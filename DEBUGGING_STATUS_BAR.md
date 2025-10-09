@@ -1,5 +1,21 @@
 # 🐛 Debugging Status Bar Items
 
+## ✅ FIXED: Status Bars Not Showing Until Click
+
+**Problem:** Status bars didn't appear until you clicked the TensorFleet icon.
+
+**Root Cause:** The `updateStatusBars()` function was async but wasn't being awaited, so the extension activated before the project detection completed.
+
+**Fix Applied:**
+
+1. Made `initializeStatusBarItems()` async
+2. Added `await` to `updateStatusBars()` call
+3. Added `onStartupFinished` activation event
+
+**Now the status bars appear immediately when you open a TensorFleet project!** ✨
+
+---
+
 ## Quick Debug Steps
 
 ### 1. Open Developer Console

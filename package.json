@@ -11,6 +11,7 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onView:tensorfleet-qgroundcontrol",
     "onView:tensorfleet-gazebo",
     "onView:tensorfleet-aiops",

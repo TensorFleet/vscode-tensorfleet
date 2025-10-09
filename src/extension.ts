@@ -91,7 +91,9 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   // Initialize status bar items for TensorFleet projects
-  initializeStatusBarItems(context);
+  initializeStatusBarItems(context).catch((error) => {
+    console.error('[TensorFleet] Failed to initialize status bars:', error);
+  });
   DRONE_VIEWS.forEach((view) => {
     const provider = new DashboardViewProvider(view, context);
     context.subscriptions.push(
@@ -699,7 +701,7 @@ const AVAILABLE_ROS_VERSIONS: RosVersion[] = [
 let currentRosVersion: RosVersion = AVAILABLE_ROS_VERSIONS[0];
 let drones: DroneInfo[] = [];
 
-function initializeStatusBarItems(context: vscode.ExtensionContext) {
+async function initializeStatusBarItems(context: vscode.ExtensionContext) {
   console.log('[TensorFleet] Initializing status bar items...');
   
   // Create ROS version status bar item
@@ -722,8 +724,9 @@ function initializeStatusBarItems(context: vscode.ExtensionContext) {
   context.subscriptions.push(droneStatusBar);
   console.log('[TensorFleet] Drone status bar created');
 
-  // Check if current workspace is a TensorFleet project
-  updateStatusBars();
+  // Check if current workspace is a TensorFleet project - AWAIT this!
+  await updateStatusBars();
+  console.log('[TensorFleet] Initial status bar update complete');
 
   // Watch for workspace changes
   context.subscriptions.push(
