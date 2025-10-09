@@ -1,0 +1,55 @@
+{
+  "fileType": "Plan",
+  "version": 1,
+  "groundStation": "TensorFleet",
+  "mission": {
+    "cruiseSpeed": 5.0,
+    "hoverSpeed": 2.0,
+    "items": [
+      {
+        "type": "Takeoff",
+        "altitude": 5.0,
+        "params": {
+          "pitch": 0,
+          "yaw": 0
+        }
+      },
+      {
+        "type": "Waypoint",
+        "coordinate": [47.397742, 8.545594, 10.0],
+        "params": {
+          "holdTime": 2.0,
+          "acceptanceRadius": 1.0
+        }
+      },
+      {
+        "type": "Waypoint",
+        "coordinate": [47.398242, 8.546094, 10.0],
+        "params": {
+          "holdTime": 2.0,
+          "acceptanceRadius": 1.0
+        }
+      },
+      {
+        "type": "Waypoint",
+        "coordinate": [47.398242, 8.545594, 10.0],
+        "params": {
+          "holdTime": 2.0,
+          "acceptanceRadius": 1.0
+        }
+      },
+      {
+        "type": "RTL",
+        "params": {
+          "landImmediately": true
+        }
+      }
+    ]
+  },
+  "rally": [],
+  "geoFence": {
+    "circles": [],
+    "polygons": []
+  }
+}
+

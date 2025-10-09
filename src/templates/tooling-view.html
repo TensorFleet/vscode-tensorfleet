@@ -9,6 +9,18 @@
   </head>
   <body>
     <section class="viewport">
+      <h2 class="viewport__title">Quick Start</h2>
+      <p class="viewport__description">
+        Create a new drone project with pre-configured templates and examples.
+      </p>
+      <div class="viewport__actions">
+        <button id="newProject" class="viewport__action">🚀 New Project</button>
+      </div>
+    </section>
+
+    <hr style="border: none; border-top: 1px solid var(--vscode-editorWidget-border); margin: 24px 0;">
+
+    <section class="viewport">
       <h2 class="viewport__title">Install Bundled Tooling</h2>
       <p class="viewport__description">
         Deploy ROS 2, mission utilities, and supporting binaries that ship with this extension to a local workspace.
@@ -20,11 +32,14 @@
       </ol>
       <div class="viewport__actions">
         <button id="installTools" class="viewport__action">Install TensorFleet Toolchain</button>
-        <button id="openAllPanels" class="viewport__action viewport__action--secondary">2Open All Dashboards</button>
+        <button id="openAllPanels" class="viewport__action viewport__action--secondary">Open All Dashboards</button>
       </div>
     </section>
     <script nonce="tooling">
       const vscode = acquireVsCodeApi();
+      document.getElementById('newProject')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'newProject' });
+      });
       document.getElementById('installTools')?.addEventListener('click', () => {
         vscode.postMessage({ command: 'installTools' });
       });

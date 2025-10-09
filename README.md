@@ -7,6 +7,7 @@ and bundles a simple installer for shipping external tooling such as ROS 2.
 
 ## Features
 
+- **🚀 Project Scaffolding**: Create new drone projects with pre-configured templates, example code, and best practices in one click.
 - QGroundControl view with launch button for a dedicated workspace window.
 - Gazebo simulation dashboard for world visualization and sensor overlays.
 - AI Ops view for running TensorFleet AI models against live or recorded feeds.
@@ -21,6 +22,8 @@ side bar or panel area. Commands exposed in the command palette open equivalent
 content in standalone webview panels for focused workflows.
 
 ## Getting Started
+
+### For Extension Development
 
 1. Install dependencies with Bun:
 
@@ -56,6 +59,23 @@ Workspace`, or `TensorFleet: Open AI Ops Workspace` to open each dashboard
    - Run `TensorFleet: Open All Dashboards in Main Area` (or press the **Open
      All Dashboards** button in any TensorFleet view) to arrange all four
      dashboards—including the ROS 2 & Stable Baselines lab—in a quad layout.
+
+### For Drone Development (Using the Extension)
+
+1. **Create a New Project**:
+
+   - Open the TensorFleet Tools panel (bottom panel)
+   - Click the **🚀 New Project** button
+   - Enter a project name and select a location
+   - Get a complete project with templates, examples, and configuration!
+
+   📚 **[Project Scaffolding Guide →](./PROJECT_SCAFFOLDING.md)** - Learn about project templates
+
+2. **Configure Your Environment**: Edit `config/drone_config.yaml` in your new project
+
+3. **Launch Tools**: Use TensorFleet panels to start Gazebo, ROS 2, and AI operations
+
+4. **Start Coding**: Modify `src/main.py` to implement your drone control logic
 
 ## Bundled Tool Installer
 
@@ -137,5 +157,7 @@ For example, when an AI assistant calls `start_gazebo_simulation`, the Gazebo pa
 
 ### Full Documentation
 
+- [QUICK_START.md](./QUICK_START.md) - Get started with TensorFleet in 5 minutes
+- [PROJECT_SCAFFOLDING.md](./PROJECT_SCAFFOLDING.md) - Create new drone projects with templates
 - [MCP_SETUP.md](./MCP_SETUP.md) - Basic MCP setup for Cursor and Claude
 - [VSCODE_MCP_INTEGRATION.md](./VSCODE_MCP_INTEGRATION.md) - How MCP tools open VS Code panels automatically

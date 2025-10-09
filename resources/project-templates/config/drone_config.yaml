@@ -1,0 +1,50 @@
+# TensorFleet Drone Configuration
+
+drone:
+  model: "iris" # Options: iris, typhoon_h480, plane
+  id: "drone_1"
+
+simulation:
+  world: "empty" # Options: empty, warehouse, outdoor
+  headless: false
+  enable_gui: true
+
+ros2:
+  ros_version: "humble"
+  namespace: "/drone"
+  domain_id: 0
+
+sensors:
+  camera:
+    enabled: true
+    resolution: [640, 480]
+    fps: 30
+
+  lidar:
+    enabled: false
+    range: 10.0
+
+  gps:
+    enabled: true
+    update_rate: 10 # Hz
+
+flight:
+  max_altitude: 100.0 # meters
+  max_speed: 10.0 # m/s
+  geofence:
+    enabled: true
+    radius: 500.0 # meters from home
+
+ai_models:
+  object_detection:
+    model: "yolov8n"
+    confidence_threshold: 0.5
+
+  depth_estimation:
+    model: "depth_anything"
+    enabled: false
+
+logging:
+  level: "INFO" # DEBUG, INFO, WARN, ERROR
+  save_to_file: true
+  directory: "./logs"

@@ -20,11 +20,14 @@
     "onCommand:tensorfleet.openGazeboPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
+    "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.installTools",
     "onCommand:tensorfleet.openAllPanels",
     "onCommand:tensorfleet.startMCPServer",
     "onCommand:tensorfleet.stopMCPServer",
-    "onCommand:tensorfleet.getMCPConfig"
+    "onCommand:tensorfleet.getMCPConfig",
+    "onCommand:tensorfleet.selectRosVersion",
+    "onCommand:tensorfleet.showDroneStatus"
   ],
   "main": "./out/extension.js",
   "packageManager": "bun@1.0.0",
@@ -98,6 +101,11 @@
         "category": "TensorFleet"
       },
       {
+        "command": "tensorfleet.createNewProject",
+        "title": "TensorFleet: Create New Project",
+        "category": "TensorFleet"
+      },
+      {
         "command": "tensorfleet.installTools",
         "title": "TensorFleet: Install Bundled Tools",
         "category": "TensorFleet"
@@ -120,6 +128,16 @@
       {
         "command": "tensorfleet.getMCPConfig",
         "title": "TensorFleet: Show MCP Configuration",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.selectRosVersion",
+        "title": "TensorFleet: Select ROS Version",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.showDroneStatus",
+        "title": "TensorFleet: Show Drone Status",
         "category": "TensorFleet"
       }
     ],

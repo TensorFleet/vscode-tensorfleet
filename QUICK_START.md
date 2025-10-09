@@ -10,6 +10,20 @@ When configured, you can ask Cursor or Claude things like:
 
 And the **Gazebo panel will automatically open in VS Code** with your simulation ready!
 
+## 🚀 New: One-Click Project Creation
+
+**Want to start a new drone project?** Just click the **"🚀 New Project"** button in the TensorFleet Tools panel!
+
+You'll get:
+
+- Complete project structure
+- Example ROS 2 drone controller
+- Pre-configured settings
+- Mission plans and launch files
+- All dependencies listed
+
+📚 See [PROJECT_SCAFFOLDING.md](./PROJECT_SCAFFOLDING.md) for details.
+
 ## Installation Steps
 
 ### 1. Build the Extension

@@ -76,6 +76,11 @@ const terminalRegistry = new Map<string, vscode.Terminal>();
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 
+// Status bar items for TensorFleet projects
+let rosVersionStatusBar: vscode.StatusBarItem | null = null;
+let droneStatusBar: vscode.StatusBarItem | null = null;
+let projectWatcher: vscode.FileSystemWatcher | null = null;
+
 export function activate(context: vscode.ExtensionContext) {
   // Start MCP bridge for communication between MCP server and VS Code
   mcpBridge = new MCPBridge(context);
@@ -84,6 +89,9 @@ export function activate(context: vscode.ExtensionContext) {
   }).catch((error) => {
     console.error('Failed to start MCP Bridge:', error);
   });
+
+  // Initialize status bar items for TensorFleet projects
+  initializeStatusBarItems(context);
   DRONE_VIEWS.forEach((view) => {
     const provider = new DashboardViewProvider(view, context);
     context.subscriptions.push(
@@ -109,6 +117,10 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.createNewProject', () => createNewProject(context))
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
   );
 
@@ -122,6 +134,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.selectRosVersion', () => selectRosVersion())
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
   );
 
   context.subscriptions.push(
@@ -147,6 +167,20 @@ export function deactivate() {
   if (mcpServerProcess) {
     mcpServerProcess.kill();
     mcpServerProcess = null;
+  }
+
+  // Clean up status bar items
+  if (rosVersionStatusBar) {
+    rosVersionStatusBar.dispose();
+    rosVersionStatusBar = null;
+  }
+  if (droneStatusBar) {
+    droneStatusBar.dispose();
+    droneStatusBar = null;
+  }
+  if (projectWatcher) {
+    projectWatcher.dispose();
+    projectWatcher = null;
   }
 }
 
@@ -205,7 +239,9 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this.renderHtml(webviewView.webview);
     webviewView.webview.onDidReceiveMessage((message) => {
-      if (message?.command === 'installTools') {
+      if (message?.command === 'newProject') {
+        vscode.commands.executeCommand('tensorfleet.createNewProject');
+      } else if (message?.command === 'installTools') {
         vscode.commands.executeCommand('tensorfleet.installTools');
       } else if (message?.command === 'openAllPanels') {
         vscode.commands.executeCommand('tensorfleet.openAllPanels');
@@ -330,6 +366,91 @@ function launchTerminalSession(target: string) {
   }
 
   terminal.show();
+}
+
+async function createNewProject(context: vscode.ExtensionContext) {
+  // Get project name from user
+  const projectName = await vscode.window.showInputBox({
+    prompt: 'Enter a name for your new drone project',
+    placeHolder: 'my-drone-project',
+    validateInput: (value) => {
+      if (!value) {
+        return 'Project name cannot be empty';
+      }
+      if (!/^[a-zA-Z0-9-_]+$/.test(value)) {
+        return 'Project name can only contain letters, numbers, hyphens, and underscores';
+      }
+      return null;
+    }
+  });
+
+  if (!projectName) {
+    return;
+  }
+
+  // Select location for the project
+  const targetFolders = await vscode.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    openLabel: 'Select Location for New Project'
+  });
+
+  if (!targetFolders || targetFolders.length === 0) {
+    return;
+  }
+
+  const targetFolder = targetFolders[0];
+  const projectFolder = vscode.Uri.joinPath(targetFolder, projectName);
+  const templateFolder = vscode.Uri.joinPath(context.extensionUri, 'resources', 'project-templates');
+
+  try {
+    // Check if folder already exists
+    try {
+      await vscode.workspace.fs.stat(projectFolder);
+      const overwrite = await vscode.window.showWarningMessage(
+        `A folder named "${projectName}" already exists. Do you want to overwrite it?`,
+        { modal: true },
+        'Overwrite',
+        'Cancel'
+      );
+      if (overwrite !== 'Overwrite') {
+        return;
+      }
+    } catch {
+      // Folder doesn't exist, which is fine
+    }
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Creating TensorFleet Project',
+        cancellable: false
+      },
+      async (progress) => {
+        progress.report({ message: 'Setting up project structure…' });
+        await copyDirectory(templateFolder, projectFolder);
+        progress.report({ message: 'Project created successfully!' });
+      }
+    );
+
+    const openProject = await vscode.window.showInformationMessage(
+      `✨ Project "${projectName}" created successfully!`,
+      'Open Project',
+      'Open in New Window',
+      'Close'
+    );
+
+    if (openProject === 'Open Project') {
+      await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
+    } else if (openProject === 'Open in New Window') {
+      await vscode.commands.executeCommand('vscode.openFolder', projectFolder, true);
+    }
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Failed to create project: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 async function installBundledTools(context: vscode.ExtensionContext) {
@@ -548,6 +669,409 @@ function stopMCPServer() {
   mcpServerProcess = null;
   vscode.window.showInformationMessage('TensorFleet MCP Server stopped');
 }
+
+// ============================================================================
+// Status Bar Items for TensorFleet Projects
+// ============================================================================
+
+type DroneInfo = {
+  id: string;
+  name: string;
+  status: 'idle' | 'armed' | 'flying' | 'offline';
+  battery: number;
+  mode: string;
+};
+
+type RosVersion = {
+  name: string;
+  distro: string;
+  path?: string;
+};
+
+const AVAILABLE_ROS_VERSIONS: RosVersion[] = [
+  { name: 'ROS 2 Humble', distro: 'humble', path: '/opt/ros/humble' },
+  { name: 'ROS 2 Iron', distro: 'iron', path: '/opt/ros/iron' },
+  { name: 'ROS 2 Jazzy', distro: 'jazzy', path: '/opt/ros/jazzy' },
+  { name: 'ROS 2 Rolling', distro: 'rolling', path: '/opt/ros/rolling' },
+  { name: 'ROS 1 Noetic', distro: 'noetic', path: '/opt/ros/noetic' }
+];
+
+let currentRosVersion: RosVersion = AVAILABLE_ROS_VERSIONS[0];
+let drones: DroneInfo[] = [];
+
+function initializeStatusBarItems(context: vscode.ExtensionContext) {
+  // Create ROS version status bar item
+  rosVersionStatusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100
+  );
+  rosVersionStatusBar.command = 'tensorfleet.selectRosVersion';
+  rosVersionStatusBar.tooltip = 'Click to change ROS version';
+  context.subscriptions.push(rosVersionStatusBar);
+
+  // Create drone status bar item
+  droneStatusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    99
+  );
+  droneStatusBar.command = 'tensorfleet.showDroneStatus';
+  droneStatusBar.tooltip = 'Click to view drone details';
+  context.subscriptions.push(droneStatusBar);
+
+  // Check if current workspace is a TensorFleet project
+  updateStatusBars();
+
+  // Watch for workspace changes
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => updateStatusBars())
+  );
+
+  // Watch for config file changes
+  const configPattern = '**/config/drone_config.yaml';
+  projectWatcher = vscode.workspace.createFileSystemWatcher(configPattern);
+  
+  projectWatcher.onDidCreate(() => updateStatusBars());
+  projectWatcher.onDidChange(() => updateStatusBars());
+  projectWatcher.onDidDelete(() => updateStatusBars());
+  
+  context.subscriptions.push(projectWatcher);
+
+  // Update status periodically (every 5 seconds)
+  const interval = setInterval(async () => {
+    if (await isTensorFleetProject()) {
+      await updateDroneStatus();
+    }
+  }, 5000);
+
+  context.subscriptions.push(new vscode.Disposable(() => clearInterval(interval)));
+}
+
+async function isTensorFleetProject(): Promise<boolean> {
+  if (!vscode.workspace.workspaceFolders) {
+    return false;
+  }
+
+  // Check for TensorFleet project markers
+  const markers = [
+    'config/drone_config.yaml',
+    'src/main.py',
+    'missions',
+    'launch'
+  ];
+
+  for (const folder of vscode.workspace.workspaceFolders) {
+    for (const marker of markers) {
+      try {
+        const markerPath = vscode.Uri.joinPath(folder.uri, marker);
+        await vscode.workspace.fs.stat(markerPath);
+        return true;
+      } catch {
+        // File doesn't exist, continue checking
+      }
+    }
+  }
+
+  return false;
+}
+
+async function updateStatusBars() {
+  const isTFProject = await isTensorFleetProject();
+
+  if (isTFProject) {
+    // Detect ROS version from config or system
+    await detectRosVersion();
+    
+    // Initialize drone status
+    await updateDroneStatus();
+
+    // Show status bars
+    rosVersionStatusBar?.show();
+    droneStatusBar?.show();
+  } else {
+    // Hide status bars when not in a TensorFleet project
+    rosVersionStatusBar?.hide();
+    droneStatusBar?.hide();
+  }
+}
+
+async function detectRosVersion() {
+  if (!vscode.workspace.workspaceFolders) {
+    return;
+  }
+
+  try {
+    // Try to read from drone config
+    const configPath = vscode.Uri.joinPath(
+      vscode.workspace.workspaceFolders[0].uri,
+      'config',
+      'drone_config.yaml'
+    );
+
+    const configContent = await vscode.workspace.fs.readFile(configPath);
+    const configText = Buffer.from(configContent).toString('utf8');
+
+    // Simple YAML parsing for ROS version (looking for ros_version or ros2: lines)
+    const versionMatch = configText.match(/ros_?version:\s*["']?([^"'\n]+)["']?/i);
+    if (versionMatch) {
+      const versionName = versionMatch[1].toLowerCase();
+      const found = AVAILABLE_ROS_VERSIONS.find((v) => 
+        v.distro.toLowerCase() === versionName || 
+        v.name.toLowerCase().includes(versionName)
+      );
+      if (found) {
+        currentRosVersion = found;
+      }
+    }
+  } catch {
+    // Config not found or parse error, use default
+  }
+
+  // Update status bar
+  if (rosVersionStatusBar) {
+    rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
+  }
+}
+
+async function updateDroneStatus() {
+  if (!vscode.workspace.workspaceFolders) {
+    return;
+  }
+
+  try {
+    // Try to read from config to get drone info
+    const configPath = vscode.Uri.joinPath(
+      vscode.workspace.workspaceFolders[0].uri,
+      'config',
+      'drone_config.yaml'
+    );
+
+    const configContent = await vscode.workspace.fs.readFile(configPath);
+    const configText = Buffer.from(configContent).toString('utf8');
+
+    // Extract drone ID/name from config
+    const idMatch = configText.match(/id:\s*["']?([^"'\n]+)["']?/);
+    const modelMatch = configText.match(/model:\s*["']?([^"'\n]+)["']?/);
+
+    const droneId = idMatch ? idMatch[1] : 'drone_1';
+    const droneModel = modelMatch ? modelMatch[1] : 'iris';
+
+    // For now, simulate drone status
+    // In a real implementation, this would query the MCP server or ROS topics
+    drones = [
+      {
+        id: droneId,
+        name: droneModel,
+        status: 'idle',
+        battery: 100,
+        mode: 'MANUAL'
+      }
+    ];
+
+    // Check if simulation is running by looking for active ROS topics
+    // This is a placeholder - real implementation would check actual ROS
+    const simulationRunning = false; // TODO: Check actual ROS topics
+
+    if (simulationRunning) {
+      drones[0].status = 'flying';
+      drones[0].battery = Math.floor(Math.random() * 40) + 60; // Simulate battery drain
+      drones[0].mode = 'AUTO';
+    }
+
+    // Update status bar
+    if (droneStatusBar) {
+      const activeCount = drones.filter((d) => d.status !== 'offline').length;
+      const flyingCount = drones.filter((d) => d.status === 'flying').length;
+
+      let statusText = `$(radio-tower) ${activeCount} Drone${activeCount !== 1 ? 's' : ''}`;
+      
+      if (flyingCount > 0) {
+        statusText += ` (${flyingCount} Flying)`;
+      }
+
+      droneStatusBar.text = statusText;
+    }
+  } catch {
+    // Config not found, show default
+    drones = [
+      {
+        id: 'drone_1',
+        name: 'iris',
+        status: 'offline',
+        battery: 0,
+        mode: 'UNKNOWN'
+      }
+    ];
+
+    if (droneStatusBar) {
+      droneStatusBar.text = '$(radio-tower) 0 Drones';
+    }
+  }
+}
+
+async function selectRosVersion() {
+  const items = AVAILABLE_ROS_VERSIONS.map((version) => ({
+    label: version.name,
+    description: version.path,
+    detail: version.distro === currentRosVersion.distro ? '$(check) Currently selected' : '',
+    version
+  }));
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select ROS version for your project',
+    title: 'TensorFleet: ROS Version'
+  });
+
+  if (selected) {
+    currentRosVersion = selected.version;
+    
+    if (rosVersionStatusBar) {
+      rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
+    }
+
+    // Optionally update the config file
+    const shouldUpdateConfig = await vscode.window.showInformationMessage(
+      `Switched to ${currentRosVersion.name}. Update drone_config.yaml?`,
+      'Yes',
+      'No'
+    );
+
+    if (shouldUpdateConfig === 'Yes') {
+      await updateConfigWithRosVersion(currentRosVersion);
+    }
+
+    vscode.window.showInformationMessage(
+      `ROS version set to ${currentRosVersion.name}. Run: source ${currentRosVersion.path}/setup.bash`
+    );
+  }
+}
+
+async function updateConfigWithRosVersion(version: RosVersion) {
+  if (!vscode.workspace.workspaceFolders) {
+    return;
+  }
+
+  try {
+    const configPath = vscode.Uri.joinPath(
+      vscode.workspace.workspaceFolders[0].uri,
+      'config',
+      'drone_config.yaml'
+    );
+
+    const configContent = await vscode.workspace.fs.readFile(configPath);
+    let configText = Buffer.from(configContent).toString('utf8');
+
+    // Add or update ROS version in config
+    if (configText.includes('ros_version:')) {
+      configText = configText.replace(
+        /ros_version:\s*["']?[^"'\n]+["']?/,
+        `ros_version: "${version.distro}"`
+      );
+    } else {
+      // Add after ros2: section if it exists
+      if (configText.includes('ros2:')) {
+        configText = configText.replace(
+          /(ros2:\s*\n)/,
+          `$1  ros_version: "${version.distro}"\n`
+        );
+      } else {
+        // Add new ros2 section
+        configText += `\nros2:\n  ros_version: "${version.distro}"\n`;
+      }
+    }
+
+    await vscode.workspace.fs.writeFile(configPath, Buffer.from(configText, 'utf8'));
+    vscode.window.showInformationMessage('Updated drone_config.yaml with ROS version');
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Failed to update config: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+async function showDroneStatus() {
+  if (drones.length === 0) {
+    vscode.window.showInformationMessage('No drones detected. Start a simulation to see drone status.');
+    return;
+  }
+
+  const items = drones.map((drone) => {
+    const statusIcon =
+      drone.status === 'flying' ? '$(rocket)' :
+      drone.status === 'armed' ? '$(zap)' :
+      drone.status === 'idle' ? '$(circle-outline)' :
+      '$(circle-slash)';
+
+    const batteryIcon =
+      drone.battery > 75 ? '$(battery-full)' :
+      drone.battery > 50 ? '$(battery)' :
+      drone.battery > 25 ? '$(battery-charging)' :
+      '$(battery-empty)';
+
+    return {
+      label: `${statusIcon} ${drone.name}`,
+      description: `${drone.mode} | ${batteryIcon} ${drone.battery}%`,
+      detail: `ID: ${drone.id} | Status: ${drone.status}`,
+      drone
+    };
+  });
+
+  items.push({
+    label: '$(refresh) Refresh Status',
+    description: 'Update drone information',
+    detail: '',
+    // @ts-ignore
+    drone: null
+  });
+
+  items.push({
+    label: '$(debug-start) Start Simulation',
+    description: 'Launch Gazebo with drones',
+    detail: '',
+    // @ts-ignore
+    drone: null
+  });
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Drone Status',
+    title: 'TensorFleet: Connected Drones'
+  });
+
+  if (selected) {
+    if (selected.label.includes('Refresh')) {
+      await updateDroneStatus();
+      vscode.window.showInformationMessage('Drone status refreshed');
+    } else if (selected.label.includes('Start Simulation')) {
+      vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
+    } else if (selected.drone) {
+      // Show detailed drone info
+      showDetailedDroneInfo(selected.drone);
+    }
+  }
+}
+
+function showDetailedDroneInfo(drone: DroneInfo) {
+  const info = `
+**Drone Information**
+
+**ID:** ${drone.id}
+**Model:** ${drone.name}
+**Status:** ${drone.status}
+**Battery:** ${drone.battery}%
+**Mode:** ${drone.mode}
+
+Click "Open Gazebo Workspace" to view in simulation.
+  `.trim();
+
+  vscode.window.showInformationMessage(info, 'Open Gazebo Workspace', 'Close').then((choice) => {
+    if (choice === 'Open Gazebo Workspace') {
+      vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
+    }
+  });
+}
+
+// ============================================================================
+// MCP Configuration
+// ============================================================================
 
 async function showMCPConfiguration(context: vscode.ExtensionContext) {
   const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
