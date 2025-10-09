@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 270">
+  <defs>
+    <linearGradient id="sky" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a8a" />
+      <stop offset="100%" stop-color="#60a5fa" />
+    </linearGradient>
+  </defs>
+  <rect width="480" height="270" fill="url(#sky)" />
+  <path d="M40 210h400l-40 40H80z" fill="#0f172a" opacity="0.6" />
+  <circle cx="120" cy="120" r="60" fill="#38bdf8" opacity="0.6" />
+  <path
+    d="M180 140h120a12 12 0 0 1 12 12v40a12 12 0 0 1-12 12H180a12 12 0 0 1-12-12v-40a12 12 0 0 1 12-12z"
+    fill="#111827"
+    opacity="0.7"
+  />
+  <text x="50%" y="48%" dominant-baseline="middle" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="42"
+    fill="#f8fafc" opacity="0.9">QGroundControl</text>
+  <text x="50%" y="65%" dominant-baseline="middle" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="26"
+    fill="#bfdbfe" opacity="0.9">Manual Flight &amp; Telemetry</text>
+  <g fill="none" stroke="#f8fafc" stroke-width="4" opacity="0.8">
+    <circle cx="240" cy="200" r="26" />
+    <line x1="212" y1="200" x2="268" y2="200" />
+    <line x1="240" y1="172" x2="240" y2="228" />
+  </g>
+</svg>

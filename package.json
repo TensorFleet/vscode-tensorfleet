@@ -1,0 +1,171 @@
+{
+  "name": "tensorfleet-drone",
+  "displayName": "TensorFleet Drone Suite",
+  "description": "Flexible drone operations workspace for TensorFleet with multi-view dashboards and tooling management.",
+  "version": "0.0.1",
+  "publisher": "tensorfleet",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:tensorfleet-qgroundcontrol",
+    "onView:tensorfleet-gazebo",
+    "onView:tensorfleet-aiops",
+    "onView:tensorfleet-ros2-baselines",
+    "onView:tensorfleet-tooling-view",
+    "onCommand:tensorfleet.openQGroundControlPanel",
+    "onCommand:tensorfleet.openGazeboPanel",
+    "onCommand:tensorfleet.openAIPanel",
+    "onCommand:tensorfleet.openROS2Panel",
+    "onCommand:tensorfleet.installTools",
+    "onCommand:tensorfleet.openAllPanels"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tensorfleet-drone-suite",
+          "title": "TensorFleet",
+          "icon": "media/tensorfleet-icon.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "tensorfleet-tooling",
+          "title": "TensorFleet Tools",
+          "icon": "media/tensorfleet-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "tensorfleet-drone-suite": [
+        {
+          "id": "tensorfleet-qgroundcontrol",
+          "name": "QGroundControl",
+          "type": "webview"
+        },
+        {
+          "id": "tensorfleet-gazebo",
+          "name": "Gazebo World",
+          "type": "webview"
+        },
+        {
+          "id": "tensorfleet-aiops",
+          "name": "AI Ops",
+          "type": "webview"
+        },
+        {
+          "id": "tensorfleet-ros2-baselines",
+          "name": "ROS 2 & Stable Baselines",
+          "type": "webview"
+        }
+      ],
+      "tensorfleet-tooling": [
+        {
+          "id": "tensorfleet-tooling-view",
+          "name": "Tool Installer",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "tensorfleet.openQGroundControlPanel",
+        "title": "TensorFleet: Open QGroundControl Workspace",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openGazeboPanel",
+        "title": "TensorFleet: Open Gazebo Workspace",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openAIPanel",
+        "title": "TensorFleet: Open AI Ops Workspace",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openROS2Panel",
+        "title": "TensorFleet: Open ROS 2 & Stable Baselines Lab",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.installTools",
+        "title": "TensorFleet: Install Bundled Tools",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openAllPanels",
+        "title": "TensorFleet: Open All Dashboards in Main Area",
+        "category": "TensorFleet"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "tensorfleet.openQGroundControlPanel",
+          "when": "view == tensorfleet-qgroundcontrol",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tensorfleet.openGazeboPanel",
+          "when": "view == tensorfleet-gazebo",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tensorfleet.openAIPanel",
+          "when": "view == tensorfleet-aiops",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tensorfleet.openROS2Panel",
+          "when": "view == tensorfleet-ros2-baselines",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tensorfleet.openAllPanels",
+          "when": "view == tensorfleet-qgroundcontrol",
+          "group": "navigation@9"
+        },
+        {
+          "command": "tensorfleet.openAllPanels",
+          "when": "view == tensorfleet-gazebo",
+          "group": "navigation@9"
+        },
+        {
+          "command": "tensorfleet.openAllPanels",
+          "when": "view == tensorfleet-aiops",
+          "group": "navigation@9"
+        },
+        {
+          "command": "tensorfleet.openAllPanels",
+          "when": "view == tensorfleet-ros2-baselines",
+          "group": "navigation@9"
+        },
+        {
+          "command": "tensorfleet.openAllPanels",
+          "when": "view == tensorfleet-tooling-view",
+          "group": "navigation@9"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^18.17.0",
+    "@types/vscode": "^1.85.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.2.2",
+    "tslib": "^2.6.2"
+  }
+}

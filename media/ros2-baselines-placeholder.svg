@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 270">
+  <defs>
+    <linearGradient id="grid" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+  </defs>
+  <rect width="480" height="270" fill="url(#grid)" />
+  <g fill="none" stroke="#38bdf8" stroke-width="2" opacity="0.4">
+    <path d="M40 40h400M40 70h400M40 100h400M40 130h400M40 160h400M40 190h400M40 220h400" />
+    <path d="M60 30v220M110 30v220M160 30v220M210 30v220M260 30v220M310 30v220M360 30v220M410 30v220" />
+  </g>
+  <g>
+    <path d="M160 120c0-44 36-80 80-80s80 36 80 80-36 80-80 80-80-36-80-80z" fill="#0ea5e9" opacity="0.25" />
+    <path d="M200 120c0-22 18-40 40-40s40 18 40 40-18 40-40 40-40-18-40-40z" fill="#c084fc" opacity="0.4" />
+    <circle cx="240" cy="120" r="18" fill="#f9fafb" />
+  </g>
+  <text x="50%" y="40%" dominant-baseline="middle" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="34"
+    fill="#f8fafc" opacity="0.95">ROS 2 &amp; Stable Baselines</text>
+  <text x="50%" y="58%" dominant-baseline="middle" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="22"
+    fill="#dbeafe" opacity="0.9">Launch middleware &amp; RL workflows</text>
+  <g fill="none" stroke="#f1f5f9" stroke-width="3" opacity="0.7">
+    <rect x="120" y="182" width="110" height="50" rx="8" />
+    <rect x="250" y="182" width="110" height="50" rx="8" />
+    <path d="M230 207h20" />
+  </g>
+  <text x="175" y="212" dominant-baseline="middle" text-anchor="middle" font-family="Consolas, monospace" font-size="14"
+    fill="#f8fafc">ros2 launch</text>
+  <text x="305" y="212" dominant-baseline="middle" text-anchor="middle" font-family="Consolas, monospace" font-size="14"
+    fill="#f8fafc">sb3 train</text>
+</svg>

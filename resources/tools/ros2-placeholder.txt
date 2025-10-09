@@ -1,0 +1,6 @@
+ROS 2 Placeholder Binary
+------------------------
+
+Replace this file with the actual ROS 2 distribution or installer that ships
+with TensorFleet. The installer command copies everything from
+resources/tools into the user selected directory.
