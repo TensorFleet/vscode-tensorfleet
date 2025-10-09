@@ -700,6 +700,8 @@ let currentRosVersion: RosVersion = AVAILABLE_ROS_VERSIONS[0];
 let drones: DroneInfo[] = [];
 
 function initializeStatusBarItems(context: vscode.ExtensionContext) {
+  console.log('[TensorFleet] Initializing status bar items...');
+  
   // Create ROS version status bar item
   rosVersionStatusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
@@ -708,6 +710,7 @@ function initializeStatusBarItems(context: vscode.ExtensionContext) {
   rosVersionStatusBar.command = 'tensorfleet.selectRosVersion';
   rosVersionStatusBar.tooltip = 'Click to change ROS version';
   context.subscriptions.push(rosVersionStatusBar);
+  console.log('[TensorFleet] ROS version status bar created');
 
   // Create drone status bar item
   droneStatusBar = vscode.window.createStatusBarItem(
@@ -717,6 +720,7 @@ function initializeStatusBarItems(context: vscode.ExtensionContext) {
   droneStatusBar.command = 'tensorfleet.showDroneStatus';
   droneStatusBar.tooltip = 'Click to view drone details';
   context.subscriptions.push(droneStatusBar);
+  console.log('[TensorFleet] Drone status bar created');
 
   // Check if current workspace is a TensorFleet project
   updateStatusBars();
@@ -748,8 +752,12 @@ function initializeStatusBarItems(context: vscode.ExtensionContext) {
 
 async function isTensorFleetProject(): Promise<boolean> {
   if (!vscode.workspace.workspaceFolders) {
+    console.log('[TensorFleet] No workspace folders open');
     return false;
   }
+
+  console.log('[TensorFleet] Checking for TensorFleet project markers...');
+  console.log('[TensorFleet] Workspace folders:', vscode.workspace.workspaceFolders.map(f => f.uri.fsPath));
 
   // Check for TensorFleet project markers
   const markers = [
@@ -763,20 +771,27 @@ async function isTensorFleetProject(): Promise<boolean> {
       try {
         const markerPath = vscode.Uri.joinPath(folder.uri, marker);
         await vscode.workspace.fs.stat(markerPath);
+        console.log(`[TensorFleet] ✓ Found marker: ${marker} in ${folder.uri.fsPath}`);
+        console.log('[TensorFleet] Project detected! Status bars should appear.');
         return true;
       } catch {
+        console.log(`[TensorFleet] ✗ Missing marker: ${marker} in ${folder.uri.fsPath}`);
         // File doesn't exist, continue checking
       }
     }
   }
 
+  console.log('[TensorFleet] No TensorFleet project detected. Status bars will be hidden.');
   return false;
 }
 
 async function updateStatusBars() {
+  console.log('[TensorFleet] Updating status bars...');
   const isTFProject = await isTensorFleetProject();
 
   if (isTFProject) {
+    console.log('[TensorFleet] TensorFleet project detected, showing status bars');
+    
     // Detect ROS version from config or system
     await detectRosVersion();
     
@@ -784,9 +799,16 @@ async function updateStatusBars() {
     await updateDroneStatus();
 
     // Show status bars
-    rosVersionStatusBar?.show();
-    droneStatusBar?.show();
+    if (rosVersionStatusBar) {
+      rosVersionStatusBar.show();
+      console.log('[TensorFleet] ROS version status bar shown:', rosVersionStatusBar.text);
+    }
+    if (droneStatusBar) {
+      droneStatusBar.show();
+      console.log('[TensorFleet] Drone status bar shown:', droneStatusBar.text);
+    }
   } else {
+    console.log('[TensorFleet] Not a TensorFleet project, hiding status bars');
     // Hide status bars when not in a TensorFleet project
     rosVersionStatusBar?.hide();
     droneStatusBar?.hide();
@@ -828,6 +850,7 @@ async function detectRosVersion() {
   // Update status bar
   if (rosVersionStatusBar) {
     rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
+    console.log('[TensorFleet] ROS version set to:', currentRosVersion.name);
   }
 }
 
@@ -888,6 +911,7 @@ async function updateDroneStatus() {
       }
 
       droneStatusBar.text = statusText;
+      console.log('[TensorFleet] Drone status set to:', statusText);
     }
   } catch {
     // Config not found, show default
