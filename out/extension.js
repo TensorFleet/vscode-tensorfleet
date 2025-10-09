@@ -36,6 +36,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
 const DRONE_VIEWS = [
     {
         id: 'tensorfleet-qgroundcontrol',
@@ -140,38 +142,14 @@ class DashboardViewProvider {
             .toString();
         const cspSource = webview.cspSource;
         const styles = getBaseStyles();
-        return /* html */ `
-      <!DOCTYPE html>
-      <html lang="en">
-        <head>
-          <meta charset="UTF-8" />
-          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} https: data:; script-src 'nonce-dashboard'; style-src ${cspSource} 'unsafe-inline';" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>${this.config.title}</title>
-          ${styles}
-        </head>
-        <body>
-          <section class="viewport">
-            <img src="${imageUri}" alt="${this.config.title} placeholder" class="viewport__artwork" />
-            <h2 class="viewport__title">${this.config.title}</h2>
-            <p class="viewport__description">${this.config.description}</p>
-            <div class="viewport__actions">
-              <button id="openPanel" class="viewport__action">${this.config.actionLabel}</button>
-              <button id="openAllPanels" class="viewport__action viewport__action--secondary">Open All Dashboards</button>
-            </div>
-          </section>
-          <script nonce="dashboard">
-            const vscode = acquireVsCodeApi();
-            document.getElementById('openPanel')?.addEventListener('click', () => {
-              vscode.postMessage({ command: 'openPanel' });
-            });
-            document.getElementById('openAllPanels')?.addEventListener('click', () => {
-              vscode.postMessage({ command: 'openAllPanels' });
-            });
-          </script>
-        </body>
-      </html>
-    `;
+        return loadTemplate('dashboard-view.html', {
+            cspSource,
+            title: this.config.title,
+            styles,
+            imageUri,
+            description: this.config.description,
+            actionLabel: this.config.actionLabel
+        });
     }
 }
 class ToolingViewProvider {
@@ -196,44 +174,10 @@ class ToolingViewProvider {
     renderHtml(webview) {
         const styles = getBaseStyles();
         const cspSource = webview.cspSource;
-        return /* html */ `
-      <!DOCTYPE html>
-      <html lang="en">
-        <head>
-          <meta charset="UTF-8" />
-          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} data:; script-src 'nonce-tooling'; style-src ${cspSource} 'unsafe-inline';" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>TensorFleet Tool Installer</title>
-          ${styles}
-        </head>
-        <body>
-          <section class="viewport">
-            <h2 class="viewport__title">Install Bundled Tooling</h2>
-            <p class="viewport__description">
-              Deploy ROS 2, mission utilities, and supporting binaries that ship with this extension to a local workspace.
-            </p>
-            <ol class="viewport__list">
-              <li>Select a destination folder on your machine.</li>
-              <li>Confirm the copy operation to extract tools.</li>
-              <li>Add the install path to your PATH or robotics runtime.</li>
-            </ol>
-            <div class="viewport__actions">
-              <button id="installTools" class="viewport__action">Install TensorFleet Toolchain</button>
-              <button id="openAllPanels" class="viewport__action viewport__action--secondary">Open All Dashboards</button>
-            </div>
-          </section>
-          <script nonce="tooling">
-            const vscode = acquireVsCodeApi();
-            document.getElementById('installTools')?.addEventListener('click', () => {
-              vscode.postMessage({ command: 'installTools' });
-            });
-            document.getElementById('openAllPanels')?.addEventListener('click', () => {
-              vscode.postMessage({ command: 'openAllPanels' });
-            });
-          </script>
-        </body>
-      </html>
-    `;
+        return loadTemplate('tooling-view.html', {
+            cspSource,
+            styles
+        });
     }
 }
 async function openDedicatedPanel(view, context, viewColumn = vscode.ViewColumn.Active, preserveFocus = false) {
@@ -262,191 +206,22 @@ async function openDedicatedPanel(view, context, viewColumn = vscode.ViewColumn.
     return panel;
 }
 function getStandardPanelHtml(view, imageUri, cspSource) {
-    return /* html */ `
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <meta charset="UTF-8" />
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} https: data:; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-standard';" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>${view.title}</title>
-        ${getBaseStyles()}
-      </head>
-      <body>
-        <section class="viewport viewport--panel">
-          <img src="${imageUri}" alt="${view.title} placeholder" class="viewport__artwork" />
-          <h2 class="viewport__title">${view.title}</h2>
-          <p class="viewport__description">${view.description}</p>
-          <p class="viewport__hint">This dedicated window is ready for integration with live data and controls.</p>
-          <div class="viewport__actions">
-            <button id="openAllPanels" class="viewport__action viewport__action--secondary">Open All Dashboards</button>
-          </div>
-        </section>
-        <script nonce="standard">
-          const vscode = acquireVsCodeApi();
-          document.getElementById('openAllPanels')?.addEventListener('click', () => {
-            vscode.postMessage({ command: 'openAllPanels' });
-          });
-        </script>
-      </body>
-    </html>
-  `;
+    return loadTemplate('standard-panel.html', {
+        cspSource,
+        title: view.title,
+        styles: getBaseStyles(),
+        imageUri,
+        description: view.description
+    });
 }
 function getTerminalPanelHtml(view, imageUri, cspSource) {
-    return /* html */ `
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <meta charset="UTF-8" />
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} https: data:; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-terminals';" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>${view.title}</title>
-        ${getBaseStyles()}
-        <style>
-          .terminal-tabs {
-            width: 100%;
-            margin-top: 12px;
-            border: 1px solid var(--vscode-editorWidget-border);
-            border-radius: 8px;
-            overflow: hidden;
-            background: var(--vscode-editor-background);
-          }
-
-          .terminal-tabs__list {
-            display: flex;
-            border-bottom: 1px solid var(--vscode-editorWidget-border);
-          }
-
-          .terminal-tabs__tab {
-            flex: 1 1 0;
-            padding: 10px;
-            background: transparent;
-            border: none;
-            border-right: 1px solid var(--vscode-editorWidget-border);
-            color: var(--vscode-foreground);
-            font-weight: 600;
-            cursor: pointer;
-          }
-
-          .terminal-tabs__tab:last-child {
-            border-right: none;
-          }
-
-          .terminal-tabs__tab--active {
-            background: var(--vscode-editor-selectionBackground, rgba(99, 102, 241, 0.2));
-          }
-
-          .terminal-tabs__body {
-            display: none;
-            padding: 16px;
-            gap: 12px;
-            flex-direction: column;
-          }
-
-          .terminal-tabs__body[data-active="true"] {
-            display: flex;
-          }
-
-          .terminal-placeholder {
-            padding: 16px;
-            border-radius: 6px;
-            background: var(--vscode-terminal-background, #111827);
-            color: var(--vscode-terminal-foreground, #e5e7eb);
-            font-family: var(--vscode-terminal-ansiBrightWhite, Consolas), monospace;
-            box-shadow: inset 0 0 0 1px var(--vscode-terminal-border, rgba(255, 255, 255, 0.05));
-          }
-
-          .terminal-placeholder__title {
-            margin: 0 0 8px 0;
-            font-weight: 600;
-            font-size: 0.95rem;
-          }
-
-          .terminal-placeholder__content {
-            margin: 0;
-            font-size: 0.85rem;
-            white-space: pre-wrap;
-            opacity: 0.9;
-          }
-
-          .terminal-launch {
-            align-self: flex-start;
-            padding: 8px 12px;
-            font-size: 0.95rem;
-            color: var(--vscode-button-foreground);
-            background: var(--vscode-button-background);
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-          }
-
-          .terminal-launch:hover {
-            background: var(--vscode-button-hoverBackground);
-          }
-        </style>
-      </head>
-      <body>
-        <section class="viewport viewport--panel">
-          <img src="${imageUri}" alt="${view.title} placeholder" class="viewport__artwork" />
-          <h2 class="viewport__title">${view.title}</h2>
-          <p class="viewport__description">${view.description}</p>
-          <div class="terminal-tabs">
-            <div class="terminal-tabs__list">
-              <button class="terminal-tabs__tab terminal-tabs__tab--active" data-target="ros2">ROS 2 Terminal</button>
-              <button class="terminal-tabs__tab" data-target="baselines">Stable Baselines Terminal</button>
-            </div>
-            <div class="terminal-tabs__body" data-panel="ros2" data-active="true">
-              <div class="terminal-placeholder">
-                <h3 class="terminal-placeholder__title">ROS 2 Mission Shell</h3>
-                <p class="terminal-placeholder__content">
-                  Prepare to launch ROS 2 nodes, bridge telemetry, and interact with TensorFleet middleware.
-                </p>
-              </div>
-              <button class="terminal-launch" data-command="ros2">Launch ROS 2 Terminal</button>
-            </div>
-            <div class="terminal-tabs__body" data-panel="baselines" data-active="false">
-              <div class="terminal-placeholder">
-                <h3 class="terminal-placeholder__title">Stable Baselines Lab</h3>
-                <p class="terminal-placeholder__content">
-                  Train or evaluate reinforcement learning policies against live or simulated drone feeds.
-                </p>
-              </div>
-              <button class="terminal-launch" data-command="baselines">Launch Stable Baselines Terminal</button>
-            </div>
-          </div>
-          <div class="viewport__actions">
-            <button id="openAllPanels" class="viewport__action viewport__action--secondary">Open All Dashboards</button>
-          </div>
-        </section>
-        <script nonce="terminals">
-          const vscode = acquireVsCodeApi();
-          const tabs = Array.from(document.querySelectorAll('.terminal-tabs__tab'));
-          const panels = Array.from(document.querySelectorAll('.terminal-tabs__body'));
-
-          tabs.forEach((tab) => {
-            tab.addEventListener('click', () => {
-              const target = tab.dataset.target;
-              tabs.forEach((t) => t.classList.toggle('terminal-tabs__tab--active', t === tab));
-              panels.forEach((panel) => {
-                panel.dataset.active = String(panel.dataset.panel === target);
-              });
-            });
-          });
-
-          document.querySelectorAll('.terminal-launch').forEach((button) => {
-            button.addEventListener('click', () => {
-              const target = button.getAttribute('data-command');
-              vscode.postMessage({ command: 'launchTerminal', target });
-            });
-          });
-
-          document.getElementById('openAllPanels')?.addEventListener('click', () => {
-            vscode.postMessage({ command: 'openAllPanels' });
-          });
-        </script>
-      </body>
-    </html>
-  `;
+    return loadTemplate('terminal-panel.html', {
+        cspSource,
+        title: view.title,
+        styles: getBaseStyles(),
+        imageUri,
+        description: view.description
+    });
 }
 async function openAllPanels(context) {
     await vscode.commands.executeCommand('vscode.setEditorLayout', {
@@ -625,5 +400,13 @@ function getBaseStyles() {
       }
     </style>
   `;
+}
+function loadTemplate(templateName, replacements) {
+    const templatePath = path.join(__dirname, '..', 'src', 'templates', templateName);
+    let template = fs.readFileSync(templatePath, 'utf8');
+    for (const [key, value] of Object.entries(replacements)) {
+        template = template.replace(new RegExp(`{{${key}}}`, 'g'), value);
+    }
+    return template;
 }
 //# sourceMappingURL=extension.js.map

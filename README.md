@@ -21,16 +21,16 @@ content in standalone webview panels for focused workflows.
 
 ## Getting Started
 
-1. Install dependencies:
+1. Install dependencies with Bun:
 
    ```bash
-   npm install
+   bun install
    ```
 
 2. Compile the extension:
 
    ```bash
-   npm run compile
+   bun run compile
    ```
 
 3. Launch a VS Code Extension Development Host:
@@ -63,8 +63,7 @@ before packaging the extension.
 To produce a `.vsix` package (requires `vsce`):
 
 ```bash
-npm install -g @vscode/vsce
-vsce package
+bunx vsce package
 ```
 
 The resulting package can be installed in VS Code via the Extensions view

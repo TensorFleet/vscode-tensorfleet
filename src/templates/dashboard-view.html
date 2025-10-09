@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}} https: data:; script-src 'nonce-dashboard'; style-src {{cspSource}} 'unsafe-inline';" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{title}}</title>
+    {{styles}}
+  </head>
+  <body>
+    <section class="viewport">
+      <img src="{{imageUri}}" alt="{{title}} placeholder" class="viewport__artwork" />
+      <h2 class="viewport__title">{{title}}</h2>
+      <p class="viewport__description">{{description}}</p>
+      <div class="viewport__actions">
+        <button id="openPanel" class="viewport__action">{{actionLabel}}</button>
+        <button id="openAllPanels" class="viewport__action viewport__action--secondary">1Open All Dashboards</button>
+      </div>
+    </section>
+    <script nonce="dashboard">
+      const vscode = acquireVsCodeApi();
+      document.getElementById('openPanel')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'openPanel' });
+      });
+      document.getElementById('openAllPanels')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'openAllPanels' });
+      });
+    </script>
+  </body>
+</html>
+

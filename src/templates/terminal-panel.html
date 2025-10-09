@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}} https: data:; style-src {{cspSource}} 'unsafe-inline'; script-src 'nonce-terminals';" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{title}}</title>
+    {{styles}}
+    <style>
+      .terminal-tabs {
+        width: 100%;
+        margin-top: 12px;
+        border: 1px solid var(--vscode-editorWidget-border);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--vscode-editor-background);
+      }
+
+      .terminal-tabs__list {
+        display: flex;
+        border-bottom: 1px solid var(--vscode-editorWidget-border);
+      }
+
+      .terminal-tabs__tab {
+        flex: 1 1 0;
+        padding: 10px;
+        background: transparent;
+        border: none;
+        border-right: 1px solid var(--vscode-editorWidget-border);
+        color: var(--vscode-foreground);
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .terminal-tabs__tab:last-child {
+        border-right: none;
+      }
+
+      .terminal-tabs__tab--active {
+        background: var(--vscode-editor-selectionBackground, rgba(99, 102, 241, 0.2));
+      }
+
+      .terminal-tabs__body {
+        display: none;
+        padding: 16px;
+        gap: 12px;
+        flex-direction: column;
+      }
+
+      .terminal-tabs__body[data-active="true"] {
+        display: flex;
+      }
+
+      .terminal-placeholder {
+        padding: 16px;
+        border-radius: 6px;
+        background: var(--vscode-terminal-background, #111827);
+        color: var(--vscode-terminal-foreground, #e5e7eb);
+        font-family: var(--vscode-terminal-ansiBrightWhite, Consolas), monospace;
+        box-shadow: inset 0 0 0 1px var(--vscode-terminal-border, rgba(255, 255, 255, 0.05));
+      }
+
+      .terminal-placeholder__title {
+        margin: 0 0 8px 0;
+        font-weight: 600;
+        font-size: 0.95rem;
+      }
+
+      .terminal-placeholder__content {
+        margin: 0;
+        font-size: 0.85rem;
+        white-space: pre-wrap;
+        opacity: 0.9;
+      }
+
+      .terminal-launch {
+        align-self: flex-start;
+        padding: 8px 12px;
+        font-size: 0.95rem;
+        color: var(--vscode-button-foreground);
+        background: var(--vscode-button-background);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      .terminal-launch:hover {
+        background: var(--vscode-button-hoverBackground);
+      }
+    </style>
+  </head>
+  <body>
+    <section class="viewport viewport--panel">
+      <img src="{{imageUri}}" alt="{{title}} placeholder" class="viewport__artwork" />
+      <h2 class="viewport__title">{{title}}</h2>
+      <p class="viewport__description">{{description}}</p>
+      <div class="terminal-tabs">
+        <div class="terminal-tabs__list">
+          <button class="terminal-tabs__tab terminal-tabs__tab--active" data-target="ros2">ROS 2 Terminal</button>
+          <button class="terminal-tabs__tab" data-target="baselines">Stable Baselines Terminal</button>
+        </div>
+        <div class="terminal-tabs__body" data-panel="ros2" data-active="true">
+          <div class="terminal-placeholder">
+            <h3 class="terminal-placeholder__title">ROS 2 Mission Shell</h3>
+            <p class="terminal-placeholder__content">
+              Prepare to launch ROS 2 nodes, bridge telemetry, and interact with TensorFleet middleware.
+            </p>
+          </div>
+          <button class="terminal-launch" data-command="ros2">Launch ROS 2 Terminal</button>
+        </div>
+        <div class="terminal-tabs__body" data-panel="baselines" data-active="false">
+          <div class="terminal-placeholder">
+            <h3 class="terminal-placeholder__title">Stable Baselines Lab</h3>
+            <p class="terminal-placeholder__content">
+              Train or evaluate reinforcement learning policies against live or simulated drone feeds.
+            </p>
+          </div>
+          <button class="terminal-launch" data-command="baselines">Launch Stable Baselines Terminal</button>
+        </div>
+      </div>
+    </section>
+    <script nonce="terminals">
+      const vscode = acquireVsCodeApi();
+      const tabs = Array.from(document.querySelectorAll('.terminal-tabs__tab'));
+      const panels = Array.from(document.querySelectorAll('.terminal-tabs__body'));
+
+      tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          const target = tab.dataset.target;
+          tabs.forEach((t) => t.classList.toggle('terminal-tabs__tab--active', t === tab));
+          panels.forEach((panel) => {
+            panel.dataset.active = String(panel.dataset.panel === target);
+          });
+        });
+      });
+
+      document.querySelectorAll('.terminal-launch').forEach((button) => {
+        button.addEventListener('click', () => {
+          const target = button.getAttribute('data-command');
+          vscode.postMessage({ command: 'launchTerminal', target });
+        });
+      });
+
+      document.getElementById('openAllPanels')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'openAllPanels' });
+      });
+    </script>
+  </body>
+</html>
+

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}} data:; script-src 'nonce-tooling'; style-src {{cspSource}} 'unsafe-inline';" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TensorFleet Tool Installer</title>
+    {{styles}}
+  </head>
+  <body>
+    <section class="viewport">
+      <h2 class="viewport__title">Install Bundled Tooling</h2>
+      <p class="viewport__description">
+        Deploy ROS 2, mission utilities, and supporting binaries that ship with this extension to a local workspace.
+      </p>
+      <ol class="viewport__list">
+        <li>Select a destination folder on your machine.</li>
+        <li>Confirm the copy operation to extract tools.</li>
+        <li>Add the install path to your PATH or robotics runtime.</li>
+      </ol>
+      <div class="viewport__actions">
+        <button id="installTools" class="viewport__action">Install TensorFleet Toolchain</button>
+        <button id="openAllPanels" class="viewport__action viewport__action--secondary">2Open All Dashboards</button>
+      </div>
+    </section>
+    <script nonce="tooling">
+      const vscode = acquireVsCodeApi();
+      document.getElementById('installTools')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'installTools' });
+      });
+      document.getElementById('openAllPanels')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'openAllPanels' });
+      });
+    </script>
+  </body>
+</html>
+

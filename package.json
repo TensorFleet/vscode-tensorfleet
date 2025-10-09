@@ -24,6 +24,7 @@
     "onCommand:tensorfleet.openAllPanels"
   ],
   "main": "./out/extension.js",
+  "packageManager": "bun@1.0.0",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -155,11 +156,11 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts",
-    "package": "vsce package"
+    "vscode:prepublish": "bun run compile",
+    "compile": "bunx tsc -p ./",
+    "watch": "bunx tsc -watch -p ./",
+    "lint": "bunx eslint src --ext ts",
+    "package": "bunx vsce package"
   },
   "devDependencies": {
     "@types/node": "^18.17.0",
