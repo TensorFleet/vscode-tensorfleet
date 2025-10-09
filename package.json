@@ -21,7 +21,10 @@
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
     "onCommand:tensorfleet.installTools",
-    "onCommand:tensorfleet.openAllPanels"
+    "onCommand:tensorfleet.openAllPanels",
+    "onCommand:tensorfleet.startMCPServer",
+    "onCommand:tensorfleet.stopMCPServer",
+    "onCommand:tensorfleet.getMCPConfig"
   ],
   "main": "./out/extension.js",
   "packageManager": "bun@1.0.0",
@@ -103,6 +106,21 @@
         "command": "tensorfleet.openAllPanels",
         "title": "TensorFleet: Open All Dashboards in Main Area",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.startMCPServer",
+        "title": "TensorFleet: Start MCP Server (for Cursor/Claude)",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.stopMCPServer",
+        "title": "TensorFleet: Stop MCP Server",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.getMCPConfig",
+        "title": "TensorFleet: Show MCP Configuration",
+        "category": "TensorFleet"
       }
     ],
     "menus": {
@@ -160,7 +178,14 @@
     "compile": "bunx tsc -p ./",
     "watch": "bunx tsc -watch -p ./",
     "lint": "bunx eslint src --ext ts",
-    "package": "bunx vsce package"
+    "package": "bunx vsce package",
+    "mcp": "node out/mcp-server.js"
+  },
+  "bin": {
+    "tensorfleet-mcp": "./out/mcp-server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^18.17.0",

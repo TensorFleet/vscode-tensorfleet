@@ -38,6 +38,8 @@ exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const child_process_1 = require("child_process");
+const mcp_bridge_1 = require("./mcp-bridge");
 const DRONE_VIEWS = [
     {
         id: 'tensorfleet-qgroundcontrol',
@@ -86,7 +88,16 @@ const TERMINAL_CONFIGS = {
     }
 };
 const terminalRegistry = new Map();
+let mcpServerProcess = null;
+let mcpBridge = null;
 function activate(context) {
+    // Start MCP bridge for communication between MCP server and VS Code
+    mcpBridge = new mcp_bridge_1.MCPBridge(context);
+    mcpBridge.start().then(() => {
+        console.log('TensorFleet MCP Bridge started');
+    }).catch((error) => {
+        console.error('Failed to start MCP Bridge:', error);
+    });
     DRONE_VIEWS.forEach((view) => {
         const provider = new DashboardViewProvider(view, context);
         context.subscriptions.push(vscode.window.registerWebviewViewProvider(view.id, provider, {
@@ -100,6 +111,9 @@ function activate(context) {
     }));
     context.subscriptions.push(vscode.commands.registerCommand('tensorfleet.installTools', () => installBundledTools(context)));
     context.subscriptions.push(vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context)));
+    context.subscriptions.push(vscode.commands.registerCommand('tensorfleet.startMCPServer', () => startMCPServer(context)));
+    context.subscriptions.push(vscode.commands.registerCommand('tensorfleet.stopMCPServer', () => stopMCPServer()));
+    context.subscriptions.push(vscode.commands.registerCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context)));
     context.subscriptions.push(vscode.window.onDidCloseTerminal((closedTerminal) => {
         for (const [key, terminal] of terminalRegistry.entries()) {
             if (terminal === closedTerminal) {
@@ -110,7 +124,16 @@ function activate(context) {
     }));
 }
 function deactivate() {
-    // No resources to dispose.
+    // Clean up MCP bridge
+    if (mcpBridge) {
+        mcpBridge.stop().catch(console.error);
+        mcpBridge = null;
+    }
+    // Clean up MCP server if running
+    if (mcpServerProcess) {
+        mcpServerProcess.kill();
+        mcpServerProcess = null;
+    }
 }
 class DashboardViewProvider {
     constructor(config, context) {
@@ -408,5 +431,72 @@ function loadTemplate(templateName, replacements) {
         template = template.replace(new RegExp(`{{${key}}}`, 'g'), value);
     }
     return template;
+}
+function startMCPServer(context) {
+    if (mcpServerProcess) {
+        vscode.window.showInformationMessage('TensorFleet MCP Server is already running');
+        return;
+    }
+    const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
+    if (!fs.existsSync(mcpServerPath)) {
+        vscode.window.showErrorMessage('MCP server not found. Please compile the extension first (run "bun run compile")');
+        return;
+    }
+    try {
+        mcpServerProcess = (0, child_process_1.spawn)('node', [mcpServerPath], {
+            stdio: ['pipe', 'pipe', 'pipe']
+        });
+        mcpServerProcess.stdout?.on('data', (data) => {
+            console.log(`MCP Server: ${data}`);
+        });
+        mcpServerProcess.stderr?.on('data', (data) => {
+            console.error(`MCP Server Error: ${data}`);
+        });
+        mcpServerProcess.on('exit', (code) => {
+            console.log(`MCP Server exited with code ${code}`);
+            mcpServerProcess = null;
+        });
+        vscode.window.showInformationMessage('TensorFleet MCP Server started! Configure it in Cursor or Claude Desktop.', 'Show Config').then((selection) => {
+            if (selection === 'Show Config') {
+                showMCPConfiguration(context);
+            }
+        });
+    }
+    catch (error) {
+        vscode.window.showErrorMessage(`Failed to start MCP server: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+function stopMCPServer() {
+    if (!mcpServerProcess) {
+        vscode.window.showInformationMessage('TensorFleet MCP Server is not running');
+        return;
+    }
+    mcpServerProcess.kill();
+    mcpServerProcess = null;
+    vscode.window.showInformationMessage('TensorFleet MCP Server stopped');
+}
+async function showMCPConfiguration(context) {
+    const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
+    const config = {
+        mcpServers: {
+            'tensorfleet-drone': {
+                command: 'node',
+                args: [mcpServerPath],
+                env: {}
+            }
+        }
+    };
+    const configText = JSON.stringify(config, null, 2);
+    const document = await vscode.workspace.openTextDocument({
+        content: configText,
+        language: 'json'
+    });
+    await vscode.window.showTextDocument(document);
+    vscode.window.showInformationMessage('MCP Configuration copied! Add this to your Cursor or Claude Desktop config.', 'Open Setup Guide').then((selection) => {
+        if (selection === 'Open Setup Guide') {
+            const setupPath = vscode.Uri.file(path.join(context.extensionPath, 'MCP_SETUP.md'));
+            vscode.commands.executeCommand('markdown.showPreview', setupPath);
+        }
+    });
 }
 //# sourceMappingURL=extension.js.map

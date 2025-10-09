@@ -14,6 +14,7 @@ and bundles a simple installer for shipping external tooling such as ROS 2.
   workflows.
 - Tooling panel with a guided installer that copies bundled binaries (e.g.,
   ROS 2) to a user-selected directory.
+- **MCP Server**: Expose TensorFleet drone tools to AI assistants like Cursor, Claude, an OpenAI Codex via the Model Context Protocol.
 
 Each dashboard is implemented as a webview view so panes can be arranged in the
 side bar or panel area. Commands exposed in the command palette open equivalent
@@ -74,3 +75,67 @@ bunx vsce package
 
 The resulting package can be installed in VS Code via the Extensions view
 ("Install from VSIX...").
+
+## MCP Server Integration
+
+TensorFleet includes a **Model Context Protocol (MCP) server** that exposes drone operations, ROS2, Gazebo simulation, and AI ops tools to AI assistants.
+
+> **✨ NEW:** MCP tools automatically open VS Code panels! Ask Cursor "Start a Gazebo simulation" and watch the panel open automatically.
+
+📚 **[Quick Start Guide →](./QUICK_START.md)** - Get set up in 5 minutes!
+
+### Quick Setup
+
+1. **Compile the extension** (if not already done):
+
+   ```bash
+   bun run compile
+   ```
+
+2. **Get MCP configuration** - Run command:
+
+   ```
+   TensorFleet: Show MCP Configuration
+   ```
+
+   This displays the JSON config to add to Cursor or Claude Desktop.
+
+3. **Configure your AI assistant**:
+
+   - **Cursor**: Add config to `~/.cursor/mcp.json`
+   - **Claude Desktop**: Add config to `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+4. **Restart** Cursor or Claude Desktop to load the TensorFleet MCP server.
+
+### Available MCP Tools
+
+The MCP server provides these tools to AI assistants:
+
+- `get_drone_status` - Get drone battery, GPS, mode, and readiness
+- `launch_ros2_environment` - Launch ROS2 packages for drone operations
+- `start_gazebo_simulation` - Start Gazebo with world and model
+- `run_ai_inference` - Run AI models on drone video feeds
+- `configure_qgc_mission` - Configure QGroundControl missions
+- `install_tensorfleet_tools` - Install bundled tools
+- `get_telemetry_data` - Get real-time telemetry data
+
+### MCP Resources
+
+Contextual resources available to AI assistants:
+
+- `tensorfleet://drone/config` - Drone configuration
+- `tensorfleet://ros2/topics` - Active ROS2 topics
+- `tensorfleet://gazebo/models` - Available models and worlds
+- `tensorfleet://ai/models` - Available AI models
+- `tensorfleet://qgc/missions` - Saved missions
+
+### VS Code Integration
+
+When the TensorFleet extension is running in VS Code, MCP tools will **automatically open the corresponding panels**!
+
+For example, when an AI assistant calls `start_gazebo_simulation`, the Gazebo panel opens in VS Code automatically. This creates a seamless experience where your AI assistant controls your workspace.
+
+### Full Documentation
+
+- [MCP_SETUP.md](./MCP_SETUP.md) - Basic MCP setup for Cursor and Claude
+- [VSCODE_MCP_INTEGRATION.md](./VSCODE_MCP_INTEGRATION.md) - How MCP tools open VS Code panels automatically
