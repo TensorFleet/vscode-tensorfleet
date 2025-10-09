@@ -33,6 +33,12 @@ content in standalone webview panels for focused workflows.
    bun run compile
    ```
 
+   or just continually build the code
+
+   ```bash
+      bun watch
+   ```
+
 3. Launch a VS Code Extension Development Host:
 
    ```bash
@@ -44,7 +50,7 @@ content in standalone webview panels for focused workflows.
    (`Cmd/Ctrl + Shift + P`).
 
    - Use `TensorFleet: Open QGroundControl Workspace`, `TensorFleet: Open Gazebo
-     Workspace`, or `TensorFleet: Open AI Ops Workspace` to open each dashboard
+Workspace`, or `TensorFleet: Open AI Ops Workspace` to open each dashboard
      as a full-sized webview panel in the main editor area.
    - Run `TensorFleet: Open All Dashboards in Main Area` (or press the **Open
      All Dashboards** button in any TensorFleet view) to arrange all four
