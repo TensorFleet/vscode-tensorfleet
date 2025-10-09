@@ -756,7 +756,6 @@ async function isTensorFleetProject(): Promise<boolean> {
     'config/drone_config.yaml',
     'src/main.py',
     'missions',
-    'launch'
   ];
 
   for (const folder of vscode.workspace.workspaceFolders) {

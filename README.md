@@ -8,6 +8,7 @@ and bundles a simple installer for shipping external tooling such as ROS 2.
 ## Features
 
 - **🚀 Project Scaffolding**: Create new drone projects with pre-configured templates, example code, and best practices in one click.
+- **📊 Smart Status Bar**: Auto-appearing ROS version selector and drone status monitor in the lower right corner when TensorFleet projects are open.
 - QGroundControl view with launch button for a dedicated workspace window.
 - Gazebo simulation dashboard for world visualization and sensor overlays.
 - AI Ops view for running TensorFleet AI models against live or recorded feeds.
@@ -159,5 +160,6 @@ For example, when an AI assistant calls `start_gazebo_simulation`, the Gazebo pa
 
 - [QUICK_START.md](./QUICK_START.md) - Get started with TensorFleet in 5 minutes
 - [PROJECT_SCAFFOLDING.md](./PROJECT_SCAFFOLDING.md) - Create new drone projects with templates
+- [STATUS_BAR_FEATURE.md](./STATUS_BAR_FEATURE.md) - ROS version and drone status in the status bar
 - [MCP_SETUP.md](./MCP_SETUP.md) - Basic MCP setup for Cursor and Claude
 - [VSCODE_MCP_INTEGRATION.md](./VSCODE_MCP_INTEGRATION.md) - How MCP tools open VS Code panels automatically
