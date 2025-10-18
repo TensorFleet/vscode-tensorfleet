@@ -14,6 +14,7 @@ type DroneViewport = {
   command: string;
   actionLabel: string;
   panelKind?: PanelKind;
+  htmlTemplate?: string;
 };
 
 type TerminalConfig = {
@@ -28,7 +29,7 @@ const DRONE_VIEWS: DroneViewport[] = [
     title: 'QGroundControl Command Deck',
     description:
       'Monitor manual flight controls, telemetry, and mission scripts aligned with QGroundControl workflows.',
-    image: 'qgroundcontrol-placeholder.svg',
+    image: 'connected_vehicle.tasoHGVc.jpg',
     command: 'tensorfleet.openQGroundControlPanel',
     actionLabel: 'Launch QGroundControl Workspace'
   },
@@ -38,7 +39,8 @@ const DRONE_VIEWS: DroneViewport[] = [
     description: 'Review Gazebo scenes, sensor overlays, and simulation states for the current drone world.',
     image: 'gazebo-placeholder.svg',
     command: 'tensorfleet.openGazeboPanel',
-    actionLabel: 'Open Gazebo Viewer'
+    actionLabel: 'Open Gazebo Viewer',
+    htmlTemplate: 'visualization.html'
   },
   {
     id: 'tensorfleet-aiops',
@@ -269,6 +271,12 @@ async function openDedicatedPanel(
   preserveFocus = false
 ) {
   const viewType = `tensorfleetPanel.${view.id.replace(/[^A-Za-z0-9.-]/g, '-')}`;
+  // Set up local resource roots based on panel type
+  const localResourceRoots = [vscode.Uri.joinPath(context.extensionUri, 'media')];
+  if (view.htmlTemplate) {
+    localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'src', 'templates'));
+  }
+
   const panel = vscode.window.createWebviewPanel(
     viewType,
     view.title,
@@ -276,7 +284,7 @@ async function openDedicatedPanel(
     {
       enableScripts: true,
       retainContextWhenHidden: true,
-      localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')]
+      localResourceRoots
     }
   );
 
@@ -294,6 +302,12 @@ async function openDedicatedPanel(
 
   if (view.panelKind === 'terminalTabs') {
     panel.webview.html = getTerminalPanelHtml(view, imageUri, cspSource);
+    return panel;
+  }
+
+  // Check if view has a custom HTML template
+  if (view.htmlTemplate) {
+    panel.webview.html = getCustomPanelHtml(view, panel.webview, context, cspSource);
     return panel;
   }
 
@@ -319,6 +333,47 @@ function getTerminalPanelHtml(view: DroneViewport, imageUri: string, cspSource: 
     imageUri,
     description: view.description
   });
+}
+
+function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, context: vscode.ExtensionContext, cspSource: string): string {
+  if (!view.htmlTemplate) {
+    throw new Error('No HTML template specified for custom panel');
+  }
+  
+  // Load the custom HTML template directly
+  const templatePath = path.join(__dirname, '..', 'src', 'templates', view.htmlTemplate);
+  let template = fs.readFileSync(templatePath, 'utf8');
+  
+  // Convert asset paths to webview URIs
+  template = template.replace(
+    /src="\/assets\/([^"]+)"/g,
+    (match, assetPath) => {
+      const assetUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(context.extensionUri, 'src', 'templates', 'assets', assetPath)
+      );
+      return `src="${assetUri}"`;
+    }
+  );
+  
+  template = template.replace(
+    /href="\/assets\/([^"]+)"/g,
+    (match, assetPath) => {
+      const assetUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(context.extensionUri, 'src', 'templates', 'assets', assetPath)
+      );
+      return `href="${assetUri}"`;
+    }
+  );
+  
+  // Add CSP meta tag for security
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https:; frame-src ${cspSource};">`;
+  
+  // Insert CSP meta tag in head if not already present
+  if (!template.includes('Content-Security-Policy')) {
+    template = template.replace('<head>', `<head>\n    ${cspMeta}`);
+  }
+  
+  return template;
 }
 
 async function openAllPanels(context: vscode.ExtensionContext) {
