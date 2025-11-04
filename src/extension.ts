@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
+import { ROS2Bridge } from './ros2-bridge';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -97,6 +98,7 @@ const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
 const terminalRegistry = new Map<string, vscode.Terminal>();
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
+let ros2Bridge: ROS2Bridge | null = null;
 
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
@@ -110,6 +112,25 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('TensorFleet MCP Bridge started');
   }).catch((error) => {
     console.error('Failed to start MCP Bridge:', error);
+  });
+
+  // Initialize ROS2 bridge for real-time drone communication
+  ros2Bridge = new ROS2Bridge(context);
+  
+  // Listen for ROS2 connection events
+  ros2Bridge.on('connected', () => {
+    vscode.window.showInformationMessage('ROS2 connected successfully!');
+    console.log('TensorFleet ROS2 Bridge connected');
+  });
+  
+  ros2Bridge.on('disconnected', () => {
+    vscode.window.showWarningMessage('ROS2 disconnected');
+    console.log('TensorFleet ROS2 Bridge disconnected');
+  });
+  
+  ros2Bridge.on('error', (error) => {
+    console.error('ROS2 Bridge error:', error);
+    // Don't show error immediately - ROS2 might not be running yet
   });
 
   // Initialize status bar items for TensorFleet projects
@@ -169,6 +190,18 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.connectROS2', () => connectToROS2(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.disconnectROS2', () => disconnectFromROS2())
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.startPX4Telemetry', () => startPX4TelemetryMonitor(context))
+  );
+
+  context.subscriptions.push(
     vscode.window.onDidCloseTerminal((closedTerminal) => {
       for (const [key, terminal] of terminalRegistry.entries()) {
         if (terminal === closedTerminal) {
@@ -181,6 +214,12 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  // Clean up ROS2 bridge
+  if (ros2Bridge) {
+    ros2Bridge.shutdown().catch(console.error);
+    ros2Bridge = null;
+  }
+
   // Clean up MCP bridge
   if (mcpBridge) {
     mcpBridge.stop().catch(console.error);
@@ -437,37 +476,177 @@ function getOption3PanelHtml(templateName: string, webview: vscode.Webview, cont
   return html;
 }
 
-function handleOption3Message(panel: vscode.WebviewPanel, message: any, context: vscode.ExtensionContext) {
+async function handleOption3Message(panel: vscode.WebviewPanel, message: any, context: vscode.ExtensionContext) {
+  if (!message || !message.command) {
+    console.warn('[TensorFleet] Invalid message received from webview');
+    return;
+  }
+
   switch (message.command) {
     case 'subscribeToTopic':
-      // Simulate image data stream
-      startImageStream(panel, message.topic);
+      await handleImageTopicSubscription(panel, message.topic);
       break;
     
     case 'publishTwist':
-      // Handle twist command publication
-      console.log('Publishing Twist to', message.topic, message.data);
-      vscode.window.showInformationMessage(`Teleops: Published twist to ${message.topic}`);
+      await handleTwistPublication(message.topic, message.data);
       break;
     
     case 'connectROS':
-      // Simulate ROS connection
-      setTimeout(() => {
-        panel.webview.postMessage({ type: 'connectionStatus', connected: true });
-      }, 500);
+      await handleROS2Connection(panel, context);
       break;
     
     case 'disconnectROS':
-      // Simulate ROS disconnection
-      panel.webview.postMessage({ type: 'connectionStatus', connected: false });
+      await handleROS2Disconnection(panel);
       break;
   }
 }
 
-// Simulate image data stream for testing
+// Handle image topic subscription
+async function handleImageTopicSubscription(panel: vscode.WebviewPanel, topic: string) {
+  if (!topic || typeof topic !== 'string') {
+    console.error('[TensorFleet] Invalid topic:', topic);
+    return;
+  }
+
+  try {
+    if (!ros2Bridge) {
+      throw new Error('ROS2 Bridge not initialized');
+    }
+
+    // Check if ROS2 is connected, if not try to initialize
+    if (!ros2Bridge.isROS2Connected()) {
+      console.log('[TensorFleet] ROS2 not connected, attempting to initialize...');
+      try {
+        await ros2Bridge.initialize();
+      } catch (error) {
+        // Fall back to simulation if ROS2 is not available
+        console.warn('[TensorFleet] ROS2 not available, falling back to simulation');
+        startImageStreamSimulation(panel, topic);
+        return;
+      }
+    }
+
+    console.log(`[TensorFleet] Subscribing to ROS2 topic: ${topic}`);
+    
+    // Subscribe to real ROS2 topic
+    await ros2Bridge.subscribeToImageTopic(topic, (imageData, metadata) => {
+      // Send image data to webview
+      panel.webview.postMessage({
+        type: 'imageData',
+        topic: metadata.topic,
+        timestamp: metadata.timestamp,
+        encoding: metadata.encoding,
+        width: metadata.width,
+        height: metadata.height,
+        data: imageData
+      });
+    });
+
+    vscode.window.showInformationMessage(`Subscribed to ${topic}`);
+  } catch (error) {
+    console.error('[TensorFleet] Failed to subscribe to topic:', error);
+    vscode.window.showErrorMessage(`Failed to subscribe to ${topic}: ${error}`);
+    
+    // Fall back to simulation
+    startImageStreamSimulation(panel, topic);
+  }
+}
+
+// Handle twist message publication
+async function handleTwistPublication(topic: string, data: any) {
+  if (!topic || !data) {
+    console.error('[TensorFleet] Invalid twist data:', { topic, data });
+    return;
+  }
+
+  try {
+    if (!ros2Bridge) {
+      throw new Error('ROS2 Bridge not initialized');
+    }
+
+    // Check if ROS2 is connected
+    if (!ros2Bridge.isROS2Connected()) {
+      console.log('[TensorFleet] ROS2 not connected, attempting to initialize...');
+      try {
+        await ros2Bridge.initialize();
+      } catch (error) {
+        console.warn('[TensorFleet] ROS2 not available, twist command only logged:', data);
+        console.log('Twist (simulated):', topic, data);
+        return;
+      }
+    }
+
+    // Publish to real ROS2 topic
+    await ros2Bridge.publishTwist(topic, data);
+    console.log(`[TensorFleet] Published twist to ${topic}:`, data);
+    
+  } catch (error) {
+    console.error('[TensorFleet] Failed to publish twist:', error);
+    // Don't show error to user for every publish failure (too noisy)
+  }
+}
+
+// Handle ROS2 connection
+async function handleROS2Connection(panel: vscode.WebviewPanel, context: vscode.ExtensionContext) {
+  try {
+    if (!ros2Bridge) {
+      throw new Error('ROS2 Bridge not initialized');
+    }
+
+    console.log('[TensorFleet] Connecting to ROS2...');
+    await ros2Bridge.initialize();
+    
+    panel.webview.postMessage({ type: 'connectionStatus', connected: true });
+    
+    // Get list of available topics
+    const topics = await ros2Bridge.getTopicList();
+    const imageTopics = topics
+      .filter(t => t.type.includes('Image'))
+      .map(t => t.name);
+    
+    if (imageTopics.length > 0) {
+      panel.webview.postMessage({ 
+        type: 'availableTopics', 
+        topics: imageTopics 
+      });
+    }
+    
+    vscode.window.showInformationMessage('Connected to ROS2');
+  } catch (error) {
+    console.error('[TensorFleet] Failed to connect to ROS2:', error);
+    panel.webview.postMessage({ type: 'connectionStatus', connected: false });
+    
+    vscode.window.showErrorMessage(
+      'Failed to connect to ROS2. Make sure ROS2 is installed and sourced.',
+      'View Setup Guide'
+    ).then(action => {
+      if (action === 'View Setup Guide') {
+        const setupUri = vscode.Uri.file(path.join(context.extensionPath, 'ROS2_SETUP.md'));
+        vscode.commands.executeCommand('markdown.showPreview', setupUri);
+      }
+    });
+  }
+}
+
+// Handle ROS2 disconnection
+async function handleROS2Disconnection(panel: vscode.WebviewPanel) {
+  try {
+    if (ros2Bridge) {
+      await ros2Bridge.shutdown();
+    }
+    panel.webview.postMessage({ type: 'connectionStatus', connected: false });
+    vscode.window.showInformationMessage('Disconnected from ROS2');
+  } catch (error) {
+    console.error('[TensorFleet] Error during ROS2 disconnection:', error);
+  }
+}
+
+// Fallback simulation for when ROS2 is not available
 const imageStreamIntervals = new Map<vscode.WebviewPanel, NodeJS.Timeout>();
 
-function startImageStream(panel: vscode.WebviewPanel, topic: string) {
+function startImageStreamSimulation(panel: vscode.WebviewPanel, topic: string) {
+  console.log(`[TensorFleet] Starting simulated image stream for ${topic} (ROS2 not available)`);
+  
   // Clear existing interval if any
   const existingInterval = imageStreamIntervals.get(panel);
   if (existingInterval) {
@@ -476,17 +655,24 @@ function startImageStream(panel: vscode.WebviewPanel, topic: string) {
   
   // Send simulated image data every 100ms
   const interval = setInterval(() => {
-    // Generate a simple test pattern
-    const canvas = generateTestImage(640, 480);
-    panel.webview.postMessage({
-      type: 'imageData',
-      topic: topic,
-      timestamp: new Date().toISOString(),
-      encoding: 'rgb8',
-      width: 640,
-      height: 480,
-      data: canvas
-    });
+    if (!panel.visible) return; // Don't send when panel not visible
+    
+    try {
+      const canvas = generateTestImage(640, 480);
+      panel.webview.postMessage({
+        type: 'imageData',
+        topic: topic,
+        timestamp: new Date().toISOString(),
+        encoding: 'rgb8',
+        width: 640,
+        height: 480,
+        data: canvas
+      });
+    } catch (error) {
+      console.error('[TensorFleet] Error sending simulated image:', error);
+      clearInterval(interval);
+      imageStreamIntervals.delete(panel);
+    }
   }, 100);
   
   imageStreamIntervals.set(panel, interval);
@@ -503,8 +689,8 @@ function startImageStream(panel: vscode.WebviewPanel, topic: string) {
 
 function generateTestImage(width: number, height: number): string {
   // Generate a simple gradient as base64 data URI
-  // In production, this would come from actual ROS camera data
-  return `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:rgb(100,100,255);stop-opacity:1"/><stop offset="100%" style="stop-color:rgb(255,100,100);stop-opacity:1"/></linearGradient></defs><rect width="${width}" height="${height}" fill="url(%23g)"/><text x="50%" y="50%" text-anchor="middle" fill="white" font-size="24">Camera Feed - ${new Date().toLocaleTimeString()}</text></svg>`;
+  // This is fallback simulation when ROS2 is not available
+  return `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:rgb(100,100,255);stop-opacity:1"/><stop offset="100%" style="stop-color:rgb(255,100,100);stop-opacity:1"/></linearGradient></defs><rect width="${width}" height="${height}" fill="url(%23g)"/><text x="50%" y="50%" text-anchor="middle" fill="white" font-size="24">SIMULATION - ${new Date().toLocaleTimeString()}</text><text x="50%" y="60%" text-anchor="middle" fill="yellow" font-size="14">ROS2 not connected</text></svg>`;
 }
 
 async function openAllPanels(context: vscode.ExtensionContext) {
@@ -1066,27 +1252,38 @@ async function updateDroneStatus() {
     const droneId = idMatch ? idMatch[1] : 'drone_1';
     const droneModel = modelMatch ? modelMatch[1] : 'iris';
 
-    // For now, simulate drone status
-    // In a real implementation, this would query the MCP server or ROS topics
+    // Check if ROS2 is connected and get real telemetry
+    let droneStatus: 'idle' | 'armed' | 'flying' | 'offline' = 'offline';
+    let battery = 0;
+    let mode = 'UNKNOWN';
+
+    if (ros2Bridge && ros2Bridge.isROS2Connected()) {
+      try {
+        // Try to get topic list to check if PX4 is publishing
+        const topics = await ros2Bridge.getTopicList();
+        const px4Topics = topics.filter(t => 
+          t.name.includes('mavros') || t.name.includes('fmu')
+        );
+        
+        if (px4Topics.length > 0) {
+          droneStatus = 'idle'; // ROS2 connected with PX4 topics
+          battery = 100; // Would be updated from actual telemetry
+          mode = 'MANUAL';
+        }
+      } catch (error) {
+        console.error('[TensorFleet] Error checking PX4 topics:', error);
+      }
+    }
+
     drones = [
       {
         id: droneId,
         name: droneModel,
-        status: 'idle',
-        battery: 100,
-        mode: 'MANUAL'
+        status: droneStatus,
+        battery: battery,
+        mode: mode
       }
     ];
-
-    // Check if simulation is running by looking for active ROS topics
-    // This is a placeholder - real implementation would check actual ROS
-    const simulationRunning = false; // TODO: Check actual ROS topics
-
-    if (simulationRunning) {
-      drones[0].status = 'flying';
-      drones[0].battery = Math.floor(Math.random() * 40) + 60; // Simulate battery drain
-      drones[0].mode = 'AUTO';
-    }
 
     // Update status bar
     if (droneStatusBar) {
@@ -1279,6 +1476,156 @@ Click "Open Gazebo Workspace" to view in simulation.
       vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
     }
   });
+}
+
+// ============================================================================
+// ROS2 Connection Management
+// ============================================================================
+
+async function connectToROS2(context: vscode.ExtensionContext) {
+  if (!ros2Bridge) {
+    vscode.window.showErrorMessage('ROS2 Bridge not initialized');
+    return;
+  }
+
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Connecting to ROS2...',
+        cancellable: false
+      },
+      async (progress) => {
+        progress.report({ message: 'Initializing ROS2 node...' });
+        await ros2Bridge!.initialize();
+        
+        progress.report({ message: 'Discovering topics...' });
+        const topics = await ros2Bridge!.getTopicList();
+        
+        vscode.window.showInformationMessage(
+          `Connected to ROS2! Found ${topics.length} active topics.`,
+          'View Topics'
+        ).then(action => {
+          if (action === 'View Topics') {
+            showROS2Topics(topics);
+          }
+        });
+      }
+    );
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Failed to connect to ROS2: ${error}`,
+      'View Setup Guide'
+    ).then(action => {
+      if (action === 'View Setup Guide') {
+        const setupUri = vscode.Uri.file(path.join(context.extensionPath, 'ROS2_SETUP.md'));
+        vscode.commands.executeCommand('markdown.showPreview', setupUri);
+      }
+    });
+  }
+}
+
+async function disconnectFromROS2() {
+  if (!ros2Bridge) {
+    return;
+  }
+
+  try {
+    await ros2Bridge.shutdown();
+    vscode.window.showInformationMessage('Disconnected from ROS2');
+  } catch (error) {
+    vscode.window.showErrorMessage(`Error disconnecting from ROS2: ${error}`);
+  }
+}
+
+async function showROS2Topics(topics: Array<{ name: string; type: string }>) {
+  const items = topics.map(topic => ({
+    label: topic.name,
+    description: topic.type,
+    detail: `Topic: ${topic.name}`
+  }));
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: 'ROS2 Active Topics',
+    title: `${topics.length} Active ROS2 Topics`,
+    matchOnDescription: true,
+    matchOnDetail: true
+  });
+
+  if (selected) {
+    const action = await vscode.window.showInformationMessage(
+      `Topic: ${selected.label}\nType: ${selected.description}`,
+      'Copy Topic Name',
+      'Echo Topic'
+    );
+
+    if (action === 'Copy Topic Name') {
+      vscode.env.clipboard.writeText(selected.label);
+      vscode.window.showInformationMessage(`Copied: ${selected.label}`);
+    } else if (action === 'Echo Topic') {
+      // Open terminal and echo the topic
+      const terminal = vscode.window.createTerminal('ROS2 Echo');
+      terminal.sendText(`ros2 topic echo ${selected.label}`);
+      terminal.show();
+    }
+  }
+}
+
+// PX4 Telemetry Monitor
+let telemetryOutputChannel: vscode.OutputChannel | null = null;
+
+async function startPX4TelemetryMonitor(context: vscode.ExtensionContext) {
+  if (!ros2Bridge) {
+    vscode.window.showErrorMessage('ROS2 Bridge not initialized');
+    return;
+  }
+
+  try {
+    // Initialize ROS2 if not connected
+    if (!ros2Bridge.isROS2Connected()) {
+      await ros2Bridge.initialize();
+    }
+
+    // Create output channel for telemetry
+    if (!telemetryOutputChannel) {
+      telemetryOutputChannel = vscode.window.createOutputChannel('PX4 Telemetry');
+      context.subscriptions.push(telemetryOutputChannel);
+    }
+    
+    telemetryOutputChannel.clear();
+    telemetryOutputChannel.show();
+    telemetryOutputChannel.appendLine('='.repeat(60));
+    telemetryOutputChannel.appendLine('PX4 Telemetry Monitor Started');
+    telemetryOutputChannel.appendLine('='.repeat(60));
+    telemetryOutputChannel.appendLine('');
+
+    // Subscribe to PX4 telemetry
+    await ros2Bridge.subscribeToPX4Telemetry((telemetry: any) => {
+      if (!telemetryOutputChannel) return;
+
+      const timestamp = new Date().toLocaleTimeString();
+      telemetryOutputChannel.appendLine(`[${timestamp}] Telemetry Update:`);
+      
+      if (telemetry.pose) {
+        telemetryOutputChannel.appendLine(`  Position: x=${telemetry.pose.position.x.toFixed(2)}, y=${telemetry.pose.position.y.toFixed(2)}, z=${telemetry.pose.position.z.toFixed(2)}`);
+      }
+      
+      if (telemetry.battery) {
+        telemetryOutputChannel.appendLine(`  Battery: ${telemetry.battery.percentage.toFixed(1)}% (${telemetry.battery.voltage.toFixed(2)}V)`);
+      }
+      
+      if (telemetry.state) {
+        telemetryOutputChannel.appendLine(`  State: ${telemetry.state.mode} | Armed: ${telemetry.state.armed} | Connected: ${telemetry.state.connected}`);
+      }
+      
+      telemetryOutputChannel.appendLine('');
+    });
+
+    vscode.window.showInformationMessage('PX4 Telemetry monitoring started');
+    
+  } catch (error) {
+    vscode.window.showErrorMessage(`Failed to start PX4 telemetry: ${error}`);
+  }
 }
 
 // ============================================================================

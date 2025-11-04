@@ -32,7 +32,10 @@
     "onCommand:tensorfleet.stopMCPServer",
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
-    "onCommand:tensorfleet.showDroneStatus"
+    "onCommand:tensorfleet.showDroneStatus",
+    "onCommand:tensorfleet.connectROS2",
+    "onCommand:tensorfleet.disconnectROS2",
+    "onCommand:tensorfleet.startPX4Telemetry"
   ],
   "main": "./out/extension.js",
   "packageManager": "bun@1.0.0",
@@ -164,6 +167,21 @@
         "command": "tensorfleet.showDroneStatus",
         "title": "TensorFleet: Show Drone Status",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.connectROS2",
+        "title": "TensorFleet: Connect to ROS2",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.disconnectROS2",
+        "title": "TensorFleet: Disconnect from ROS2",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.startPX4Telemetry",
+        "title": "TensorFleet: Start PX4 Telemetry Monitor",
+        "category": "TensorFleet"
       }
     ],
     "menus": {
@@ -239,6 +257,9 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "optionalDependencies": {
+    "rclnodejs": "^0.21.4"
   },
   "devDependencies": {
     "@types/node": "^18.17.0",
