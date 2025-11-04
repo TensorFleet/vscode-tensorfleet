@@ -58,6 +58,26 @@ const DRONE_VIEWS: DroneViewport[] = [
     command: 'tensorfleet.openROS2Panel',
     actionLabel: 'Launch Robotics Lab',
     panelKind: 'terminalTabs'
+  },
+  {
+    id: 'tensorfleet-image-panel-option3',
+    title: 'Image Panel (Option 3)',
+    description: 'Display camera feeds with custom React components - lightweight, deeply integrated.',
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openImagePanelOption3',
+    actionLabel: 'Open Image Panel',
+    panelKind: 'standard',
+    htmlTemplate: 'option3-image'
+  },
+  {
+    id: 'tensorfleet-teleops-panel-option3',
+    title: 'Teleops Panel (Option 3)',
+    description: 'Control drone with keyboard - custom React implementation for precise control.',
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openTeleopsPanelOption3',
+    actionLabel: 'Open Teleops Panel',
+    panelKind: 'standard',
+    htmlTemplate: 'option3-teleops'
   }
 ];
 
@@ -275,6 +295,10 @@ async function openDedicatedPanel(
   const localResourceRoots = [vscode.Uri.joinPath(context.extensionUri, 'media')];
   if (view.htmlTemplate) {
     localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'src', 'templates'));
+    // Add React build output for Option 3 panels
+    if (view.htmlTemplate.startsWith('option3-')) {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'out', 'webviews', 'option3-panels'));
+    }
   }
 
   const panel = vscode.window.createWebviewPanel(
@@ -297,6 +321,9 @@ async function openDedicatedPanel(
       launchTerminalSession(message.target);
     } else if (message?.command === 'openAllPanels') {
       void vscode.commands.executeCommand('tensorfleet.openAllPanels');
+    } else {
+      // Handle Option 3 panel messages
+      handleOption3Message(panel, message, context);
     }
   });
 
@@ -340,6 +367,11 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
     throw new Error('No HTML template specified for custom panel');
   }
   
+  // Handle Option 3 React panels
+  if (view.htmlTemplate.startsWith('option3-')) {
+    return getOption3PanelHtml(view.htmlTemplate, webview, context, cspSource);
+  }
+  
   // Load the custom HTML template directly
   const templatePath = path.join(__dirname, '..', 'src', 'templates', view.htmlTemplate);
   let template = fs.readFileSync(templatePath, 'utf8');
@@ -374,6 +406,105 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   }
   
   return template;
+}
+
+function getOption3PanelHtml(templateName: string, webview: vscode.Webview, context: vscode.ExtensionContext, cspSource: string): string {
+  // Map template name to HTML file
+  const panelName = templateName.replace('option3-', '');
+  const htmlPath = path.join(__dirname, '..', 'out', 'webviews', 'option3-panels', `${panelName}.html`);
+  
+  if (!fs.existsSync(htmlPath)) {
+    throw new Error(`Option 3 panel build not found: ${htmlPath}. Run 'npm run build' in src/webviews/option3-panels/`);
+  }
+  
+  let html = fs.readFileSync(htmlPath, 'utf8');
+  
+  // Convert all asset paths to webview URIs
+  html = html.replace(
+    /(src|href)="\/assets\/([^"]+)"/g,
+    (match, attr, assetPath) => {
+      const assetUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(context.extensionUri, 'out', 'webviews', 'option3-panels', 'assets', assetPath)
+      );
+      return `${attr}="${assetUri}"`;
+    }
+  );
+  
+  // Update Content Security Policy for React
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: ws: wss:;">`;
+  html = html.replace(/<head>/, `<head>\n  ${cspMeta}`);
+  
+  return html;
+}
+
+function handleOption3Message(panel: vscode.WebviewPanel, message: any, context: vscode.ExtensionContext) {
+  switch (message.command) {
+    case 'subscribeToTopic':
+      // Simulate image data stream
+      startImageStream(panel, message.topic);
+      break;
+    
+    case 'publishTwist':
+      // Handle twist command publication
+      console.log('Publishing Twist to', message.topic, message.data);
+      vscode.window.showInformationMessage(`Teleops: Published twist to ${message.topic}`);
+      break;
+    
+    case 'connectROS':
+      // Simulate ROS connection
+      setTimeout(() => {
+        panel.webview.postMessage({ type: 'connectionStatus', connected: true });
+      }, 500);
+      break;
+    
+    case 'disconnectROS':
+      // Simulate ROS disconnection
+      panel.webview.postMessage({ type: 'connectionStatus', connected: false });
+      break;
+  }
+}
+
+// Simulate image data stream for testing
+const imageStreamIntervals = new Map<vscode.WebviewPanel, NodeJS.Timeout>();
+
+function startImageStream(panel: vscode.WebviewPanel, topic: string) {
+  // Clear existing interval if any
+  const existingInterval = imageStreamIntervals.get(panel);
+  if (existingInterval) {
+    clearInterval(existingInterval);
+  }
+  
+  // Send simulated image data every 100ms
+  const interval = setInterval(() => {
+    // Generate a simple test pattern
+    const canvas = generateTestImage(640, 480);
+    panel.webview.postMessage({
+      type: 'imageData',
+      topic: topic,
+      timestamp: new Date().toISOString(),
+      encoding: 'rgb8',
+      width: 640,
+      height: 480,
+      data: canvas
+    });
+  }, 100);
+  
+  imageStreamIntervals.set(panel, interval);
+  
+  // Clean up on panel disposal
+  panel.onDidDispose(() => {
+    const intervalToClean = imageStreamIntervals.get(panel);
+    if (intervalToClean) {
+      clearInterval(intervalToClean);
+      imageStreamIntervals.delete(panel);
+    }
+  });
+}
+
+function generateTestImage(width: number, height: number): string {
+  // Generate a simple gradient as base64 data URI
+  // In production, this would come from actual ROS camera data
+  return `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:rgb(100,100,255);stop-opacity:1"/><stop offset="100%" style="stop-color:rgb(255,100,100);stop-opacity:1"/></linearGradient></defs><rect width="${width}" height="${height}" fill="url(%23g)"/><text x="50%" y="50%" text-anchor="middle" fill="white" font-size="24">Camera Feed - ${new Date().toLocaleTimeString()}</text></svg>`;
 }
 
 async function openAllPanels(context: vscode.ExtensionContext) {
