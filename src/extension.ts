@@ -5,6 +5,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
 import { ROS2Bridge } from './ros2-bridge';
 import { ROS2WebSocketBridge } from './ros2-websocket-bridge';
+import { FoxgloveBridge } from './foxglove-bridge';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -101,9 +102,11 @@ let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 let ros2Bridge: ROS2Bridge | null = null;
 let ros2WebSocketBridge: ROS2WebSocketBridge | null = null;
+let foxgloveBridge: FoxgloveBridge | null = null;
 
-// Active ROS2 connection mode: 'native' | 'websocket'
-let ros2ConnectionMode: 'native' | 'websocket' | null = null;
+// Active ROS2 connection mode: 'native' | 'websocket' | 'foxglove'
+let ros2ConnectionMode: 'native' | 'websocket' | 'foxglove' | null = null;
+let preferredConnectionMode: 'auto' | 'native' | 'rosbridge' | 'foxglove' = 'rosbridge';
 
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
@@ -162,9 +165,32 @@ export function activate(context: vscode.ExtensionContext) {
       ros2ConnectionMode = null;
     }
   });
+
+  // Initialize Foxglove Bridge (high-performance C++ bridge)
+  const foxgloveUrl = config.get<string>('ros2.foxgloveUrl', 'ws://172.16.0.2:8765');
+  
+  foxgloveBridge = new FoxgloveBridge(foxgloveUrl);
+  
+  foxgloveBridge.on('connected', () => {
+    vscode.window.showInformationMessage(`ROS2 (Foxglove) connected to ${foxgloveUrl}`);
+    console.log('TensorFleet Foxglove Bridge connected');
+    ros2ConnectionMode = 'foxglove';
+  });
+  
+  foxgloveBridge.on('disconnected', () => {
+    vscode.window.showWarningMessage('ROS2 (Foxglove) disconnected');
+    console.log('TensorFleet Foxglove Bridge disconnected');
+    if (ros2ConnectionMode === 'foxglove') {
+      ros2ConnectionMode = null;
+    }
+  });
   
   ros2WebSocketBridge.on('error', (error) => {
     console.error('ROS2 WebSocket Bridge error:', error);
+  });
+  
+  foxgloveBridge.on('error', (error) => {
+    console.error('Foxglove Bridge error:', error);
   });
 
   // Initialize status bar items for TensorFleet projects
@@ -237,6 +263,18 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.configureROS2WebSocket', () => configureROS2WebSocket())
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.connectFoxgloveBridge', () => connectToFoxgloveBridge(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.disconnectFoxgloveBridge', () => disconnectFoxgloveBridge())
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.configureFoxgloveBridge', () => configureFoxgloveBridge())
   );
 
   context.subscriptions.push(
@@ -534,7 +572,17 @@ async function handleOption3Message(panel: vscode.WebviewPanel, message: any, co
   }
 
   switch (message.command) {
+    case 'setConnectionMode':
+      preferredConnectionMode = message.mode || 'rosbridge';
+      console.log(`[TensorFleet] Connection mode set to: ${preferredConnectionMode}`);
+      break;
+    
     case 'subscribeToTopic':
+      // Use connection mode from message or fallback to preferred
+      const connMode = message.connectionMode || preferredConnectionMode;
+      if (connMode !== preferredConnectionMode) {
+        preferredConnectionMode = connMode;
+      }
       await handleImageTopicSubscription(panel, message.topic);
       break;
     
@@ -553,16 +601,22 @@ async function handleOption3Message(panel: vscode.WebviewPanel, message: any, co
 }
 
 /**
- * Get the active ROS2 bridge (either native DDS or WebSocket)
+ * Get the active ROS2 bridge (native DDS, WebSocket, or Foxglove)
  */
-function getActiveROS2Bridge(): ROS2Bridge | ROS2WebSocketBridge | null {
+function getActiveROS2Bridge(): ROS2Bridge | ROS2WebSocketBridge | FoxgloveBridge | null {
+  if (ros2ConnectionMode === 'foxglove' && foxgloveBridge?.isROS2Connected()) {
+    return foxgloveBridge;
+  }
   if (ros2ConnectionMode === 'websocket' && ros2WebSocketBridge?.isROS2Connected()) {
     return ros2WebSocketBridge;
   }
   if (ros2ConnectionMode === 'native' && ros2Bridge?.isROS2Connected()) {
     return ros2Bridge;
   }
-  // Try WebSocket first if available, then native
+  // Try Foxglove first, then WebSocket, then native
+  if (foxgloveBridge?.isROS2Connected()) {
+    return foxgloveBridge;
+  }
   if (ros2WebSocketBridge?.isROS2Connected()) {
     return ros2WebSocketBridge;
   }
@@ -582,34 +636,71 @@ async function handleImageTopicSubscription(panel: vscode.WebviewPanel, topic: s
   try {
     let bridge = getActiveROS2Bridge();
     
-    // If no bridge is connected, try to connect
+    // If no bridge is connected, try to connect based on preferred mode
     if (!bridge) {
-      console.log('[TensorFleet] No ROS2 connection active, attempting to connect...');
+      console.log(`[TensorFleet] No ROS2 connection active, attempting to connect (mode: ${preferredConnectionMode})...`);
       
-      // Try WebSocket first (no local ROS2 required)
-      if (ros2WebSocketBridge) {
+      // Connect based on preferred mode
+      if (preferredConnectionMode === 'foxglove' && foxgloveBridge) {
+        try {
+          await foxgloveBridge.connect();
+          bridge = foxgloveBridge;
+          ros2ConnectionMode = 'foxglove';
+          console.log('[TensorFleet] Connected via Foxglove Bridge');
+        } catch (error) {
+          console.error('[TensorFleet] Foxglove connection failed:', error);
+        }
+      } else if (preferredConnectionMode === 'rosbridge' && ros2WebSocketBridge) {
         try {
           await ros2WebSocketBridge.connect();
           bridge = ros2WebSocketBridge;
+          ros2ConnectionMode = 'websocket';
+          console.log('[TensorFleet] Connected via ROS Bridge');
         } catch (error) {
-          console.warn('[TensorFleet] WebSocket connection failed:', error);
-          
-          // Fall back to native ROS2
-          if (ros2Bridge) {
-            try {
-              await ros2Bridge.initialize();
-              bridge = ros2Bridge;
-            } catch (nativeError) {
-              console.warn('[TensorFleet] Native ROS2 not available either');
-            }
-          }
+          console.error('[TensorFleet] ROS Bridge connection failed:', error);
         }
-      } else if (ros2Bridge) {
+      } else if (preferredConnectionMode === 'native' && ros2Bridge) {
         try {
           await ros2Bridge.initialize();
           bridge = ros2Bridge;
+          ros2ConnectionMode = 'native';
+          console.log('[TensorFleet] Connected via Native ROS2');
         } catch (error) {
-          console.warn('[TensorFleet] Native ROS2 not available');
+          console.error('[TensorFleet] Native ROS2 connection failed:', error);
+        }
+      } else {
+        // Auto mode or fallback: try rosbridge first
+        if (ros2WebSocketBridge) {
+          try {
+            await ros2WebSocketBridge.connect();
+            bridge = ros2WebSocketBridge;
+            ros2ConnectionMode = 'websocket';
+            console.log('[TensorFleet] Connected via ROS Bridge (auto)');
+          } catch (error) {
+            console.warn('[TensorFleet] ROS Bridge connection failed:', error);
+          }
+        }
+        
+        if (!bridge && foxgloveBridge) {
+          try {
+            await foxgloveBridge.connect();
+            bridge = foxgloveBridge;
+            ros2ConnectionMode = 'foxglove';
+            console.log('[TensorFleet] Connected via Foxglove (auto fallback)');
+          } catch (error) {
+            console.warn('[TensorFleet] Foxglove connection failed:', error);
+          }
+        }
+        
+        if (!bridge && ros2Bridge) {
+          try {
+            await ros2Bridge.initialize();
+            bridge = ros2Bridge;
+            ros2ConnectionMode = 'native';
+            console.log('[TensorFleet] Connected via Native ROS2 (auto fallback)');
+          } catch (error) {
+            console.warn('[TensorFleet] Native ROS2 connection failed:', error);
+          }
         }
       }
       
@@ -707,34 +798,90 @@ async function handleTwistPublication(topic: string, data: any) {
 // Handle ROS2 connection
 async function handleROS2Connection(panel: vscode.WebviewPanel, context: vscode.ExtensionContext) {
   try {
-    console.log('[TensorFleet] Connecting to ROS2...');
+    console.log(`[TensorFleet] Connecting to ROS2... (preferred mode: ${preferredConnectionMode})`);
     
     let connected = false;
-    let bridge: ROS2Bridge | ROS2WebSocketBridge | null = null;
+    let bridge: ROS2Bridge | ROS2WebSocketBridge | FoxgloveBridge | null = null;
     
-    // Try WebSocket first (no local ROS2 required)
-    if (ros2WebSocketBridge) {
-      try {
-        await ros2WebSocketBridge.connect();
-        bridge = ros2WebSocketBridge;
-        connected = true;
-        ros2ConnectionMode = 'websocket';
-        console.log('[TensorFleet] Connected via WebSocket');
-      } catch (error) {
-        console.warn('[TensorFleet] WebSocket connection failed:', error);
+    // Try connection based on preferred mode
+    if (preferredConnectionMode === 'foxglove') {
+      // User explicitly requested Foxglove
+      if (foxgloveBridge) {
+        try {
+          await foxgloveBridge.connect();
+          bridge = foxgloveBridge;
+          connected = true;
+          ros2ConnectionMode = 'foxglove';
+          console.log('[TensorFleet] Connected via Foxglove Bridge');
+        } catch (error) {
+          console.error('[TensorFleet] Foxglove connection failed:', error);
+          vscode.window.showWarningMessage('Foxglove Bridge connection failed. Try ROS Bridge instead.');
+        }
       }
-    }
-    
-    // Fall back to native ROS2 if WebSocket failed
-    if (!connected && ros2Bridge) {
-      try {
-        await ros2Bridge.initialize();
-        bridge = ros2Bridge;
-        connected = true;
-        ros2ConnectionMode = 'native';
-        console.log('[TensorFleet] Connected via native ROS2');
-      } catch (error) {
-        console.warn('[TensorFleet] Native ROS2 connection failed:', error);
+    } else if (preferredConnectionMode === 'rosbridge') {
+      // User explicitly requested rosbridge (or default)
+      if (ros2WebSocketBridge) {
+        try {
+          await ros2WebSocketBridge.connect();
+          bridge = ros2WebSocketBridge;
+          connected = true;
+          ros2ConnectionMode = 'websocket';
+          console.log('[TensorFleet] Connected via ROS Bridge');
+        } catch (error) {
+          console.error('[TensorFleet] ROS Bridge connection failed:', error);
+          vscode.window.showWarningMessage('ROS Bridge connection failed. Check if bridge is running on port 9091.');
+        }
+      }
+    } else if (preferredConnectionMode === 'native') {
+      // User explicitly requested native DDS
+      if (ros2Bridge) {
+        try {
+          await ros2Bridge.initialize();
+          bridge = ros2Bridge;
+          connected = true;
+          ros2ConnectionMode = 'native';
+          console.log('[TensorFleet] Connected via native ROS2');
+        } catch (error) {
+          console.error('[TensorFleet] Native ROS2 connection failed:', error);
+          vscode.window.showWarningMessage('Native ROS2 connection failed. Source ROS2 environment first.');
+        }
+      }
+    } else {
+      // Auto mode: Try rosbridge first, then Foxglove, then native
+      if (!connected && ros2WebSocketBridge) {
+        try {
+          await ros2WebSocketBridge.connect();
+          bridge = ros2WebSocketBridge;
+          connected = true;
+          ros2ConnectionMode = 'websocket';
+          console.log('[TensorFleet] Connected via ROS Bridge (auto)');
+        } catch (error) {
+          console.warn('[TensorFleet] ROS Bridge connection failed:', error);
+        }
+      }
+      
+      if (!connected && foxgloveBridge) {
+        try {
+          await foxgloveBridge.connect();
+          bridge = foxgloveBridge;
+          connected = true;
+          ros2ConnectionMode = 'foxglove';
+          console.log('[TensorFleet] Connected via Foxglove Bridge (auto)');
+        } catch (error) {
+          console.warn('[TensorFleet] Foxglove connection failed:', error);
+        }
+      }
+      
+      if (!connected && ros2Bridge) {
+        try {
+          await ros2Bridge.initialize();
+          bridge = ros2Bridge;
+          connected = true;
+          ros2ConnectionMode = 'native';
+          console.log('[TensorFleet] Connected via native ROS2 (auto)');
+        } catch (error) {
+          console.warn('[TensorFleet] Native ROS2 connection failed:', error);
+        }
       }
     }
     
@@ -1801,6 +1948,107 @@ async function configureROS2WebSocket() {
       });
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to update WebSocket URL: ${error}`);
+    }
+  }
+}
+
+async function connectToFoxgloveBridge(context: vscode.ExtensionContext) {
+  if (!foxgloveBridge) {
+    vscode.window.showErrorMessage('Foxglove Bridge not initialized');
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration('tensorfleet');
+  const foxgloveUrl = config.get<string>('ros2.foxgloveUrl', 'ws://172.16.0.2:8765');
+
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Connecting to Foxglove Bridge at ${foxgloveUrl}...`,
+        cancellable: false
+      },
+      async (progress) => {
+        progress.report({ message: 'Establishing connection...' });
+        await foxgloveBridge!.connect();
+        
+        progress.report({ message: 'Discovering channels...' });
+        const topics = await foxgloveBridge!.getTopicList();
+        
+        vscode.window.showInformationMessage(
+          `Connected to Foxglove Bridge! Found ${topics.length} channels.`,
+          'View Topics',
+          'Configure URL'
+        ).then(action => {
+          if (action === 'View Topics') {
+            showROS2Topics(topics);
+          } else if (action === 'Configure URL') {
+            vscode.commands.executeCommand('tensorfleet.configureFoxgloveBridge');
+          }
+        });
+      }
+    );
+  } catch (error) {
+    vscode.window.showErrorMessage(`Failed to connect to Foxglove Bridge: ${error}`);
+    console.error('[TensorFleet] Foxglove Bridge connection error:', error);
+  }
+}
+
+async function disconnectFoxgloveBridge() {
+  if (!foxgloveBridge) {
+    return;
+  }
+
+  try {
+    await foxgloveBridge.shutdown();
+    vscode.window.showInformationMessage('Disconnected from Foxglove Bridge');
+  } catch (error) {
+    vscode.window.showErrorMessage(`Error disconnecting from Foxglove Bridge: ${error}`);
+  }
+}
+
+async function configureFoxgloveBridge() {
+  const config = vscode.workspace.getConfiguration('tensorfleet');
+  const currentUrl = config.get<string>('ros2.foxgloveUrl', 'ws://172.16.0.2:8765');
+
+  const newUrl = await vscode.window.showInputBox({
+    prompt: 'Enter Foxglove Bridge WebSocket URL',
+    value: currentUrl,
+    placeHolder: 'ws://172.16.0.2:8765',
+    validateInput: (value) => {
+      if (!value) {
+        return 'URL cannot be empty';
+      }
+      if (!value.startsWith('ws://') && !value.startsWith('wss://')) {
+        return 'URL must start with ws:// or wss://';
+      }
+      return null;
+    }
+  });
+
+  if (newUrl && newUrl !== currentUrl) {
+    try {
+      await config.update('ros2.foxgloveUrl', newUrl, vscode.ConfigurationTarget.Global);
+      
+      // Update the bridge with new URL
+      if (foxgloveBridge) {
+        // Disconnect if currently connected
+        if (foxgloveBridge.isROS2Connected()) {
+          await foxgloveBridge.shutdown();
+        }
+        foxgloveBridge.setUrl(newUrl);
+      }
+      
+      vscode.window.showInformationMessage(
+        `Foxglove Bridge URL updated to: ${newUrl}`,
+        'Connect Now'
+      ).then(action => {
+        if (action === 'Connect Now') {
+          vscode.commands.executeCommand('tensorfleet.connectFoxgloveBridge');
+        }
+      });
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to update Foxglove Bridge URL: ${error}`);
     }
   }
 }

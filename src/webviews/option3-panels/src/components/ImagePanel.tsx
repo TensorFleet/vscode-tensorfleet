@@ -19,6 +19,7 @@ export const ImagePanel: React.FC = () => {
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
   const [rotation, setRotation] = useState(0);
+  const [connectionMode, setConnectionMode] = useState<'auto' | 'rosbridge' | 'foxglove' | 'native'>('rosbridge');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const pendingImageRef = useRef<ImageMessage | null>(null);
@@ -45,10 +46,11 @@ export const ImagePanel: React.FC = () => {
       }
     });
 
-    // Request initial data
+    // Request initial data with connection mode
     vscodeBridge.postMessage({
       command: 'subscribeToTopic',
-      topic: selectedTopic
+      topic: selectedTopic,
+      connectionMode
     });
 
     return () => {
@@ -57,7 +59,7 @@ export const ImagePanel: React.FC = () => {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [selectedTopic, isPaused]);
+  }, [selectedTopic, isPaused, connectionMode]);
 
   useEffect(() => {
     // Render image to canvas with transformations
@@ -136,7 +138,23 @@ export const ImagePanel: React.FC = () => {
     setSelectedTopic(e.target.value);
     vscodeBridge.postMessage({
       command: 'subscribeToTopic',
-      topic: e.target.value
+      topic: e.target.value,
+      connectionMode
+    });
+  };
+
+  const handleConnectionModeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const mode = e.target.value as 'auto' | 'rosbridge' | 'foxglove' | 'native';
+    setConnectionMode(mode);
+    // Reconnect with new mode
+    vscodeBridge.postMessage({
+      command: 'setConnectionMode',
+      mode
+    });
+    vscodeBridge.postMessage({
+      command: 'subscribeToTopic',
+      topic: selectedTopic,
+      connectionMode: mode
     });
   };
 
@@ -149,6 +167,15 @@ export const ImagePanel: React.FC = () => {
   return (
     <div className="image-panel">
       <div className="controls">
+        <div className="control-group">
+          <label>Connection:</label>
+          <select value={connectionMode} onChange={handleConnectionModeChange}>
+            <option value="rosbridge">ROS Bridge (9091)</option>
+            <option value="foxglove">Foxglove (8765)</option>
+            <option value="native">Native DDS</option>
+          </select>
+        </div>
+        
         <div className="control-group">
           <label>Topic:</label>
           <select value={selectedTopic} onChange={handleTopicChange}>
