@@ -486,8 +486,10 @@ export class ROS2WebSocketBridge extends EventEmitter {
       // Convert to RGBA format
       const rgba = this.convertToRGBA(imageData, encoding, width, height);
       
-      // Create BMP data URL
-      return this.createPNGDataURL(rgba, width, height);
+      // Return RGBA data as base64 (for direct ImageData usage)
+      // This is more efficient than BMP encoding
+      const base64 = Buffer.from(rgba).toString('base64');
+      return `data:image/x-rgba;base64,${base64}`;
       
     } catch (error) {
       console.error('[ROS2WebSocketBridge] Failed to convert raw image:', error);
@@ -571,62 +573,6 @@ export class ROS2WebSocketBridge extends EventEmitter {
     return rgba;
   }
 
-  /**
-   * Create PNG data URL from RGBA pixel data
-   * Uses simple uncompressed PNG format
-   */
-  private createPNGDataURL(rgba: Uint8ClampedArray, width: number, height: number): string {
-    // For simplicity, convert RGBA to base64 and let browser decode
-    // Create a simple BMP format (easier than PNG)
-    const bmp = this.createBMP(rgba, width, height);
-    const base64 = Buffer.from(bmp).toString('base64');
-    return `data:image/bmp;base64,${base64}`;
-  }
-
-  /**
-   * Create BMP image from RGBA data
-   */
-  private createBMP(rgba: Uint8ClampedArray, width: number, height: number): Uint8Array {
-    const rowSize = Math.floor((24 * width + 31) / 32) * 4;
-    const pixelDataSize = rowSize * height;
-    const fileSize = 54 + pixelDataSize;
-
-    const bmp = new Uint8Array(fileSize);
-    
-    // BMP Header
-    bmp[0] = 0x42; bmp[1] = 0x4D; // "BM"
-    bmp[2] = fileSize & 0xFF;
-    bmp[3] = (fileSize >> 8) & 0xFF;
-    bmp[4] = (fileSize >> 16) & 0xFF;
-    bmp[5] = (fileSize >> 24) & 0xFF;
-    bmp[10] = 54; // Pixel data offset
-    
-    // DIB Header
-    bmp[14] = 40; // Header size
-    bmp[18] = width & 0xFF;
-    bmp[19] = (width >> 8) & 0xFF;
-    bmp[22] = height & 0xFF;
-    bmp[23] = (height >> 8) & 0xFF;
-    bmp[26] = 1;  // Color planes
-    bmp[28] = 24; // Bits per pixel
-    
-    // Pixel data (BGR format, bottom-up)
-    let pos = 54;
-    for (let y = height - 1; y >= 0; y--) {
-      for (let x = 0; x < width; x++) {
-        const i = (y * width + x) * 4;
-        bmp[pos++] = rgba[i + 2]; // B
-        bmp[pos++] = rgba[i + 1]; // G
-        bmp[pos++] = rgba[i];     // R
-      }
-      // Padding
-      while ((pos - 54) % 4 !== 0) {
-        bmp[pos++] = 0;
-      }
-    }
-    
-    return bmp;
-  }
 
   /**
    * Get placeholder image SVG

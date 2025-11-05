@@ -20,13 +20,27 @@ export const ImagePanel: React.FC = () => {
   const [contrast, setContrast] = useState(100);
   const [rotation, setRotation] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const pendingImageRef = useRef<ImageMessage | null>(null);
 
   useEffect(() => {
     // Listen for image data from extension
     const cleanup = vscodeBridge.onMessage((message) => {
       if (message.type === 'imageData' && !isPaused) {
         if (message.topic === selectedTopic || !message.topic) {
-          setCurrentImage(message);
+          // Store pending image for next animation frame
+          pendingImageRef.current = message;
+          
+          // Request animation frame if not already scheduled
+          if (animationFrameRef.current === null) {
+            animationFrameRef.current = requestAnimationFrame(() => {
+              if (pendingImageRef.current) {
+                setCurrentImage(pendingImageRef.current);
+                pendingImageRef.current = null;
+              }
+              animationFrameRef.current = null;
+            });
+          }
         }
       }
     });
@@ -37,7 +51,12 @@ export const ImagePanel: React.FC = () => {
       topic: selectedTopic
     });
 
-    return cleanup;
+    return () => {
+      cleanup();
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
   }, [selectedTopic, isPaused]);
 
   useEffect(() => {
@@ -47,13 +66,60 @@ export const ImagePanel: React.FC = () => {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
+      // Check if data is RGBA format (optimized path)
+      if (currentImage.data.startsWith('data:image/x-rgba;base64,')) {
+        try {
+          // Decode base64 RGBA data directly
+          const base64Data = currentImage.data.split(',')[1];
+          const binaryString = atob(base64Data);
+          const bytes = new Uint8ClampedArray(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          
+          // Set canvas size
+          canvas.width = currentImage.width;
+          canvas.height = currentImage.height;
+          
+          // Create ImageData directly (much faster than Image element!)
+          const imageData = new ImageData(bytes, currentImage.width, currentImage.height);
+          
+          // If no transformations, use fast path
+          if (brightness === 100 && contrast === 100 && rotation === 0) {
+            ctx.putImageData(imageData, 0, 0);
+          } else {
+            // For transformations, use temporary canvas
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = currentImage.width;
+            tempCanvas.height = currentImage.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            if (tempCtx) {
+              tempCtx.putImageData(imageData, 0, 0);
+              
+              // Apply transformations when drawing to main canvas
+              ctx.save();
+              ctx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
+              ctx.translate(canvas.width / 2, canvas.height / 2);
+              ctx.rotate((rotation * Math.PI) / 180);
+              ctx.translate(-canvas.width / 2, -canvas.height / 2);
+              ctx.drawImage(tempCanvas, 0, 0);
+              ctx.restore();
+            }
+          }
+          
+          return;
+        } catch (error) {
+          console.error('Failed to decode RGBA data:', error);
+          // Fall through to Image loading
+        }
+      }
+      
+      // Fallback: Load as Image element (for BMP/JPEG/PNG)
       const img = new Image();
       img.onload = () => {
-        // Set canvas to actual image size for crisp rendering
         canvas.width = currentImage.width;
         canvas.height = currentImage.height;
 
-        // Apply transformations
         ctx.save();
         ctx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
         ctx.translate(canvas.width / 2, canvas.height / 2);

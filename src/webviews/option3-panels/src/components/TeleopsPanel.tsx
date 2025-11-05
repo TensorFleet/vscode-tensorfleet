@@ -42,13 +42,19 @@ export const TeleopsPanel: React.FC = () => {
     return () => clearInterval(interval);
   }, [activeKeys, config, isConnected]);
 
-  // Listen for connection status from extension
+  // Listen for connection status from extension and auto-connect on mount
   useEffect(() => {
     const cleanup = vscodeBridge.onMessage((message) => {
       if (message.type === 'connectionStatus') {
         setIsConnected(message.connected);
+        console.log('[TeleopsPanel] Connection status:', message.connected);
       }
     });
+    
+    // Auto-connect on mount
+    console.log('[TeleopsPanel] Attempting auto-connect to ROS2...');
+    vscodeBridge.postMessage({ command: 'connectROS' });
+    
     return cleanup;
   }, []);
 
