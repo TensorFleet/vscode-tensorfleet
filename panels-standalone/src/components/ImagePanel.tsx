@@ -1,26 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ros2Bridge, type ImageMessage, type ConnectionMode } from '../ros2-bridge';
+import { ros2Bridge, type ImageMessage } from '../ros2-bridge';
 import './ImagePanel.css';
 
 export const ImagePanel: React.FC = () => {
   const [currentImage, setCurrentImage] = useState<ImageMessage | null>(null);
   const [isPaused, setIsPaused] = useState(false);
-  const [topics] = useState(['/camera/image_raw', '/camera/compressed', '/depth/image']);
-  const [selectedTopic, setSelectedTopic] = useState(topics[1]); // Default to compressed
+  const [topics] = useState(['/camera/image_raw']);
+  const [selectedTopic, setSelectedTopic] = useState('/camera/image_raw');
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
   const [rotation, setRotation] = useState(0);
   const [flipHorizontal, setFlipHorizontal] = useState(false);
   const [flipVertical, setFlipVertical] = useState(false);
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>('rosbridge');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const pendingImageRef = useRef<ImageMessage | null>(null);
 
   useEffect(() => {
-    // Connect to ROS2
-    ros2Bridge.connect(connectionMode);
-    
+    // Ensure connection to rosbridge (single supported mode)
+    ros2Bridge.connect('rosbridge');
+
     // Subscribe to selected topic
     ros2Bridge.subscribe(selectedTopic);
 
@@ -49,7 +48,7 @@ export const ImagePanel: React.FC = () => {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [selectedTopic, isPaused, connectionMode]);
+  }, [selectedTopic, isPaused]);
 
   useEffect(() => {
     // Render image to canvas with transformations
@@ -98,13 +97,7 @@ export const ImagePanel: React.FC = () => {
     setSelectedTopic(newTopic);
   };
 
-  const handleConnectionModeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const mode = e.target.value as ConnectionMode;
-    setConnectionMode(mode);
-    ros2Bridge.disconnect();
-    ros2Bridge.connect(mode);
-    ros2Bridge.subscribe(selectedTopic);
-  };
+  // Connection mode is fixed to rosbridge; no handler needed
 
   const resetTransforms = () => {
     setBrightness(100);
@@ -117,13 +110,6 @@ export const ImagePanel: React.FC = () => {
   return (
     <div className="image-panel">
       <div className="controls">
-        <div className="control-group">
-          <label>Connection:</label>
-          <select value={connectionMode} onChange={handleConnectionModeChange}>
-            <option value="rosbridge">ROS Bridge (9091)</option>
-            <option value="foxglove">Foxglove (8765)</option>
-          </select>
-        </div>
         
         <div className="control-group">
           <label>Topic:</label>
@@ -204,7 +190,7 @@ export const ImagePanel: React.FC = () => {
         {!currentImage && (
           <div className="no-image">
             <p>Waiting for image data...</p>
-            <p className="hint">Connecting to {connectionMode} - topic: {selectedTopic}</p>
+            <p className="hint">Connecting to rosbridge - topic: {selectedTopic}</p>
           </div>
         )}
       </div>

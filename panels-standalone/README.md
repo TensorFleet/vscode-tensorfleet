@@ -29,14 +29,19 @@ bun run build  # or: npm run build
 ## Available Panels
 
 ### ✅ Image Panel
-- Display camera feeds (compressed images)
+- Display camera feeds (sensor_msgs/Image)
 - Brightness/contrast controls
 - Flip horizontal/vertical
 - Rotation (0-360°)
-- Pan/zoom (coming soon)
+
+### ✅ Teleops Panel
+- Keyboard control (WASD/arrows)
+- Publish geometry_msgs/Twist to `/cmd_vel`
+- Configurable linear/angular speed
+- Adjustable publish rate (Hz)
+- Emergency stop button
 
 ### 🚧 Coming Soon
-- Teleoperation Panel
 - Plot Panel
 - 3D View Panel
 - Map Panel
@@ -52,25 +57,32 @@ Connects to your ROS2 system via:
 - Install: `sudo apt install ros-${ROS_DISTRO}-rosbridge-suite`
 - Launch: `ros2 launch rosbridge_server rosbridge_websocket_launch.xml`
 
-**Foxglove Bridge**
-- WebSocket: `ws://172.16.0.2:8765`
-- Protocol: Foxglove WebSocket
-- Install: `sudo apt install ros-${ROS_DISTRO}-foxglove-bridge`
-- Launch: `ros2 launch foxglove_bridge foxglove_bridge_launch.xml`
+Foxglove Bridge is not used in the standalone image panel.
+
+## Supported ROS2 Messages
+
+**Image Panel:** `sensor_msgs/Image` via rosbridge
+- Encodings: rgb8, rgba8, bgr8, bgra8, mono8, mono16
+- Default topic: `/camera/image_raw`
+
+**Teleops Panel:** `geometry_msgs/Twist` (publish only)
+- Default topic: `/cmd_vel`
 
 ## Project Structure
 
 ```
-tensorfleet-panels-standalone/
+panels-standalone/
 ├── index.html              # Panel selector (home page)
 ├── image.html              # Image panel entry
+├── teleops.html            # Teleops panel entry
 ├── src/
 │   ├── image.tsx           # Image panel React entry
+│   ├── teleops.tsx         # Teleops panel React entry
 │   ├── ros2-bridge.ts      # ROS2 WebSocket connection
 │   ├── global.css          # Global styles
 │   └── components/
-│       ├── ImagePanel.tsx  # Image panel component
-│       └── ImagePanel.css  # Image panel styles
+│       ├── ImagePanel.tsx/.css
+│       └── TeleopsPanel.tsx/.css
 ├── package.json
 ├── vite.config.ts
 └── tsconfig.json
@@ -120,8 +132,4 @@ The panels will work exactly the same in VS Code!
 - **Vite** - Fast dev server & bundler
 - **Canvas API** - Image rendering
 - **WebSocket** - ROS2 connection
-
-## License
-
-MIT
 

@@ -10,7 +10,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        image: resolve(__dirname, 'image.html')
+        image: resolve(__dirname, 'image.html'),
+        teleops: resolve(__dirname, 'teleops.html')
       }
     }
   },

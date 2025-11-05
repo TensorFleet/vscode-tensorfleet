@@ -1,0 +1,197 @@
+.teleops-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #1e1e1e;
+  color: #cccccc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  padding: 20px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #3c3c3c;
+}
+
+.header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.status-indicator.connected {
+  background: #4caf50;
+}
+
+.status-indicator.disconnected {
+  background: #f44336;
+}
+
+.config-panel {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 30px;
+  padding: 15px;
+  background: #252526;
+  border-radius: 4px;
+}
+
+.config-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.config-group label {
+  font-size: 12px;
+  color: #8e8e8e;
+}
+
+.config-group input {
+  background: #3c3c3c;
+  color: #cccccc;
+  border: 1px solid #464646;
+  padding: 6px;
+  border-radius: 2px;
+  font-size: 13px;
+  width: 120px;
+}
+
+.control-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+}
+
+.controls-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.control-row {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.spacer {
+  width: 100px;
+}
+
+.control-btn {
+  width: 100px;
+  height: 80px;
+  font-size: 14px;
+  font-weight: bold;
+  background: #0e639c;
+  color: white;
+  border: 2px solid #007acc;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.control-btn:hover:not(:disabled) {
+  background: #1177bb;
+  transform: scale(1.05);
+}
+
+.control-btn.active {
+  background: #007acc;
+  border-color: #0098ff;
+  box-shadow: 0 0 10px #0098ff;
+}
+
+.control-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.emergency-stop {
+  width: 100px;
+  height: 80px;
+  font-size: 16px;
+  font-weight: bold;
+  background: #f44336;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.emergency-stop:hover:not(:disabled) {
+  background: #d32f2f;
+}
+
+.emergency-stop:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #999;
+}
+
+.keyboard-hint {
+  text-align: center;
+  color: #8e8e8e;
+  font-size: 12px;
+}
+
+.keyboard-hint p {
+  margin: 5px 0;
+}
+
+.keyboard-hint .keys {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+}
+
+kbd {
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.status-panel {
+  margin-top: 20px;
+  padding: 15px;
+  background: #252526;
+  border-radius: 4px;
+}
+
+.status-panel h3 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+}
+
+.twist-display {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.twist-display > div {
+  margin: 5px 0;
+}
+
