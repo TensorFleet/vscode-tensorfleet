@@ -2,7 +2,7 @@
 
 **Implementation Date:** November 4, 2025  
 **Status:** ✅ Production-ready  
-**Branch:** `feature/phase2-option3-components`
+**Branch:** `experimental/custom-webview-panels`
 
 ## Overview
 
