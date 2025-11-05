@@ -22,6 +22,10 @@ An alternative implementation using the full Lichtblick suite (~34 MB bundle wit
 
 ### Build & Run
 ```bash
+# Quick build (automated script)
+./build.sh
+
+# Or manual steps:
 # 1. Build React panels
 cd src/webviews/option3-panels
 npm install
@@ -127,15 +131,15 @@ src/webviews/option3-panels/
 - **Playback Controls** - Pause/resume
 - **Metadata Overlay** - Topic, timestamp, encoding, dimensions
 
-### Teleops Panel
-- **Keyboard Control** - W/A/S/D and arrow keys
+### Teleops Panel (⚠️ In Progress)
+- **Keyboard Control** - W/A/S/D and arrow keys (UI ready)
 - **Configurable Speed** - Linear (m/s) and angular (rad/s) sliders
 - **Publish Rate** - 1-100 Hz adjustable
-- **Connection Management** - Connect/disconnect via WebSocket (auto-connects)
+- **Connection Management** - Connect button needs debugging
 - **Emergency Stop** - Instant zero velocity
 - **Visual Feedback** - Active key highlighting
 - **Message Display** - Real-time Twist message values
-- **Topic** - Publishes to `/cmd_vel` (geometry_msgs/Twist)
+- **Topic** - Publishes to `/cmd_vel_raw` → twist_deadman.py → `/cmd_vel` → Gazebo
 
 ---
 
@@ -668,6 +672,12 @@ Branch `feature/phase2-lichtblick-optimized` contains full Lichtblick suite (~34
 - ⚠️ Twist command publishing needs debugging
 - 🔧 UI and keyboard controls ready, backend needs fixes
 
+**Known Issues:**
+- ⚠️ **Image panel performance:** Video display is laggy
+  - BMP encoding is inefficient (no compression)
+  - Large base64 strings sent via postMessage
+  - Potential fixes: Use compressed images, optimize decoding, throttle frame rate
+
 **Supported Image Encodings:**
 - RGB8, RGBA8 - Standard RGB formats
 - BGR8, BGRA8 - OpenCV-style BGR formats (auto-converted)
@@ -676,9 +686,12 @@ Branch `feature/phase2-lichtblick-optimized` contains full Lichtblick suite (~34
 
 **How to Use:**
 ```bash
+# Build
 cd /home/shane/vscode-tensorfleet
-bun run compile
-# Press F5 to launch extension
+./build.sh
+
+# Launch (Press F5 in VS Code, or:)
+code --extensionDevelopmentPath=/home/shane/vscode-tensorfleet
 
 # Image Panel:
 # TensorFleet sidebar → "Image Panel (Option 3)"
@@ -687,8 +700,9 @@ bun run compile
 # Teleops Panel:
 # TensorFleet sidebar → "Teleops Panel (Option 3)"
 # Click "Connect" → Auto-connects via WebSocket
-# Use W/A/S/D or arrow keys → Publishes to /cmd_vel
+# Use W/A/S/D or arrow keys → Publishes to /cmd_vel_raw
 # STOP button or release keys → Sends zero velocity
+# (VM: /cmd_vel_raw → twist_deadman.py → /cmd_vel → Gazebo)
 ```
 
 **Code Changes (Nov 5, 2025):**
@@ -703,10 +717,12 @@ bun run compile
 - Total: ~650 lines in `ros2-websocket-bridge.ts` + React component updates
 
 **Files Modified:**
-- `src/ros2-websocket-bridge.ts` (new file)
+- `src/ros2-websocket-bridge.ts` (new file, 652 lines)
 - `src/webviews/option3-panels/src/components/ImagePanel.tsx`
 - `src/webviews/option3-panels/src/components/ImagePanel.css`
+- `src/webviews/option3-panels/src/components/TeleopsPanel.tsx` (topic: /cmd_vel_raw)
 - `src/extension.ts` (image subscription logic)
+- `build.sh` (new file, automated build script)
 - `options.md` (documentation)
 
 

@@ -32,7 +32,7 @@ export const TeleopsPanel: React.FC = () => {
       if (twist) {
         vscodeBridge.postMessage({
           command: 'publishTwist',
-          topic: '/cmd_vel',
+          topic: '/cmd_vel_raw',
           data: twist
         });
         setLastPublished(twist);
@@ -125,7 +125,7 @@ export const TeleopsPanel: React.FC = () => {
     };
     vscodeBridge.postMessage({
       command: 'publishTwist',
-      topic: '/cmd_vel',
+      topic: '/cmd_vel_raw',
       data: stopTwist
     });
     setActiveKeys(new Set());
