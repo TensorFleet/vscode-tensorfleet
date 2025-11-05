@@ -4,6 +4,7 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
 import { ROS2Bridge } from './ros2-bridge';
+import { ROS2WebSocketBridge } from './ros2-websocket-bridge';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -99,6 +100,10 @@ const terminalRegistry = new Map<string, vscode.Terminal>();
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 let ros2Bridge: ROS2Bridge | null = null;
+let ros2WebSocketBridge: ROS2WebSocketBridge | null = null;
+
+// Active ROS2 connection mode: 'native' | 'websocket'
+let ros2ConnectionMode: 'native' | 'websocket' | null = null;
 
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
@@ -114,23 +119,52 @@ export function activate(context: vscode.ExtensionContext) {
     console.error('Failed to start MCP Bridge:', error);
   });
 
-  // Initialize ROS2 bridge for real-time drone communication
+  // Initialize ROS2 bridge for real-time drone communication (native DDS mode)
   ros2Bridge = new ROS2Bridge(context);
   
   // Listen for ROS2 connection events
   ros2Bridge.on('connected', () => {
-    vscode.window.showInformationMessage('ROS2 connected successfully!');
-    console.log('TensorFleet ROS2 Bridge connected');
+    vscode.window.showInformationMessage('ROS2 (Native DDS) connected successfully!');
+    console.log('TensorFleet ROS2 Bridge (Native) connected');
+    ros2ConnectionMode = 'native';
   });
   
   ros2Bridge.on('disconnected', () => {
-    vscode.window.showWarningMessage('ROS2 disconnected');
-    console.log('TensorFleet ROS2 Bridge disconnected');
+    vscode.window.showWarningMessage('ROS2 (Native DDS) disconnected');
+    console.log('TensorFleet ROS2 Bridge (Native) disconnected');
+    if (ros2ConnectionMode === 'native') {
+      ros2ConnectionMode = null;
+    }
   });
   
   ros2Bridge.on('error', (error) => {
-    console.error('ROS2 Bridge error:', error);
+    console.error('ROS2 Bridge (Native) error:', error);
     // Don't show error immediately - ROS2 might not be running yet
+  });
+
+  // Initialize WebSocket bridge (for remote ROS2 instances like Firecracker VM)
+  // Get WebSocket URL from configuration
+  const config = vscode.workspace.getConfiguration('tensorfleet');
+  const wsUrl = config.get<string>('ros2.websocketUrl', 'ws://172.16.0.2:9091');
+  
+  ros2WebSocketBridge = new ROS2WebSocketBridge(wsUrl);
+  
+  ros2WebSocketBridge.on('connected', () => {
+    vscode.window.showInformationMessage(`ROS2 (WebSocket) connected to ${wsUrl}`);
+    console.log('TensorFleet ROS2 WebSocket Bridge connected');
+    ros2ConnectionMode = 'websocket';
+  });
+  
+  ros2WebSocketBridge.on('disconnected', () => {
+    vscode.window.showWarningMessage('ROS2 (WebSocket) disconnected');
+    console.log('TensorFleet ROS2 WebSocket Bridge disconnected');
+    if (ros2ConnectionMode === 'websocket') {
+      ros2ConnectionMode = null;
+    }
+  });
+  
+  ros2WebSocketBridge.on('error', (error) => {
+    console.error('ROS2 WebSocket Bridge error:', error);
   });
 
   // Initialize status bar items for TensorFleet projects
@@ -194,6 +228,18 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.connectROS2WebSocket', () => connectToROS2WebSocket(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.disconnectROS2WebSocket', () => disconnectROS2WebSocket())
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.configureROS2WebSocket', () => configureROS2WebSocket())
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.disconnectROS2', () => disconnectFromROS2())
   );
 
@@ -218,6 +264,11 @@ export function deactivate() {
   if (ros2Bridge) {
     ros2Bridge.shutdown().catch(console.error);
     ros2Bridge = null;
+  }
+
+  if (ros2WebSocketBridge) {
+    ros2WebSocketBridge.shutdown().catch(console.error);
+    ros2WebSocketBridge = null;
   }
 
   // Clean up MCP bridge
@@ -501,6 +552,26 @@ async function handleOption3Message(panel: vscode.WebviewPanel, message: any, co
   }
 }
 
+/**
+ * Get the active ROS2 bridge (either native DDS or WebSocket)
+ */
+function getActiveROS2Bridge(): ROS2Bridge | ROS2WebSocketBridge | null {
+  if (ros2ConnectionMode === 'websocket' && ros2WebSocketBridge?.isROS2Connected()) {
+    return ros2WebSocketBridge;
+  }
+  if (ros2ConnectionMode === 'native' && ros2Bridge?.isROS2Connected()) {
+    return ros2Bridge;
+  }
+  // Try WebSocket first if available, then native
+  if (ros2WebSocketBridge?.isROS2Connected()) {
+    return ros2WebSocketBridge;
+  }
+  if (ros2Bridge?.isROS2Connected()) {
+    return ros2Bridge;
+  }
+  return null;
+}
+
 // Handle image topic subscription
 async function handleImageTopicSubscription(panel: vscode.WebviewPanel, topic: string) {
   if (!topic || typeof topic !== 'string') {
@@ -509,27 +580,51 @@ async function handleImageTopicSubscription(panel: vscode.WebviewPanel, topic: s
   }
 
   try {
-    if (!ros2Bridge) {
-      throw new Error('ROS2 Bridge not initialized');
-    }
-
-    // Check if ROS2 is connected, if not try to initialize
-    if (!ros2Bridge.isROS2Connected()) {
-      console.log('[TensorFleet] ROS2 not connected, attempting to initialize...');
-      try {
-        await ros2Bridge.initialize();
-      } catch (error) {
-        // Fall back to simulation if ROS2 is not available
-        console.warn('[TensorFleet] ROS2 not available, falling back to simulation');
+    let bridge = getActiveROS2Bridge();
+    
+    // If no bridge is connected, try to connect
+    if (!bridge) {
+      console.log('[TensorFleet] No ROS2 connection active, attempting to connect...');
+      
+      // Try WebSocket first (no local ROS2 required)
+      if (ros2WebSocketBridge) {
+        try {
+          await ros2WebSocketBridge.connect();
+          bridge = ros2WebSocketBridge;
+        } catch (error) {
+          console.warn('[TensorFleet] WebSocket connection failed:', error);
+          
+          // Fall back to native ROS2
+          if (ros2Bridge) {
+            try {
+              await ros2Bridge.initialize();
+              bridge = ros2Bridge;
+            } catch (nativeError) {
+              console.warn('[TensorFleet] Native ROS2 not available either');
+            }
+          }
+        }
+      } else if (ros2Bridge) {
+        try {
+          await ros2Bridge.initialize();
+          bridge = ros2Bridge;
+        } catch (error) {
+          console.warn('[TensorFleet] Native ROS2 not available');
+        }
+      }
+      
+      // If still no connection, fall back to simulation
+      if (!bridge) {
+        console.warn('[TensorFleet] No ROS2 connection available, falling back to simulation');
         startImageStreamSimulation(panel, topic);
         return;
       }
     }
 
-    console.log(`[TensorFleet] Subscribing to ROS2 topic: ${topic}`);
+    console.log(`[TensorFleet] Subscribing to ROS2 topic: ${topic} (mode: ${ros2ConnectionMode})`);
     
     // Subscribe to real ROS2 topic
-    await ros2Bridge.subscribeToImageTopic(topic, (imageData, metadata) => {
+    await bridge.subscribeToImageTopic(topic, (imageData, metadata) => {
       // Send image data to webview
       panel.webview.postMessage({
         type: 'imageData',
@@ -542,7 +637,7 @@ async function handleImageTopicSubscription(panel: vscode.WebviewPanel, topic: s
       });
     });
 
-    vscode.window.showInformationMessage(`Subscribed to ${topic}`);
+    vscode.window.showInformationMessage(`Subscribed to ${topic} via ${ros2ConnectionMode || 'ROS2'}`);
   } catch (error) {
     console.error('[TensorFleet] Failed to subscribe to topic:', error);
     vscode.window.showErrorMessage(`Failed to subscribe to ${topic}: ${error}`);
@@ -560,25 +655,48 @@ async function handleTwistPublication(topic: string, data: any) {
   }
 
   try {
-    if (!ros2Bridge) {
-      throw new Error('ROS2 Bridge not initialized');
-    }
-
-    // Check if ROS2 is connected
-    if (!ros2Bridge.isROS2Connected()) {
-      console.log('[TensorFleet] ROS2 not connected, attempting to initialize...');
-      try {
-        await ros2Bridge.initialize();
-      } catch (error) {
-        console.warn('[TensorFleet] ROS2 not available, twist command only logged:', data);
-        console.log('Twist (simulated):', topic, data);
-        return;
+    let bridge = getActiveROS2Bridge();
+    
+    // If no bridge is connected, try to connect (prefer WebSocket)
+    if (!bridge) {
+      if (ros2WebSocketBridge) {
+        try {
+          await ros2WebSocketBridge.connect();
+          bridge = ros2WebSocketBridge;
+        } catch (error) {
+          // Try native
+          if (ros2Bridge) {
+            try {
+              await ros2Bridge.initialize();
+              bridge = ros2Bridge;
+            } catch (nativeError) {
+              console.warn('[TensorFleet] No ROS2 connection available, twist command only logged:', data);
+              console.log('Twist (simulated):', topic, data);
+              return;
+            }
+          }
+        }
+      } else if (ros2Bridge) {
+        try {
+          await ros2Bridge.initialize();
+          bridge = ros2Bridge;
+        } catch (error) {
+          console.warn('[TensorFleet] ROS2 not available, twist command only logged:', data);
+          console.log('Twist (simulated):', topic, data);
+          return;
+        }
       }
     }
 
+    if (!bridge) {
+      console.warn('[TensorFleet] No ROS2 connection available, twist command only logged:', data);
+      console.log('Twist (simulated):', topic, data);
+      return;
+    }
+
     // Publish to real ROS2 topic
-    await ros2Bridge.publishTwist(topic, data);
-    console.log(`[TensorFleet] Published twist to ${topic}:`, data);
+    await bridge.publishTwist(topic, data);
+    console.log(`[TensorFleet] Published twist to ${topic} via ${ros2ConnectionMode}:`, data);
     
   } catch (error) {
     console.error('[TensorFleet] Failed to publish twist:', error);
@@ -589,35 +707,67 @@ async function handleTwistPublication(topic: string, data: any) {
 // Handle ROS2 connection
 async function handleROS2Connection(panel: vscode.WebviewPanel, context: vscode.ExtensionContext) {
   try {
-    if (!ros2Bridge) {
-      throw new Error('ROS2 Bridge not initialized');
-    }
-
     console.log('[TensorFleet] Connecting to ROS2...');
-    await ros2Bridge.initialize();
     
-    panel.webview.postMessage({ type: 'connectionStatus', connected: true });
+    let connected = false;
+    let bridge: ROS2Bridge | ROS2WebSocketBridge | null = null;
     
-    // Get list of available topics
-    const topics = await ros2Bridge.getTopicList();
-    const imageTopics = topics
-      .filter(t => t.type.includes('Image'))
-      .map(t => t.name);
-    
-    if (imageTopics.length > 0) {
-      panel.webview.postMessage({ 
-        type: 'availableTopics', 
-        topics: imageTopics 
-      });
+    // Try WebSocket first (no local ROS2 required)
+    if (ros2WebSocketBridge) {
+      try {
+        await ros2WebSocketBridge.connect();
+        bridge = ros2WebSocketBridge;
+        connected = true;
+        ros2ConnectionMode = 'websocket';
+        console.log('[TensorFleet] Connected via WebSocket');
+      } catch (error) {
+        console.warn('[TensorFleet] WebSocket connection failed:', error);
+      }
     }
     
-    vscode.window.showInformationMessage('Connected to ROS2');
+    // Fall back to native ROS2 if WebSocket failed
+    if (!connected && ros2Bridge) {
+      try {
+        await ros2Bridge.initialize();
+        bridge = ros2Bridge;
+        connected = true;
+        ros2ConnectionMode = 'native';
+        console.log('[TensorFleet] Connected via native ROS2');
+      } catch (error) {
+        console.warn('[TensorFleet] Native ROS2 connection failed:', error);
+      }
+    }
+    
+    if (connected && bridge) {
+      panel.webview.postMessage({ type: 'connectionStatus', connected: true });
+      
+      // Get list of available topics
+      try {
+        const topics = await bridge.getTopicList();
+        const imageTopics = topics
+          .filter(t => t.type.includes('Image'))
+          .map(t => t.name);
+        
+        if (imageTopics.length > 0) {
+          panel.webview.postMessage({ 
+            type: 'availableTopics', 
+            topics: imageTopics 
+          });
+        }
+      } catch (error) {
+        console.warn('[TensorFleet] Failed to get topic list:', error);
+      }
+      
+      vscode.window.showInformationMessage(`Connected to ROS2 via ${ros2ConnectionMode}`);
+    } else {
+      throw new Error('All connection methods failed');
+    }
   } catch (error) {
     console.error('[TensorFleet] Failed to connect to ROS2:', error);
     panel.webview.postMessage({ type: 'connectionStatus', connected: false });
     
     vscode.window.showErrorMessage(
-      'Failed to connect to ROS2. Make sure ROS2 is installed and sourced.',
+      'Failed to connect to ROS2. Check that rosbridge is running at ws://172.16.0.2:9091',
       'View Setup Guide'
     ).then(action => {
       if (action === 'View Setup Guide') {
@@ -631,7 +781,9 @@ async function handleROS2Connection(panel: vscode.WebviewPanel, context: vscode.
 // Handle ROS2 disconnection
 async function handleROS2Disconnection(panel: vscode.WebviewPanel) {
   try {
-    if (ros2Bridge) {
+    if (ros2ConnectionMode === 'websocket' && ros2WebSocketBridge) {
+      await ros2WebSocketBridge.shutdown();
+    } else if (ros2Bridge) {
       await ros2Bridge.shutdown();
     }
     panel.webview.postMessage({ type: 'connectionStatus', connected: false });
@@ -1535,6 +1687,121 @@ async function disconnectFromROS2() {
     vscode.window.showInformationMessage('Disconnected from ROS2');
   } catch (error) {
     vscode.window.showErrorMessage(`Error disconnecting from ROS2: ${error}`);
+  }
+}
+
+// ============================================================================
+// ROS2 WebSocket Connection Management
+// ============================================================================
+
+async function connectToROS2WebSocket(context: vscode.ExtensionContext) {
+  if (!ros2WebSocketBridge) {
+    vscode.window.showErrorMessage('ROS2 WebSocket Bridge not initialized');
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration('tensorfleet');
+  const wsUrl = config.get<string>('ros2.websocketUrl', 'ws://172.16.0.2:9091');
+
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Connecting to ROS2 WebSocket at ${wsUrl}...`,
+        cancellable: false
+      },
+      async (progress) => {
+        progress.report({ message: 'Establishing WebSocket connection...' });
+        await ros2WebSocketBridge!.connect();
+        
+        progress.report({ message: 'Discovering topics...' });
+        const topics = await ros2WebSocketBridge!.getTopicList();
+        
+        vscode.window.showInformationMessage(
+          `Connected to ROS2 via WebSocket! Found ${topics.length} active topics.`,
+          'View Topics',
+          'Configure URL'
+        ).then(action => {
+          if (action === 'View Topics') {
+            showROS2Topics(topics);
+          } else if (action === 'Configure URL') {
+            configureROS2WebSocket();
+          }
+        });
+      }
+    );
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Failed to connect to ROS2 WebSocket: ${error}`,
+      'Configure URL',
+      'View Setup Guide'
+    ).then(action => {
+      if (action === 'Configure URL') {
+        configureROS2WebSocket();
+      } else if (action === 'View Setup Guide') {
+        const setupUri = vscode.Uri.file(path.join(context.extensionPath, 'CONNECT_TO_REMOTE_VM.md'));
+        vscode.commands.executeCommand('markdown.showPreview', setupUri);
+      }
+    });
+  }
+}
+
+async function disconnectROS2WebSocket() {
+  if (!ros2WebSocketBridge) {
+    return;
+  }
+
+  try {
+    await ros2WebSocketBridge.shutdown();
+    vscode.window.showInformationMessage('Disconnected from ROS2 WebSocket');
+  } catch (error) {
+    vscode.window.showErrorMessage(`Error disconnecting from ROS2 WebSocket: ${error}`);
+  }
+}
+
+async function configureROS2WebSocket() {
+  const config = vscode.workspace.getConfiguration('tensorfleet');
+  const currentUrl = config.get<string>('ros2.websocketUrl', 'ws://172.16.0.2:9091');
+
+  const newUrl = await vscode.window.showInputBox({
+    prompt: 'Enter ROS2 WebSocket URL (rosbridge_suite)',
+    value: currentUrl,
+    placeHolder: 'ws://172.16.0.2:9091',
+    validateInput: (value) => {
+      if (!value) {
+        return 'URL cannot be empty';
+      }
+      if (!value.startsWith('ws://') && !value.startsWith('wss://')) {
+        return 'URL must start with ws:// or wss://';
+      }
+      return null;
+    }
+  });
+
+  if (newUrl && newUrl !== currentUrl) {
+    try {
+      await config.update('ros2.websocketUrl', newUrl, vscode.ConfigurationTarget.Global);
+      
+      // Update the bridge with new URL
+      if (ros2WebSocketBridge) {
+        // Disconnect if currently connected
+        if (ros2WebSocketBridge.isROS2Connected()) {
+          await ros2WebSocketBridge.shutdown();
+        }
+        ros2WebSocketBridge.setUrl(newUrl);
+      }
+      
+      vscode.window.showInformationMessage(
+        `ROS2 WebSocket URL updated to: ${newUrl}`,
+        'Connect Now'
+      ).then(action => {
+        if (action === 'Connect Now') {
+          vscode.commands.executeCommand('tensorfleet.connectROS2WebSocket');
+        }
+      });
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to update WebSocket URL: ${error}`);
+    }
   }
 }
 

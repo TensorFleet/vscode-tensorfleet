@@ -49,6 +49,7 @@ export const ImagePanel: React.FC = () => {
 
       const img = new Image();
       img.onload = () => {
+        // Set canvas to actual image size for crisp rendering
         canvas.width = currentImage.width;
         canvas.height = currentImage.height;
 

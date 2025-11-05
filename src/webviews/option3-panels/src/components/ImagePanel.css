@@ -75,6 +75,13 @@ canvas {
   max-height: 100%;
   object-fit: contain;
   border: 1px solid var(--vscode-panel-border);
+  image-rendering: pixelated; /* Keep pixels crisp when scaled */
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  width: auto;
+  height: auto;
+  min-width: 480px; /* Scale up small images */
+  min-height: 360px;
 }
 
 .image-info {
