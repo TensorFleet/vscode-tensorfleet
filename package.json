@@ -35,7 +35,10 @@
     "onCommand:tensorfleet.showDroneStatus",
     "onCommand:tensorfleet.connectROS2",
     "onCommand:tensorfleet.disconnectROS2",
-    "onCommand:tensorfleet.startPX4Telemetry"
+    "onCommand:tensorfleet.startPX4Telemetry",
+    "onCommand:tensorfleet.connectROS2WebSocket",
+    "onCommand:tensorfleet.disconnectROS2WebSocket",
+    "onCommand:tensorfleet.configureROS2WebSocket"
   ],
   "main": "./out/extension.js",
   "packageManager": "bun@1.0.0",
@@ -182,8 +185,34 @@
         "command": "tensorfleet.startPX4Telemetry",
         "title": "TensorFleet: Start PX4 Telemetry Monitor",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.connectROS2WebSocket",
+        "title": "TensorFleet: Connect to ROS2 (WebSocket)",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.disconnectROS2WebSocket",
+        "title": "TensorFleet: Disconnect from ROS2 (WebSocket)",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.configureROS2WebSocket",
+        "title": "TensorFleet: Configure ROS2 WebSocket URL",
+        "category": "TensorFleet"
       }
     ],
+    "configuration": {
+      "title": "TensorFleet",
+      "properties": {
+        "tensorfleet.ros2.websocketUrl": {
+          "type": "string",
+          "default": "ws://172.16.0.2:9091",
+          "description": "ROS2 WebSocket URL (rosbridge_suite) for remote connections (e.g., Firecracker VM)",
+          "pattern": "^(ws|wss)://.*$"
+        }
+      }
+    },
     "menus": {
       "view/title": [
         {
@@ -256,7 +285,8 @@
     "tensorfleet-mcp": "./out/mcp-server.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "roslib": "^1.4.1"
   },
   "optionalDependencies": {
     "rclnodejs": "^0.21.4"
@@ -265,7 +295,7 @@
     "@types/node": "^18.17.0",
     "@types/vscode": "^1.85.0",
     "eslint": "^8.56.0",
-    "typescript": "^5.2.2",
-    "tslib": "^2.6.2"
+    "tslib": "^2.6.2",
+    "typescript": "^5.2.2"
   }
 }
