@@ -1,11 +1,11 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { TeleopsPanel } from './components/TeleopsPanel';
+import { TeleopPanel } from './components/Teleop/TeleopPanel';
 import './global.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <TeleopsPanel />
+    <TeleopPanel />
   </React.StrictMode>
 );
 
