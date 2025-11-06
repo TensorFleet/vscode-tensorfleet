@@ -602,114 +602,158 @@ export const ImagePanel: React.FC = () => {
 
   return (
     <div className="image-panel">
-      <div className="controls">
+      {/* HEADER PANEL */}
+      <div className="image-panel-header-panel">
+        {/* Layer 1: Title + Status */}
+        <div className="header-top">
+          <div className="header-title-section">
+            <h2 className="panel-title">Image Viewer</h2>
+            <div className={`connection-indicator ${connectionStatus === 'connected' ? 'connected' : 'disconnected'}`}>
+              <span className="status-dot"></span>
+              <span className="status-text">
+                {connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting' : 'Disconnected'}
+              </span>
+            </div>
+          </div>
+        </div>
         
-        <div className="control-group">
-          <label>Topic:</label>
-          <select 
-            value={selectedTopic} 
-            onChange={handleTopicChange}
-            disabled={availableTopics.length === 0}
-          >
-            {availableTopics.length === 0 && (
-              <option value="">No image topics available</option>
-            )}
-            {availableTopics.map(topic => (
-              <option key={topic} value={topic}>{topic}</option>
-            ))}
-          </select>
+        {/* Layer 2: Primary Settings */}
+        <div className="header-settings">
+          <div className="settings-inline">
+            <div className="setting-item">
+              <label className="setting-label">
+                <span className="label-text">Image Topic</span>
+              </label>
+              <select 
+                className="setting-input"
+                value={selectedTopic} 
+                onChange={handleTopicChange}
+                disabled={availableTopics.length === 0}
+              >
+                {availableTopics.length === 0 && (
+                  <option value="">No image topics available</option>
+                )}
+                {availableTopics.map(topic => (
+                  <option key={topic} value={topic}>{topic}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label className="setting-label">
+                <span className="label-text">Calibration Topic</span>
+              </label>
+              <select 
+                className="setting-input"
+                value={calibrationTopic} 
+                onChange={(e) => setCalibrationTopic(e.target.value)}
+                disabled={availableCalibrationTopics.length === 0}
+              >
+                <option value="">None (use fallback)</option>
+                {availableCalibrationTopics.map(topic => (
+                  <option key={topic} value={topic}>{topic}</option>
+                ))}
+              </select>
+              {cameraInfo && !frameIdMismatch && (
+                <span className="calibration-status success">✓ Loaded</span>
+              )}
+              {frameIdMismatch && (
+                <span className="calibration-status warning">⚠️ Frame mismatch</span>
+              )}
+            </div>
+
+            <div className="setting-item setting-item-narrow">
+              <label className="setting-label">
+                <span className="label-text">Playback</span>
+              </label>
+              <button className="setting-button" onClick={() => setIsPaused(!isPaused)}>
+                {isPaused ? '▶ Resume' : '⏸ Pause'}
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="control-group">
-          <button onClick={() => setIsPaused(!isPaused)}>
-            {isPaused ? '▶ Resume' : '⏸ Pause'}
-          </button>
-        </div>
+        {/* Layer 3: Advanced Settings */}
+        <details className="advanced-settings">
+          <summary>
+            <span>Display & Transform Options</span>
+          </summary>
+          
+          <div className="button-config">
+            <div className="button-config-group">
+              <h4>Image Adjustments</h4>
+              <div className="setting-group">
+                <label>Brightness: {brightness}%</label>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  value={brightness}
+                  onChange={(e) => setBrightness(Number(e.target.value))}
+                />
+              </div>
+              <div className="setting-group">
+                <label>Contrast: {contrast}%</label>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  value={contrast}
+                  onChange={(e) => setContrast(Number(e.target.value))}
+                />
+              </div>
+            </div>
 
-        <div className="control-group">
-          <label>Calibration Topic:</label>
-          <select 
-            value={calibrationTopic} 
-            onChange={(e) => setCalibrationTopic(e.target.value)}
-            disabled={availableCalibrationTopics.length === 0}
-          >
-            <option value="">None (use fallback)</option>
-            {availableCalibrationTopics.map(topic => (
-              <option key={topic} value={topic}>{topic}</option>
-            ))}
-          </select>
-          {cameraInfo && !frameIdMismatch && (
-            <span style={{ color: 'green', marginLeft: '8px' }}>✓ Loaded</span>
-          )}
-          {frameIdMismatch && (
-            <span style={{ color: 'orange', marginLeft: '8px' }}>⚠️ Frame mismatch</span>
-          )}
-        </div>
+            <div className="button-config-group">
+              <h4>Orientation</h4>
+              <div className="setting-group">
+                <label>Rotation: {rotation}°</label>
+                <input
+                  type="range"
+                  min="0"
+                  max="360"
+                  value={rotation}
+                  onChange={(e) => setRotation(Number(e.target.value))}
+                />
+              </div>
+              <div className="button-config-row">
+                <button 
+                  className={`transform-button ${flipHorizontal ? 'active' : ''}`}
+                  onClick={() => setFlipHorizontal(!flipHorizontal)}
+                >
+                  ↔️ Flip H
+                </button>
+                <button 
+                  className={`transform-button ${flipVertical ? 'active' : ''}`}
+                  onClick={() => setFlipVertical(!flipVertical)}
+                >
+                  ↕️ Flip V
+                </button>
+              </div>
+            </div>
 
-        <div className="control-group">
-          <label>Brightness:</label>
-          <input
-            type="range"
-            min="0"
-            max="200"
-            value={brightness}
-            onChange={(e) => setBrightness(Number(e.target.value))}
-          />
-          <span>{brightness}%</span>
-        </div>
-
-        <div className="control-group">
-          <label>Contrast:</label>
-          <input
-            type="range"
-            min="0"
-            max="200"
-            value={contrast}
-            onChange={(e) => setContrast(Number(e.target.value))}
-          />
-          <span>{contrast}%</span>
-        </div>
-
-        <div className="control-group">
-          <label>Rotation:</label>
-          <input
-            type="range"
-            min="0"
-            max="360"
-            value={rotation}
-            onChange={(e) => setRotation(Number(e.target.value))}
-          />
-          <span>{rotation}°</span>
-        </div>
-
-        <div className="control-group">
-          <button onClick={() => setFlipHorizontal(!flipHorizontal)}>
-            {flipHorizontal ? '↔️ H-Flip: ON' : '↔️ H-Flip: OFF'}
-          </button>
-        </div>
-
-        <div className="control-group">
-          <button onClick={() => setFlipVertical(!flipVertical)}>
-            {flipVertical ? '↕️ V-Flip: ON' : '↕️ V-Flip: OFF'}
-          </button>
-        </div>
-
-        <div className="control-group">
-          <label>Zoom:</label>
-          <span>{zoomLevel.toFixed(2)}x</span>
-        </div>
-
-        <div className="control-group">
-          <button onClick={resetView}>Reset View</button>
-        </div>
-
-        <div className="control-group">
-          <button onClick={() => setShow3DAnnotations(!show3DAnnotations)} disabled={!cameraModel}>
-            {show3DAnnotations ? '🎯 Hide 3D Points' : '🎯 Show 3D Points'}
-          </button>
-        </div>
-
-        <button onClick={resetTransforms}>Reset Transforms</button>
+            <div className="button-config-group">
+              <h4>View Controls</h4>
+              <div className="setting-group">
+                <label>Zoom: {zoomLevel.toFixed(2)}x</label>
+                <div className="button-config-row">
+                  <button className="view-button" onClick={resetView}>Reset View</button>
+                  <button className="view-button" onClick={resetTransforms}>Reset All</button>
+                </div>
+              </div>
+              <div className="setting-group">
+                <label>3D Annotations</label>
+                <button 
+                  className={`transform-button ${show3DAnnotations ? 'active' : ''}`}
+                  onClick={() => setShow3DAnnotations(!show3DAnnotations)} 
+                  disabled={!cameraModel}
+                >
+                  {show3DAnnotations ? '🎯 Hide Points' : '🎯 Show Points'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </details>
       </div>
 
       <div className="canvas-container">
