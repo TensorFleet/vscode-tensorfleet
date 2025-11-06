@@ -1,0 +1,251 @@
+/* Ported from: lichtblick/packages/suite-base/src/panels/Teleop/TeleopPanel.tsx
+   Date: 2025-11-06
+   Original used inline Stack component and ThemeProvider
+   Converted to traditional CSS with dark theme defaults
+*/
+
+.teleop-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #1e1e1e;
+  color: rgba(255, 255, 255, 0.87);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  padding: 20px;
+}
+
+.teleop-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.teleop-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transition: background-color 0.3s ease;
+}
+
+.status-dot.connected {
+  background: #4caf50;
+  box-shadow: 0 0 8px rgba(76, 175, 80, 0.6);
+}
+
+.status-dot.disconnected {
+  background: #f44336;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-bottom: 20px;
+  padding: 15px;
+  background: #252526;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 180px;
+}
+
+.setting-group label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+}
+
+.setting-group input,
+.setting-group select {
+  background: #3c3c3c;
+  color: rgba(255, 255, 255, 0.87);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color 0.2s ease;
+}
+
+.setting-group input:focus,
+.setting-group select:focus {
+  outline: none;
+  border-color: #2196f3;
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+}
+
+.setting-group input:disabled,
+.setting-group select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.advanced-settings {
+  margin-top: 10px;
+}
+
+.advanced-settings summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: #2196f3;
+  padding: 8px 0;
+  user-select: none;
+}
+
+.advanced-settings summary:hover {
+  color: #42a5f5;
+}
+
+.advanced-settings[open] summary {
+  margin-bottom: 15px;
+}
+
+.button-config {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 15px;
+  padding: 15px;
+  background: #2d2d30;
+  border-radius: 4px;
+}
+
+.button-config-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.button-config-group h4 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.87);
+}
+
+.button-config-row {
+  display: flex;
+  gap: 10px;
+}
+
+.control-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  min-height: 300px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+  padding: 40px 20px;
+}
+
+.empty-state p {
+  margin: 10px 0;
+  line-height: 1.5;
+}
+
+.directional-pad-wrapper {
+  width: 100%;
+  max-width: 400px;
+  aspect-ratio: 1;
+}
+
+.keyboard-hint {
+  margin-top: 30px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+}
+
+.keyboard-hint p {
+  margin: 5px 0;
+}
+
+.keyboard-hint .keys {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.keyboard-hint kbd {
+  background: #252526;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.2);
+}
+
+.status-panel {
+  margin-top: 20px;
+  padding: 15px;
+  background: #252526;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.status-panel h3 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.87);
+}
+
+.twist-display {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.twist-display > div {
+  margin: 5px 0;
+  padding: 4px 8px;
+  background: #1e1e1e;
+  border-radius: 2px;
+}
+
+.twist-display .field-name {
+  color: #2196f3;
+  font-weight: 600;
+}
+
