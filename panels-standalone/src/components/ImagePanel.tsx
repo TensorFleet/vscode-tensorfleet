@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ros2Bridge, type ImageMessage } from '../ros2-bridge';
+import { 
+  type CameraInfo, 
+  type ICameraModel, 
+  PinholeCameraModel, 
+  createFallbackCameraModel,
+  normalizeCameraInfo 
+} from '../utils/CameraModel';
 import './ImagePanel.css';
 
 export const ImagePanel: React.FC = () => {
@@ -25,6 +32,17 @@ export const ImagePanel: React.FC = () => {
   const dragStartMouseCoords = useRef({ x: 0, y: 0 });
   const isDragging = useRef(false);
   
+  // Context menu for download
+  const [contextMenu, setContextMenu] = useState<{x: number; y: number} | null>(null);
+  
+  // Camera calibration state - Phase 4
+  const [cameraInfo, setCameraInfo] = useState<CameraInfo | null>(null);
+  const [cameraModel, setCameraModel] = useState<ICameraModel | null>(null);
+  const [calibrationTopic, setCalibrationTopic] = useState<string>('');
+  const [availableCalibrationTopics, setAvailableCalibrationTopics] = useState<string[]>([]);
+  const [frameIdMismatch, setFrameIdMismatch] = useState<boolean>(false);
+  const [show3DAnnotations, setShow3DAnnotations] = useState<boolean>(false);
+  
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const pendingImageRef = useRef<ImageMessage | null>(null);
@@ -38,6 +56,16 @@ export const ImagePanel: React.FC = () => {
     if (topics.length > 0 && !selectedTopic) {
       setSelectedTopic(topics[0]);
     }
+    
+    // Get calibration topics (camera_info)
+    // In a real implementation, you'd filter topics by type
+    // For now, we'll look for topics containing "camera_info" or "CameraInfo"
+    const allTopics = topics; // In real app: ros2Bridge.getAllTopics()
+    const calibTopics = allTopics.filter(t => 
+      t.toLowerCase().includes('camera_info') || 
+      t.toLowerCase().includes('camerainfo')
+    );
+    setAvailableCalibrationTopics(calibTopics);
   }, []);
 
   useEffect(() => {
@@ -171,6 +199,11 @@ export const ImagePanel: React.FC = () => {
         ctx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
         
         ctx.restore();
+
+        // Draw 3D annotations on top (if enabled and camera model available)
+        if (show3DAnnotations && cameraModel) {
+          draw3DAnnotations(ctx);
+        }
       };
       
       img.onerror = (error) => {
@@ -183,7 +216,7 @@ export const ImagePanel: React.FC = () => {
     };
 
     renderImage();
-  }, [currentImage, brightness, contrast, rotation, flipHorizontal, flipVertical, panOffset, zoomLevel]);
+  }, [currentImage, brightness, contrast, rotation, flipHorizontal, flipVertical, panOffset, zoomLevel, show3DAnnotations, cameraModel]);
 
   // Mouse event handlers for pan and zoom (ported from Lichtblick ImageMode)
   useEffect(() => {
@@ -306,6 +339,20 @@ export const ImagePanel: React.FC = () => {
     ros2Bridge.unsubscribe(selectedTopic);
     ros2Bridge.subscribe(newTopic);
     setSelectedTopic(newTopic);
+    
+    // Auto-match calibration topic (Phase 4.1)
+    // Try to find matching camera_info topic with same prefix
+    const match = newTopic.match(/^(.+\/)([^/]+)$/);
+    if (match) {
+      const prefix = match[1]; // e.g., "/camera/"
+      const matchingCalibTopic = availableCalibrationTopics.find(t => 
+        t.startsWith(prefix) && 
+        (t.endsWith('camera_info') || t.endsWith('CameraInfo'))
+      );
+      if (matchingCalibTopic) {
+        setCalibrationTopic(matchingCalibTopic);
+      }
+    }
   };
 
   // Connection mode is fixed to rosbridge; no handler needed
@@ -323,6 +370,235 @@ export const ImagePanel: React.FC = () => {
     setPanOffset({ x: 0, y: 0 });
     setZoomLevel(1);
   };
+
+  // Project 3D point to 2D pixel coordinates (Phase 4.3)
+  const projectPoint = (point3D: { x: number; y: number; z: number }) => {
+    if (!cameraModel) {
+      console.warn('No camera model available for projection');
+      return null;
+    }
+    return cameraModel.project(point3D);
+  };
+
+  // Example: Draw 3D annotations on canvas (Phase 4.3)
+  // This demonstrates how to use the projection feature
+  // In a real application, you'd receive 3D points from ROS messages
+  const draw3DAnnotations = (ctx: CanvasRenderingContext2D) => {
+    if (!cameraModel) return;
+
+    // Example 3D points (in camera coordinate frame)
+    // You would replace these with actual 3D data from your ROS topics
+    const example3DPoints = [
+      { x: 0.5, y: 0, z: 2, label: 'Point A' },
+      { x: -0.5, y: 0, z: 2, label: 'Point B' },
+      { x: 0, y: 0.5, z: 3, label: 'Point C' },
+    ];
+
+    example3DPoints.forEach(point => {
+      const pixel = projectPoint(point);
+      if (!pixel) return; // Behind camera or outside image
+
+      // Draw circle at projected location
+      ctx.save();
+      ctx.fillStyle = 'red';
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(pixel.u, pixel.v, 5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+
+      // Draw label
+      ctx.fillStyle = 'white';
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 3;
+      ctx.font = '12px Arial';
+      ctx.strokeText(point.label, pixel.u + 8, pixel.v - 8);
+      ctx.fillText(point.label, pixel.u + 8, pixel.v - 8);
+      ctx.restore();
+    });
+  };
+
+  // Download image with all transforms applied - ported from Lichtblick ImageMode
+  const downloadImage = async () => {
+    if (!currentImage) {
+      console.warn('No image available to download');
+      return;
+    }
+
+    try {
+      // Calculate output dimensions (rotation by 90°/270° swaps width/height)
+      const isRotated90or270 = rotation === 90 || rotation === 270;
+      const outputWidth = isRotated90or270 ? currentImage.height : currentImage.width;
+      const outputHeight = isRotated90or270 ? currentImage.width : currentImage.height;
+
+      // Create offscreen canvas for export
+      const canvas = document.createElement('canvas');
+      canvas.width = outputWidth;
+      canvas.height = outputHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Unable to create rendering context for image download');
+      }
+
+      // Load image as bitmap
+      const img = new Image();
+      img.src = currentImage.data;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = reject;
+      });
+
+      // Create bitmap (needed for transform support)
+      const bitmap = await createImageBitmap(img);
+
+      // Apply transforms (order is critical!)
+      ctx.save();
+      
+      // Translate to center (so rotation/flip happen around center)
+      ctx.translate(outputWidth / 2, outputHeight / 2);
+      
+      // Apply flip
+      ctx.scale(
+        flipHorizontal ? -1 : 1,
+        flipVertical ? -1 : 1
+      );
+      
+      // Apply rotation
+      ctx.rotate((rotation * Math.PI) / 180);
+      
+      // Apply brightness/contrast filter
+      const brightnessValue = (brightness / 100) * 1.2 - 0.6; // Maps to -0.6 to 0.6
+      const contrastValue = (contrast / 100) * 1.8 + 0.1; // Maps to 0.1 to 1.9
+      ctx.filter = `brightness(${brightnessValue + 1}) contrast(${contrastValue})`;
+      
+      // Translate back and draw centered
+      ctx.translate(-currentImage.width / 2, -currentImage.height / 2);
+      ctx.drawImage(bitmap, 0, 0);
+      
+      ctx.restore();
+
+      // Export as PNG blob
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) {
+            resolve(result);
+          } else {
+            reject(new Error(`Failed to create image from ${outputWidth}x${outputHeight} canvas`));
+          }
+        }, 'image/png');
+      });
+
+      // Generate filename with topic and timestamp
+      const topicName = selectedTopic.replace(/^\/+/, '').replace(/\//g, '_');
+      const timestamp = currentImage.timestamp || Date.now();
+      const fileName = `${topicName}-${timestamp}.png`;
+
+      // Trigger download
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      console.log(`Downloaded image: ${fileName}`);
+    } catch (error) {
+      console.error('[ImagePanel] Failed to download image:', error);
+      setErrorMessage(`Download failed: ${(error as Error).message}`);
+    }
+  };
+
+  // Handle context menu (right-click)
+  const handleContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  // Close context menu
+  const closeContextMenu = () => {
+    setContextMenu(null);
+  };
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const handleClick = () => closeContextMenu();
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, [contextMenu]);
+
+  // Subscribe to calibration topic (Phase 4.1)
+  useEffect(() => {
+    if (!calibrationTopic) {
+      setCameraInfo(null);
+      return;
+    }
+
+    // Subscribe to calibration topic
+    ros2Bridge.subscribe(calibrationTopic);
+
+    const cleanup = ros2Bridge.onMessage((message) => {
+      if (message.topic === calibrationTopic) {
+        try {
+          // Normalize CameraInfo (handle ROS1/ROS2 differences)
+          const normalizedInfo = normalizeCameraInfo(message.data);
+          setCameraInfo(normalizedInfo);
+        } catch (error) {
+          console.error('[ImagePanel] Failed to parse CameraInfo:', error);
+          setErrorMessage(`Invalid CameraInfo: ${(error as Error).message}`);
+        }
+      }
+    });
+
+    return () => {
+      cleanup();
+      ros2Bridge.unsubscribe(calibrationTopic);
+    };
+  }, [calibrationTopic]);
+
+  // Create/update camera model (Phase 4.2)
+  useEffect(() => {
+    if (!currentImage) {
+      setCameraModel(null);
+      return;
+    }
+
+    if (cameraInfo) {
+      // Validate frame_id match
+      const imageFrameId = currentImage.frameId || '';
+      const cameraFrameId = cameraInfo.header.frame_id;
+      
+      if (imageFrameId && cameraFrameId && imageFrameId !== cameraFrameId) {
+        setFrameIdMismatch(true);
+        console.warn(`[ImagePanel] Frame ID mismatch: Image (${imageFrameId}) vs CameraInfo (${cameraFrameId})`);
+      } else {
+        setFrameIdMismatch(false);
+      }
+
+      // Create camera model from calibration
+      try {
+        const model = new PinholeCameraModel(cameraInfo);
+        setCameraModel(model);
+      } catch (error) {
+        console.error('[ImagePanel] Failed to create camera model:', error);
+        setErrorMessage(`Camera model error: ${(error as Error).message}`);
+      }
+    } else {
+      // Create fallback camera model (Phase 4.2)
+      const fallbackModel = createFallbackCameraModel(
+        currentImage.width,
+        currentImage.height,
+        currentImage.frameId || 'camera',
+        500 // Default focal length
+      );
+      setCameraModel(fallbackModel);
+      setFrameIdMismatch(false);
+    }
+  }, [currentImage, cameraInfo]);
 
   return (
     <div className="image-panel">
@@ -348,6 +624,26 @@ export const ImagePanel: React.FC = () => {
           <button onClick={() => setIsPaused(!isPaused)}>
             {isPaused ? '▶ Resume' : '⏸ Pause'}
           </button>
+        </div>
+
+        <div className="control-group">
+          <label>Calibration Topic:</label>
+          <select 
+            value={calibrationTopic} 
+            onChange={(e) => setCalibrationTopic(e.target.value)}
+            disabled={availableCalibrationTopics.length === 0}
+          >
+            <option value="">None (use fallback)</option>
+            {availableCalibrationTopics.map(topic => (
+              <option key={topic} value={topic}>{topic}</option>
+            ))}
+          </select>
+          {cameraInfo && !frameIdMismatch && (
+            <span style={{ color: 'green', marginLeft: '8px' }}>✓ Loaded</span>
+          )}
+          {frameIdMismatch && (
+            <span style={{ color: 'orange', marginLeft: '8px' }}>⚠️ Frame mismatch</span>
+          )}
         </div>
 
         <div className="control-group">
@@ -407,11 +703,17 @@ export const ImagePanel: React.FC = () => {
           <button onClick={resetView}>Reset View</button>
         </div>
 
+        <div className="control-group">
+          <button onClick={() => setShow3DAnnotations(!show3DAnnotations)} disabled={!cameraModel}>
+            {show3DAnnotations ? '🎯 Hide 3D Points' : '🎯 Show 3D Points'}
+          </button>
+        </div>
+
         <button onClick={resetTransforms}>Reset Transforms</button>
       </div>
 
       <div className="canvas-container">
-        <canvas ref={canvasRef} />
+        <canvas ref={canvasRef} onContextMenu={handleContextMenu} />
         
         {/* HUD Overlays */}
         {connectionStatus === 'disconnected' && (
@@ -441,6 +743,20 @@ export const ImagePanel: React.FC = () => {
             <div>Encoding: {currentImage.encoding}</div>
             <div>Type: {currentImage.messageType}</div>
             <div>Timestamp: {new Date(currentImage.timestamp).toLocaleTimeString()}</div>
+            
+            {cameraModel && (
+              <>
+                <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.3)', paddingTop: '8px' }}>
+                  <strong>Camera Model:</strong>
+                </div>
+                <div>Focal Length: fx={cameraModel.fx.toFixed(1)}, fy={cameraModel.fy.toFixed(1)}</div>
+                <div>Principal Point: ({cameraModel.cx.toFixed(1)}, {cameraModel.cy.toFixed(1)})</div>
+                <div>Distortion: {cameraModel.distortionModel}{cameraInfo ? '' : ' (fallback)'}</div>
+                {cameraModel.D.length > 0 && cameraModel.D.some(d => d !== 0) && (
+                  <div>Coefficients: [{cameraModel.D.slice(0, 5).map(d => d.toFixed(4)).join(', ')}]</div>
+                )}
+              </>
+            )}
           </div>
         )}
         {!currentImage && (
@@ -461,6 +777,31 @@ export const ImagePanel: React.FC = () => {
                 <p className="hint">Connecting to rosbridge - topic: {selectedTopic}</p>
               </>
             )}
+          </div>
+        )}
+
+        {/* Context Menu for Download */}
+        {contextMenu && (
+          <div
+            className="context-menu"
+            style={{
+              position: 'fixed',
+              left: `${contextMenu.x}px`,
+              top: `${contextMenu.y}px`,
+              zIndex: 1000,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                downloadImage();
+                closeContextMenu();
+              }}
+              disabled={!currentImage}
+            >
+              📥 Download Image
+            </button>
           </div>
         )}
       </div>
