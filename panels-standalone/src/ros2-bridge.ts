@@ -215,7 +215,8 @@ class ROS2Bridge {
       throw new Error('Failed to get canvas context');
     }
 
-    const imageDataObj = new ImageData(rgba, width, height);
+    const imageDataObj = ctx.createImageData(width, height);
+    imageDataObj.data.set(rgba);
     ctx.putImageData(imageDataObj, 0, 0);
 
     // Return as data URI (JPEG for efficiency)
