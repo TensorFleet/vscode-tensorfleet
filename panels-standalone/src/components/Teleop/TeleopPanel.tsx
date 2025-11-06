@@ -169,39 +169,52 @@ export function TeleopPanel(): React.JSX.Element {
 
   return (
     <div className="teleop-panel">
-      <div className="teleop-header">
-        <h2>Teleop Control</h2>
-        <div className="connection-status">
-          <span className={`status-dot ${isConnected ? 'connected' : 'disconnected'}`} />
-          <span>{isConnected ? 'Connected to ROS' : 'Disconnected'}</span>
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <div className="settings-row">
-          <div className="setting-group">
-            <label>Topic</label>
-            <input
-              type="text"
-              value={config.topic ?? ''}
-              onChange={(e) => setConfig({ ...config, topic: e.target.value })}
-              placeholder="/cmd_vel"
-            />
+      <div className="teleop-header-panel">
+        <div className="header-top">
+          <div className="header-title-section">
+            <h2 className="panel-title">Teleop Control</h2>
+            <div className={`connection-indicator ${isConnected ? 'connected' : 'disconnected'}`}>
+              <span className="status-dot"></span>
+              <span className="status-text">{isConnected ? 'Connected' : 'Disconnected'}</span>
+            </div>
           </div>
-          <div className="setting-group">
-            <label>Publish Rate (Hz)</label>
-            <input
-              type="number"
-              min="1"
-              max="100"
-              value={config.publishRate}
-              onChange={(e) => setConfig({ ...config, publishRate: Number(e.target.value) })}
-            />
+        </div>
+        
+        <div className="header-settings">
+          <div className="settings-inline">
+            <div className="setting-item">
+              <label className="setting-label">
+                <span className="label-text">Topic</span>
+              </label>
+              <input
+                className="setting-input"
+                type="text"
+                value={config.topic ?? ''}
+                onChange={(e) => setConfig({ ...config, topic: e.target.value })}
+                placeholder="/cmd_vel"
+              />
+            </div>
+            <div className="setting-item setting-item-narrow">
+              <label className="setting-label">
+                <span className="label-text">Rate</span>
+                <span className="label-unit">Hz</span>
+              </label>
+              <input
+                className="setting-input"
+                type="number"
+                min="1"
+                max="100"
+                value={config.publishRate}
+                onChange={(e) => setConfig({ ...config, publishRate: Number(e.target.value) })}
+              />
+            </div>
           </div>
         </div>
 
         <details className="advanced-settings">
-          <summary>Button Mapping Configuration</summary>
+          <summary>
+            <span>Button Mapping Configuration</span>
+          </summary>
           <div className="button-config">
             {/* Up Button */}
             <div className="button-config-group">
