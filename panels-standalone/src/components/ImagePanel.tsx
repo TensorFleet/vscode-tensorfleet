@@ -7,8 +7,9 @@ export const ImagePanel: React.FC = () => {
   const [isPaused, setIsPaused] = useState(false);
   const [availableTopics, setAvailableTopics] = useState<string[]>([]);
   const [selectedTopic, setSelectedTopic] = useState<string>('');
-  const [brightness, setBrightness] = useState(100);
-  const [contrast, setContrast] = useState(100);
+  // Brightness/Contrast: 50 = neutral (maps to 0 brightness, 1.0 contrast)
+  const [brightness, setBrightness] = useState(50);
+  const [contrast, setContrast] = useState(50);
   const [rotation, setRotation] = useState(0);
   const [flipHorizontal, setFlipHorizontal] = useState(false);
   const [flipVertical, setFlipVertical] = useState(false);
@@ -16,6 +17,14 @@ export const ImagePanel: React.FC = () => {
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [lastMessageTime, setLastMessageTime] = useState<number>(Date.now());
+  
+  // Pan & Zoom state - ported from Lichtblick ImageMode
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const dragStartPanOffset = useRef({ x: 0, y: 0 });
+  const dragStartMouseCoords = useRef({ x: 0, y: 0 });
+  const isDragging = useRef(false);
+  
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const pendingImageRef = useRef<ImageMessage | null>(null);
@@ -82,7 +91,7 @@ export const ImagePanel: React.FC = () => {
   }, [selectedTopic, isPaused]);
 
   useEffect(() => {
-    // Render image to canvas with transformations and aspect ratio preservation
+    // Render image to canvas with transformations, pan/zoom, and aspect ratio preservation
     const renderImage = () => {
       if (!currentImage || !canvasRef.current) return;
       
@@ -131,8 +140,18 @@ export const ImagePanel: React.FC = () => {
         // Apply transformations
         ctx.save();
         
-        // Move to center of where image will be drawn
-        ctx.translate(drawX + drawWidth / 2, drawY + drawHeight / 2);
+        // Move to center of canvas for pan/zoom
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        
+        // Apply user zoom (ported from Lichtblick)
+        ctx.scale(zoomLevel, zoomLevel);
+        
+        // Apply pan offset (ported from Lichtblick)
+        ctx.translate(panOffset.x / zoomLevel, panOffset.y / zoomLevel);
+        
+        // Move to center of where image will be drawn (adjusted for zoom/pan)
+        ctx.translate((drawX - canvas.width / 2), (drawY - canvas.height / 2));
+        ctx.translate(drawWidth / 2, drawHeight / 2);
         
         // Apply flip
         const scaleX = flipHorizontal ? -1 : 1;
@@ -143,7 +162,10 @@ export const ImagePanel: React.FC = () => {
         ctx.rotate((rotation * Math.PI) / 180);
         
         // Apply brightness/contrast filter
-        ctx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
+        // Map from 0-100 slider range to Lichtblick's internal ranges
+        const brightnessValue = (brightness / 100) * 1.2 - 0.6; // Maps to -0.6 to 0.6
+        const contrastValue = (contrast / 100) * 1.8 + 0.1; // Maps to 0.1 to 1.9
+        ctx.filter = `brightness(${brightnessValue + 1}) contrast(${contrastValue})`;
         
         // Draw image centered at origin
         ctx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
@@ -161,7 +183,87 @@ export const ImagePanel: React.FC = () => {
     };
 
     renderImage();
-  }, [currentImage, brightness, contrast, rotation, flipHorizontal, flipVertical]);
+  }, [currentImage, brightness, contrast, rotation, flipHorizontal, flipVertical, panOffset, zoomLevel]);
+
+  // Mouse event handlers for pan and zoom (ported from Lichtblick ImageMode)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Mouse down - start drag
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return; // Only left mouse button
+      isDragging.current = true;
+      dragStartPanOffset.current = { ...panOffset };
+      dragStartMouseCoords.current = { x: e.clientX, y: e.clientY };
+      canvas.style.cursor = 'grabbing';
+    };
+
+    // Mouse move - update pan during drag
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      
+      const dx = e.clientX - dragStartMouseCoords.current.x;
+      const dy = e.clientY - dragStartMouseCoords.current.y;
+      
+      setPanOffset({
+        x: dragStartPanOffset.current.x + dx,
+        y: dragStartPanOffset.current.y + dy,
+      });
+    };
+
+    // Mouse up - end drag
+    const handleMouseUp = () => {
+      if (isDragging.current) {
+        isDragging.current = false;
+        canvas.style.cursor = 'grab';
+      }
+    };
+
+    // Wheel - zoom centered on cursor (ported from Lichtblick)
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      
+      // Get cursor position relative to canvas
+      const rect = canvas.getBoundingClientRect();
+      const cursorX = e.clientX - rect.left;
+      const cursorY = e.clientY - rect.top;
+      
+      // Clamp wheel delta (from Lichtblick: -30 to 30)
+      const clampedDelta = Math.max(-30, Math.min(30, e.deltaY));
+      const zoomRatio = 1 - 0.01 * clampedDelta;
+      
+      // Clamp zoom level (from Lichtblick: 0.5 to 50)
+      const newZoom = Math.max(0.5, Math.min(50, zoomLevel * zoomRatio));
+      const finalRatio = newZoom / zoomLevel;
+      
+      // Adjust pan offset so zoom is centered around cursor
+      const halfWidth = canvas.width / 2;
+      const halfHeight = canvas.height / 2;
+      
+      setPanOffset({
+        x: (halfWidth + panOffset.x - cursorX) * finalRatio - halfWidth + cursorX,
+        y: (halfHeight + panOffset.y - cursorY) * finalRatio - halfHeight + cursorY,
+      });
+      
+      setZoomLevel(newZoom);
+    };
+
+    canvas.style.cursor = 'grab';
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('mouseleave', handleMouseUp);
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('mousedown', handleMouseDown);
+      canvas.removeEventListener('mousemove', handleMouseMove);
+      canvas.removeEventListener('mouseup', handleMouseUp);
+      canvas.removeEventListener('mouseleave', handleMouseUp);
+      canvas.removeEventListener('wheel', handleWheel);
+    };
+  }, [panOffset, zoomLevel]);
 
   // Handle window resize
   useEffect(() => {
@@ -209,11 +311,17 @@ export const ImagePanel: React.FC = () => {
   // Connection mode is fixed to rosbridge; no handler needed
 
   const resetTransforms = () => {
-    setBrightness(100);
-    setContrast(100);
+    setBrightness(50); // Reset to middle value (maps to 0 brightness)
+    setContrast(50); // Reset to middle value (maps to 1.0 contrast)
     setRotation(0);
     setFlipHorizontal(false);
     setFlipVertical(false);
+  };
+
+  // Reset view (pan & zoom) - ported from Lichtblick
+  const resetView = () => {
+    setPanOffset({ x: 0, y: 0 });
+    setZoomLevel(1);
   };
 
   return (
@@ -290,7 +398,16 @@ export const ImagePanel: React.FC = () => {
           </button>
         </div>
 
-        <button onClick={resetTransforms}>Reset</button>
+        <div className="control-group">
+          <label>Zoom:</label>
+          <span>{zoomLevel.toFixed(2)}x</span>
+        </div>
+
+        <div className="control-group">
+          <button onClick={resetView}>Reset View</button>
+        </div>
+
+        <button onClick={resetTransforms}>Reset Transforms</button>
       </div>
 
       <div className="canvas-container">
