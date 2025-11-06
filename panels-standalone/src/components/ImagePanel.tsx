@@ -5,20 +5,46 @@ import './ImagePanel.css';
 export const ImagePanel: React.FC = () => {
   const [currentImage, setCurrentImage] = useState<ImageMessage | null>(null);
   const [isPaused, setIsPaused] = useState(false);
-  const [topics] = useState(['/camera/image_raw']);
-  const [selectedTopic, setSelectedTopic] = useState('/camera/image_raw');
+  const [availableTopics, setAvailableTopics] = useState<string[]>([]);
+  const [selectedTopic, setSelectedTopic] = useState<string>('');
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
   const [rotation, setRotation] = useState(0);
   const [flipHorizontal, setFlipHorizontal] = useState(false);
   const [flipVertical, setFlipVertical] = useState(false);
+  const [isLoadingImage, setIsLoadingImage] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [lastMessageTime, setLastMessageTime] = useState<number>(Date.now());
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const pendingImageRef = useRef<ImageMessage | null>(null);
 
+  // Initialize: Load available topics and auto-select first one
+  useEffect(() => {
+    const topics = ros2Bridge.getAvailableImageTopics();
+    setAvailableTopics(topics);
+    
+    // Auto-select first topic if available
+    if (topics.length > 0 && !selectedTopic) {
+      setSelectedTopic(topics[0]);
+    }
+  }, []);
+
   useEffect(() => {
     // Ensure connection to rosbridge (single supported mode)
     ros2Bridge.connect('rosbridge');
+
+    // Check connection status periodically
+    const statusInterval = setInterval(() => {
+      const isConnected = ros2Bridge.isConnected();
+      setConnectionStatus(isConnected ? 'connected' : 'disconnected');
+    }, 1000);
+
+    // Only subscribe if we have a selected topic
+    if (!selectedTopic) {
+      return () => clearInterval(statusInterval);
+    }
 
     // Subscribe to selected topic
     ros2Bridge.subscribe(selectedTopic);
@@ -26,6 +52,10 @@ export const ImagePanel: React.FC = () => {
     // Listen for image messages
     const cleanup = ros2Bridge.onMessage((message) => {
       if (!isPaused && message.topic === selectedTopic) {
+        // Clear any error messages on successful receipt
+        setErrorMessage(null);
+        setLastMessageTime(Date.now());
+        
         // Store pending image for next animation frame
         pendingImageRef.current = message;
         
@@ -44,6 +74,7 @@ export const ImagePanel: React.FC = () => {
 
     return () => {
       cleanup();
+      clearInterval(statusInterval);
       if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current);
       }
@@ -51,23 +82,57 @@ export const ImagePanel: React.FC = () => {
   }, [selectedTopic, isPaused]);
 
   useEffect(() => {
-    // Render image to canvas with transformations
-    if (currentImage && canvasRef.current) {
+    // Render image to canvas with transformations and aspect ratio preservation
+    const renderImage = () => {
+      if (!currentImage || !canvasRef.current) return;
+      
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
+      setIsLoadingImage(true);
+
       const img = new Image();
       img.onload = () => {
-        // Update canvas dimensions
-        canvas.width = img.width;
-        canvas.height = img.height;
+        setIsLoadingImage(false);
+        // Get container dimensions
+        const container = canvas.parentElement;
+        if (!container) return;
+        
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        
+        // Set canvas to match container
+        canvas.width = containerWidth;
+        canvas.height = containerHeight;
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Calculate aspect ratio preserved dimensions
+        const imgAspect = img.width / img.height;
+        const canvasAspect = canvas.width / canvas.height;
+        
+        let drawWidth, drawHeight;
+        if (imgAspect > canvasAspect) {
+          // Image is wider - fit to width
+          drawWidth = canvas.width;
+          drawHeight = canvas.width / imgAspect;
+        } else {
+          // Image is taller - fit to height
+          drawHeight = canvas.height;
+          drawWidth = canvas.height * imgAspect;
+        }
+        
+        // Calculate position to center image
+        const drawX = (canvas.width - drawWidth) / 2;
+        const drawY = (canvas.height - drawHeight) / 2;
 
         // Apply transformations
         ctx.save();
         
-        // Move to center for transformations
-        ctx.translate(canvas.width / 2, canvas.height / 2);
+        // Move to center of where image will be drawn
+        ctx.translate(drawX + drawWidth / 2, drawY + drawHeight / 2);
         
         // Apply flip
         const scaleX = flipHorizontal ? -1 : 1;
@@ -80,15 +145,59 @@ export const ImagePanel: React.FC = () => {
         // Apply brightness/contrast filter
         ctx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
         
-        // Draw image centered
-        ctx.drawImage(img, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height);
+        // Draw image centered at origin
+        ctx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
         
         ctx.restore();
       };
       
+      img.onerror = (error) => {
+        setIsLoadingImage(false);
+        setErrorMessage('Failed to decode image data');
+        console.error('[ImagePanel] Failed to load image:', error);
+      };
+      
       img.src = currentImage.data;
-    }
+    };
+
+    renderImage();
   }, [currentImage, brightness, contrast, rotation, flipHorizontal, flipVertical]);
+
+  // Handle window resize
+  useEffect(() => {
+    const handleResize = () => {
+      // Trigger re-render on resize by creating a synthetic re-render
+      if (currentImage && canvasRef.current) {
+        const canvas = canvasRef.current;
+        const container = canvas.parentElement;
+        if (container) {
+          canvas.width = container.clientWidth;
+          canvas.height = container.clientHeight;
+          // The effect above will re-render when canvas dimensions change
+        }
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [currentImage]);
+
+  // Check for message timeout (no messages for 10 seconds)
+  useEffect(() => {
+    if (!selectedTopic || connectionStatus !== 'connected') {
+      return;
+    }
+
+    const timeoutCheck = setInterval(() => {
+      const timeSinceLastMessage = Date.now() - lastMessageTime;
+      if (timeSinceLastMessage > 10000 && !currentImage) {
+        // No messages for 10 seconds and no current image
+        setErrorMessage(`No messages received on ${selectedTopic} for ${Math.floor(timeSinceLastMessage / 1000)}s`);
+      }
+    }, 2000);
+
+    return () => clearInterval(timeoutCheck);
+  }, [selectedTopic, connectionStatus, lastMessageTime, currentImage]);
 
   const handleTopicChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newTopic = e.target.value;
@@ -113,8 +222,15 @@ export const ImagePanel: React.FC = () => {
         
         <div className="control-group">
           <label>Topic:</label>
-          <select value={selectedTopic} onChange={handleTopicChange}>
-            {topics.map(topic => (
+          <select 
+            value={selectedTopic} 
+            onChange={handleTopicChange}
+            disabled={availableTopics.length === 0}
+          >
+            {availableTopics.length === 0 && (
+              <option value="">No image topics available</option>
+            )}
+            {availableTopics.map(topic => (
               <option key={topic} value={topic}>{topic}</option>
             ))}
           </select>
@@ -179,18 +295,55 @@ export const ImagePanel: React.FC = () => {
 
       <div className="canvas-container">
         <canvas ref={canvasRef} />
+        
+        {/* HUD Overlays */}
+        {connectionStatus === 'disconnected' && (
+          <div className="hud-overlay error">
+            <p>⚠️ Not connected to ROS2</p>
+            <p className="hint">Check if rosbridge_server is running</p>
+          </div>
+        )}
+        
+        {errorMessage && (
+          <div className="hud-overlay error">
+            <p>❌ {errorMessage}</p>
+          </div>
+        )}
+        
+        {isLoadingImage && (
+          <div className="loading-indicator">
+            <p>Decoding image...</p>
+          </div>
+        )}
+        
         {currentImage && (
           <div className="image-info">
             <div>Topic: {currentImage.topic}</div>
+            <div>Frame: {currentImage.frameId || 'N/A'}</div>
             <div>Size: {currentImage.width}×{currentImage.height}</div>
             <div>Encoding: {currentImage.encoding}</div>
+            <div>Type: {currentImage.messageType}</div>
             <div>Timestamp: {new Date(currentImage.timestamp).toLocaleTimeString()}</div>
           </div>
         )}
         {!currentImage && (
           <div className="no-image">
-            <p>Waiting for image data...</p>
-            <p className="hint">Connecting to rosbridge - topic: {selectedTopic}</p>
+            {availableTopics.length === 0 ? (
+              <>
+                <p>No image topics available</p>
+                <p className="hint">Please configure image topics in the bridge</p>
+              </>
+            ) : !selectedTopic ? (
+              <>
+                <p>No topic selected</p>
+                <p className="hint">Please select an image topic from the dropdown</p>
+              </>
+            ) : (
+              <>
+                <p>Waiting for image data...</p>
+                <p className="hint">Connecting to rosbridge - topic: {selectedTopic}</p>
+              </>
+            )}
           </div>
         )}
       </div>

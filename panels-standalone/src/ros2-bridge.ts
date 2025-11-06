@@ -7,11 +7,14 @@ export type ConnectionMode = 'rosbridge' | 'foxglove';
 
 export interface ImageMessage {
   topic: string;
-  timestamp: string;
+  timestamp: string; // ISO string
+  timestampNanos?: number; // nanoseconds since epoch
+  frameId: string;
   encoding: string;
   width: number;
   height: number;
   data: string; // base64 or data URI
+  messageType: 'raw' | 'compressed';
 }
 
 export interface TwistMessage {
@@ -87,7 +90,7 @@ class ROS2Bridge {
     }
   }
 
-  subscribe(topic: string) {
+  subscribe(topic: string, messageType?: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('Not connected, queueing subscription:', topic);
       this.subscribedTopics.add(topic);
@@ -97,12 +100,19 @@ class ROS2Bridge {
     this.subscribedTopics.add(topic);
 
     if (this.currentMode === 'rosbridge') {
-      // ROS Bridge protocol - subscribe to raw Image type
-      this.ws.send(JSON.stringify({
+      // ROS Bridge protocol
+      // If no message type specified, let rosbridge auto-detect
+      const subscribeMsg: any = {
         op: 'subscribe',
-        topic: topic,
-        type: 'sensor_msgs/Image'
-      }));
+        topic: topic
+      };
+      
+      // Optionally specify type (useful for disambiguation)
+      if (messageType) {
+        subscribeMsg.type = messageType;
+      }
+      
+      this.ws.send(JSON.stringify(subscribeMsg));
     } else {
       // Foxglove Bridge protocol
       this.ws.send(JSON.stringify({
@@ -114,7 +124,7 @@ class ROS2Bridge {
       }));
     }
 
-    console.log(`Subscribed to ${topic}`);
+    console.log(`Subscribed to ${topic}${messageType ? ` (${messageType})` : ''}`);
   }
 
   unsubscribe(topic: string) {
@@ -160,25 +170,87 @@ class ROS2Bridge {
     return () => this.messageHandlers.delete(handler);
   }
 
+  /**
+   * Get available image topics
+   * TODO: In the future, query rosbridge for actual available topics
+   * For now, returns a configurable list
+   */
+  getAvailableImageTopics(): string[] {
+    // Common ROS2 image topic patterns
+    return [
+      '/camera/image_raw',
+      '/camera/image_compressed',
+      '/camera/color/image_raw',
+      '/camera/color/image_compressed',
+      '/camera/depth/image_raw',
+      '/camera/rgb/image_raw',
+      '/camera/rgb/image_compressed',
+      '/usb_cam/image_raw',
+      '/usb_cam/image_compressed',
+      '/image',
+      '/image_raw',
+      '/image_compressed'
+    ];
+  }
+
   private handleRosbridgeMessage(data: any) {
     if (data.op === 'publish' && data.msg) {
       const msg = data.msg;
       
+      // Extract header information (common to both message types)
+      const header = msg.header || {};
+      const frameId = header.frame_id || '';
+      let timestamp = new Date().toISOString();
+      let timestampNanos: number | undefined;
+      
+      // Extract timestamp from header if available
+      if (header.stamp) {
+        const sec = header.stamp.sec || 0;
+        const nanosec = header.stamp.nanosec || 0;
+        timestampNanos = sec * 1_000_000_000 + nanosec;
+        timestamp = new Date(sec * 1000 + nanosec / 1_000_000).toISOString();
+      }
+      
       // Handle raw Image messages (sensor_msgs/Image)
-      if (msg.width && msg.height && msg.encoding && msg.data) {
+      if (msg.width && msg.height && msg.encoding && msg.data && !msg.format) {
         try {
           const dataURI = this.convertRawImageToDataURI(msg);
           const imageMsg: ImageMessage = {
             topic: data.topic,
-            timestamp: new Date().toISOString(),
+            timestamp,
+            timestampNanos,
+            frameId,
             encoding: msg.encoding,
             width: msg.width,
             height: msg.height,
-            data: dataURI
+            data: dataURI,
+            messageType: 'raw'
           };
           this.messageHandlers.forEach(handler => handler(imageMsg));
         } catch (error) {
-          console.error('[ROS2Bridge] Failed to convert image:', error);
+          console.error('[ROS2Bridge] Failed to convert raw image:', error);
+        }
+      }
+      
+      // Handle compressed Image messages (sensor_msgs/CompressedImage)
+      else if (msg.format && msg.data) {
+        try {
+          this.convertCompressedImageToDataURI(msg, (dataURI, width, height) => {
+            const imageMsg: ImageMessage = {
+              topic: data.topic,
+              timestamp,
+              timestampNanos,
+              frameId,
+              encoding: msg.format, // e.g., "jpeg", "png"
+              width,
+              height,
+              data: dataURI,
+              messageType: 'compressed'
+            };
+            this.messageHandlers.forEach(handler => handler(imageMsg));
+          });
+        } catch (error) {
+          console.error('[ROS2Bridge] Failed to convert compressed image:', error);
         }
       }
     }
@@ -290,6 +362,36 @@ class ROS2Bridge {
     }
 
     return rgba;
+  }
+
+  private convertCompressedImageToDataURI(
+    msg: any,
+    callback: (dataURI: string, width: number, height: number) => void
+  ): void {
+    const { format, data } = msg;
+    
+    // Determine MIME type from format
+    let mimeType = 'image/jpeg'; // default
+    const formatLower = format.toLowerCase();
+    if (formatLower.includes('png')) {
+      mimeType = 'image/png';
+    } else if (formatLower.includes('webp')) {
+      mimeType = 'image/webp';
+    }
+    
+    // Create data URI from base64 data
+    // rosbridge sends the data already base64 encoded
+    const dataURI = `data:${mimeType};base64,${data}`;
+    
+    // Load image to get dimensions
+    const img = new Image();
+    img.onload = () => {
+      callback(dataURI, img.width, img.height);
+    };
+    img.onerror = (error) => {
+      console.error('[ROS2Bridge] Failed to load compressed image:', error);
+    };
+    img.src = dataURI;
   }
 
   private handleFoxgloveMessage(data: any) {
