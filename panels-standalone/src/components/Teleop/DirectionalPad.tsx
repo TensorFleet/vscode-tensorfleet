@@ -9,7 +9,7 @@ import { DirectionalPadAction, DirectionalPadProps } from './types';
 import './DirectionalPad.css';
 
 export function DirectionalPad(props: Readonly<DirectionalPadProps>): React.JSX.Element {
-  const { onAction, disabled = false } = props;
+  const { onAction, disabled = false, activeAction } = props;
 
   const [currentAction, setCurrentAction] = useState<DirectionalPadAction | undefined>();
 
@@ -47,7 +47,7 @@ export function DirectionalPad(props: Readonly<DirectionalPadProps>): React.JSX.
   // Helper to build CSS class names (replaces cx() from tss-react)
   const getButtonClass = (action: DirectionalPadAction) => {
     const classes = ['directional-pad-button'];
-    if (currentAction === action) {
+    if (currentAction === action || activeAction === action) {
       classes.push('active');
     }
     if (disabled) {
@@ -106,4 +106,3 @@ export function DirectionalPad(props: Readonly<DirectionalPadProps>): React.JSX.
     </div>
   );
 }
-

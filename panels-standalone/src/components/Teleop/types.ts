@@ -21,5 +21,5 @@ export enum DirectionalPadAction {
 export type DirectionalPadProps = {
   disabled?: boolean;
   onAction?: (action?: DirectionalPadAction) => void;
+  activeAction?: DirectionalPadAction;
 };
-

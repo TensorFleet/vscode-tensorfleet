@@ -25,6 +25,33 @@ const DEFAULT_CONFIG: TeleopConfig = {
   rightButton: { field: 'angular-z', value: -1 },
 };
 
+const KEYBOARD_ACTIONS: Record<string, DirectionalPadAction> = {
+  arrowup: DirectionalPadAction.UP,
+  w: DirectionalPadAction.UP,
+  arrowdown: DirectionalPadAction.DOWN,
+  s: DirectionalPadAction.DOWN,
+  arrowleft: DirectionalPadAction.LEFT,
+  a: DirectionalPadAction.LEFT,
+  arrowright: DirectionalPadAction.RIGHT,
+  d: DirectionalPadAction.RIGHT,
+};
+
+const EDITABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+
+const normalizeKey = (key: string) => key.toLowerCase();
+
+function shouldIgnoreKeyboardEvent(target: EventTarget | null): boolean {
+  if (!target || !(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  return EDITABLE_TAGS.has(target.tagName);
+}
+
 export function TeleopPanel(): React.JSX.Element {
   // Load config from localStorage or use defaults
   const [config, setConfig] = useState<TeleopConfig>(() => {
@@ -41,9 +68,11 @@ export function TeleopPanel(): React.JSX.Element {
     return DEFAULT_CONFIG;
   });
 
-  const [currentAction, setCurrentAction] = useState<DirectionalPadAction | undefined>();
+  const [padAction, setPadAction] = useState<DirectionalPadAction | undefined>();
+  const [keyboardAction, setKeyboardAction] = useState<DirectionalPadAction | undefined>();
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<Record<string, unknown> | null>(null);
+  const activeAction = keyboardAction ?? padAction;
 
   // Save config to localStorage when it changes
   useEffect(() => {
@@ -117,7 +146,7 @@ export function TeleopPanel(): React.JSX.Element {
 
   // Publish messages when action is active
   useLayoutEffect(() => {
-    if (currentAction === undefined || !config.topic) {
+    if (activeAction === undefined || !config.topic) {
       return;
     }
 
@@ -130,7 +159,7 @@ export function TeleopPanel(): React.JSX.Element {
       return;
     }
 
-    const message = buildTwistMessage(currentAction);
+    const message = buildTwistMessage(activeAction);
     const intervalMs = 1000 / config.publishRate;
 
     // Publish immediately
@@ -146,11 +175,75 @@ export function TeleopPanel(): React.JSX.Element {
     return () => {
       clearInterval(intervalHandle);
     };
-  }, [currentAction, config.topic, config.publishRate, isConnected, buildTwistMessage]);
+  }, [activeAction, config.topic, config.publishRate, isConnected, buildTwistMessage]);
 
   const canPublish = isConnected && config.publishRate > 0;
   const hasTopic = Boolean(config.topic);
   const enabled = canPublish && hasTopic;
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    const activeKeys: string[] = [];
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!enabled || shouldIgnoreKeyboardEvent(event.target)) {
+        return;
+      }
+
+      const key = normalizeKey(event.key);
+      const action = KEYBOARD_ACTIONS[key];
+      if (action === undefined) {
+        return;
+      }
+
+      if (event.repeat && activeKeys.includes(key)) {
+        event.preventDefault();
+        return;
+      }
+
+      event.preventDefault();
+
+      if (!activeKeys.includes(key)) {
+        activeKeys.push(key);
+      }
+
+      setKeyboardAction(action);
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      const key = normalizeKey(event.key);
+      if (!(key in KEYBOARD_ACTIONS)) {
+        return;
+      }
+
+      const index = activeKeys.indexOf(key);
+      if (index !== -1) {
+        activeKeys.splice(index, 1);
+      }
+
+      if (activeKeys.length === 0) {
+        setKeyboardAction(undefined);
+        return;
+      }
+
+      const nextActionKey = activeKeys[activeKeys.length - 1];
+      const nextAction = KEYBOARD_ACTIONS[nextActionKey];
+      setKeyboardAction(nextAction ?? undefined);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      activeKeys.length = 0;
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      setKeyboardAction(undefined);
+    };
+  }, [enabled, setKeyboardAction]);
 
   // Update button configuration
   const updateButton = (
@@ -349,7 +442,11 @@ export function TeleopPanel(): React.JSX.Element {
         )}
         {enabled && (
           <div className="directional-pad-wrapper">
-            <DirectionalPad onAction={setCurrentAction} disabled={!enabled} />
+            <DirectionalPad
+              onAction={setPadAction}
+              disabled={!enabled}
+              activeAction={activeAction}
+            />
           </div>
         )}
       </div>
@@ -376,4 +473,3 @@ export function TeleopPanel(): React.JSX.Element {
     </div>
   );
 }
-
