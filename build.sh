@@ -12,7 +12,7 @@ echo "📦 Step 1/2: Building React panels..."
 cd panels-standalone
 bun install
 bun run build
-cd ../../..
+cd ../
 
 echo ""
 
