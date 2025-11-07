@@ -293,10 +293,11 @@ export function TeleopPanel(): React.JSX.Element {
                 <span className="label-unit">Hz</span>
               </label>
               <input
-                className="setting-input"
+                className="setting-input numeric-input"
                 type="number"
                 min="1"
                 max="100"
+                inputMode="numeric"
                 value={config.publishRate}
                 onChange={(e) => setConfig({ ...config, publishRate: Number(e.target.value) })}
               />
@@ -313,7 +314,7 @@ export function TeleopPanel(): React.JSX.Element {
             <div className="button-config-group">
               <h4>Up Button</h4>
               <div className="button-config-row">
-                <div className="setting-group">
+                <div className="setting-group field-group">
                   <label>Field</label>
                   <select
                     value={config.upButton.field}
@@ -326,11 +327,13 @@ export function TeleopPanel(): React.JSX.Element {
                     ))}
                   </select>
                 </div>
-                <div className="setting-group">
+                <div className="setting-group value-group">
                   <label>Value</label>
                   <input
+                    className="numeric-input"
                     type="number"
                     step="0.1"
+                    inputMode="decimal"
                     value={config.upButton.value}
                     onChange={(e) => updateButton('upButton', 'value', Number(e.target.value))}
                   />
@@ -342,7 +345,7 @@ export function TeleopPanel(): React.JSX.Element {
             <div className="button-config-group">
               <h4>Down Button</h4>
               <div className="button-config-row">
-                <div className="setting-group">
+                <div className="setting-group field-group">
                   <label>Field</label>
                   <select
                     value={config.downButton.field}
@@ -355,11 +358,13 @@ export function TeleopPanel(): React.JSX.Element {
                     ))}
                   </select>
                 </div>
-                <div className="setting-group">
+                <div className="setting-group value-group">
                   <label>Value</label>
                   <input
+                    className="numeric-input"
                     type="number"
                     step="0.1"
+                    inputMode="decimal"
                     value={config.downButton.value}
                     onChange={(e) => updateButton('downButton', 'value', Number(e.target.value))}
                   />
@@ -371,7 +376,7 @@ export function TeleopPanel(): React.JSX.Element {
             <div className="button-config-group">
               <h4>Left Button</h4>
               <div className="button-config-row">
-                <div className="setting-group">
+                <div className="setting-group field-group">
                   <label>Field</label>
                   <select
                     value={config.leftButton.field}
@@ -384,11 +389,13 @@ export function TeleopPanel(): React.JSX.Element {
                     ))}
                   </select>
                 </div>
-                <div className="setting-group">
+                <div className="setting-group value-group">
                   <label>Value</label>
                   <input
+                    className="numeric-input"
                     type="number"
                     step="0.1"
+                    inputMode="decimal"
                     value={config.leftButton.value}
                     onChange={(e) => updateButton('leftButton', 'value', Number(e.target.value))}
                   />
@@ -400,7 +407,7 @@ export function TeleopPanel(): React.JSX.Element {
             <div className="button-config-group">
               <h4>Right Button</h4>
               <div className="button-config-row">
-                <div className="setting-group">
+                <div className="setting-group field-group">
                   <label>Field</label>
                   <select
                     value={config.rightButton.field}
@@ -413,11 +420,13 @@ export function TeleopPanel(): React.JSX.Element {
                     ))}
                   </select>
                 </div>
-                <div className="setting-group">
+                <div className="setting-group value-group">
                   <label>Value</label>
                   <input
+                    className="numeric-input"
                     type="number"
                     step="0.1"
+                    inputMode="decimal"
                     value={config.rightButton.value}
                     onChange={(e) => updateButton('rightButton', 'value', Number(e.target.value))}
                   />
