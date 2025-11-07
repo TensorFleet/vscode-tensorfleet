@@ -86,7 +86,7 @@
         },
         {
           "id": "tensorfleet-image-panel",
-          "name": "Image Panel (Option 3)",
+          "name": "Image Panel",
           "type": "webview"
         },
         {
@@ -126,7 +126,7 @@
       },
       {
         "command": "tensorfleet.openImagePanel",
-        "title": "TensorFleet: Open Image Panel (Option 3 - React)",
+        "title": "TensorFleet: Open Image Panel",
         "category": "TensorFleet"
       },
       {
