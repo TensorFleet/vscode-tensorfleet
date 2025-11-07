@@ -80,7 +80,7 @@ const DRONE_VIEWS: DroneViewport[] = [
     command: 'tensorfleet.openTeleopsPanelOption3',
     actionLabel: 'Open Teleops Panel',
     panelKind: 'standard',
-    htmlTemplate: 'option3-teleops'
+    htmlTemplate: 'teleops-standalone'
   }
 ];
 
@@ -427,6 +427,10 @@ async function openDedicatedPanel(
     if (view.htmlTemplate.startsWith('option3-')) {
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'out', 'webviews', 'option3-panels'));
     }
+    if (view.htmlTemplate === 'teleops-standalone') {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    }
   }
 
   const panel = vscode.window.createWebviewPanel(
@@ -494,6 +498,10 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   if (!view.htmlTemplate) {
     throw new Error('No HTML template specified for custom panel');
   }
+
+  if (view.htmlTemplate === 'teleops-standalone') {
+    return getStandalonePanelHtml('teleops', webview, context, cspSource);
+  }
   
   // Handle Option 3 React panels
   if (view.htmlTemplate.startsWith('option3-')) {
@@ -542,7 +550,7 @@ function getOption3PanelHtml(templateName: string, webview: vscode.Webview, cont
   const htmlPath = path.join(__dirname, '..', 'out', 'webviews', 'option3-panels', `${panelName}.html`);
   
   if (!fs.existsSync(htmlPath)) {
-    throw new Error(`Option 3 panel build not found: ${htmlPath}. Run 'npm run build' in src/webviews/option3-panels/`);
+    throw new Error(`Option 3 panel build not found: ${htmlPath}. Run 'bun run build' in src/webviews/option3-panels/`);
   }
   
   let html = fs.readFileSync(htmlPath, 'utf8');
@@ -562,6 +570,40 @@ function getOption3PanelHtml(templateName: string, webview: vscode.Webview, cont
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: ws: wss:;">`;
   html = html.replace(/<head>/, `<head>\n  ${cspMeta}`);
   
+  return html;
+}
+
+function getStandalonePanelHtml(
+  panelName: 'teleops',
+  webview: vscode.Webview,
+  context: vscode.ExtensionContext,
+  cspSource: string
+): string {
+  const htmlPath = path.join(__dirname, '..', 'panels-standalone', 'dist', `${panelName}.html`);
+
+  if (!fs.existsSync(htmlPath)) {
+    throw new Error(`Standalone panel build not found: ${htmlPath}. Run 'bun run build' inside panels-standalone/`);
+  }
+
+  let html = fs.readFileSync(htmlPath, 'utf8');
+
+  html = html.replace(
+    /(src|href)="\/assets\/([^"]+)"/g,
+    (match, attr, assetPath) => {
+      const assetUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets', assetPath)
+      );
+      return `${attr}="${assetUri}"`;
+    }
+  );
+
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
+  if (html.includes('Content-Security-Policy')) {
+    html = html.replace(/<meta[^>]+Content-Security-Policy[^>]+>/i, cspMeta);
+  } else {
+    html = html.replace('<head>', `<head>\n  ${cspMeta}`);
+  }
+
   return html;
 }
 
