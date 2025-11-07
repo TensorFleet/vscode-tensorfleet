@@ -1,0 +1,81 @@
+/* Ported from: lichtblick/packages/suite-base/src/panels/Teleop/DirectionalPad.style.ts
+   Date: 2025-11-06
+   Modifications: Converted from CSS-in-JS (tss-react/mui) to traditional CSS
+   Theme colors extracted from Material-UI default dark theme
+*/
+
+.directional-pad-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.directional-pad-svg {
+  max-height: 100%;
+  max-width: 100%;
+}
+
+.directional-pad-button {
+  cursor: pointer;
+  /* theme.palette.action.hover ≈ rgba(255, 255, 255, 0.08) in dark theme */
+  fill: rgba(255, 255, 255, 0.08);
+  /* theme.palette.divider ≈ rgba(255, 255, 255, 0.12) */
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 0.5;
+  transition: fill 0.2s ease, stroke 0.2s ease;
+}
+
+.directional-pad-button:hover {
+  /* theme.palette.primary.main with alpha (selectedOpacity + hoverOpacity) */
+  fill: rgba(33, 150, 243, 0.16);
+  /* theme.palette.primary.main */
+  stroke: #2196f3;
+}
+
+/* Adjacent sibling selector for icon - triggers when button is hovered */
+.directional-pad-button:hover + .directional-pad-button-icon {
+  fill: #2196f3;
+}
+
+.directional-pad-button.active {
+  /* theme.palette.primary.main */
+  fill: #2196f3 !important;
+  /* theme.palette.primary.dark */
+  stroke: #1976d2 !important;
+}
+
+.directional-pad-button.active:hover + .directional-pad-button-icon {
+  /* theme.palette.common.white */
+  fill: #ffffff;
+}
+
+.directional-pad-button.disabled {
+  cursor: auto;
+  stroke-width: 0;
+  /* theme.palette.action.disabledBackground */
+  fill: rgba(255, 255, 255, 0.12);
+}
+
+.directional-pad-button.disabled:hover {
+  fill: rgba(255, 255, 255, 0.12);
+}
+
+.directional-pad-button.disabled:hover + .directional-pad-button-icon {
+  /* theme.palette.background.default in dark theme */
+  fill: #1e1e1e;
+}
+
+.directional-pad-button-icon {
+  pointer-events: none;
+  /* theme.palette.text.primary ≈ rgba(255, 255, 255, 0.87) */
+  fill: rgba(255, 255, 255, 0.87);
+  transition: fill 0.2s ease;
+}
+
+.directional-pad-button-icon.disabled {
+  fill: #1e1e1e;
+}
+
