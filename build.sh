@@ -9,9 +9,9 @@ echo ""
 
 # 1. Build React panels
 echo "📦 Step 1/2: Building React panels..."
-cd src/webviews/option3-panels
-npm install
-npm run build
+cd panels-standalone
+bun install
+bun run build
 cd ../../..
 
 echo ""
