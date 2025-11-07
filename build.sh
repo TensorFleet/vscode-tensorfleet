@@ -13,7 +13,6 @@ cd panels-standalone
 bun install
 bun run build
 cd ../
-
 echo ""
 
 # 2. Build extension
