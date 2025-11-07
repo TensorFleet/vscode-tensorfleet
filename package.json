@@ -16,14 +16,14 @@
     "onView:tensorfleet-gazebo",
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
-    "onView:tensorfleet-image-panel-option3",
+    "onView:tensorfleet-image-panel",
     "onView:tensorfleet-teleops-panel-option3",
     "onView:tensorfleet-tooling-view",
     "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
-    "onCommand:tensorfleet.openImagePanelOption3",
+    "onCommand:tensorfleet.openImagePanel",
     "onCommand:tensorfleet.openTeleopsPanelOption3",
     "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.installTools",
@@ -85,7 +85,7 @@
           "type": "webview"
         },
         {
-          "id": "tensorfleet-image-panel-option3",
+          "id": "tensorfleet-image-panel",
           "name": "Image Panel (Option 3)",
           "type": "webview"
         },
@@ -125,7 +125,7 @@
         "category": "TensorFleet"
       },
       {
-        "command": "tensorfleet.openImagePanelOption3",
+        "command": "tensorfleet.openImagePanel",
         "title": "TensorFleet: Open Image Panel (Option 3 - React)",
         "category": "TensorFleet"
       },
@@ -260,8 +260,8 @@
           "group": "navigation@1"
         },
         {
-          "command": "tensorfleet.openImagePanelOption3",
-          "when": "view == tensorfleet-image-panel-option3",
+          "command": "tensorfleet.openImagePanel",
+          "when": "view == tensorfleet-image-panel",
           "group": "navigation@1"
         },
         {
