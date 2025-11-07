@@ -71,16 +71,6 @@ const DRONE_VIEWS: DroneViewport[] = [
     actionLabel: 'Open Image Panel',
     panelKind: 'standard',
     htmlTemplate: 'image-standalone'
-  },
-  {
-    id: 'tensorfleet-teleops-panel-option3',
-    title: 'Teleops Panel (Option 3)',
-    description: 'Control drone with keyboard - custom React implementation for precise control.',
-    image: 'tensorfleet-icon.svg',
-    command: 'tensorfleet.openTeleopsPanelOption3',
-    actionLabel: 'Open Teleops Panel',
-    panelKind: 'standard',
-    htmlTemplate: 'option3-teleops'
   }
 ];
 
