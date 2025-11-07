@@ -17,14 +17,14 @@
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
     "onView:tensorfleet-image-panel-option3",
-    "onView:tensorfleet-teleops-panel-option3",
+    "onView:tensorfleet-teleops-panel",
     "onView:tensorfleet-tooling-view",
     "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
     "onCommand:tensorfleet.openImagePanelOption3",
-    "onCommand:tensorfleet.openTeleopsPanelOption3",
+    "onCommand:tensorfleet.openTeleopsPanel",
     "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.installTools",
     "onCommand:tensorfleet.openAllPanels",
@@ -90,8 +90,8 @@
           "type": "webview"
         },
         {
-          "id": "tensorfleet-teleops-panel-option3",
-          "name": "Teleops (Option 3)",
+          "id": "tensorfleet-teleops-panel",
+          "name": "Teleops Panel",
           "type": "webview"
         }
       ],
@@ -130,8 +130,8 @@
         "category": "TensorFleet"
       },
       {
-        "command": "tensorfleet.openTeleopsPanelOption3",
-        "title": "TensorFleet: Open Teleops Panel (Option 3 - React)",
+        "command": "tensorfleet.openTeleopsPanel",
+        "title": "TensorFleet: Open Teleops Panel",
         "category": "TensorFleet"
       },
       {
@@ -265,8 +265,8 @@
           "group": "navigation@1"
         },
         {
-          "command": "tensorfleet.openTeleopsPanelOption3",
-          "when": "view == tensorfleet-teleops-panel-option3",
+          "command": "tensorfleet.openTeleopsPanel",
+          "when": "view == tensorfleet-teleops-panel",
           "group": "navigation@1"
         },
         {

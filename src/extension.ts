@@ -73,11 +73,11 @@ const DRONE_VIEWS: DroneViewport[] = [
     htmlTemplate: 'option3-image'
   },
   {
-    id: 'tensorfleet-teleops-panel-option3',
-    title: 'Teleops Panel (Option 3)',
+    id: 'tensorfleet-teleops-panel',
+    title: 'Teleops Panel',
     description: 'Control drone with keyboard - custom React implementation for precise control.',
     image: 'tensorfleet-icon.svg',
-    command: 'tensorfleet.openTeleopsPanelOption3',
+    command: 'tensorfleet.openTeleopsPanel',
     actionLabel: 'Open Teleops Panel',
     panelKind: 'standard',
     htmlTemplate: 'teleops-standalone'
@@ -423,10 +423,6 @@ async function openDedicatedPanel(
   const localResourceRoots = [vscode.Uri.joinPath(context.extensionUri, 'media')];
   if (view.htmlTemplate) {
     localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'src', 'templates'));
-    // Add React build output for Option 3 panels
-    if (view.htmlTemplate.startsWith('option3-')) {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'out', 'webviews', 'option3-panels'));
-    }
     if (view.htmlTemplate === 'teleops-standalone') {
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
@@ -501,12 +497,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 
   if (view.htmlTemplate === 'teleops-standalone') {
     return getStandalonePanelHtml('teleops', webview, context, cspSource);
-  }
-  
-  // Handle Option 3 React panels
-  if (view.htmlTemplate.startsWith('option3-')) {
-    return getOption3PanelHtml(view.htmlTemplate, webview, context, cspSource);
-  }
+  } 
   
   // Load the custom HTML template directly
   const templatePath = path.join(__dirname, '..', 'src', 'templates', view.htmlTemplate);
@@ -542,35 +533,6 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   }
   
   return template;
-}
-
-function getOption3PanelHtml(templateName: string, webview: vscode.Webview, context: vscode.ExtensionContext, cspSource: string): string {
-  // Map template name to HTML file
-  const panelName = templateName.replace('option3-', '');
-  const htmlPath = path.join(__dirname, '..', 'out', 'webviews', 'option3-panels', `${panelName}.html`);
-  
-  if (!fs.existsSync(htmlPath)) {
-    throw new Error(`Option 3 panel build not found: ${htmlPath}. Run 'bun run build' in src/webviews/option3-panels/`);
-  }
-  
-  let html = fs.readFileSync(htmlPath, 'utf8');
-  
-  // Convert all asset paths to webview URIs
-  html = html.replace(
-    /(src|href)="\/assets\/([^"]+)"/g,
-    (match, attr, assetPath) => {
-      const assetUri = webview.asWebviewUri(
-        vscode.Uri.joinPath(context.extensionUri, 'out', 'webviews', 'option3-panels', 'assets', assetPath)
-      );
-      return `${attr}="${assetUri}"`;
-    }
-  );
-  
-  // Update Content Security Policy for React
-  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: ws: wss:;">`;
-  html = html.replace(/<head>/, `<head>\n  ${cspMeta}`);
-  
-  return html;
 }
 
 function getStandalonePanelHtml(
