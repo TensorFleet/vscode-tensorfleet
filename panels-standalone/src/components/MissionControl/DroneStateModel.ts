@@ -1,11 +1,10 @@
 import log from 'loglevel';
 import { ros2Bridge } from '../../ros2-bridge';
 import type {
+  ROS2Bridge,
+  Subscription,
   SensorMsgsNavSatFix,
   StdMsgsFloat64,
-  BuiltinTime,
-  StdHeader,
-  SensorMsgsNavSatStatus,
 } from '../../ros2-bridge';
 
 export type DroneState = {
@@ -33,11 +32,6 @@ export type DroneStateUpdateListener = (state: Partial<DroneState>) => void;
 
 type RosPublish<T> = { op: 'publish'; topic: string; msg: T };
 type RosFrame = RosPublish<SensorMsgsNavSatFix | StdMsgsFloat64> | Record<string, unknown>;
-
-type Bridge = {
-  subscribe: (topic: string, messageType?: string) => void;
-  unsubscribe?: (topic: string) => void;
-};
 
 type EventMap = { update: (state: Partial<DroneState>) => void };
 
@@ -69,26 +63,34 @@ export class DroneStateModel extends Emitter {
   private updateInterval: number | null = null;
   private updated = false;
   private updateFps: number;
-  private bridge: Bridge | null = null;
+  private bridge: ROS2Bridge | null = null;
 
   constructor(updateFps = 10) {
     super();
     this.updateFps = updateFps;
+    this.startUpdateLoop();
   }
 
-  public connect(bridge: Bridge = ros2Bridge as unknown as Bridge): void {
+  public connect(bridge: ROS2Bridge = ros2Bridge): void {
     this.disconnect();
     this.bridge = bridge;
-    this.bridge.subscribe('/mavros/global_position/global', 'sensor_msgs/NavSatFix');
-    this.bridge.subscribe('/mavros/global_position/compass_hdg', 'std_msgs/Float64');
-    this.startUpdateLoop();
+    this.bridge.subscribe(
+      {
+        topic: '/mavros/global_position/global',
+        type: 'sensor_msgs/msg/NavSatFix'
+      }, this.ingest);
+    this.bridge.subscribe(
+      {
+        topic: '/mavros/global_position/compass_hdg',
+        type: 'std_msgs/msg/Float64'
+      }, this.ingest);
   }
 
   public disconnect(): void {
     this.stopUpdateLoop();
     if (this.bridge?.unsubscribe) {
-      this.bridge.unsubscribe('/mavros/global_position/global');
-      this.bridge.unsubscribe('/mavros/global_position/compass_hdg');
+      this.bridge.unsubscribe('/mavros/global_position/global', this.ingest);
+      this.bridge.unsubscribe('/mavros/global_position/compass_hdg', this.ingest);
     }
     this.bridge = null;
     this.updateListeners.clear();
@@ -103,35 +105,35 @@ export class DroneStateModel extends Emitter {
     return { ...this.state };
   }
 
-  public ingest(frame: RosFrame) {
+  public ingest = (frame: RosFrame) => {
     if (!frame || (frame as any).op !== 'publish') return;
     const topic = (frame as any).topic as string;
     const msg = (frame as any).msg;
     const now = Date.now();
 
     switch (topic) {
-      case '/mavros/global_position/global': {
-        if (!isNavSatFix(msg)) break;
-        this.ensureGlobal();
-        this.state.global_position_int!.time_boot_ms = now;
-        this.state.global_position_int!.lat = msg.latitude;
-        this.state.global_position_int!.lon = msg.longitude;
-        this.state.global_position_int!.alt = msg.altitude;
-        this.updated = true;
+      case '/mavros/global_position/global':
+        console.log("Received global ", msg);
+        if (isNavSatFix(msg)) {
+          this.ensureGlobal();
+          this.state.global_position_int!.time_boot_ms = now;
+          this.state.global_position_int!.lat = msg.latitude;
+          this.state.global_position_int!.lon = msg.longitude;
+          this.state.global_position_int!.alt = msg.altitude;
+          this.updated = true;
+        }
         break;
-      }
-      case '/mavros/global_position/compass_hdg': {
-        if (!isFloat64(msg)) break;
-        this.ensureGlobal();
-        this.state.global_position_int!.time_boot_ms = now;
-        this.state.global_position_int!.hdg = msg.data;
-        this.updated = true;
-        break;
-      }
-      default:
+      case '/mavros/global_position/compass_hdg':
+        console.log("Received hdg");
+        if (isFloat64(msg)) {
+          this.ensureGlobal();
+          this.state.global_position_int!.time_boot_ms = now;
+          this.state.global_position_int!.hdg = msg.data;
+          this.updated = true;
+        }
         break;
     }
-  }
+  };
 
   private ensureGlobal() {
     if (!this.state.global_position_int) {
