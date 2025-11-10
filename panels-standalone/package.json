@@ -8,6 +8,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@foxglove/rosmsg-msgs-common": "^3.2.3",
+    "@foxglove/rosmsg2-serialization": "^3.0.3",
+    "cbor-x": "^1.6.0",
+    "cbor2": "^2.0.1",
+    "ol": "^10.7.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -19,4 +24,3 @@
     "vite": "^5.4.2"
   }
 }
-
