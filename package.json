@@ -17,12 +17,14 @@
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
     "onView:tensorfleet-image-panel",
+    "onView:tensorfleet-teleops-panel",
     "onView:tensorfleet-tooling-view",
     "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
     "onCommand:tensorfleet.openImagePanel",
+    "onCommand:tensorfleet.openTeleopsPanel",
     "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.installTools",
     "onCommand:tensorfleet.openAllPanels",
@@ -86,6 +88,11 @@
           "id": "tensorfleet-image-panel",
           "name": "Image Panel",
           "type": "webview"
+        },
+        {
+          "id": "tensorfleet-teleops-panel",
+          "name": "Teleops Panel",
+          "type": "webview"
         }
       ],
       "tensorfleet-tooling": [
@@ -120,6 +127,11 @@
       {
         "command": "tensorfleet.openImagePanel",
         "title": "TensorFleet: Open Image Panel",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openTeleopsPanel",
+        "title": "TensorFleet: Open Teleops Panel",
         "category": "TensorFleet"
       },
       {
@@ -250,6 +262,11 @@
         {
           "command": "tensorfleet.openImagePanel",
           "when": "view == tensorfleet-image-panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tensorfleet.openTeleopsPanel",
+          "when": "view == tensorfleet-teleops-panel",
           "group": "navigation@1"
         },
         {
