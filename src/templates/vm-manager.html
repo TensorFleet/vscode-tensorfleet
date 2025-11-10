@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}} https: data:; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'unsafe-inline'; font-src {{cspSource}} https: data:; connect-src {{cspSource}};" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TensorFleet VM Manager</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: var(--vscode-font-family, 'Segoe UI', sans-serif);
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-size: 13px;
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+    }
+
+    .vm-container {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    h1, h2 {
+      margin: 0;
+      font-weight: 600;
+    }
+
+    .card {
+      border: 1px solid var(--vscode-editorWidget-border, rgba(255,255,255,0.08));
+      border-radius: 8px;
+      background: var(--vscode-editorWidget-background, rgba(255,255,255,0.02));
+      padding: 20px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    }
+
+    .card--priority {
+      border-color: var(--vscode-focusBorder, rgba(74, 222, 128, 0.6));
+    }
+
+    .card.is-disabled {
+      opacity: 0.65;
+    }
+
+    .card-note {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 10px;
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .env-summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .env-status {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .env-status.logged-in {
+      color: #4ade80;
+    }
+
+    .env-status.logged-out {
+      color: #ffb74d;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #f44336;
+      box-shadow: 0 0 6px rgba(244, 67, 54, 0.6);
+    }
+
+    .status-dot.running {
+      background: #4ade80;
+      box-shadow: 0 0 8px rgba(74, 222, 128, 0.6);
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: none;
+      border-radius: 4px;
+      padding: 6px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+
+    button.secondary {
+      background: transparent;
+      border: 1px solid var(--vscode-button-border, var(--vscode-button-background));
+      color: var(--vscode-foreground);
+    }
+
+    button.danger {
+      background: #ff5252;
+      color: #000;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .meta {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .meta--stacked {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .vm-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .vm-card {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 14px;
+      background: rgba(255,255,255,0.02);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .vm-card h3 {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .vm-meta {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      line-height: 1.5;
+    }
+
+    .message {
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-top: 10px;
+      display: none;
+    }
+
+    .message.error {
+      border: 1px solid rgba(244, 67, 54, 0.6);
+      background: rgba(244, 67, 54, 0.15);
+    }
+
+    .message.success {
+      border: 1px solid rgba(74, 222, 128, 0.6);
+      background: rgba(74, 222, 128, 0.15);
+    }
+
+    form {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    label {
+      font-size: 12px;
+      margin-bottom: 4px;
+      display: block;
+      color: var(--vscode-foreground);
+    }
+
+    input, select {
+      width: 100%;
+      padding: 6px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-input-border, rgba(255,255,255,0.12));
+      background: var(--vscode-input-background, rgba(255,255,255,0.02));
+      color: var(--vscode-input-foreground, var(--vscode-foreground));
+      font-size: 12px;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .input-with-button {
+      display: flex;
+      gap: 6px;
+    }
+
+    .input-with-button input {
+      flex: 1;
+    }
+
+    .helper-text {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 4px;
+    }
+
+    .env-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+      width: 100%;
+    }
+
+    .env-grid .input-group {
+      margin: 0;
+    }
+
+    .env-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: var(--vscode-descriptionForeground);
+      border: 1px dashed rgba(255,255,255,0.12);
+      border-radius: 8px;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="vm-container">
+    <div class="card card--priority" id="vm-login-card">
+      <div class="env-summary">
+        <div>
+          <h2>Environment &amp; Login</h2>
+          <p class="meta">Authenticate first so every VM action uses the correct environment.</p>
+        </div>
+        <div id="vm-env-status" class="env-status logged-out">No environment configured</div>
+      </div>
+      <div class="env-grid">
+        <div class="input-group">
+          <label for="vm-env-select">Environment</label>
+          <div class="input-with-button">
+            <select id="vm-env-select"></select>
+            <button id="vm-env-apply" class="secondary" disabled>Switch</button>
+          </div>
+          <span class="helper-text">Base URL: <span id="vm-env-url">—</span></span>
+        </div>
+        <div class="input-group">
+          <label for="vm-login-email">Email</label>
+          <input id="vm-login-email" type="email" placeholder="you@example.com" autocomplete="username" />
+        </div>
+        <div class="input-group">
+          <label for="vm-login-password">Password</label>
+          <input id="vm-login-password" type="password" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <div class="env-actions">
+          <button id="vm-login-submit">Log In</button>
+          <button id="vm-logout-btn" class="secondary" disabled>Log Out</button>
+        </div>
+      </div>
+      <p class="helper-text" id="vm-login-meta">Not logged in yet</p>
+    </div>
+
+    <div class="card" id="vm-service-card">
+      <div class="status-row">
+        <div>
+          <h2>Local VM Manager Service</h2>
+          <p class="meta">Optional for contributors who run the Go service locally.</p>
+        </div>
+        <div class="status-indicator">
+          <span id="vm-status-dot" class="status-dot"></span>
+          <span id="vm-status-text">Service offline</span>
+        </div>
+      </div>
+      <div class="status-row" style="margin-top:14px;">
+        <div class="actions">
+          <button id="vm-start-btn">Start Service</button>
+          <button id="vm-stop-btn" class="secondary" disabled>Stop Service</button>
+          <button id="vm-logs-btn" class="secondary">Open Logs</button>
+        </div>
+        <div class="meta meta--stacked">
+          <div>API URL: <code id="vm-api-url">http://localhost:8080</code></div>
+          <div>Repo: <code id="vm-repo-path">not detected</code></div>
+        </div>
+      </div>
+      <p class="card-note" id="vm-service-notice">Detected local repo path is required only when running the Go binary yourself.</p>
+    </div>
+
+    <div class="card">
+      <div class="status-row">
+        <h2>Virtual Machines</h2>
+        <div class="actions">
+          <button id="vm-refresh-btn" class="secondary">Refresh</button>
+          <span class="meta" id="vm-last-refresh">Never refreshed</span>
+        </div>
+      </div>
+      <div id="vm-success" class="message success"></div>
+      <div id="vm-error" class="message error"></div>
+      <div class="vm-list" id="vm-list"></div>
+      <div class="empty-state" id="vm-empty" style="display:none;">No VMs yet. Create one below to get started.</div>
+    </div>
+
+    <div class="card">
+      <h2>Create VM</h2>
+      <form id="vm-create-form">
+        <div class="input-group" style="grid-column: span 2;">
+          <label for="vm-user">User ID (UUID)</label>
+          <div class="input-with-button">
+            <input id="vm-user" name="user_id" placeholder="12d82b4e-c09e-4ca7-a1c7-fb289909b094" required />
+            <button type="button" id="vm-generate" class="secondary">Generate</button>
+          </div>
+          <span class="helper-text" id="vm-user-helper">Use the default Supabase test user or log in to auto-fill your UUID.</span>
+        </div>
+        <div class="input-group">
+          <label for="vm-name">VM Name</label>
+          <input id="vm-name" name="name" placeholder="demo-vm" required />
+        </div>
+        <div class="input-group">
+          <label for="vm-ram">RAM (GB)</label>
+          <input id="vm-ram" name="ram_gb" type="number" min="1" max="128" value="2" />
+        </div>
+        <div class="input-group">
+          <label for="vm-cpu">CPU Cores</label>
+          <input id="vm-cpu" name="cpu_cores" type="number" min="1" max="32" value="1" />
+        </div>
+        <div class="input-group">
+          <label for="vm-provider">Provider</label>
+          <select id="vm-provider" name="provider">
+            <option value="firecracker">Firecracker</option>
+            <option value="vz">macOS VZ</option>
+            <option value="mock">Mock</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label for="vm-region">Region</label>
+          <input id="vm-region" name="region" value="local" />
+        </div>
+        <div style="grid-column: span 2; text-align: right;">
+          <button type="submit">Create VM</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+    const successEl = document.getElementById('vm-success');
+    const errorEl = document.getElementById('vm-error');
+    const listEl = document.getElementById('vm-list');
+    const emptyStateEl = document.getElementById('vm-empty');
+    const statusDot = document.getElementById('vm-status-dot');
+    const statusText = document.getElementById('vm-status-text');
+    const apiUrlEl = document.getElementById('vm-api-url');
+    const lastRefreshEl = document.getElementById('vm-last-refresh');
+    const repoPathEl = document.getElementById('vm-repo-path');
+    const startBtn = document.getElementById('vm-start-btn');
+    const stopBtn = document.getElementById('vm-stop-btn');
+    const envStatusEl = document.getElementById('vm-env-status');
+    const envSelect = document.getElementById('vm-env-select');
+    const envApplyBtn = document.getElementById('vm-env-apply');
+    const envUrlEl = document.getElementById('vm-env-url');
+    const loginEmailInput = document.getElementById('vm-login-email');
+    const loginPasswordInput = document.getElementById('vm-login-password');
+    const loginMetaEl = document.getElementById('vm-login-meta');
+    const loginBtn = document.getElementById('vm-login-submit');
+    const logoutBtn = document.getElementById('vm-logout-btn');
+    const userIdInput = document.getElementById('vm-user');
+    const userIdHelper = document.getElementById('vm-user-helper');
+    const serviceCard = document.getElementById('vm-service-card');
+    const serviceNotice = document.getElementById('vm-service-notice');
+    const DEFAULT_USER_ID = '12d82b4e-c09e-4ca7-a1c7-fb289909b094';
+    const AUTO_REFRESH_MS = 30000;
+    let refreshTimer = null;
+    let currentState = null;
+    if (loginEmailInput) {
+      loginEmailInput.dataset.autofill = 'true';
+    }
+    if (userIdInput) {
+      userIdInput.dataset.autofill = 'true';
+      userIdInput.value = DEFAULT_USER_ID;
+    }
+
+    const post = (command, payload) => {
+      vscode.postMessage({ command, payload });
+    };
+
+    const setMessage = (el, message) => {
+      if (!message) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+      el.textContent = message;
+      el.style.display = 'block';
+    };
+
+    const formatTimestamp = (value) => {
+      if (!value) {
+        return 'Not logged in yet';
+      }
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return 'Not logged in yet';
+      }
+      return date.toLocaleString();
+    };
+
+    const updateEnvApplyState = () => {
+      if (!envApplyBtn || !envSelect) {
+        return;
+      }
+      const activeId = currentState?.environment?.id;
+      envApplyBtn.disabled = !envSelect.value || envSelect.value === activeId;
+    };
+
+    const updateEnvironment = (state) => {
+      const envs = Array.isArray(state?.environments) ? state.environments : [];
+      if (envSelect) {
+        const previousValue = envSelect.value;
+        envSelect.innerHTML = '';
+        envs.forEach((env) => {
+          const option = document.createElement('option');
+          option.value = env.id;
+          option.textContent = env.label;
+          envSelect.appendChild(option);
+        });
+        if (state?.environment?.id) {
+          envSelect.value = state.environment.id;
+        } else if (previousValue) {
+          envSelect.value = previousValue;
+        }
+        envSelect.disabled = envs.length === 0;
+      }
+
+      const baseUrl = (state?.environment?.apiBaseUrl || state?.apiBaseUrl || '—');
+      if (envUrlEl) {
+        envUrlEl.textContent = baseUrl;
+      }
+      if (envStatusEl) {
+        if (state?.environment) {
+          envStatusEl.textContent = `${state.environment.label} • ${baseUrl}`;
+        } else {
+          envStatusEl.textContent = 'No environment configured';
+        }
+        const loggedIn = Boolean(state?.auth?.loggedIn);
+        envStatusEl.classList.toggle('logged-in', loggedIn);
+        envStatusEl.classList.toggle('logged-out', !loggedIn);
+      }
+
+      if (loginBtn) {
+        loginBtn.disabled = Boolean(state?.auth?.loggedIn);
+      }
+      if (logoutBtn) {
+        logoutBtn.disabled = !state?.auth?.loggedIn;
+      }
+
+      if (loginMetaEl) {
+        if (state?.auth?.loggedIn) {
+          const email = state.auth.email || 'unknown';
+          const userId = state.auth.userId ? ` (${state.auth.userId})` : '';
+          loginMetaEl.textContent = `Logged in as ${email}${userId}`;
+        } else if (state?.auth?.lastLogin) {
+          loginMetaEl.textContent = `Last login ${formatTimestamp(state.auth.lastLogin)}`;
+        } else {
+          loginMetaEl.textContent = 'Not logged in yet';
+        }
+      }
+
+      if (loginEmailInput) {
+        const selectedEnvId = envSelect?.value || state?.environment?.id;
+        const matchingEnv = envs.find((env) => env.id === selectedEnvId);
+        const preferredEmail = state?.auth?.email || matchingEnv?.defaultEmail || '';
+        if (!loginEmailInput.value || loginEmailInput.dataset.autofill === 'true' || state?.auth?.loggedIn) {
+          loginEmailInput.value = preferredEmail;
+          loginEmailInput.dataset.autofill = preferredEmail ? 'true' : loginEmailInput.dataset.autofill;
+        }
+      }
+
+      updateEnvApplyState();
+    };
+
+    const updateUserIdField = (state) => {
+      if (!userIdInput) {
+        return;
+      }
+      const loggedInUserId = state?.auth?.userId;
+      if (loggedInUserId) {
+        if (userIdInput.dataset.autofill !== 'false') {
+          userIdInput.value = loggedInUserId;
+          userIdInput.dataset.autofill = 'true';
+        }
+        if (userIdHelper) {
+          userIdHelper.textContent = userIdInput.dataset.autofill === 'false'
+            ? 'Using custom UUID instead of your login identity.'
+            : 'Auto-filled from your login. Generate or edit to override.';
+        }
+        return;
+      }
+
+      if (userIdInput.dataset.autofill !== 'false') {
+        userIdInput.value = DEFAULT_USER_ID;
+        userIdInput.dataset.autofill = 'true';
+      }
+      if (userIdHelper) {
+        userIdHelper.textContent = 'Use the default Supabase test user or log in to auto-fill your UUID.';
+      }
+    };
+
+    const updateStatus = (state) => {
+      if (!state) {
+        return;
+      }
+      currentState = state;
+      updateEnvironment(state);
+      updateUserIdField(state);
+      apiUrlEl.textContent = state.apiBaseUrl;
+      const localServiceAvailable = Boolean(state.localServiceAvailable);
+      repoPathEl.textContent = state.repoPath || (localServiceAvailable ? 'not detected' : 'not configured');
+      if (serviceCard) {
+        serviceCard.classList.toggle('is-disabled', !localServiceAvailable);
+      }
+      if (serviceNotice) {
+        serviceNotice.textContent = localServiceAvailable
+          ? 'Runs `go run ./cmd/vm-manager` from your configured repo path.'
+          : 'Local Go repo not detected. Log in to cloud environments or set tensorfleet.vmManager.repoPath for dev mode.';
+      }
+
+      if (!localServiceAvailable) {
+        statusDot.classList.remove('running');
+        statusText.textContent = 'Local service unavailable';
+        if (startBtn) {
+          startBtn.disabled = true;
+          startBtn.title = 'Local vm-manager repo not found.';
+        }
+        if (stopBtn) {
+          stopBtn.disabled = true;
+          stopBtn.title = 'Local vm-manager repo not found.';
+        }
+      } else if (state.running) {
+        statusDot.classList.add('running');
+        statusText.textContent = 'VM Manager running';
+        if (startBtn) {
+          startBtn.disabled = true;
+          startBtn.removeAttribute('title');
+        }
+        if (stopBtn) {
+          stopBtn.disabled = false;
+          stopBtn.removeAttribute('title');
+        }
+      } else {
+        statusDot.classList.remove('running');
+        statusText.textContent = 'Service offline';
+        if (startBtn) {
+          startBtn.disabled = false;
+          startBtn.removeAttribute('title');
+        }
+        if (stopBtn) {
+          stopBtn.disabled = true;
+          stopBtn.removeAttribute('title');
+        }
+      }
+
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+      const shouldAutoRefresh = Boolean(state?.auth?.loggedIn) || Boolean(state.running);
+      if (shouldAutoRefresh) {
+        refreshTimer = setInterval(() => {
+          post('vmManager:refresh');
+        }, AUTO_REFRESH_MS);
+      }
+    };
+
+    const renderVMs = (payload) => {
+      const data = payload || {};
+      const vms = Array.isArray(data.vms) ? data.vms : [];
+      listEl.innerHTML = '';
+      if (vms.length === 0) {
+        emptyStateEl.style.display = 'block';
+      } else {
+        emptyStateEl.style.display = 'none';
+      }
+
+      vms.forEach((vm) => {
+        const card = document.createElement('div');
+        card.className = 'vm-card';
+        const status = vm.status || 'unknown';
+        const isStopping = status === 'stopping' || status === 'stopped';
+        card.innerHTML = `
+          <h3>${vm.name || vm.id}</h3>
+          <div class="vm-meta">
+            <div>Status: <strong>${status}</strong></div>
+            <div>RAM: ${vm.ram_gb || vm.ram || '—'} GB · CPU: ${vm.cpu_cores || vm.cpu || '—'}</div>
+            <div>Provider: ${vm.provider || 'n/a'} · Region: ${vm.region || 'n/a'}</div>
+            <div>ID: <code>${vm.id}</code></div>
+          </div>
+          <div class="actions">
+            <button data-vm-id="${vm.id}" class="danger" ${isStopping ? 'disabled' : ''}>Stop</button>
+          </div>
+        `;
+        const stopBtn = card.querySelector('button');
+        stopBtn?.addEventListener('click', () => {
+          post('vmManager:stopVm', { id: vm.id });
+        });
+        listEl.appendChild(card);
+      });
+
+      lastRefreshEl.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
+    };
+
+    document.getElementById('vm-refresh-btn').addEventListener('click', () => {
+      setMessage(successEl, '');
+      setMessage(errorEl, '');
+      post('vmManager:refresh');
+    });
+
+    document.getElementById('vm-start-btn').addEventListener('click', () => post('vmManager:startService'));
+    document.getElementById('vm-stop-btn').addEventListener('click', () => post('vmManager:stopService'));
+    document.getElementById('vm-logs-btn').addEventListener('click', () => post('vmManager:openLogs'));
+    envSelect?.addEventListener('change', () => {
+      updateEnvApplyState();
+      if (!loginEmailInput || currentState?.auth?.loggedIn) {
+        return;
+      }
+      loginEmailInput.dataset.autofill = 'true';
+      const selected = currentState?.environments?.find((env) => env.id === envSelect.value);
+      if (selected?.defaultEmail) {
+        loginEmailInput.value = selected.defaultEmail;
+      } else if (!loginEmailInput.value) {
+        loginEmailInput.value = '';
+      }
+    });
+    envApplyBtn?.addEventListener('click', () => {
+      if (!envSelect?.value || envSelect.value === currentState?.environment?.id) {
+        return;
+      }
+      setMessage(successEl, '');
+      setMessage(errorEl, '');
+      post('vmManager:setEnvironment', { id: envSelect.value });
+    });
+    loginEmailInput?.addEventListener('input', () => {
+      loginEmailInput.dataset.autofill = 'false';
+    });
+    userIdInput?.addEventListener('input', () => {
+      userIdInput.dataset.autofill = 'false';
+      if (userIdHelper) {
+        userIdHelper.textContent = currentState?.auth?.userId
+          ? 'Using custom UUID instead of your login identity.'
+          : 'Custom UUID will be sent when creating VMs.';
+      }
+    });
+    loginBtn?.addEventListener('click', () => {
+      setMessage(successEl, '');
+      setMessage(errorEl, '');
+      if (!currentState?.environment) {
+        setMessage(errorEl, 'No environment configured. Update tensorfleet settings first.');
+        return;
+      }
+      const email = (loginEmailInput?.value || '').trim();
+      const password = loginPasswordInput?.value || '';
+      if (!email || !password) {
+        setMessage(errorEl, 'Email and password are required.');
+        return;
+      }
+      post('vmManager:login', { email, password });
+      if (loginPasswordInput) {
+        loginPasswordInput.value = '';
+      }
+    });
+    logoutBtn?.addEventListener('click', () => {
+      setMessage(successEl, '');
+      setMessage(errorEl, '');
+      post('vmManager:logout');
+    });
+    window.addEventListener('unload', () => {
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+    });
+
+    const generateBtn = document.getElementById('vm-generate');
+    generateBtn?.addEventListener('click', () => {
+      if (!userIdInput) {
+        return;
+      }
+      if (window.crypto?.randomUUID) {
+        userIdInput.value = window.crypto.randomUUID();
+      } else {
+        userIdInput.value = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = Math.random() * 16 | 0;
+          const v = c === 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+      }
+      userIdInput.dataset.autofill = 'false';
+      if (userIdHelper) {
+        userIdHelper.textContent = 'Using custom UUID instead of your login identity.';
+      }
+    });
+
+    document.getElementById('vm-create-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      const payload = Object.fromEntries(formData.entries());
+      payload.ram_gb = Number(payload.ram_gb) || 2;
+      payload.cpu_cores = Number(payload.cpu_cores) || 1;
+      setMessage(successEl, '');
+      setMessage(errorEl, '');
+      post('vmManager:create', payload);
+    });
+
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (!message) {
+        return;
+      }
+      switch (message.type) {
+        case 'vmManager:state':
+          updateStatus(message.payload);
+          break;
+        case 'vmManager:vms':
+          renderVMs(message.payload);
+          break;
+        case 'vmManager:error':
+          setMessage(errorEl, message.payload);
+          break;
+        case 'vmManager:success':
+          setMessage(successEl, message.payload);
+          break;
+        default:
+          break;
+      }
+    });
+
+    // Initial bootstrap
+    post('vmManager:getStatus');
+    post('vmManager:refresh');
+  </script>
+</body>
+</html>

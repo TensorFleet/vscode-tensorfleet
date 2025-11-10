@@ -16,6 +16,7 @@
     "onView:tensorfleet-gazebo",
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
+    "onView:tensorfleet-vm-manager",
     "onView:tensorfleet-tooling-view",
     "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
@@ -28,7 +29,14 @@
     "onCommand:tensorfleet.stopMCPServer",
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
-    "onCommand:tensorfleet.showDroneStatus"
+    "onCommand:tensorfleet.showDroneStatus",
+    "onCommand:tensorfleet.openVMManagerPanel",
+    "onCommand:tensorfleet.startVMManager",
+    "onCommand:tensorfleet.stopVMManager",
+    "onCommand:tensorfleet.showVMManagerLogs",
+    "onCommand:tensorfleet.selectVMManagerEnvironment",
+    "onCommand:tensorfleet.vmManager.login",
+    "onCommand:tensorfleet.vmManager.logout"
   ],
   "main": "./out/extension.js",
   "packageManager": "bun@1.0.0",
@@ -69,6 +77,11 @@
         {
           "id": "tensorfleet-ros2-baselines",
           "name": "ROS 2 & Stable Baselines",
+          "type": "webview"
+        },
+        {
+          "id": "tensorfleet-vm-manager",
+          "name": "VM Manager",
           "type": "webview"
         }
       ],
@@ -140,6 +153,41 @@
         "command": "tensorfleet.showDroneStatus",
         "title": "TensorFleet: Show Drone Status",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openVMManagerPanel",
+        "title": "TensorFleet: Open VM Manager Console",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.startVMManager",
+        "title": "TensorFleet: Start VM Manager Service",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.stopVMManager",
+        "title": "TensorFleet: Stop VM Manager Service",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.showVMManagerLogs",
+        "title": "TensorFleet: Show VM Manager Logs",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.selectVMManagerEnvironment",
+        "title": "TensorFleet: Select VM Manager Environment",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.vmManager.login",
+        "title": "TensorFleet: Log In to VM Manager",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.vmManager.logout",
+        "title": "TensorFleet: Log Out of VM Manager",
+        "category": "TensorFleet"
       }
     ],
     "menus": {
@@ -188,8 +236,102 @@
           "command": "tensorfleet.openAllPanels",
           "when": "view == tensorfleet-tooling-view",
           "group": "navigation@9"
+        },
+        {
+          "command": "tensorfleet.openAllPanels",
+          "when": "view == tensorfleet-vm-manager",
+          "group": "navigation@9"
+        },
+        {
+          "command": "tensorfleet.selectVMManagerEnvironment",
+          "when": "view == tensorfleet-vm-manager",
+          "group": "navigation@2"
+        },
+        {
+          "command": "tensorfleet.vmManager.login",
+          "when": "view == tensorfleet-vm-manager",
+          "group": "navigation@3"
+        },
+        {
+          "command": "tensorfleet.vmManager.logout",
+          "when": "view == tensorfleet-vm-manager",
+          "group": "navigation@4"
         }
       ]
+    },
+    "configuration": {
+      "title": "TensorFleet",
+      "properties": {
+        "tensorfleet.vmManager.repoPath": {
+          "type": "string",
+          "default": "../vm-manager",
+          "description": "Path to the Go vm-manager repository. Relative paths are resolved from the extension or current workspace."
+        },
+        "tensorfleet.vmManager.apiBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Base URL for the vm-manager HTTP API used by the VM console webview."
+        },
+        "tensorfleet.vmManager.environments": {
+          "type": "array",
+          "default": [
+            {
+              "id": "local",
+              "label": "Local Dev",
+              "apiBaseUrl": "http://localhost:8080",
+              "authEndpoint": "http://localhost:8080/login"
+            },
+            {
+              "id": "staging",
+              "label": "Staging",
+              "apiBaseUrl": "https://staging.vm.tensorfleet.dev",
+              "authEndpoint": "https://staging.vm.tensorfleet.dev/login"
+            },
+            {
+              "id": "production",
+              "label": "Production",
+              "apiBaseUrl": "https://vm.tensorfleet.com",
+              "authEndpoint": "https://vm.tensorfleet.com/login"
+            }
+          ],
+          "description": "List of available VM Manager environments. Each entry should include an id, friendly label, API base URL, and optional auth endpoint.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "apiBaseUrl"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique identifier for the environment (e.g. local, staging, production)."
+              },
+              "label": {
+                "type": "string",
+                "description": "Human-readable label shown in pickers."
+              },
+              "apiBaseUrl": {
+                "type": "string",
+                "description": "Base URL of the VM Manager API."
+              },
+              "authEndpoint": {
+                "type": "string",
+                "description": "Optional absolute or relative URL to use for login requests. Defaults to /login."
+              },
+              "defaultEmail": {
+                "type": "string",
+                "description": "Optional hint email that will be pre-filled in the login form."
+              }
+            }
+          }
+        },
+        "tensorfleet.vmManager.activeEnvironment": {
+          "type": "string",
+          "default": "local",
+          "description": "Identifier of the active VM Manager environment. Must match one of the configured environments."
+        }
+      }
     }
   },
   "scripts": {

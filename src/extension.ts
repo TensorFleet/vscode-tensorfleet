@@ -3,8 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
+import { VMManagerIntegration } from './vm-manager';
 
-type PanelKind = 'standard' | 'terminalTabs';
+type PanelKind = 'standard' | 'terminalTabs' | 'vmManager';
 
 type DroneViewport = {
   id: string;
@@ -58,6 +59,15 @@ const DRONE_VIEWS: DroneViewport[] = [
     command: 'tensorfleet.openROS2Panel',
     actionLabel: 'Launch Robotics Lab',
     panelKind: 'terminalTabs'
+  },
+  {
+    id: 'tensorfleet-vm-manager',
+    title: 'VM Manager Console',
+    description: 'Control the Go-based VM Manager service to launch, inspect, and stop Firecracker/VZ microVMs.',
+    image: 'vm-manager-placeholder.svg',
+    command: 'tensorfleet.openVMManagerPanel',
+    actionLabel: 'Open VM Manager Console',
+    panelKind: 'vmManager'
   }
 ];
 
@@ -77,6 +87,7 @@ const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
 const terminalRegistry = new Map<string, vscode.Terminal>();
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
+let vmManagerIntegration: VMManagerIntegration | null = null;
 
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
@@ -96,6 +107,8 @@ export function activate(context: vscode.ExtensionContext) {
   initializeStatusBarItems(context).catch((error) => {
     console.error('[TensorFleet] Failed to initialize status bars:', error);
   });
+
+  vmManagerIntegration = new VMManagerIntegration(context);
   DRONE_VIEWS.forEach((view) => {
     const provider = new DashboardViewProvider(view, context);
     context.subscriptions.push(
@@ -148,6 +161,17 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
   );
 
+  if (vmManagerIntegration) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand('tensorfleet.startVMManager', () => vmManagerIntegration?.start()),
+      vscode.commands.registerCommand('tensorfleet.stopVMManager', () => vmManagerIntegration?.stop()),
+      vscode.commands.registerCommand('tensorfleet.showVMManagerLogs', () => vmManagerIntegration?.showLogs()),
+      vscode.commands.registerCommand('tensorfleet.selectVMManagerEnvironment', () => vmManagerIntegration?.selectEnvironment()),
+      vscode.commands.registerCommand('tensorfleet.vmManager.login', () => vmManagerIntegration?.promptForLogin()),
+      vscode.commands.registerCommand('tensorfleet.vmManager.logout', () => vmManagerIntegration?.logout())
+    );
+  }
+
   context.subscriptions.push(
     vscode.window.onDidCloseTerminal((closedTerminal) => {
       for (const [key, terminal] of terminalRegistry.entries()) {
@@ -185,6 +209,11 @@ export function deactivate() {
   if (projectWatcher) {
     projectWatcher.dispose();
     projectWatcher = null;
+  }
+
+  if (vmManagerIntegration) {
+    vmManagerIntegration.dispose();
+    vmManagerIntegration = null;
   }
 }
 
@@ -293,12 +322,27 @@ async function openDedicatedPanel(
   const cspSource = webview.cspSource;
 
   panel.webview.onDidReceiveMessage((message) => {
+    if (vmManagerIntegration?.handleWebviewMessage(view.id, message, panel.webview)) {
+      return;
+    }
+
     if (message?.command === 'launchTerminal' && typeof message.target === 'string') {
       launchTerminalSession(message.target);
     } else if (message?.command === 'openAllPanels') {
       void vscode.commands.executeCommand('tensorfleet.openAllPanels');
     }
   });
+
+  if (view.panelKind === 'vmManager') {
+    if (!vmManagerIntegration) {
+      panel.webview.html = getStandardPanelHtml(view, imageUri, cspSource);
+      vscode.window.showErrorMessage('VM Manager integration is unavailable.');
+    } else {
+      vmManagerIntegration.registerPanel(panel);
+      panel.webview.html = vmManagerIntegration.getPanelHtml(panel.webview, cspSource);
+    }
+    return panel;
+  }
 
   if (view.panelKind === 'terminalTabs') {
     panel.webview.html = getTerminalPanelHtml(view, imageUri, cspSource);
