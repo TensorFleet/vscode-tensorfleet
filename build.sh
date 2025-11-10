@@ -9,11 +9,10 @@ echo ""
 
 # 1. Build React panels
 echo "📦 Step 1/2: Building React panels..."
-cd src/webviews/option3-panels
+cd panels-standalone
 bun install
 bun run build
-cd ../../..
-
+cd ../
 echo ""
 
 # 2. Build extension
