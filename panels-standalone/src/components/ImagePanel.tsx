@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ros2Bridge, type ImageMessage } from '../ros2-bridge';
+import { ros2Bridge, Subscription, type ImageMessage } from '../ros2-bridge';
 import { 
   type CameraInfo, 
   type ICameraModel, 
@@ -12,8 +12,8 @@ import './ImagePanel.css';
 export const ImagePanel: React.FC = () => {
   const [currentImage, setCurrentImage] = useState<ImageMessage | null>(null);
   const [isPaused, setIsPaused] = useState(false);
-  const [availableTopics, setAvailableTopics] = useState<string[]>([]);
-  const [selectedTopic, setSelectedTopic] = useState<string>('');
+  const [availableSubscriptions, setAvailableSubscriptions] = useState<Subscription[]>([]);
+  const [selectedSubscription, setSelectedSubscription] = useState<Subscription|null>(null);
   // Brightness/Contrast: 50 = neutral (maps to 0 brightness, 1.0 contrast)
   const [brightness, setBrightness] = useState(50);
   const [contrast, setContrast] = useState(50);
@@ -38,8 +38,8 @@ export const ImagePanel: React.FC = () => {
   // Camera calibration state - Phase 4
   const [cameraInfo, setCameraInfo] = useState<CameraInfo | null>(null);
   const [cameraModel, setCameraModel] = useState<ICameraModel | null>(null);
-  const [calibrationTopic, setCalibrationTopic] = useState<string>('');
-  const [availableCalibrationTopics, setAvailableCalibrationTopics] = useState<string[]>([]);
+  const [calibrationSubscription, setCalibrationSubscription] = useState<Subscription|null>(null);
+  const [availableCalibrationSubscriptions, setAvailableCalibrationSubscriptions] = useState<Subscription[]>([]);
   const [frameIdMismatch, setFrameIdMismatch] = useState<boolean>(false);
   const [show3DAnnotations, setShow3DAnnotations] = useState<boolean>(false);
   
@@ -49,28 +49,26 @@ export const ImagePanel: React.FC = () => {
 
   // Initialize: Load available topics and auto-select first one
   useEffect(() => {
-    const topics = ros2Bridge.getAvailableImageTopics();
-    setAvailableTopics(topics);
+    const subs = ros2Bridge.getAvailableImageTopics();
+    setAvailableSubscriptions(subs);
     
     // Auto-select first topic if available
-    if (topics.length > 0 && !selectedTopic) {
-      setSelectedTopic(topics[0]);
+    if (subs.length > 0 && !selectedSubscription) {
+      setSelectedSubscription(subs[0]);
     }
     
     // Get calibration topics (camera_info)
     // In a real implementation, you'd filter topics by type
     // For now, we'll look for topics containing "camera_info" or "CameraInfo"
-    const allTopics = topics; // In real app: ros2Bridge.getAllTopics()
-    const calibTopics = allTopics.filter(t => 
-      t.toLowerCase().includes('camera_info') || 
-      t.toLowerCase().includes('camerainfo')
+    const allSubs = subs; // In real app: ros2Bridge.getAllTopics()
+    const calibSubs = allSubs.filter(t => 
+      t.topic.toLowerCase().includes('camera_info') || 
+      t.topic.toLowerCase().includes('camerainfo')
     );
-    setAvailableCalibrationTopics(calibTopics);
+    setAvailableCalibrationSubscriptions(calibSubs);
   }, []);
 
   useEffect(() => {
-    // Ensure connection to rosbridge (single supported mode)
-    ros2Bridge.connect('rosbridge');
 
     // Check connection status periodically
     const statusInterval = setInterval(() => {
@@ -79,16 +77,18 @@ export const ImagePanel: React.FC = () => {
     }, 1000);
 
     // Only subscribe if we have a selected topic
-    if (!selectedTopic) {
+    if (!selectedSubscription) {
       return () => clearInterval(statusInterval);
     }
 
     // Subscribe to selected topic
-    ros2Bridge.subscribe(selectedTopic);
+    // ros2Bridge.subscribe(selectedTopic);
 
     // Listen for image messages
-    const cleanup = ros2Bridge.onMessage((message) => {
-      if (!isPaused && message.topic === selectedTopic) {
+    const cleanup = ros2Bridge.subscribe(
+      selectedSubscription,
+      (message) => {
+      if (!isPaused) {
         // Clear any error messages on successful receipt
         setErrorMessage(null);
         setLastMessageTime(Date.now());
@@ -116,7 +116,7 @@ export const ImagePanel: React.FC = () => {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [selectedTopic, isPaused]);
+  }, [selectedSubscription, isPaused]);
 
   useEffect(() => {
     // Render image to canvas with transformations, pan/zoom, and aspect ratio preservation
@@ -319,7 +319,7 @@ export const ImagePanel: React.FC = () => {
 
   // Check for message timeout (no messages for 10 seconds)
   useEffect(() => {
-    if (!selectedTopic || connectionStatus !== 'connected') {
+    if (!selectedSubscription || connectionStatus !== 'connected') {
       return;
     }
 
@@ -327,30 +327,34 @@ export const ImagePanel: React.FC = () => {
       const timeSinceLastMessage = Date.now() - lastMessageTime;
       if (timeSinceLastMessage > 10000 && !currentImage) {
         // No messages for 10 seconds and no current image
-        setErrorMessage(`No messages received on ${selectedTopic} for ${Math.floor(timeSinceLastMessage / 1000)}s`);
+        setErrorMessage(`No messages received on ${selectedSubscription} for ${Math.floor(timeSinceLastMessage / 1000)}s`);
       }
     }, 2000);
 
     return () => clearInterval(timeoutCheck);
-  }, [selectedTopic, connectionStatus, lastMessageTime, currentImage]);
+  }, [selectedSubscription, connectionStatus, lastMessageTime, currentImage]);
 
-  const handleTopicChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newTopic = e.target.value;
-    ros2Bridge.unsubscribe(selectedTopic);
-    ros2Bridge.subscribe(newTopic);
-    setSelectedTopic(newTopic);
+  const handleTopicChange = (sub: Subscription | null) => {
+
+    // ros2Bridge.unsubscribe(selectedSubscription);
+    // ros2Bridge.subscribe(newTopic);
+    setSelectedSubscription(sub);
+
+    if (!sub) {
+      return;
+    }
     
     // Auto-match calibration topic (Phase 4.1)
     // Try to find matching camera_info topic with same prefix
-    const match = newTopic.match(/^(.+\/)([^/]+)$/);
+    const match = sub.topic.match(/^(.+\/)([^/]+)$/);
     if (match) {
       const prefix = match[1]; // e.g., "/camera/"
-      const matchingCalibTopic = availableCalibrationTopics.find(t => 
-        t.startsWith(prefix) && 
-        (t.endsWith('camera_info') || t.endsWith('CameraInfo'))
+      const matchingCalibSub = availableCalibrationSubscriptions.find(t => 
+        t.topic.startsWith(prefix) && 
+        (t.topic.endsWith('camera_info') || t.topic.endsWith('CameraInfo'))
       );
-      if (matchingCalibTopic) {
-        setCalibrationTopic(matchingCalibTopic);
+      if (matchingCalibSub) {
+        setCalibrationSubscription(matchingCalibSub);
       }
     }
   };
@@ -490,7 +494,7 @@ export const ImagePanel: React.FC = () => {
       });
 
       // Generate filename with topic and timestamp
-      const topicName = selectedTopic.replace(/^\/+/, '').replace(/\//g, '_');
+      const topicName = selectedSubscription?.topic.replace(/^\/+/, '').replace(/\//g, '_');
       const timestamp = currentImage.timestamp || Date.now();
       const fileName = `${topicName}-${timestamp}.png`;
 
@@ -533,32 +537,32 @@ export const ImagePanel: React.FC = () => {
 
   // Subscribe to calibration topic (Phase 4.1)
   useEffect(() => {
-    if (!calibrationTopic) {
+    if (!calibrationSubscription) {
       setCameraInfo(null);
       return;
     }
 
     // Subscribe to calibration topic
-    ros2Bridge.subscribe(calibrationTopic);
+    // ros2Bridge.subscribe(calibrationSubscription);
 
-    const cleanup = ros2Bridge.onMessage((message) => {
-      if (message.topic === calibrationTopic) {
-        try {
-          // Normalize CameraInfo (handle ROS1/ROS2 differences)
-          const normalizedInfo = normalizeCameraInfo(message.data);
-          setCameraInfo(normalizedInfo);
-        } catch (error) {
-          console.error('[ImagePanel] Failed to parse CameraInfo:', error);
-          setErrorMessage(`Invalid CameraInfo: ${(error as Error).message}`);
-        }
+    const cleanup = ros2Bridge.subscribe(
+      calibrationSubscription,
+      (message) => {
+      try {
+        // Normalize CameraInfo (handle ROS1/ROS2 differences)
+        const normalizedInfo = normalizeCameraInfo(message.data);
+        setCameraInfo(normalizedInfo);
+      } catch (error) {
+        console.error('[ImagePanel] Failed to parse CameraInfo:', error);
+        setErrorMessage(`Invalid CameraInfo: ${(error as Error).message}`);
       }
     });
 
     return () => {
       cleanup();
-      ros2Bridge.unsubscribe(calibrationTopic);
+      // ros2Bridge.unsubscribe(calibrationTopic);
     };
-  }, [calibrationTopic]);
+  }, [calibrationSubscription]);
 
   // Create/update camera model (Phase 4.2)
   useEffect(() => {
@@ -624,17 +628,23 @@ export const ImagePanel: React.FC = () => {
               <label className="setting-label">
                 <span className="label-text">Image Topic</span>
               </label>
-              <select 
+              <select
                 className="setting-input"
-                value={selectedTopic} 
-                onChange={handleTopicChange}
-                disabled={availableTopics.length === 0}
+                value={selectedSubscription?.topic}
+                onChange={(e) => {
+                  const topic = e.target.value;
+                  const sub = availableSubscriptions.find(s => s.topic === topic) ?? null;
+                  handleTopicChange(sub);
+                }}
+                disabled={availableSubscriptions.length === 0}
               >
-                {availableTopics.length === 0 && (
+                {availableSubscriptions.length === 0 && (
                   <option value="">No image topics available</option>
                 )}
-                {availableTopics.map(topic => (
-                  <option key={topic} value={topic}>{topic}</option>
+                {availableSubscriptions.map(sub => (
+                  <option key={sub.topic} value={sub.topic}>
+                    {sub.topic}
+                  </option>
                 ))}
               </select>
             </div>
@@ -643,32 +653,40 @@ export const ImagePanel: React.FC = () => {
               <label className="setting-label">
                 <span className="label-text">Calibration Topic</span>
               </label>
-              <select 
+
+              <select
                 className="setting-input"
-                value={calibrationTopic} 
-                onChange={(e) => setCalibrationTopic(e.target.value)}
-                disabled={availableCalibrationTopics.length === 0}
+                value={calibrationSubscription?.topic ?? ""} 
+                onChange={(e) => {
+                  const topic = e.target.value;
+
+                  // "None (use fallback)"
+                  if (topic === "") {
+                    setCalibrationSubscription(null);
+                    return;
+                  }
+
+                  const sub =
+                    availableCalibrationSubscriptions.find(t => t.topic === topic) ?? null;
+
+                  setCalibrationSubscription(sub);
+                }}
+                disabled={availableCalibrationSubscriptions.length === 0}
               >
                 <option value="">None (use fallback)</option>
-                {availableCalibrationTopics.map(topic => (
-                  <option key={topic} value={topic}>{topic}</option>
+                {availableCalibrationSubscriptions.map(t => (
+                  <option key={t.topic} value={t.topic}>
+                    {t.topic}
+                  </option>
                 ))}
               </select>
+
               {cameraInfo && !frameIdMismatch && (
                 <span className="calibration-status success">✓ Loaded</span>
               )}
               {frameIdMismatch && (
                 <span className="calibration-status warning">⚠️ Frame mismatch</span>
               )}
-            </div>
-
-            <div className="setting-item setting-item-narrow">
-              <label className="setting-label">
-                <span className="label-text">Playback</span>
-              </label>
-              <button className="setting-button" onClick={() => setIsPaused(!isPaused)}>
-                {isPaused ? '▶ Resume' : '⏸ Pause'}
-              </button>
             </div>
           </div>
         </div>
@@ -805,12 +823,12 @@ export const ImagePanel: React.FC = () => {
         )}
         {!currentImage && (
           <div className="no-image">
-            {availableTopics.length === 0 ? (
+            {availableSubscriptions.length === 0 ? (
               <>
                 <p>No image topics available</p>
                 <p className="hint">Please configure image topics in the bridge</p>
               </>
-            ) : !selectedTopic ? (
+            ) : !selectedSubscription ? (
               <>
                 <p>No topic selected</p>
                 <p className="hint">Please select an image topic from the dropdown</p>
@@ -818,7 +836,7 @@ export const ImagePanel: React.FC = () => {
             ) : (
               <>
                 <p>Waiting for image data...</p>
-                <p className="hint">Connecting to rosbridge - topic: {selectedTopic}</p>
+                <p className="hint">Connecting to rosbridge - topic: {selectedSubscription.topic}</p>
               </>
             )}
           </div>

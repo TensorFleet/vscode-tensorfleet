@@ -224,7 +224,7 @@ export class ROS2Bridge {
   }
 
   // Ensure we always capture both topic and type in our map
-  subscribe(subscription: Subscription, handler: (message: any) => void) {
+  subscribe(subscription: Subscription, handler: (message: any) => void): () => void  {
     const { topic, type } = subscription;
     this.subscriptions.set(topic, { topic, type });
 
@@ -238,10 +238,14 @@ export class ROS2Bridge {
 
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('Not connected, queueing subscription:', { topic, type });
-      return;
+      return () => {};
     }
   
     this._forwardSubscribtion(subscription);
+
+    return () => { 
+      this.unsubscribe(topic, handler);
+    };
   }
 
   _forwardSubscribtion(sub: Subscription) {
