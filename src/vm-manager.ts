@@ -66,6 +66,7 @@ const LOGIN_METADATA_KEY = 'tensorfleet.vmManager.loginMetadata';
 export class VMManagerIntegration {
   private process: ChildProcess | null = null;
   private pendingShutdown: Promise<void> | null = null;
+  private sudoTerminal: vscode.Terminal | null = null;
   private readonly outputChannel: vscode.OutputChannel;
   private readonly templatePath: string;
   private readonly webviews = new Set<vscode.Webview>();
@@ -77,6 +78,14 @@ export class VMManagerIntegration {
   constructor(private readonly context: vscode.ExtensionContext) {
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
     this.templatePath = path.join(__dirname, '..', 'src', 'templates', 'vm-manager.html');
+    this.context.subscriptions.push(
+      vscode.window.onDidCloseTerminal((terminal) => {
+        if (terminal === this.sudoTerminal) {
+          this.sudoTerminal = null;
+          void this.broadcastState();
+        }
+      })
+    );
   }
 
   registerPanel(panel: vscode.WebviewPanel) {
@@ -107,6 +116,14 @@ export class VMManagerIntegration {
 
     if (this.process) {
       vscode.window.showInformationMessage('TensorFleet VM Manager is already running.');
+      void this.broadcastState();
+      return;
+    }
+
+    if (this.sudoTerminal) {
+      vscode.window.showInformationMessage(
+        'TensorFleet VM Manager is already running via the sudo terminal. Stop it before starting another instance.'
+      );
       void this.broadcastState();
       return;
     }
@@ -199,6 +216,10 @@ export class VMManagerIntegration {
     }
 
     if (!this.process) {
+      if (this.sudoTerminal) {
+        await this.stopSudoTerminal(options);
+        return;
+      }
       if (!options.quiet) {
         vscode.window.showInformationMessage('TensorFleet VM Manager is not running.');
       }
@@ -344,6 +365,12 @@ export class VMManagerIntegration {
       return;
     }
 
+    if (this.sudoTerminal) {
+      this.sudoTerminal.show(true);
+      vscode.window.showInformationMessage('TensorFleet VM Manager sudo terminal is already open.');
+      return;
+    }
+
     if (String(process.platform) === 'win32') {
       vscode.window.showWarningMessage('Starting TensorFleet VM Manager with sudo is only supported on Unix-like systems.');
       return;
@@ -374,9 +401,42 @@ export class VMManagerIntegration {
       env: terminalEnv
     });
 
+    this.sudoTerminal = terminal;
     terminal.show(true);
     terminal.sendText(`sudo -E ${goCommand} run ./cmd/vm-manager`);
     vscode.window.showInformationMessage('Opened terminal to start TensorFleet VM Manager with sudo.');
+    void this.broadcastState();
+  }
+
+  private async stopSudoTerminal(options: { quiet?: boolean } = {}) {
+    const terminal = this.sudoTerminal;
+    if (!terminal) {
+      return;
+    }
+
+    this.sudoTerminal = null;
+    if (!options.quiet) {
+      vscode.window.showInformationMessage('TensorFleet VM Manager (sudo terminal) is stopping…');
+    }
+
+    try {
+      terminal.sendText('\u0003', false);
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `[VM Manager] Failed to send stop signal to sudo terminal: ${this.formatError(error)}`
+      );
+    }
+
+    try {
+      terminal.dispose();
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `[VM Manager] Failed to dispose sudo terminal: ${this.formatError(error)}`
+      );
+    }
+
+    this.outputChannel.appendLine('[VM Manager] Sudo terminal closed.');
+    await this.broadcastState();
   }
 
   private isTapPermissionError(output: string): boolean {
@@ -417,7 +477,7 @@ export class VMManagerIntegration {
   }
 
   dispose() {
-    if (this.process || this.pendingShutdown) {
+    if (this.process || this.pendingShutdown || this.sudoTerminal) {
       void this.stop({ quiet: true }).finally(() => {
         this.outputChannel.dispose();
       });
@@ -442,6 +502,7 @@ export class VMManagerIntegration {
       type: 'vmManager:state',
       payload: {
         running: this.isRunning(),
+        sudoTerminalActive: Boolean(this.sudoTerminal),
         apiBaseUrl: this.getApiBaseUrl(),
         repoPath: repoPath ?? undefined,
         localServiceAvailable: Boolean(repoPath),
@@ -1373,7 +1434,7 @@ export class VMManagerIntegration {
     if (error && typeof error === 'object' && 'code' in error) {
       const code = String((error as NodeJS.ErrnoException).code);
       if (code === 'ECONNREFUSED') {
-        return new Error(`Cannot reach VM Manager API at ${url.origin}. Start the Go service or update tensorfleet.vmManager.apiBaseUrl.`);
+        return new Error(`VM Manager API is not responding at ${url.origin}. Start the Go service or update tensorfleet.vmManager.apiBaseUrl.`);
       }
       if (code === 'ETIMEDOUT') {
         return new Error(`VM Manager request to ${url.origin} timed out. Check the service status.`);

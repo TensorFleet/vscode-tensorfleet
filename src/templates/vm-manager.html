@@ -285,7 +285,7 @@
       </div>
       <div class="status-row" style="margin-top:14px;">
         <div class="actions">
-          <button id="vm-start-root-btn" class="secondary">Start as root (terminal)</button>
+          <button id="vm-start-root-btn">Start as root (terminal)</button>
           <button id="vm-stop-btn" class="secondary" disabled>Stop Service</button>
           <button id="vm-logs-btn" class="secondary">Open Logs</button>
         </div>
@@ -565,6 +565,9 @@
         committedApiUrl = targetUrl;
       }
       const localServiceAvailable = Boolean(state.localServiceAvailable);
+      const runningManaged = Boolean(state.running);
+      const runningViaSudo = Boolean(state.sudoTerminalActive);
+      const serviceRunning = runningManaged || runningViaSudo;
       if (serviceCard) {
         serviceCard.classList.toggle('is-disabled', !localServiceAvailable);
       }
@@ -585,12 +588,16 @@
           stopBtn.disabled = true;
           stopBtn.title = 'Local vm-manager repo not found.';
         }
-      } else if (state.running) {
+      } else if (serviceRunning) {
         statusDot.classList.add('running');
-        statusText.textContent = 'VM Manager running';
+        statusText.textContent = runningManaged
+          ? 'VM Manager running'
+          : 'VM Manager running (sudo terminal)';
         if (startRootBtn) {
           startRootBtn.disabled = true;
-          startRootBtn.title = 'Service already running.';
+          startRootBtn.title = runningManaged
+            ? 'Service already running.'
+            : 'Sudo terminal already running.';
         }
         if (stopBtn) {
           stopBtn.disabled = false;
@@ -605,7 +612,7 @@
         }
         if (stopBtn) {
           stopBtn.disabled = true;
-          stopBtn.removeAttribute('title');
+          stopBtn.title = 'No local service detected.';
         }
       }
 
@@ -613,7 +620,7 @@
         clearInterval(refreshTimer);
         refreshTimer = null;
       }
-      const shouldAutoRefresh = Boolean(state?.auth?.loggedIn) || Boolean(state.running);
+      const shouldAutoRefresh = Boolean(state?.auth?.loggedIn) || Boolean(state.running) || Boolean(state.sudoTerminalActive);
       if (shouldAutoRefresh) {
         refreshTimer = setInterval(() => {
           post('vmManager:refresh');
