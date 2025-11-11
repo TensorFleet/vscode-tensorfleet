@@ -71,6 +71,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     actionLabel: 'Open Teleops Panel',
     panelKind: 'standard',
     htmlTemplate: 'teleops-standalone'
+  },
+  {
+    id: 'tensorfleet-image-panel',
+    title: 'Image Panel',
+    description: 'Display camera feeds with custom React components - lightweight, deeply integrated.',
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openImagePanel',
+    actionLabel: 'Open Image Panel',
+    panelKind: 'standard',
+    htmlTemplate: 'image-standalone'
   }
 ];
 
@@ -417,6 +427,11 @@ async function openDedicatedPanel(
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
     }
+
+    if (view.htmlTemplate === 'image-standalone') {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    }
   }
 
   const panel = vscode.window.createWebviewPanel(
@@ -488,6 +503,10 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   if (view.htmlTemplate === 'teleops-standalone') {
     return getStandalonePanelHtml('teleops', webview, context, cspSource);
   } 
+
+  if (view.htmlTemplate === 'image-standalone') {
+    return getStandalonePanelHtml('image', webview, context, cspSource);
+  }
   
   // Load the custom HTML template directly
   const templatePath = path.join(__dirname, '..', 'src', 'templates', view.htmlTemplate);
@@ -526,7 +545,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 }
 
 function getStandalonePanelHtml(
-  panelName: 'teleops',
+  panelName: 'teleops' | 'image',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
