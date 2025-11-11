@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as http from 'http';
 import * as https from 'https';
 import * as os from 'os';
+import * as net from 'net';
 import { ChildProcess, spawn, spawnSync } from 'child_process';
 
 interface VmRecord {
@@ -126,7 +127,12 @@ export class VMManagerIntegration {
     this.outputChannel.appendLine(`[VM Manager] Starting at ${new Date().toISOString()}`);
     this.outputChannel.appendLine(`[VM Manager] Working directory: ${repoPath}`);
 
-    const spawnEnv = this.buildLocalServiceEnv(repoPath);
+    const spawnEnv = await this.buildLocalServiceEnv(repoPath);
+    const serverPort = this.getServerPort(spawnEnv);
+    if (!(await this.ensureServerPortAvailable(serverPort))) {
+      await this.broadcastState();
+      return;
+    }
 
     try {
       this.process = spawn(goCommand, ['run', './cmd/vm-manager'], {
@@ -352,14 +358,20 @@ export class VMManagerIntegration {
     }
 
     const goCommand = String(process.platform) === 'win32' ? 'go.exe' : 'go';
-    const envOverrides = this.getRootfsEnvOverrides(repoPath);
+    const envOverrides = await this.getLocalServiceEnvOverrides(repoPath);
+    const terminalEnv = {
+      ...process.env,
+      LOCAL_DEV: '1',
+      ...envOverrides
+    };
+    const serverPort = this.getServerPort(terminalEnv);
+    if (!(await this.ensureServerPortAvailable(serverPort))) {
+      return;
+    }
     const terminal = vscode.window.createTerminal({
       name: 'TensorFleet VM Manager (sudo)',
       cwd: repoPath,
-      env: {
-        LOCAL_DEV: '1',
-        ...envOverrides
-      }
+      env: terminalEnv
     });
 
     terminal.show(true);
@@ -960,12 +972,82 @@ export class VMManagerIntegration {
     return `${SECRET_TOKEN_PREFIX}.${envId}`;
   }
 
-  private buildLocalServiceEnv(repoPath: string): NodeJS.ProcessEnv {
+  private async buildLocalServiceEnv(repoPath: string): Promise<NodeJS.ProcessEnv> {
+    const overrides = await this.getLocalServiceEnvOverrides(repoPath);
     return {
       ...process.env,
       LOCAL_DEV: '1',
-      ...this.getRootfsEnvOverrides(repoPath)
+      ...overrides
     };
+  }
+
+  private async getLocalServiceEnvOverrides(repoPath: string): Promise<Record<string, string>> {
+    return this.getRootfsEnvOverrides(repoPath);
+  }
+
+  private getServerPort(env?: NodeJS.ProcessEnv): number {
+    const rawValue = env?.PORT ?? process.env.PORT ?? '8080';
+    const candidate = String(rawValue).trim().replace(/^.*:/, '');
+    const parsed = Number.parseInt(candidate || '8080', 10);
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 65535) {
+      return parsed;
+    }
+    if (candidate) {
+      this.outputChannel.appendLine(
+        `[VM Manager] Invalid PORT value "${rawValue}". Falling back to 8080.`
+      );
+    }
+    return 8080;
+  }
+
+  private async ensureServerPortAvailable(port: number): Promise<boolean> {
+    if (!Number.isFinite(port)) {
+      return true;
+    }
+
+    if (await this.isExistingVmManagerRunning(port)) {
+      const message = `TensorFleet VM Manager is already running on port ${port}. Stop it before starting another instance.`;
+      this.outputChannel.appendLine(`[VM Manager] ${message}`);
+      void vscode.window.showInformationMessage(message);
+      return false;
+    }
+
+    if (!(await this.isPortAvailable(port))) {
+      const message = `Port ${port} is already in use. Stop the process using it before starting TensorFleet VM Manager.`;
+      this.outputChannel.appendLine(`[VM Manager] ${message}`);
+      void vscode.window.showErrorMessage(message);
+      return false;
+    }
+
+    return true;
+  }
+
+  private async isExistingVmManagerRunning(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const request = http.request(
+        {
+          host: '127.0.0.1',
+          port,
+          path: '/health',
+          method: 'GET',
+          timeout: 1000
+        },
+        (response) => {
+          response.resume();
+          const healthy =
+            (response.statusCode ?? 0) >= 200 && (response.statusCode ?? 0) < 300;
+          resolve(healthy);
+        }
+      );
+
+      request.once('error', () => resolve(false));
+      request.once('timeout', () => {
+        request.destroy();
+        resolve(false);
+      });
+
+      request.end();
+    });
   }
 
   private getRootfsEnvOverrides(repoPath: string): Record<string, string> {
@@ -995,6 +1077,26 @@ export class VMManagerIntegration {
     }
 
     return envVars;
+  }
+
+  private async isPortAvailable(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const tester = net.createServer();
+      tester.unref?.();
+
+      tester.once('error', (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EADDRINUSE' && error.code !== 'EACCES') {
+          this.outputChannel.appendLine(
+            `[VM Manager] Port availability check for ${port} failed: ${error.message}`
+          );
+        }
+        resolve(false);
+      });
+
+      tester.listen(port, '0.0.0.0', () => {
+        tester.close(() => resolve(true));
+      });
+    });
   }
 
   private getDefaultRootfsDir(): string {

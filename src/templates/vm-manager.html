@@ -285,7 +285,6 @@
       </div>
       <div class="status-row" style="margin-top:14px;">
         <div class="actions">
-          <button id="vm-start-btn">Start Service</button>
           <button id="vm-start-root-btn" class="secondary">Start as root (terminal)</button>
           <button id="vm-stop-btn" class="secondary" disabled>Stop Service</button>
           <button id="vm-logs-btn" class="secondary">Open Logs</button>
@@ -397,7 +396,6 @@
     const statusText = document.getElementById('vm-status-text');
     const apiUrlInput = document.getElementById('vm-api-url');
     const lastRefreshEl = document.getElementById('vm-last-refresh');
-    const startBtn = document.getElementById('vm-start-btn');
     const startRootBtn = document.getElementById('vm-start-root-btn');
     const stopBtn = document.getElementById('vm-stop-btn');
     const envStatusEl = document.getElementById('vm-env-status');
@@ -572,17 +570,13 @@
       }
       if (serviceNotice) {
         serviceNotice.textContent = localServiceAvailable
-          ? 'Runs `go run ./cmd/vm-manager` from your configured repo path.'
+          ? 'Opens a terminal to run `sudo -E go run ./cmd/vm-manager` from your configured repo path.'
           : 'Local Go repo not detected. Log in to cloud environments or set tensorfleet.vmManager.repoPath for dev mode.';
       }
 
       if (!localServiceAvailable) {
         statusDot.classList.remove('running');
         statusText.textContent = 'Local service unavailable';
-        if (startBtn) {
-          startBtn.disabled = true;
-          startBtn.title = 'Local vm-manager repo not found.';
-        }
         if (startRootBtn) {
           startRootBtn.disabled = true;
           startRootBtn.title = 'Local vm-manager repo not found.';
@@ -594,10 +588,6 @@
       } else if (state.running) {
         statusDot.classList.add('running');
         statusText.textContent = 'VM Manager running';
-        if (startBtn) {
-          startBtn.disabled = true;
-          startBtn.removeAttribute('title');
-        }
         if (startRootBtn) {
           startRootBtn.disabled = true;
           startRootBtn.title = 'Service already running.';
@@ -609,10 +599,6 @@
       } else {
         statusDot.classList.remove('running');
         statusText.textContent = 'Service offline';
-        if (startBtn) {
-          startBtn.disabled = false;
-          startBtn.removeAttribute('title');
-        }
         if (startRootBtn) {
           startRootBtn.disabled = false;
           startRootBtn.removeAttribute('title');
@@ -678,7 +664,6 @@
       post('vmManager:refresh');
     });
 
-    document.getElementById('vm-start-btn').addEventListener('click', () => post('vmManager:startService'));
     document.getElementById('vm-start-root-btn').addEventListener('click', () => post('vmManager:startServiceWithSudo'));
     document.getElementById('vm-stop-btn').addEventListener('click', () => post('vmManager:stopService'));
     document.getElementById('vm-logs-btn').addEventListener('click', () => post('vmManager:openLogs'));
