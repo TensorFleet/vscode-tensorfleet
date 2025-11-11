@@ -17,6 +17,7 @@ echo ""
 
 # 2. Build extension
 echo "🔧 Step 2/2: Building extension..."
+bun install
 bun run compile
 
 echo ""
