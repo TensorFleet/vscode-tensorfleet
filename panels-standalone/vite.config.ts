@@ -11,7 +11,8 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         image: resolve(__dirname, 'image.html'),
-        teleops: resolve(__dirname, 'teleops.html')
+        teleops: resolve(__dirname, 'teleops.html'),
+        map: resolve(__dirname, 'mission_control.html')
       }
     }
   },

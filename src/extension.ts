@@ -524,7 +524,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   }
 
   if (view.htmlTemplate === 'map-standalone') {
-    return getStandalonePanelHtml('map', webview, context, cspSource);
+    return getStandalonePanelHtml('mission_control', webview, context, cspSource);
   }
   
   // Load the custom HTML template directly
@@ -564,7 +564,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 }
 
 function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'map',
+  panelName: 'teleops' | 'image' | 'mission_control',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
