@@ -2,7 +2,7 @@
  * ROS2 Bridge for Standalone Mode
  * Connects directly to rosbridge or Foxglove Bridge WebSocket
  */
-
+import { FoxgloveWsClient } from "./FoxgloveNetworking";
 
 export type ConnectionMode = 'rosbridge' | 'foxglove';
 
@@ -138,9 +138,9 @@ export interface MavrosMsgsHomePosition {
 }
 
 export class ROS2Bridge {
-  private ws: WebSocket | null = null;
+  private client: FoxgloveWsClient | null;
   private messageHandlers: Map<string, Set<(message: any) => void>> = new Map();
-  private currentMode: ConnectionMode = 'rosbridge';
+  private currentMode: ConnectionMode = 'foxglove';
 
   // store full Subscription objects keyed by topic
   private subscriptions: Map<string, Subscription> = new Map();
@@ -148,66 +148,59 @@ export class ROS2Bridge {
   private reconnectTimeout: number | null = null;
 
 
-  connect(mode: ConnectionMode = 'rosbridge') {
-    this.currentMode = mode;
+  connect() {
     // TODO : this is just hardcoded ip
-    const url = mode === 'rosbridge' 
-      ? 'ws://172.16.0.10:9091'
-      : 'ws://172.16.0.10:8765';
+    const url ='ws://172.16.0.10:8765';
 
-    console.log(`Connecting to ${mode} at ${url}...`);
+    console.log(`Connecting to foxglove at ${url}...`);
 
-    if (this.ws) {
-      this.ws.close();
+    if (this.client) {
+      this.client.close();
     }
 
-    // Foxglove requires the subprotocol to be specified
-    this.ws = mode === 'foxglove'
-      ? new WebSocket(url, 'foxglove.websocket.v1')
-      : new WebSocket(url);
+    this.client = new FoxgloveWsClient({ url });
 
-    this.ws.onopen = () => {
-      console.log(`Connected to ${mode}`);
+    // set hooks directly
+    this.client.onOpen = () => {
+      console.log("connected");
+      
       this.subscriptions.forEach((sub) => {
         this._forwardSubscribtion(sub);
       });
     };
 
-    this.ws.onmessage = async (event) => {
-      try {
-        if (this.currentMode === "rosbridge") {
-          const payload = event.data;
-          let data: any;
-
-          if (typeof payload === "string") {
-            data = JSON.parse(payload);
-          } else {
-            console.log("Unsupported ROS2Bridge payload :", typeof payload);
-            return
-          }
-
-          this.handleRosbridgeMessage(data);
-
-        } else {
-          console.log("Foxglove protocol not implemented");
-        }
-
-        
-      } catch (err) {
-        console.error("[RB] onmessage error:", err);
-      }
-    };
-    this.ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-
-    this.ws.onclose = () => {
-      console.log(`Disconnected from ${mode}`);
-      // Auto-reconnect after 3 seconds (use currentMode in case mode changed)
+    this.client.onClose = () => {
+      console.log("Foxglove connection closed");
       this.reconnectTimeout = window.setTimeout(() => {
         console.log('Attempting to reconnect...');
-        this.connect(this.currentMode);
+        this.connect();
       }, 3000);
+    };
+
+    this.client.onError = (err) => {
+      console.error("Foxglove client error", err);
+    };
+
+    this.client.onNewTopic = (topic, type) => {
+      console.log("new Foxglove topic:", topic, "type:", type);
+    };
+
+    this.client.onMessage = (msg) => {
+      console.log(
+        "foxglove msg on",
+        msg.topic,
+        "encoding",
+        msg.encoding,        // <── this is what you’re missing
+        "type",
+        msg.schemaName,
+        "payload",
+        msg.payload
+      );
+      try {
+        this.handleFoxgloveMessage(msg)
+      } catch (err) {
+        console.error("[Foxglove] onmessage error:", err);
+      }
     };
   }
 
@@ -216,10 +209,9 @@ export class ROS2Bridge {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
-    if (this.ws) {
-      this.ws.onclose = null;
-      this.ws.close();
-      this.ws = null;
+    if (this.client) {
+      this.client.onClose = undefined;
+      this.client.close();
     }
   }
 
@@ -249,29 +241,14 @@ export class ROS2Bridge {
   }
 
   _forwardSubscribtion(sub: Subscription) {
-    if (!this.ws) {
+    if (!this.client) {
       return;
     }
 
     const { topic, type } = sub;
 
-    if (this.currentMode === 'rosbridge') {
-      this.ws.send(JSON.stringify({
-        op: 'subscribe',
-        topic,
-        type,
-        throttle_rate: 0,
-        queue_length: 0
-      }));
-    } else {
-      this.ws.send(JSON.stringify({
-        op: 'subscribe',
-        subscriptions: [{
-          id: Date.now(),
-          topic
-        }]
-      }));
-    }
+    // Foxglove: subscribe by topic name
+    this.client.subscribe(topic);
 
     console.log(`Subscribed to [${type}] : ${topic}`);
   }
@@ -284,42 +261,28 @@ export class ROS2Bridge {
         return;
       }
     }
+
     this.subscriptions.delete(topic);
 
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.client) {
       return;
     }
 
-    if (this.currentMode === 'rosbridge') {
-      this.ws.send(JSON.stringify({
-        op: 'unsubscribe',
-        topic
-      }));
-    } else {
-      console.warn('Foxglove unsubscribe not implemented (no id tracking).');
-    }
+    this.client.unsubscribe(topic);
   }
 
   publish(topic: string, messageType: string, message: any) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn('Cannot publish: not connected');
+    if (!this.client) {
+      console.warn("Cannot publish: Foxglove client not created");
       return;
     }
 
-    if (this.currentMode === 'rosbridge') {
-      this.ws.send(JSON.stringify({
-        op: 'publish',
-        topic,
-        type: messageType,
-        msg: message
-      }));
-    } else {
-      console.warn('Publishing not yet supported for Foxglove mode');
-    }
+    // messageType here is the Foxglove schemaName (e.g. "geometry_msgs/msg/Twist")
+    this.client.publish(topic, messageType, message);
   }
 
   isConnected(): boolean {
-    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    return !!this.client;
   }
 
   getAvailableImageTopics(): Subscription[] {
@@ -339,68 +302,77 @@ export class ROS2Bridge {
   ];
 }
 
-  private handleRosbridgeMessage(data: any) {
-    if (data.op === 'publish' && data.msg) {
-      const msg = data.msg;
-      const topic = data.topic;
-      const type = this.subscriptions.get(topic)?.type ?? "";
+  private handleFoxgloveMessage(data: any) {
+    // Expecting something like: { topic, schemaName, payload, ... }
+    const topic: string | undefined = data?.topic;
+    if (!topic) {
+      console.warn("[FoxgloveBridge] handleFoxgloveMessage called without topic");
+      return;
+    }
 
-      // Extract header information (common to both message types)
+    const type = this.subscriptions.get(topic)?.type ?? "";
 
-      const header = msg.header || {};
-      const frameId = header.frame_id || '';
-      let timestamp = new Date().toISOString();
-      let timestampNanos: number | undefined;
-      
-      // Extract timestamp from header if available
-      if (header.stamp) {
-        const sec = header.stamp.sec || 0;
-        const nanosec = header.stamp.nanosec || 0;
-        timestampNanos = sec * 1_000_000_000 + nanosec;
-        timestamp = new Date(sec * 1000 + nanosec / 1_000_000).toISOString();
+    // FoxgloveWsClient gives `payload`; fall back to `msg` or the object itself if needed.
+    const msg: any = data?.payload ?? data?.msg ?? data;
+    if (!msg || typeof msg !== "object") {
+      this.messageHandlers.get(topic)?.forEach((handler) => handler(data));
+      return;
+    }
+
+    const header = msg.header || {};
+    const frameId = header.frame_id || "";
+    let timestamp = new Date().toISOString();
+    let timestampNanos: number | undefined;
+
+    if (header.stamp) {
+      const sec = header.stamp.sec || 0;
+      const nanosec = header.stamp.nanosec || header.stamp.nsec || 0;
+      timestampNanos = sec * 1_000_000_000 + nanosec;
+      timestamp = new Date(sec * 1000 + nanosec / 1_000_000).toISOString();
+    }
+
+    if (type === "sensor_msgs/msg/Image") {
+      try {
+        const dataURI = this.convertRawImageToDataURI(msg);
+        const imageMsg: ImageMessage = {
+          topic,
+          timestamp,
+          timestampNanos,
+          frameId,
+          encoding: msg.encoding,
+          width: msg.width,
+          height: msg.height,
+          data: dataURI,
+          messageType: "raw",
+        };
+        this.messageHandlers.get(topic)?.forEach((handler) => handler(imageMsg));
+      } catch (error) {
+        console.error("[FoxgloveBridge] Failed to convert image:", error);
       }
-
-      // Handle raw Image messages (sensor_msgs/Image)
-      if (type === "sensor_msgs/msg/Image") {
-        try {
-          const dataURI = this.convertRawImageToDataURI(msg);
-          const imageMsg: ImageMessage = {
-            topic: data.topic,
-            timestamp,
-            timestampNanos,
-            frameId,
-            encoding: msg.encoding,
-            width: msg.width,
-            height: msg.height,
-            data: dataURI,
-            messageType: 'raw'
-          };
-          this.messageHandlers.get(topic)?.forEach(handler => handler(imageMsg));
-        } catch (error) {
-          console.error('[ROS2Bridge] Failed to convert image:', error);
-        }
-      } else if (type === 'sensor_msgs/msg/CompressedImage') {
-          try {
-            this.convertCompressedImageToDataURI(msg, (dataURI, width, height) => {
-              const imageMsg: ImageMessage = {
-                topic: data.topic,
-                timestamp,
-                timestampNanos,
-                frameId,
-                encoding: msg.format, // e.g., "jpeg", "png"
-                width,
-                height,
-                data: dataURI,
-                messageType: 'compressed'
-              };
-              this.messageHandlers.get(topic)?.forEach(handler => handler(imageMsg));
-            });
-          } catch (error) {
-            console.error('[ROS2Bridge] Failed to convert compressed image:', error);
-          }
-      } else {
-        this.messageHandlers.get(topic)?.forEach(handler => handler(data));
+    } else if (type === "sensor_msgs/msg/CompressedImage") {
+      try {
+        this.convertCompressedImageToDataURI(
+          msg,
+          (dataURI, width, height) => {
+            const imageMsg: ImageMessage = {
+              topic,
+              timestamp,
+              timestampNanos,
+              frameId,
+              encoding: msg.format,
+              width,
+              height,
+              data: dataURI,
+              messageType: "compressed",
+            };
+            this.messageHandlers.get(topic)?.forEach((handler) => handler(imageMsg));
+          },
+        );
+      } catch (error) {
+        console.error("[FoxgloveBridge] Failed to convert compressed image:", error);
       }
+    } else {
+      this.messageHandlers.get(topic)?.forEach((handler) => handler(msg));
     }
   }
 
@@ -539,12 +511,6 @@ export class ROS2Bridge {
       console.error('[ROS2Bridge] Failed to load compressed image:', error);
     };
     img.src = dataURI;
-  }
-
-  private handleFoxgloveMessage(data: any) {
-    // Foxglove Bridge sends binary data in a different format
-    // TODO: Implement Foxglove message parsing
-    console.log('Foxglove message:', data);
   }
 }
 
