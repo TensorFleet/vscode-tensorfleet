@@ -244,8 +244,34 @@
     .vm-card__id {
       font-size: 11px;
       color: var(--vscode-descriptionForeground);
-      margin: 2px 0 0;
+      margin: 0;
       word-break: break-all;
+    }
+    .vm-card__id-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 0 0;
+    }
+    .copy-id-btn {
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      color: var(--vscode-foreground);
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+    .copy-id-btn:hover:not(:disabled) {
+      border-color: rgba(255,255,255,0.3);
+      background: rgba(255,255,255,0.1);
+    }
+    .copy-id-btn.is-success {
+      border-color: #4ade80;
+      color: #4ade80;
     }
 
     .vm-card__header {
@@ -438,7 +464,6 @@
         <div class="actions">
           <button id="vm-start-root-btn">Start as root (terminal)</button>
           <button id="vm-stop-btn" class="secondary" disabled>Stop Service</button>
-          <button id="vm-logs-btn" class="secondary">Open Logs</button>
         </div>
         <div class="meta meta--stacked vm-service-meta">
           <label for="vm-api-url">API URL</label>
@@ -691,6 +716,37 @@
       }
     };
 
+    const copyVmIdToClipboard = async (value) => {
+      const text = value || '';
+      if (!text) {
+        return false;
+      }
+      try {
+        if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (error) {
+        // fall through to manual copy attempt
+      }
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      let success = false;
+      try {
+        success = document.execCommand('copy');
+      } catch (error) {
+        success = false;
+      } finally {
+        document.body.removeChild(textarea);
+      }
+      return success;
+    };
+
     const formatTimestamp = (value) => {
       if (!value) {
         return 'Not logged in yet';
@@ -928,7 +984,10 @@
           <div class="vm-card__header">
             <div>
               <h3>${vm.name || vm.id}</h3>
-              <p class="vm-card__id">${vm.id}</p>
+              <div class="vm-card__id-row">
+                <p class="vm-card__id" title="${vm.id}">${vm.id}</p>
+                <button type="button" class="copy-id-btn" data-copy-value="${vm.id}">Copy ID</button>
+              </div>
             </div>
             <span class="${statusClass}">${statusLabel}</span>
           </div>
@@ -957,9 +1016,27 @@
             </div>
           </div>
         `;
-        const stopBtn = card.querySelector('button');
+        const stopBtn = card.querySelector('button.danger');
         stopBtn?.addEventListener('click', () => {
           post('vmManager:stopVm', { id: vm.id });
+        });
+        const copyBtn = card.querySelector('.copy-id-btn');
+        copyBtn?.addEventListener('click', async (event) => {
+          const target = event.currentTarget;
+          if (!target) {
+            return;
+          }
+          const originalLabel = target.textContent;
+          const copied = await copyVmIdToClipboard(target.dataset.copyValue || vm.id);
+          if (!originalLabel) {
+            return;
+          }
+          target.classList.toggle('is-success', copied);
+          target.textContent = copied ? 'Copied!' : 'Copy failed';
+          setTimeout(() => {
+            target.textContent = originalLabel;
+            target.classList.remove('is-success');
+          }, 1600);
         });
         listEl.appendChild(card);
       });
@@ -978,7 +1055,6 @@
 
     document.getElementById('vm-start-root-btn').addEventListener('click', () => post('vmManager:startServiceWithSudo'));
     document.getElementById('vm-stop-btn').addEventListener('click', () => post('vmManager:stopService'));
-    document.getElementById('vm-logs-btn').addEventListener('click', () => post('vmManager:openLogs'));
 
     const commitApiUrlChange = () => {
       if (!apiUrlInput) {
