@@ -16,11 +16,17 @@
     "onView:tensorfleet-gazebo",
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
+    "onView:tensorfleet-image-panel",
+    "onView:tensorfleet-teleops-panel",
+    "onView:tensorfleet-map-panel",
     "onView:tensorfleet-tooling-view",
     "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
+    "onCommand:tensorfleet.openImagePanel",
+    "onCommand:tensorfleet.openTeleopsPanel",
+    "onCommand:tensorfleet.openMapPanel",
     "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.installTools",
     "onCommand:tensorfleet.openAllPanels",
@@ -28,7 +34,16 @@
     "onCommand:tensorfleet.stopMCPServer",
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
-    "onCommand:tensorfleet.showDroneStatus"
+    "onCommand:tensorfleet.showDroneStatus",
+    "onCommand:tensorfleet.connectROS2",
+    "onCommand:tensorfleet.disconnectROS2",
+    "onCommand:tensorfleet.startPX4Telemetry",
+    "onCommand:tensorfleet.connectROS2WebSocket",
+    "onCommand:tensorfleet.disconnectROS2WebSocket",
+    "onCommand:tensorfleet.configureROS2WebSocket",
+    "onCommand:tensorfleet.connectFoxgloveBridge",
+    "onCommand:tensorfleet.disconnectFoxgloveBridge",
+    "onCommand:tensorfleet.configureFoxgloveBridge"
   ],
   "main": "./out/extension.js",
   "packageManager": "bun@1.0.0",
@@ -70,6 +85,21 @@
           "id": "tensorfleet-ros2-baselines",
           "name": "ROS 2 & Stable Baselines",
           "type": "webview"
+        },
+        {
+          "id": "tensorfleet-image-panel",
+          "name": "Image Panel",
+          "type": "webview"
+        },
+        {
+          "id": "tensorfleet-teleops-panel",
+          "name": "Teleops Panel",
+          "type": "webview"
+        },
+        {
+          "id": "tensorfleet-map-panel",
+          "name": "Map Panel",
+          "type": "webview"
         }
       ],
       "tensorfleet-tooling": [
@@ -99,6 +129,21 @@
       {
         "command": "tensorfleet.openROS2Panel",
         "title": "TensorFleet: Open ROS 2 & Stable Baselines Lab",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openImagePanel",
+        "title": "TensorFleet: Open Image Panel",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openTeleopsPanel",
+        "title": "TensorFleet: Open Teleops Panel",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openMapPanel",
+        "title": "TensorFleet: Open Map Panel",
         "category": "TensorFleet"
       },
       {
@@ -140,8 +185,70 @@
         "command": "tensorfleet.showDroneStatus",
         "title": "TensorFleet: Show Drone Status",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.connectROS2",
+        "title": "TensorFleet: Connect to ROS2",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.disconnectROS2",
+        "title": "TensorFleet: Disconnect from ROS2",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.startPX4Telemetry",
+        "title": "TensorFleet: Start PX4 Telemetry Monitor",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.connectROS2WebSocket",
+        "title": "TensorFleet: Connect to ROS2 (WebSocket)",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.disconnectROS2WebSocket",
+        "title": "TensorFleet: Disconnect from ROS2 (WebSocket)",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.configureROS2WebSocket",
+        "title": "TensorFleet: Configure ROS2 WebSocket URL",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.connectFoxgloveBridge",
+        "title": "TensorFleet: Connect to Foxglove Bridge",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.disconnectFoxgloveBridge",
+        "title": "TensorFleet: Disconnect from Foxglove Bridge",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.configureFoxgloveBridge",
+        "title": "TensorFleet: Configure Foxglove Bridge URL",
+        "category": "TensorFleet"
       }
     ],
+    "configuration": {
+      "title": "TensorFleet",
+      "properties": {
+        "tensorfleet.ros2.websocketUrl": {
+          "type": "string",
+          "default": "ws://172.16.0.2:9091",
+          "description": "ROS2 WebSocket URL (rosbridge_suite) for remote connections (e.g., Firecracker VM)",
+          "pattern": "^(ws|wss)://.*$"
+        },
+        "tensorfleet.ros2.foxgloveUrl": {
+          "type": "string",
+          "default": "ws://172.16.0.2:8765",
+          "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
+          "pattern": "^(ws|wss)://.*$"
+        }
+      }
+    },
     "menus": {
       "view/title": [
         {
@@ -162,6 +269,16 @@
         {
           "command": "tensorfleet.openROS2Panel",
           "when": "view == tensorfleet-ros2-baselines",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tensorfleet.openImagePanel",
+          "when": "view == tensorfleet-image-panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tensorfleet.openTeleopsPanel",
+          "when": "view == tensorfleet-teleops-panel",
           "group": "navigation@1"
         },
         {
@@ -204,13 +321,20 @@
     "tensorfleet-mcp": "./out/mcp-server.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@foxglove/ws-protocol": "^0.8.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@types/ws": "^8.18.1",
+    "roslib": "^1.4.1",
+    "ws": "^8.18.3"
+  },
+  "optionalDependencies": {
+    "rclnodejs": "^0.21.4"
   },
   "devDependencies": {
     "@types/node": "^18.17.0",
     "@types/vscode": "^1.85.0",
     "eslint": "^8.56.0",
-    "typescript": "^5.2.2",
-    "tslib": "^2.6.2"
+    "tslib": "^2.6.2",
+    "typescript": "^5.2.2"
   }
 }
