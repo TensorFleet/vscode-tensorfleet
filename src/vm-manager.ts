@@ -696,11 +696,17 @@ export class VMManagerIntegration {
       headers['Content-Length'] = Buffer.byteLength(data);
     }
 
-    if (!options.skipAuth && environment?.id) {
-      const token = await this.getAuthToken(environment.id);
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
+    if (!options.skipAuth) {
+      if (!environment?.id) {
+        throw new Error('Authentication required but no VM Manager environment is active.');
       }
+
+      const token = await this.getAuthToken(environment.id);
+      if (!token) {
+        const label = environment.label ?? environment.id;
+        throw new Error(`Authentication required for ${label}. Please log in first.`);
+      }
+      headers.Authorization = `Bearer ${token}`;
     }
 
     return new Promise<T>((resolve, reject) => {
