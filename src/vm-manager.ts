@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as https from 'https';
+import * as os from 'os';
 import { ChildProcess, spawn, spawnSync } from 'child_process';
 
 interface VmRecord {
@@ -70,6 +71,7 @@ export class VMManagerIntegration {
   private resolvedRepoPath: string | null = null;
   private repoWarningShown = false;
   private readonly authWarningIssued = new Set<string>();
+  private baseRootfsWarningShown = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
@@ -117,20 +119,19 @@ export class VMManagerIntegration {
       return;
     }
 
-    const goCommand = process.platform === 'win32' ? 'go.exe' : 'go';
+    const goCommand = String(process.platform) === 'win32' ? 'go.exe' : 'go';
     if (!this.ensureGoAvailable(goCommand)) {
       return;
     }
     this.outputChannel.appendLine(`[VM Manager] Starting at ${new Date().toISOString()}`);
     this.outputChannel.appendLine(`[VM Manager] Working directory: ${repoPath}`);
 
+    const spawnEnv = this.buildLocalServiceEnv(repoPath);
+
     try {
       this.process = spawn(goCommand, ['run', './cmd/vm-manager'], {
         cwd: repoPath,
-        env: {
-          ...process.env,
-          LOCAL_DEV: '1'
-        }
+        env: spawnEnv
       });
     } catch (error) {
       this.process = null;
@@ -139,6 +140,7 @@ export class VMManagerIntegration {
     }
 
     let portConflictWarned = false;
+    let tapPermissionPrompted = false;
     this.process.stdout?.on('data', (data) => {
       this.outputChannel.append(data.toString());
     });
@@ -151,6 +153,10 @@ export class VMManagerIntegration {
         vscode.window.showErrorMessage(
           'TensorFleet VM Manager could not bind one of its ports (often the ZMQ proxy on tcp://*:5556). Stop any lingering vm-manager processes or other tools using that port and try again.'
         );
+      }
+      if (!tapPermissionPrompted && this.isTapPermissionError(text)) {
+        tapPermissionPrompted = true;
+        this.showSudoNetworkingPrompt();
       }
     });
 
@@ -276,6 +282,9 @@ export class VMManagerIntegration {
       case 'vmManager:startService':
         void this.start();
         break;
+      case 'vmManager:startServiceWithSudo':
+        void this.startServiceWithSudoTerminal();
+        break;
       case 'vmManager:stopService':
         void this.stop();
         break;
@@ -321,6 +330,78 @@ export class VMManagerIntegration {
     }
 
     return true;
+  }
+
+  private async startServiceWithSudoTerminal() {
+    if (this.process) {
+      vscode.window.showInformationMessage('TensorFleet VM Manager already running via VS Code.');
+      return;
+    }
+
+    if (String(process.platform) === 'win32') {
+      vscode.window.showWarningMessage('Starting TensorFleet VM Manager with sudo is only supported on Unix-like systems.');
+      return;
+    }
+
+    const repoPath = this.resolveRepoPath();
+    if (!repoPath) {
+      vscode.window.showWarningMessage(
+        'Local vm-manager repo not detected. Configure tensorfleet.vmManager.repoPath before starting with sudo.'
+      );
+      return;
+    }
+
+    const goCommand = String(process.platform) === 'win32' ? 'go.exe' : 'go';
+    const envOverrides = this.getRootfsEnvOverrides(repoPath);
+    const terminal = vscode.window.createTerminal({
+      name: 'TensorFleet VM Manager (sudo)',
+      cwd: repoPath,
+      env: {
+        LOCAL_DEV: '1',
+        ...envOverrides
+      }
+    });
+
+    terminal.show(true);
+    terminal.sendText(`sudo -E ${goCommand} run ./cmd/vm-manager`);
+    vscode.window.showInformationMessage('Opened terminal to start TensorFleet VM Manager with sudo.');
+  }
+
+  private isTapPermissionError(output: string): boolean {
+    if (!output) {
+      return false;
+    }
+    const lower = output.toLowerCase();
+    const permissionBlocked =
+      lower.includes('operation not permitted') || lower.includes('permission denied');
+    if (!permissionBlocked) {
+      return false;
+    }
+    return lower.includes('tap') || lower.includes('tun') || lower.includes('tunsetiff');
+  }
+
+  private showSudoNetworkingPrompt() {
+    const action = 'Open sudo terminal';
+    vscode.window
+      .showWarningMessage(
+        'Firecracker networking needs root access to create TAP devices. Use "Start as root (terminal)" in the VM Manager panel or open it now.',
+        action
+      )
+      .then((selection) => {
+        if (selection !== action) {
+          return;
+        }
+        void (async () => {
+          try {
+            await this.stop({ quiet: true });
+          } catch (error) {
+            this.outputChannel.appendLine(
+              `[VM Manager] Failed to stop process before sudo restart: ${this.formatError(error)}`
+            );
+          }
+          await this.startServiceWithSudoTerminal();
+        })();
+      });
   }
 
   dispose() {
@@ -877,6 +958,88 @@ export class VMManagerIntegration {
 
   private getTokenKey(envId: string) {
     return `${SECRET_TOKEN_PREFIX}.${envId}`;
+  }
+
+  private buildLocalServiceEnv(repoPath: string): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      LOCAL_DEV: '1',
+      ...this.getRootfsEnvOverrides(repoPath)
+    };
+  }
+
+  private getRootfsEnvOverrides(repoPath: string): Record<string, string> {
+    const envVars: Record<string, string> = {};
+    const rootfsDir = this.getDefaultRootfsDir();
+    try {
+      fs.mkdirSync(rootfsDir, { recursive: true });
+      envVars.FIRECRACKER_ROOTFS_DIR = rootfsDir;
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `[VM Manager] Failed to prepare local rootfs directory (${rootfsDir}): ${this.formatError(error)}`
+      );
+    }
+
+    if (!process.env.FIRECRACKER_BASE_ROOTFS) {
+      const detectedBase = this.findLocalBaseRootfs(repoPath);
+      if (detectedBase) {
+        envVars.FIRECRACKER_BASE_ROOTFS = detectedBase;
+        this.baseRootfsWarningShown = false;
+      } else if (!this.baseRootfsWarningShown) {
+        this.baseRootfsWarningShown = true;
+        this.outputChannel.appendLine(
+          '[VM Manager] Could not find a Firecracker base rootfs under ../firecracker-vm/build. ' +
+            'Set FIRECRACKER_BASE_ROOTFS if VM creation needs a custom image.'
+        );
+      }
+    }
+
+    return envVars;
+  }
+
+  private getDefaultRootfsDir(): string {
+    const home = os.homedir();
+    if (!home) {
+      return path.resolve(this.context.globalStorageUri.fsPath, 'rootfs');
+    }
+    return path.join(home, '.tensorfleet', 'rootfs');
+  }
+
+  private findLocalBaseRootfs(repoPath: string): string | undefined {
+    const candidates: string[] = [];
+    const repoSibling = path.resolve(repoPath, '..', 'firecracker-vm', 'build');
+    candidates.push(repoSibling);
+
+    const extensionSibling = path.resolve(this.context.extensionPath, '..', 'firecracker-vm', 'build');
+    if (extensionSibling !== repoSibling) {
+      candidates.push(extensionSibling);
+    }
+
+    for (const dir of candidates) {
+      if (!fs.existsSync(dir)) {
+        continue;
+      }
+      let stats: fs.Stats | undefined;
+      try {
+        stats = fs.statSync(dir);
+      } catch {
+        continue;
+      }
+      if (!stats.isDirectory()) {
+        continue;
+      }
+      const preferred = path.join(dir, 'gazebo-rootfs.ext4');
+      if (fs.existsSync(preferred)) {
+        return preferred;
+      }
+      const entries = fs.readdirSync(dir);
+      const fallback = entries.find((entry) => entry.endsWith('.ext4'));
+      if (fallback) {
+        return path.join(dir, fallback);
+      }
+    }
+
+    return undefined;
   }
 
   private async getAuthToken(envId?: string): Promise<string | undefined> {

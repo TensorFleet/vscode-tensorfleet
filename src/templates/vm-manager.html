@@ -286,6 +286,7 @@
       <div class="status-row" style="margin-top:14px;">
         <div class="actions">
           <button id="vm-start-btn">Start Service</button>
+          <button id="vm-start-root-btn" class="secondary">Start as root (terminal)</button>
           <button id="vm-stop-btn" class="secondary" disabled>Stop Service</button>
           <button id="vm-logs-btn" class="secondary">Open Logs</button>
         </div>
@@ -397,6 +398,7 @@
     const apiUrlInput = document.getElementById('vm-api-url');
     const lastRefreshEl = document.getElementById('vm-last-refresh');
     const startBtn = document.getElementById('vm-start-btn');
+    const startRootBtn = document.getElementById('vm-start-root-btn');
     const stopBtn = document.getElementById('vm-stop-btn');
     const envStatusEl = document.getElementById('vm-env-status');
     const envSelect = document.getElementById('vm-env-select');
@@ -581,6 +583,10 @@
           startBtn.disabled = true;
           startBtn.title = 'Local vm-manager repo not found.';
         }
+        if (startRootBtn) {
+          startRootBtn.disabled = true;
+          startRootBtn.title = 'Local vm-manager repo not found.';
+        }
         if (stopBtn) {
           stopBtn.disabled = true;
           stopBtn.title = 'Local vm-manager repo not found.';
@@ -592,6 +598,10 @@
           startBtn.disabled = true;
           startBtn.removeAttribute('title');
         }
+        if (startRootBtn) {
+          startRootBtn.disabled = true;
+          startRootBtn.title = 'Service already running.';
+        }
         if (stopBtn) {
           stopBtn.disabled = false;
           stopBtn.removeAttribute('title');
@@ -602,6 +612,10 @@
         if (startBtn) {
           startBtn.disabled = false;
           startBtn.removeAttribute('title');
+        }
+        if (startRootBtn) {
+          startRootBtn.disabled = false;
+          startRootBtn.removeAttribute('title');
         }
         if (stopBtn) {
           stopBtn.disabled = true;
@@ -665,6 +679,7 @@
     });
 
     document.getElementById('vm-start-btn').addEventListener('click', () => post('vmManager:startService'));
+    document.getElementById('vm-start-root-btn').addEventListener('click', () => post('vmManager:startServiceWithSudo'));
     document.getElementById('vm-stop-btn').addEventListener('click', () => post('vmManager:stopService'));
     document.getElementById('vm-logs-btn').addEventListener('click', () => post('vmManager:openLogs'));
 
