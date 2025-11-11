@@ -308,6 +308,14 @@ export class VMManagerIntegration {
       case 'vmManager:logout':
         this.logout(webview).catch((error) => this.sendError(webview, error));
         break;
+      case 'vmManager:setApiBaseUrl':
+        if (!message.payload?.apiBaseUrl) {
+          this.sendError(webview, new Error('Missing API URL'));
+          break;
+        }
+        void this.updateApiBaseUrl(message.payload.apiBaseUrl, message.payload.environmentId, webview)
+          .catch((error) => this.sendError(webview, error));
+        break;
       default:
         return false;
     }
@@ -825,6 +833,31 @@ export class VMManagerIntegration {
     }
 
     await this.broadcastState();
+  }
+
+  private async updateApiBaseUrl(apiBaseUrl: string, environmentId?: string, webview?: vscode.Webview) {
+    const normalized = apiBaseUrl.trim();
+    if (!normalized) {
+      throw new Error('API URL cannot be empty.');
+    }
+    const config = vscode.workspace.getConfiguration('tensorfleet');
+    const environments = config.get<VmManagerEnvironment[]>('vmManager.environments') ?? [];
+    if (environmentId) {
+      const index = environments.findIndex((env) => env.id === environmentId);
+      if (index >= 0) {
+        const updated = [...environments];
+        updated[index] = { ...updated[index], apiBaseUrl: normalized };
+        await config.update('vmManager.environments', updated, vscode.ConfigurationTarget.Global);
+        this.outputChannel.appendLine(`[VM Manager] Environment ${environmentId} API URL updated to ${normalized}`);
+        await this.broadcastState();
+        webview?.postMessage({ type: 'vmManager:success', payload: 'API URL updated.' });
+        return;
+      }
+    }
+    await config.update('vmManager.apiBaseUrl', normalized, vscode.ConfigurationTarget.Global);
+    this.outputChannel.appendLine(`[VM Manager] API URL updated to ${normalized}`);
+    await this.broadcastState();
+    webview?.postMessage({ type: 'vmManager:success', payload: 'API URL updated.' });
   }
 
   private buildUrl(endpoint: string, baseUrl: string): URL {

@@ -147,6 +147,9 @@
       flex-direction: column;
       gap: 2px;
     }
+    .vm-service-meta {
+      width: min(280px, 100%);
+    }
 
     .vm-list {
       display: grid;
@@ -286,9 +289,10 @@
           <button id="vm-stop-btn" class="secondary" disabled>Stop Service</button>
           <button id="vm-logs-btn" class="secondary">Open Logs</button>
         </div>
-        <div class="meta meta--stacked">
-          <div>API URL: <code id="vm-api-url">http://localhost:8080</code></div>
-          <div>Repo: <code id="vm-repo-path">not detected</code></div>
+        <div class="meta meta--stacked vm-service-meta">
+          <label for="vm-api-url">API URL</label>
+          <input id="vm-api-url" type="url" value="http://localhost:8080" autocomplete="off" />
+          <span class="helper-text">Saved value overrides the default TensorFleet endpoint.</span>
         </div>
       </div>
       <p class="card-note" id="vm-service-notice">Detected local repo path is required only when running the Go binary yourself.</p>
@@ -390,9 +394,8 @@
     const emptyStateEl = document.getElementById('vm-empty');
     const statusDot = document.getElementById('vm-status-dot');
     const statusText = document.getElementById('vm-status-text');
-    const apiUrlEl = document.getElementById('vm-api-url');
+    const apiUrlInput = document.getElementById('vm-api-url');
     const lastRefreshEl = document.getElementById('vm-last-refresh');
-    const repoPathEl = document.getElementById('vm-repo-path');
     const startBtn = document.getElementById('vm-start-btn');
     const stopBtn = document.getElementById('vm-stop-btn');
     const envStatusEl = document.getElementById('vm-env-status');
@@ -412,6 +415,7 @@
     const AUTO_REFRESH_MS = 30000;
     let refreshTimer = null;
     let currentState = null;
+    let committedApiUrl = '';
     if (loginEmailInput) {
       loginEmailInput.dataset.autofill = 'true';
     }
@@ -553,9 +557,14 @@
       currentState = state;
       updateEnvironment(state);
       updateUserIdField(state);
-      apiUrlEl.textContent = state.apiBaseUrl;
+      if (apiUrlInput) {
+        const targetUrl = state.apiBaseUrl || '';
+        if (document.activeElement !== apiUrlInput && apiUrlInput.value !== targetUrl) {
+          apiUrlInput.value = targetUrl;
+        }
+        committedApiUrl = targetUrl;
+      }
       const localServiceAvailable = Boolean(state.localServiceAvailable);
-      repoPathEl.textContent = state.repoPath || (localServiceAvailable ? 'not detected' : 'not configured');
       if (serviceCard) {
         serviceCard.classList.toggle('is-disabled', !localServiceAvailable);
       }
@@ -658,6 +667,28 @@
     document.getElementById('vm-start-btn').addEventListener('click', () => post('vmManager:startService'));
     document.getElementById('vm-stop-btn').addEventListener('click', () => post('vmManager:stopService'));
     document.getElementById('vm-logs-btn').addEventListener('click', () => post('vmManager:openLogs'));
+
+    const commitApiUrlChange = () => {
+      if (!apiUrlInput) {
+        return;
+      }
+      const nextUrl = apiUrlInput.value.trim();
+      if (!nextUrl || nextUrl === committedApiUrl) {
+        return;
+      }
+      committedApiUrl = nextUrl;
+      post('vmManager:setApiBaseUrl', {
+        apiBaseUrl: nextUrl,
+        environmentId: currentState?.environment?.id
+      });
+    };
+    apiUrlInput?.addEventListener('change', commitApiUrlChange);
+    apiUrlInput?.addEventListener('blur', commitApiUrlChange);
+    apiUrlInput?.addEventListener('keyup', (event) => {
+      if (event.key === 'Enter') {
+        commitApiUrlChange();
+      }
+    });
     envSelect?.addEventListener('change', () => {
       updateEnvApplyState();
       if (!loginEmailInput || currentState?.auth?.loggedIn) {
