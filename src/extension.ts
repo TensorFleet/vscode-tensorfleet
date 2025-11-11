@@ -81,6 +81,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     actionLabel: 'Open Image Panel',
     panelKind: 'standard',
     htmlTemplate: 'image-standalone'
+  },
+  {
+    id: "tensorfleet-map-panel",
+    title: 'Map view',
+    description: 'Display world map view with msision control elements.',
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openMapPanel',
+    actionLabel: 'Open Map Panel',
+    panelKind: 'standard',
+    htmlTemplate: 'map-standalone'
   }
 ];
 
@@ -432,6 +442,11 @@ async function openDedicatedPanel(
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
     }
+
+    if (view.htmlTemplate == 'map-standalone') {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    }
   }
 
   const panel = vscode.window.createWebviewPanel(
@@ -507,6 +522,10 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   if (view.htmlTemplate === 'image-standalone') {
     return getStandalonePanelHtml('image', webview, context, cspSource);
   }
+
+  if (view.htmlTemplate === 'map-standalone') {
+    return getStandalonePanelHtml('map', webview, context, cspSource);
+  }
   
   // Load the custom HTML template directly
   const templatePath = path.join(__dirname, '..', 'src', 'templates', view.htmlTemplate);
@@ -545,7 +564,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 }
 
 function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image',
+  panelName: 'teleops' | 'image' | 'map',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string

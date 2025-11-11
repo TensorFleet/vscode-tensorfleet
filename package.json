@@ -18,6 +18,7 @@
     "onView:tensorfleet-ros2-baselines",
     "onView:tensorfleet-image-panel",
     "onView:tensorfleet-teleops-panel",
+    "onView:tensorfleet-map-panel",
     "onView:tensorfleet-tooling-view",
     "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
@@ -25,6 +26,7 @@
     "onCommand:tensorfleet.openROS2Panel",
     "onCommand:tensorfleet.openImagePanel",
     "onCommand:tensorfleet.openTeleopsPanel",
+    "onCommand:tensorfleet.openMapPanel",
     "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.installTools",
     "onCommand:tensorfleet.openAllPanels",
@@ -93,6 +95,11 @@
           "id": "tensorfleet-teleops-panel",
           "name": "Teleops Panel",
           "type": "webview"
+        },
+        {
+          "id": "tensorfleet-map-panel",
+          "name": "Map Panel",
+          "type": "webview"
         }
       ],
       "tensorfleet-tooling": [
@@ -132,6 +139,11 @@
       {
         "command": "tensorfleet.openTeleopsPanel",
         "title": "TensorFleet: Open Teleops Panel",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openMapPanel",
+        "title": "TensorFleet: Open Map Panel",
         "category": "TensorFleet"
       },
       {
