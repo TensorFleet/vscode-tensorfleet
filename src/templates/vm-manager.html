@@ -153,19 +153,87 @@
 
     .vm-list {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
       gap: 12px;
       margin-top: 12px;
+      transition: opacity 150ms ease, filter 150ms ease;
+    }
+
+    .vm-list.is-blurred {
+      opacity: 0.4;
+      filter: grayscale(0.2);
+      pointer-events: none;
+    }
+
+    .vm-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .vm-summary-pill {
+      flex: 1 1 120px;
+      min-width: 120px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 12px;
+    }
+
+    .vm-summary-pill span {
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .vm-summary-pill strong {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .vm-loading {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.02);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .vm-loading[hidden] {
+      display: none;
+    }
+
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: var(--vscode-focusBorder, #4ade80);
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
     }
 
     .vm-card {
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 8px;
-      padding: 14px;
+      padding: 16px;
       background: rgba(255,255,255,0.02);
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 12px;
+      min-height: 210px;
     }
 
     .vm-card h3 {
@@ -173,10 +241,93 @@
       font-size: 14px;
     }
 
+    .vm-card__id {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      margin: 2px 0 0;
+      word-break: break-all;
+    }
+
+    .vm-card__header {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .vm-card__meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+      gap: 8px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .vm-card__meta-grid dt {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 2px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .vm-card__meta-grid dd {
+      margin: 0;
+      font-size: 12px;
+      color: var(--vscode-foreground);
+      word-break: break-all;
+    }
+
+    .vm-card__footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+    }
+
     .vm-meta {
       font-size: 12px;
       color: var(--vscode-descriptionForeground);
       line-height: 1.5;
+    }
+
+    .status-chip {
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-chip::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 6px currentColor;
+    }
+
+    .status-chip--running {
+      color: #4ade80;
+    }
+
+    .status-chip--pending {
+      color: #fbbf24;
+    }
+
+    .status-chip--attention {
+      color: #ff7676;
+    }
+
+    .status-chip--unknown {
+      color: var(--vscode-descriptionForeground);
     }
 
     .message {
@@ -340,6 +491,28 @@
       </div>
       <div id="vm-success" class="message success"></div>
       <div id="vm-error" class="message error"></div>
+      <div class="vm-summary" aria-live="polite">
+        <div class="vm-summary-pill">
+          <span>Total</span>
+          <strong id="vm-summary-total">0</strong>
+        </div>
+        <div class="vm-summary-pill">
+          <span>Running</span>
+          <strong id="vm-summary-running">0</strong>
+        </div>
+        <div class="vm-summary-pill">
+          <span>Pending</span>
+          <strong id="vm-summary-pending">0</strong>
+        </div>
+        <div class="vm-summary-pill">
+          <span>Needs Attention</span>
+          <strong id="vm-summary-attention">0</strong>
+        </div>
+      </div>
+      <div id="vm-loading" class="vm-loading" role="status" aria-live="assertive" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span>Syncing with VM service…</span>
+      </div>
       <div class="vm-list" id="vm-list"></div>
       <div class="empty-state" id="vm-empty" style="display:none;">No VMs yet. Create one below to get started.</div>
     </div>
@@ -396,6 +569,14 @@
     const statusText = document.getElementById('vm-status-text');
     const apiUrlInput = document.getElementById('vm-api-url');
     const lastRefreshEl = document.getElementById('vm-last-refresh');
+    const refreshBtn = document.getElementById('vm-refresh-btn');
+    const loadingEl = document.getElementById('vm-loading');
+    const summaryEls = {
+      total: document.getElementById('vm-summary-total'),
+      running: document.getElementById('vm-summary-running'),
+      pending: document.getElementById('vm-summary-pending'),
+      attention: document.getElementById('vm-summary-attention')
+    };
     const startRootBtn = document.getElementById('vm-start-root-btn');
     const stopBtn = document.getElementById('vm-stop-btn');
     const envStatusEl = document.getElementById('vm-env-status');
@@ -413,9 +594,11 @@
     const serviceNotice = document.getElementById('vm-service-notice');
     const DEFAULT_USER_ID = '12d82b4e-c09e-4ca7-a1c7-fb289909b094';
     const AUTO_REFRESH_MS = 30000;
+    const STOP_DISABLED_STATUSES = new Set(['stopping', 'stopped', 'failed', 'error', 'terminating']);
     let refreshTimer = null;
     let currentState = null;
     let committedApiUrl = '';
+    let isVmListLoading = false;
     if (loginEmailInput) {
       loginEmailInput.dataset.autofill = 'true';
     }
@@ -429,6 +612,9 @@
     };
 
     const setMessage = (el, message) => {
+      if (!el) {
+        return;
+      }
       if (!message) {
         el.style.display = 'none';
         el.textContent = '';
@@ -436,6 +622,73 @@
       }
       el.textContent = message;
       el.style.display = 'block';
+    };
+
+    const normalizeStatus = (status) => (status || '').toString().toLowerCase();
+
+    const formatStatusLabel = (value) => {
+      const text = (value || 'Unknown').toString().replace(/[_-]/g, ' ');
+      return text.replace(/\b\w/g, (char) => char.toUpperCase());
+    };
+
+    const getStatusCategory = (status) => {
+      const normalized = normalizeStatus(status);
+      if (['running', 'ready', 'active', 'booted'].includes(normalized)) {
+        return 'running';
+      }
+      if (['creating', 'pending', 'provisioning', 'starting', 'booting', 'stopping', 'stopped', 'queued'].includes(normalized)) {
+        return 'pending';
+      }
+      if (['failed', 'error', 'degraded', 'halted'].includes(normalized)) {
+        return 'attention';
+      }
+      return 'unknown';
+    };
+
+    const formatRelativeTime = (value) => {
+      if (!value) {
+        return 'just now';
+      }
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return 'recently';
+      }
+      const diff = Date.now() - date.getTime();
+      if (diff < 60000) {
+        return 'just now';
+      }
+      if (diff < 3600000) {
+        return `${Math.floor(diff / 60000)}m ago`;
+      }
+      if (diff < 86400000) {
+        return `${Math.floor(diff / 3600000)}h ago`;
+      }
+      return date.toLocaleString();
+    };
+
+    const updateSummary = (counts = {}) => {
+      ['total', 'running', 'pending', 'attention'].forEach((key) => {
+        if (summaryEls[key]) {
+          summaryEls[key].textContent = String(counts[key] ?? 0);
+        }
+      });
+    };
+
+    const setLoadingState = (loading) => {
+      isVmListLoading = loading;
+      if (loadingEl) {
+        loadingEl.hidden = !loading;
+      }
+      if (refreshBtn) {
+        refreshBtn.disabled = loading;
+      }
+      if (listEl) {
+        const hasContent = listEl.children.length > 0;
+        listEl.classList.toggle('is-blurred', loading && hasContent);
+      }
+      if (loading && emptyStateEl) {
+        emptyStateEl.style.display = 'none';
+      }
     };
 
     const formatTimestamp = (value) => {
@@ -629,30 +882,79 @@
     };
 
     const renderVMs = (payload) => {
+      if (!listEl || !emptyStateEl) {
+        return;
+      }
+      setLoadingState(false);
       const data = payload || {};
       const vms = Array.isArray(data.vms) ? data.vms : [];
+      const counts = {
+        total: typeof data.count === 'number' ? data.count : vms.length,
+        running: 0,
+        pending: 0,
+        attention: 0
+      };
+      counts.total = Math.max(counts.total, vms.length);
       listEl.innerHTML = '';
-      if (vms.length === 0) {
-        emptyStateEl.style.display = 'block';
-      } else {
-        emptyStateEl.style.display = 'none';
-      }
+      emptyStateEl.style.display = vms.length === 0 ? 'block' : 'none';
 
       vms.forEach((vm) => {
+        const rawStatus = vm.status || 'unknown';
+        const normalizedStatus = normalizeStatus(rawStatus);
+        const category = getStatusCategory(normalizedStatus);
+        if (counts[category] !== undefined) {
+          counts[category] += 1;
+        }
+        const statusLabel = formatStatusLabel(rawStatus);
         const card = document.createElement('div');
         card.className = 'vm-card';
-        const status = vm.status || 'unknown';
-        const isStopping = status === 'stopping' || status === 'stopped';
+        const ramValue = Number(vm.ram_gb ?? vm.ram);
+        const cpuValue = Number(vm.cpu_cores ?? vm.cpu);
+        const ramText = Number.isFinite(ramValue) ? `${ramValue} GB` : '—';
+        const cpuText = Number.isFinite(cpuValue) ? `${cpuValue}` : '—';
+        const providerParts = [];
+        if (vm.provider) {
+          providerParts.push(vm.provider);
+        }
+        if (vm.region) {
+          providerParts.push(vm.region);
+        }
+        const providerText = providerParts.length ? providerParts.join(' • ') : '—';
+        const ipText = vm.ip_address || 'Not assigned';
+        const createdLabel = formatRelativeTime(vm.created_at || vm.updated_at);
+        const statusClass = `status-chip status-chip--${category === 'unknown' ? 'unknown' : category}`;
+        const stopDisabled = STOP_DISABLED_STATUSES.has(normalizedStatus);
         card.innerHTML = `
-          <h3>${vm.name || vm.id}</h3>
-          <div class="vm-meta">
-            <div>Status: <strong>${status}</strong></div>
-            <div>RAM: ${vm.ram_gb || vm.ram || '—'} GB · CPU: ${vm.cpu_cores || vm.cpu || '—'}</div>
-            <div>Provider: ${vm.provider || 'n/a'} · Region: ${vm.region || 'n/a'}</div>
-            <div>ID: <code>${vm.id}</code></div>
+          <div class="vm-card__header">
+            <div>
+              <h3>${vm.name || vm.id}</h3>
+              <p class="vm-card__id">${vm.id}</p>
+            </div>
+            <span class="${statusClass}">${statusLabel}</span>
           </div>
-          <div class="actions">
-            <button data-vm-id="${vm.id}" class="danger" ${isStopping ? 'disabled' : ''}>Stop</button>
+          <dl class="vm-card__meta-grid">
+            <div>
+              <dt>Owner</dt>
+              <dd>${vm.user_id || '—'}</dd>
+            </div>
+            <div>
+              <dt>Provider</dt>
+              <dd>${providerText}</dd>
+            </div>
+            <div>
+              <dt>Spec</dt>
+              <dd>${ramText} RAM · ${cpuText} vCPU</dd>
+            </div>
+            <div>
+              <dt>IP Address</dt>
+              <dd>${ipText}</dd>
+            </div>
+          </dl>
+          <div class="vm-card__footer">
+            <span>${vm.created_at ? 'Created' : 'Updated'} ${createdLabel}</span>
+            <div class="actions">
+              <button data-vm-id="${vm.id}" class="danger" ${stopDisabled ? 'disabled' : ''}>Request stop</button>
+            </div>
           </div>
         `;
         const stopBtn = card.querySelector('button');
@@ -662,10 +964,13 @@
         listEl.appendChild(card);
       });
 
-      lastRefreshEl.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
+      updateSummary(counts);
+      if (lastRefreshEl) {
+        lastRefreshEl.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
+      }
     };
 
-    document.getElementById('vm-refresh-btn').addEventListener('click', () => {
+    refreshBtn?.addEventListener('click', () => {
       setMessage(successEl, '');
       setMessage(errorEl, '');
       post('vmManager:refresh');
@@ -800,6 +1105,9 @@
           break;
         case 'vmManager:vms':
           renderVMs(message.payload);
+          break;
+        case 'vmManager:loading':
+          setLoadingState(Boolean(message.payload));
           break;
         case 'vmManager:error':
           setMessage(errorEl, message.payload);

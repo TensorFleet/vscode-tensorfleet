@@ -267,44 +267,49 @@ export class VMManagerIntegration {
         void this.sendState(webview);
         break;
       case 'vmManager:refresh':
-        this.fetchVMs()
-          .then((response) => {
-            webview.postMessage({ type: 'vmManager:vms', payload: response });
-          })
-          .catch((error) => this.sendError(webview, error));
+        void this.withVmLoading(webview, async () => {
+          try {
+            const response = await this.fetchVMs();
+            await this.safePostMessage(webview, { type: 'vmManager:vms', payload: response });
+          } catch (error) {
+            this.sendError(webview, error);
+          }
+        });
         break;
       case 'vmManager:create':
-        this.createVM(message.payload)
-          .then((response) => {
+        void this.withVmLoading(webview, async () => {
+          try {
+            const response = await this.createVM(message.payload);
             const vmName = response.vm?.name ?? response.vm?.id ?? 'VM';
-            webview.postMessage({
+            await this.safePostMessage(webview, {
               type: 'vmManager:success',
               payload: response.message || `${vmName} created`
             });
-            return this.fetchVMs();
-          })
-          .then((response) => {
-            webview.postMessage({ type: 'vmManager:vms', payload: response });
-          })
-          .catch((error) => this.sendError(webview, error));
+            const list = await this.fetchVMs();
+            await this.safePostMessage(webview, { type: 'vmManager:vms', payload: list });
+          } catch (error) {
+            this.sendError(webview, error);
+          }
+        });
         break;
       case 'vmManager:stopVm':
         if (!message.payload?.id) {
           this.sendError(webview, new Error('Missing VM ID'));
           break;
         }
-        this.stopVm(message.payload.id)
-          .then((result) => {
-            webview.postMessage({
+        void this.withVmLoading(webview, async () => {
+          try {
+            const result = await this.stopVm(message.payload.id);
+            await this.safePostMessage(webview, {
               type: 'vmManager:success',
               payload: result.message || 'VM stop requested'
             });
-            return this.fetchVMs();
-          })
-          .then((response) => {
-            webview.postMessage({ type: 'vmManager:vms', payload: response });
-          })
-          .catch((error) => this.sendError(webview, error));
+            const list = await this.fetchVMs();
+            await this.safePostMessage(webview, { type: 'vmManager:vms', payload: list });
+          } catch (error) {
+            this.sendError(webview, error);
+          }
+        });
         break;
       case 'vmManager:startService':
         void this.start();
@@ -323,20 +328,21 @@ export class VMManagerIntegration {
           this.sendError(webview, new Error('Missing environment id'));
           break;
         }
-        this.applyEnvironmentSelection(message.payload.id, { silent: true })
-          .then(() => {
-            webview.postMessage({
+        void this.withVmLoading(webview, async () => {
+          try {
+            await this.applyEnvironmentSelection(message.payload.id, { silent: true });
+            await this.safePostMessage(webview, {
               type: 'vmManager:success',
               payload: 'Environment updated.'
             });
-            return this.fetchVMs();
-          })
-          .then((response) => {
+            const response = await this.fetchVMs();
             if (response) {
-              webview.postMessage({ type: 'vmManager:vms', payload: response });
+              await this.safePostMessage(webview, { type: 'vmManager:vms', payload: response });
             }
-          })
-          .catch((error) => this.sendError(webview, error));
+          } catch (error) {
+            this.sendError(webview, error);
+          }
+        });
         break;
       case 'vmManager:login':
         this.loginFromWebview(message.payload, webview);
@@ -523,6 +529,23 @@ export class VMManagerIntegration {
         }
       }
     });
+  }
+
+  private async withVmLoading(webview: vscode.Webview, task: () => Promise<void>): Promise<void> {
+    await this.safePostMessage(webview, { type: 'vmManager:loading', payload: true });
+    try {
+      await task();
+    } finally {
+      await this.safePostMessage(webview, { type: 'vmManager:loading', payload: false });
+    }
+  }
+
+  private async safePostMessage(webview: vscode.Webview, payload: unknown): Promise<void> {
+    try {
+      await webview.postMessage(payload);
+    } catch (error) {
+      this.outputChannel.appendLine(`[VM Manager] Failed to post message: ${this.formatError(error)}`);
+    }
   }
 
   private sendError(webview: vscode.Webview, error: unknown) {
