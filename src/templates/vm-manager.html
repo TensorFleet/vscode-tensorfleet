@@ -269,6 +269,30 @@
 </head>
 <body>
   <div class="vm-container">
+    <div class="card" id="vm-service-card">
+      <div class="status-row">
+        <div>
+          <h2>Local VM Manager Service</h2>
+          <p class="meta">Optional for contributors who run the Go service locally.</p>
+        </div>
+        <div class="status-indicator">
+          <span id="vm-status-dot" class="status-dot"></span>
+          <span id="vm-status-text">Service offline</span>
+        </div>
+      </div>
+      <div class="status-row" style="margin-top:14px;">
+        <div class="actions">
+          <button id="vm-start-btn">Start Service</button>
+          <button id="vm-stop-btn" class="secondary" disabled>Stop Service</button>
+          <button id="vm-logs-btn" class="secondary">Open Logs</button>
+        </div>
+        <div class="meta meta--stacked">
+          <div>API URL: <code id="vm-api-url">http://localhost:8080</code></div>
+          <div>Repo: <code id="vm-repo-path">not detected</code></div>
+        </div>
+      </div>
+      <p class="card-note" id="vm-service-notice">Detected local repo path is required only when running the Go binary yourself.</p>
+    </div>
     <div class="card card--priority" id="vm-login-card">
       <div class="env-summary">
         <div>
@@ -300,31 +324,6 @@
         </div>
       </div>
       <p class="helper-text" id="vm-login-meta">Not logged in yet</p>
-    </div>
-
-    <div class="card" id="vm-service-card">
-      <div class="status-row">
-        <div>
-          <h2>Local VM Manager Service</h2>
-          <p class="meta">Optional for contributors who run the Go service locally.</p>
-        </div>
-        <div class="status-indicator">
-          <span id="vm-status-dot" class="status-dot"></span>
-          <span id="vm-status-text">Service offline</span>
-        </div>
-      </div>
-      <div class="status-row" style="margin-top:14px;">
-        <div class="actions">
-          <button id="vm-start-btn">Start Service</button>
-          <button id="vm-stop-btn" class="secondary" disabled>Stop Service</button>
-          <button id="vm-logs-btn" class="secondary">Open Logs</button>
-        </div>
-        <div class="meta meta--stacked">
-          <div>API URL: <code id="vm-api-url">http://localhost:8080</code></div>
-          <div>Repo: <code id="vm-repo-path">not detected</code></div>
-        </div>
-      </div>
-      <p class="card-note" id="vm-service-notice">Detected local repo path is required only when running the Go binary yourself.</p>
     </div>
 
     <div class="card">
