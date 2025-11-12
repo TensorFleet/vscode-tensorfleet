@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
-import { DroneStateModel } from './DroneStateModel';
+import { DroneStateModel } from '../../mission-control/drone-state-model';
 import { DroneMap } from './map/DroneMap';
 import './MissionControl.css';
 

@@ -36,6 +36,12 @@ export interface FoxgloveDecodedMessage {
   payload: any;     // fully decoded JS object
 }
 
+type SetupCommand = {
+  topic: string;
+  schemaName: string;
+  msg: any;
+};
+
 export class FoxgloveWsClient {
   private client: FoxgloveClient;
   private channelsById = new Map<ChannelId, ResolvedChannel>();
@@ -52,6 +58,8 @@ export class FoxgloveWsClient {
   private supportedEncodings: string[] | undefined;
   private serverCapabilities: string[] = [];
   private rosProfile: "ros2" | undefined;
+
+  private setupCommands: SetupCommand[] = [];
 
   // External hooks
   public onOpen?: () => void;
@@ -70,6 +78,19 @@ export class FoxgloveWsClient {
       this.isOpenFlag = true;
       this.onOpen?.();
       this.processPendingSubscriptions();
+
+      // Re-publish queued setup commands on every (re)connect
+      for (const cmd of this.setupCommands) {
+        try {
+          this.publish(cmd.topic, cmd.schemaName, cmd.msg);
+        } catch (err) {
+          console.error(
+            "[FoxgloveWsClient] Failed to (re)publish setup command for",
+            cmd.topic,
+            err,
+          );
+        }
+      }
     });
 
     this.client.on("close", (ev) => {
@@ -226,6 +247,25 @@ export class FoxgloveWsClient {
     return this.isOpenFlag;
   }
 
+  // ---------- Queued setup publishing ----------
+  /**
+   * Queue a setup publish that will be sent immediately if connected and
+   * automatically re-published on each reconnect.
+   */
+  public publishSetup(topic: string, schemaName: string, msg: any) {
+    this.setupCommands.push({ topic, schemaName, msg });
+    if (this.isOpenFlag) {
+      try {
+        this.publish(topic, schemaName, msg);
+      } catch (err) {
+        console.error(
+          `[FoxgloveWsClient] Failed to publish setup message for '${topic}' (${schemaName})`,
+          err,
+        );
+      }
+    }
+  }
+
   // ---------- PUBLISH (CDR) ----------
   private buildRos2WriterFor(schemaName: string): Ros2MessageWriter | undefined {
     // Try datatypes from already parsed channels (best match)
@@ -263,17 +303,11 @@ export class FoxgloveWsClient {
     if (existing) return { id: existing.id, writer: existing.writer };
 
     // Verify (or at least warn) that 'cdr' is supported for client publish
-    if (
-      this.supportedEncodings &&
-      !this.supportedEncodings.includes("cdr")
-    ) {
-      // Some bridges may still accept; warn but proceed.
-      // (Studio also attempts to publish even if not listed.)
-      // console.warn("[FoxgloveWsClient] Server does not list 'cdr' in supportedEncodings");
+    if (this.supportedEncodings && !this.supportedEncodings.includes("cdr")) {
+      // proceed anyway; some servers accept regardless
     }
 
     // Some servers require clientPublish capability; many accept regardless.
-    // We'll proceed and let the server reject if unsupported.
     const channelId = this.client.advertise({
       topic,
       encoding: "cdr",
