@@ -20,6 +20,12 @@ interface VmInfoResponse extends VmStatusResponse {
   region?: string;
 }
 
+interface ApiHealthResponse {
+  active_vms: number;
+  status: string;
+  time: string;
+}
+
 // Internal state representation
 interface VmSnapshot {
   connection: ConnectionState;
@@ -154,34 +160,43 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private async fetchSnapshot(): Promise<VmSnapshot> {
-    try {
-      const status = await this.apiRequest<VmStatusResponse>('GET', '/vms/self/status');
-      const vmState = this.parseVmState(status?.status);
-      
-      // Try to get additional info
-      let info: VmInfoResponse | undefined;
-      try {
-        info = await this.apiRequest<VmInfoResponse>('GET', '/vms/self/info');
-      } catch (infoError) {
-        if (!this.isNotFoundError(infoError)) {
-          this.outputChannel.appendLine(`[VM Manager] Info fetch failed: ${this.formatError(infoError)}`);
-        }
-      }
+    await this.ensureApiHealthy();
 
-      return this.createSnapshot({
-        connection: 'connected',
-        vmState,
-        ipAddress: info?.ip_address || status?.ip_address,
-        provider: info?.provider,
-        region: info?.region,
-        uptimeSeconds: info?.uptime_seconds
-      });
-    } catch (error) {
-      if (this.isNotFoundError(error)) {
-        return this.createSnapshot({ connection: 'connected', vmState: 'unknown' });
+    let status: VmStatusResponse | undefined;
+    let vmState: VmState = 'unknown';
+
+    try {
+      status = await this.apiRequest<VmStatusResponse>('GET', '/vms/self/status');
+      if (status) {
+        vmState = this.parseVmState(status.status);
       }
-      throw error;
+    } catch (statusError) {
+      if (!this.isNotFoundError(statusError)) {
+        this.outputChannel.appendLine(`[VM Manager] Status fetch failed: ${this.formatError(statusError)}`);
+      }
     }
+
+    let info: VmInfoResponse | undefined;
+    try {
+      info = await this.apiRequest<VmInfoResponse>('GET', '/vms/self/info');
+    } catch (infoError) {
+      if (!this.isNotFoundError(infoError)) {
+        this.outputChannel.appendLine(`[VM Manager] Info fetch failed: ${this.formatError(infoError)}`);
+      }
+    }
+
+    return this.createSnapshot({
+      connection: 'connected',
+      vmState,
+      ipAddress: info?.ip_address || status?.ip_address,
+      provider: info?.provider,
+      region: info?.region,
+      uptimeSeconds: info?.uptime_seconds
+    });
+  }
+
+  private async ensureApiHealthy(): Promise<ApiHealthResponse> {
+    return this.apiRequest<ApiHealthResponse>('GET', '/health', undefined, { includeAuth: false });
   }
 
   private applySnapshot(snapshot: VmSnapshot) {
@@ -465,7 +480,12 @@ export class VMManagerIntegration implements vscode.Disposable {
 
   // ========== HTTP Client ==========
 
-  private async apiRequest<T>(method: string, endpoint: string, body?: any): Promise<T> {
+  private async apiRequest<T>(
+    method: string,
+    endpoint: string,
+    body?: any,
+    options?: { includeAuth?: boolean }
+  ): Promise<T> {
     const baseUrl = this.getApiBaseUrl();
     const url = new URL(endpoint.replace(/^\//, ''), baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
     const isHttps = url.protocol === 'https:';
@@ -477,8 +497,11 @@ export class VMManagerIntegration implements vscode.Disposable {
       ...(data && { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) })
     };
 
+    const includeAuth = options?.includeAuth ?? true;
     const token = this.getAuthToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
+    if (includeAuth && token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
 
     return new Promise<T>((resolve, reject) => {
       const req = lib.request(
