@@ -150,6 +150,15 @@ type RosFrame =
 
 type EventMap = { update: (state: Partial<DroneState>) => void };
 
+/** MAV_LANDED_STATE mapping used for status logic. */
+export const LANDED = {
+  UNDEFINED: 0,
+  ON_GROUND: 1,
+  IN_AIR: 2,
+  TAKEOFF: 3,
+  LANDING: 4,
+} as const;
+
 /** Minimal event emitter for model updates. */
 class Emitter {
   private listeners = new Map<keyof EventMap, Set<Function>>();
@@ -185,7 +194,7 @@ function isHomePosition(x: any): x is MavrosMsgsHomePosition {
 
 /**
  * Maintains a unified drone state from MAVROS topics.
- * No heartbeat or param setting is performed here.
+ * No heartbeat or parameter setting is performed here.
  */
 export class DroneStateModel extends Emitter {
   public id: string;
@@ -538,6 +547,20 @@ export class DroneStateModel extends Emitter {
     const maxStaleMs = 1500;
     const seen = (t: string) => (now - (this.lastSeen[t] || 0)) <= maxStaleMs;
 
+    // Determine a reliable landed-state indication for status (do not overwrite extended.landed_state).
+    const extSeenMs = now - (this.lastSeen[DroneStateModel.T_EXT_STATE] || 0);
+    const extFresh = extSeenMs <= 1000;
+    let landedEff = extFresh ? this.state.extended?.landed_state : undefined;
+
+    if (landedEff === undefined || landedEff === LANDED.UNDEFINED) {
+      // Heuristic for startup: treat as ON_GROUND if unarmed and close to ground with low vertical speed.
+      const armed = !!this.state.vehicle?.armed;
+      const rel = this.state.global_position_int?.relative_alt ?? Number.POSITIVE_INFINITY;
+      const vz = this.state.local?.linear?.z ?? 0;
+      const almostOnGround = Number.isFinite(rel) && Math.abs(rel) < 0.25 && Math.abs(vz) < 0.3;
+      if (!armed && almostOnGround) landedEff = LANDED.ON_GROUND;
+    }
+
     const faults: string[] = [];
     if (!gcs) faults.push('vehicle.link.down');
     if (!seen(DroneStateModel.T_IMU)) faults.push('imu.stale');
@@ -548,9 +571,8 @@ export class DroneStateModel extends Emitter {
     if (typeof pct === 'number' && pct <= 0.15) faults.push('battery.low');
     if (typeof v === 'number' && v > 0 && v < 10.5) faults.push('battery.voltage.low');
 
-    const armed = !!this.state.vehicle?.armed;
-    const landed = this.state.extended?.landed_state;
-    if (!armed && landed === 1 /* IN_AIR */) faults.push('state.inconsistent');
+    const armedNow = !!this.state.vehicle?.armed;
+    if (!armedNow && landedEff === LANDED.IN_AIR) faults.push('state.inconsistent');
 
     Object.assign(this.state.status!, {
       time_boot_ms: now,

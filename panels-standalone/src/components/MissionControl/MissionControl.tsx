@@ -3,6 +3,7 @@ import { ros2Bridge } from '../../ros2-bridge';
 import { DroneStateModel } from '../../mission-control/drone-state-model';
 import { DroneMap } from './map/DroneMap';
 import './MissionControl.css';
+import { DroneStatusPanel } from './drone/DroneStatus';
 
 const droneState = new DroneStateModel();
 
@@ -35,5 +36,8 @@ export const MissionControlPanel: React.FC = () => {
             model = {droneState}
             >
         </DroneMap>
+        <DroneStatusPanel
+          model = {droneState}>
+        </DroneStatusPanel>
     </div>);
 }
