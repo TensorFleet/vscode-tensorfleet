@@ -17,7 +17,7 @@ and bundles a simple installer for shipping external tooling such as ROS 2.
 - Tooling panel with a guided installer that copies bundled binaries (e.g.,
   ROS 2) to a user-selected directory.
 - **MCP Server**: Expose TensorFleet drone tools to AI assistants like Cursor, Claude, an OpenAI Codex via the Model Context Protocol.
-- **🖥️ VM Manager Console**: Start/stop the Go-based `vm-manager` service, monitor VM records, and submit stop requests directly from VS Code.
+- **🟢 VM Status Bar**: Watch VM lifecycle states from the status bar with instant quick actions and smart notifications.
 
 Each dashboard is implemented as a webview view so panes can be arranged in the
 side bar or panel area. Commands exposed in the command palette open equivalent
@@ -89,51 +89,32 @@ before packaging the extension.
 
 ## VM Manager Integration
 
-TensorFleet ships with a dedicated VM Manager console that talks to the Go service living in `../vm-manager`.
+TensorFleet now surfaces VM health through a lightweight status bar item—no extra panels to open or processes to manage.
 
-1. **Configure locations (optional)**  
-   - `tensorfleet.vmManager.repoPath`: path to the Go repo (defaults to `../vm-manager` relative to the extension/workspace). This is only required when running the Go binary locally for development.  
-   - `tensorfleet.vmManager.apiBaseUrl`: HTTP endpoint used by the webview (defaults to `http://localhost:8080`).
+1. **Configure the endpoint**  
+   - `tensorfleet.vmManager.apiBaseUrl`: default HTTP endpoint (defaults to `http://localhost:8080`).  
+   - `tensorfleet.vmManager.authToken`: optional bearer token sent to `/vms/self/*` APIs when your server enforces JWT auth.
 
-2. **Select an environment & log in**  
-   - Define one or more entries within `tensorfleet.vmManager.environments` (local, staging, production, etc.) and point `tensorfleet.vmManager.activeEnvironment` at the default target.  
-   - Use the command palette (`TensorFleet: Select VM Manager Environment`) or the **Environment & Login** card (now surfaced first in the panel) to switch environments without editing JSON.  
-   - Authenticate from that same card or run `TensorFleet: Log In to VM Manager` / `TensorFleet: Log Out of VM Manager`; tokens are stored in VS Code Secret Storage per-environment, the associated user UUID is inferred automatically, and everything is cleared on logout or after an expired session (401).  
+2. **Watch the status bar**  
+   The indicator auto-polls every 30 seconds and rotates through intuitive states:  
+   - `🟡 VM Starting…`  
+   - `🟢 VM Ready (ip)`  
+   - `⚫ VM Stopped`  
+   - `🔴 VM Failed`  
+   - `$(debug-disconnect) VM Unreachable`
 
-3. **Start the service (developers only)**  
-   Most users can stop here—remote environments work as soon as you are logged in. If you do need to run the Go process locally, run `TensorFleet: Start VM Manager Service`. The extension spawns `go run ./cmd/vm-manager` with `LOCAL_DEV=1`, streams logs to the *TensorFleet VM Manager* output channel, and exposes convenience commands to stop the service or reopen the logs later.
+3. **Click for quick actions**  
+   `TensorFleet: Show VM Actions` (or simply click the status bar item) opens a Quick Pick menu tuned to the current state:
+   - Running → Connect via Remote SSH, Restart VM, Stop VM, Copy SSH command, Details, Support.
+   - Stopped → Start VM, Details, Support.
+   - Starting/Stopping → Busy indicator plus Details/Support.
+   - Failed → Retry Start, Details, Support.
+   - Disconnected → Retry Status, Support.
 
-4. **Open the console**  
-   Use `TensorFleet: Open VM Manager Console` (or click the VM Manager tile in the TensorFleet view) to launch a full dashboard. It surfaces:
-   - Service status + API URL indicator
-   - One-click refresh of VM records from `/dev/vms`
-   - Inline buttons to mark VMs as stopping
-   - A guided form to create development VMs (auto-fills the UUID from your login token, with an optional generator for overrides)
+4. **Smart notifications**  
+   When the backend reports major state changes (running, stopped, failed) you get a subtle toast so you know exactly when it’s safe to connect again.
 
-5. **Stop or inspect**  
-   Commands `TensorFleet: Stop VM Manager Service` and `TensorFleet: Show VM Manager Logs` remain available in the Command Palette. Any open VM Manager panels stay in sync when the process state changes thanks to live status broadcasts.
-
-### How the VM Manager workflow fits together
-
-1. **Pick an environment** – Each environment entry describes an API surface (URL + login endpoint) and an optional default email hint. Use `TensorFleet: Select VM Manager Environment` when you want to jump between Local, Staging, or Production without editing JSON.
-2. **Authenticate once per environment** – The login form (or `TensorFleet: Log In to VM Manager`) captures email + password, exchanges them for a bearer token, and saves that token in VS Code Secret Storage alongside your inferred user UUID. Tokens and UUIDs are scoped per-environment so you can simultaneously stay logged into staging and production with different identities.
-3. **Manage cloud VMs immediately** – After logging in you can refresh, stop, or create VMs against the selected environment—even if you never run the Go binary locally. When you open the VM creation form, the UUID that was extracted from your login is auto-filled so new VMs are attributed to the right user record. You can override the UUID (for service accounts or mock users) and the helper text will confirm whether the field is synced to your login or a manual value.
-4. **Optionally run the Go service locally** – Developers who have the `vm-manager` repo cloned can point `tensorfleet.vmManager.repoPath` at it and use the Start/Stop buttons (or the matching commands) to run `go run ./cmd/vm-manager` under VS Code. The panel shows whether a local repo was found, which ports the API is listening on, and streams logs to the *TensorFleet VM Manager* output channel.
-
-### Why email and UUID are both tracked
-
-- **Email** – Required to authenticate. It is stored (per environment) so the login prompt can be pre-populated the next time you log in.
-- **UUID** – Represents the authenticated user ID returned by the API response or embedded in the JWT. The VM creation form uses it as the default `user_id` owner for new microVMs, and the UI surfaces it next to the email so you can confirm which account is active. Clearing tokens or logging out wipes the cached UUID alongside the email.
-
-### Environments at a glance
-
-| Environment | Typical use case | Default config | Differences |
-|-------------|------------------|----------------|-------------|
-| `local`     | Iterate on the Go service with a repo on disk | `apiBaseUrl`: `http://localhost:8080`, `authEndpoint`: `http://localhost:8080/login` | Start/Stop buttons become available when a repo is detected, and the login form usually uses a dev/test email. |
-| `staging`   | Validate new features against shared infra | Example URL: `https://staging.vm.tensorfleet.dev` | Usually points to a staging Supabase/REST stack; often uses seeded staging accounts and may enforce stricter RBAC than local. |
-| `production`| Operate real customer workloads | Example URL: `https://vm.tensorfleet.com` | Same UI, but everything is read/write against production services; you typically keep the service controls disabled and just use the console as a remote client. |
-
-You can add as many custom environments as needed (QA, demo, customer-specific endpoints, etc.). Every environment entry can declare its own URLs, default email hint, and even a completely different login endpoint (for example, a Supabase REST hook vs. an OAuth proxy).
+Graceful degradation is built in—if the API can’t be reached you’ll see a “VM Unreachable” badge plus a Retry option in the quick menu. No local Go binary or sudo terminals required anymore.
 
 ## Packaging
 

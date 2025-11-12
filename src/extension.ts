@@ -5,7 +5,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
 import { VMManagerIntegration } from './vm-manager';
 
-type PanelKind = 'standard' | 'terminalTabs' | 'vmManager';
+type PanelKind = 'standard' | 'terminalTabs';
 
 type DroneViewport = {
   id: string;
@@ -59,15 +59,6 @@ const DRONE_VIEWS: DroneViewport[] = [
     command: 'tensorfleet.openROS2Panel',
     actionLabel: 'Launch Robotics Lab',
     panelKind: 'terminalTabs'
-  },
-  {
-    id: 'tensorfleet-vm-manager',
-    title: 'VM Manager Console',
-    description: 'Control the Go-based VM Manager service to launch, inspect, and stop Firecracker/VZ microVMs.',
-    image: 'vm-manager-placeholder.svg',
-    command: 'tensorfleet.openVMManagerPanel',
-    actionLabel: 'Open VM Manager Console',
-    panelKind: 'vmManager'
   }
 ];
 
@@ -109,6 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   vmManagerIntegration = new VMManagerIntegration(context);
+  vmManagerIntegration.initialize();
   DRONE_VIEWS.forEach((view) => {
     const provider = new DashboardViewProvider(view, context);
     context.subscriptions.push(
@@ -163,10 +155,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   if (vmManagerIntegration) {
     context.subscriptions.push(
-      vscode.commands.registerCommand('tensorfleet.startVMManager', () => vmManagerIntegration?.start()),
-      vscode.commands.registerCommand('tensorfleet.stopVMManager', () => vmManagerIntegration?.stop()),
-      vscode.commands.registerCommand('tensorfleet.showVMManagerLogs', () => vmManagerIntegration?.showLogs()),
-      vscode.commands.registerCommand('tensorfleet.selectVMManagerEnvironment', () => vmManagerIntegration?.selectEnvironment())
+      vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => vmManagerIntegration?.showVmActions())
     );
   }
 
@@ -320,27 +309,12 @@ async function openDedicatedPanel(
   const cspSource = webview.cspSource;
 
   panel.webview.onDidReceiveMessage((message) => {
-    if (vmManagerIntegration?.handleWebviewMessage(view.id, message, panel.webview)) {
-      return;
-    }
-
     if (message?.command === 'launchTerminal' && typeof message.target === 'string') {
       launchTerminalSession(message.target);
     } else if (message?.command === 'openAllPanels') {
       void vscode.commands.executeCommand('tensorfleet.openAllPanels');
     }
   });
-
-  if (view.panelKind === 'vmManager') {
-    if (!vmManagerIntegration) {
-      panel.webview.html = getStandardPanelHtml(view, imageUri, cspSource);
-      vscode.window.showErrorMessage('VM Manager integration is unavailable.');
-    } else {
-      vmManagerIntegration.registerPanel(panel);
-      panel.webview.html = vmManagerIntegration.getPanelHtml(panel.webview, cspSource);
-    }
-    return panel;
-  }
 
   if (view.panelKind === 'terminalTabs') {
     panel.webview.html = getTerminalPanelHtml(view, imageUri, cspSource);
