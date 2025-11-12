@@ -1,0 +1,53 @@
+:root {
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --vscode-font-size: 13px;
+  --vscode-foreground: #cccccc;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-input-background: #3c3c3c;
+  --vscode-input-border: #3e3e3e;
+  --vscode-button-background: #0e639c;
+  --vscode-button-hoverBackground: #1177bb;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+}
+
+button {
+  font-family: var(--vscode-font-family);
+  background: var(--vscode-button-background);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+select, input[type="text"] {
+  background: var(--vscode-input-background);
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-input-border);
+  padding: 0.25rem 0.5rem;
+  border-radius: 2px;
+}
+
