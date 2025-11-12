@@ -4,7 +4,14 @@ import * as https from 'https';
 
 // Core state types
 type ConnectionState = 'connected' | 'disconnected';
-type VmState = 'unknown' | 'stopped' | 'starting' | 'running' | 'stopping' | 'failed';
+type VmState =
+  | 'unknown'
+  | 'stopped'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'failed'
+  | 'pending';
 
 // API response types
 interface VmStatusResponse {
@@ -164,6 +171,7 @@ export class VMManagerIntegration implements vscode.Disposable {
 
     let status: VmStatusResponse | undefined;
     let vmState: VmState = 'unknown';
+    let sawVmMissing = false;
 
     try {
       status = await this.apiRequest<VmStatusResponse>('GET', '/vms/self/status');
@@ -171,7 +179,9 @@ export class VMManagerIntegration implements vscode.Disposable {
         vmState = this.parseVmState(status.status);
       }
     } catch (statusError) {
-      if (!this.isNotFoundError(statusError)) {
+      if (this.isNotFoundError(statusError)) {
+        sawVmMissing = true;
+      } else {
         this.outputChannel.appendLine(`[VM Manager] Status fetch failed: ${this.formatError(statusError)}`);
       }
     }
@@ -180,14 +190,18 @@ export class VMManagerIntegration implements vscode.Disposable {
     try {
       info = await this.apiRequest<VmInfoResponse>('GET', '/vms/self/info');
     } catch (infoError) {
-      if (!this.isNotFoundError(infoError)) {
+      if (this.isNotFoundError(infoError)) {
+        sawVmMissing = true;
+      } else {
         this.outputChannel.appendLine(`[VM Manager] Info fetch failed: ${this.formatError(infoError)}`);
       }
     }
 
+    const resolvedState = vmState === 'unknown' && sawVmMissing ? 'pending' : vmState;
+
     return this.createSnapshot({
       connection: 'connected',
-      vmState,
+      vmState: resolvedState,
       ipAddress: info?.ip_address || status?.ip_address,
       provider: info?.provider,
       region: info?.region,
@@ -225,8 +239,8 @@ export class VMManagerIntegration implements vscode.Disposable {
 
     this.outputChannel.appendLine(`[VM Manager] State change: ${previousState} → ${vmState} (userAction: ${this.userInitiatedAction})`);
 
-    // Don't notify for disconnected or unknown states
-    if (connection === 'disconnected' || vmState === 'unknown') return;
+    // Don't notify for disconnected, unknown, or pending states
+    if (connection === 'disconnected' || vmState === 'unknown' || vmState === 'pending') return;
 
     // Don't notify during transitions
     if (vmState === 'starting' || vmState === 'stopping') {
@@ -335,6 +349,9 @@ export class VMManagerIntegration implements vscode.Disposable {
     } else {
       lines.push('✓ Connected to VM Manager API');
       lines.push(`VM State: ${vmState}`);
+      if (vmState === 'pending') {
+        lines.push('⚠️ VM exists but has not started yet');
+      }
     }
 
     if (ipAddress) lines.push(`IP: ${ipAddress}`);
@@ -381,6 +398,13 @@ export class VMManagerIntegration implements vscode.Disposable {
           items.push({ label: '$(sync~spin) VM is stopping...', detail: 'Usually takes 10-20 seconds' });
           break;
 
+        case 'pending':
+          items.push(
+            { label: '🔵 VM not started', detail: 'VM has not booted yet' },
+            { label: '▶ Start VM', detail: 'Attempt to create/start VM', action: () => this.startVm() }
+          );
+          break;
+
         case 'failed':
           items.push(
             { label: '❌ VM failed', detail: error || 'Check logs for details' },
@@ -415,6 +439,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       case 'stopping': return 'VM is Stopping';
       case 'failed': return 'VM Failed';
       case 'stopped': return 'VM is Stopped';
+      case 'pending': return 'VM Pending Start';
       default: return 'VM Status Unknown';
     }
   }
@@ -598,6 +623,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       case 'stopping': return '🟡';
       case 'failed': return '🔴';
       case 'stopped': return '⚫';
+      case 'pending': return '🔵';
       default: return '❓';
     }
   }
@@ -609,6 +635,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       case 'stopping': return 'Stopping...';
       case 'failed': return 'Failed';
       case 'stopped': return 'Stopped';
+      case 'pending': return 'Pending...';
       default: return 'Unknown';
     }
   }
