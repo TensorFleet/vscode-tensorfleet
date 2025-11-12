@@ -1,0 +1,105 @@
+/* Root, scroll container */
+.drone-status {
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto;
+
+  /* panel visuals */
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  background: #fff;
+
+  /* make vertically scrollable and stretch */
+  min-height: 100%;
+  height: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+
+  /* iOS momentum scrolling */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Header */
+.dsp-header {
+  padding: 16px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.dsp-title {
+  font-weight: 600;
+}
+
+.dsp-links {
+  margin-left: auto;
+  display: flex;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.dsp-link-item {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Body */
+.dsp-body {
+  padding: 16px;
+}
+
+/* Row */
+.dsp-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 4px 0;
+}
+
+.dsp-row-label {
+  color: #6b7280;            /* gray-500 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsp-row-value {
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Dot indicator */
+.dsp-dot {
+  line-height: 1;
+}
+.dsp-dot.ok { color: #16a34a; }  /* green-600 */
+.dsp-dot.bad { color: #dc2626; } /* red-600 */
+
+/* Section separator */
+.dsp-sep {
+  border: 0;
+  border-top: 1px solid #e5e7eb;
+  margin: 12px 0;
+}
+
+/* Light/dark tweak (optional if you have dark mode) */
+@media (prefers-color-scheme: dark) {
+  .drone-status {
+    background: #0b0b0c;
+    border-color: #1f2937;
+    box-shadow: none;
+  }
+  .dsp-header {
+    border-bottom-color: #1f2937;
+  }
+  .dsp-row-label {
+    color: #9ca3af;
+  }
+  .dsp-sep {
+    border-top-color: #1f2937;
+  }
+}

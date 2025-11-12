@@ -3,7 +3,7 @@ import { ros2Bridge } from '../../ros2-bridge';
 import { DroneStateModel } from '../../mission-control/drone-state-model';
 import { DroneMap } from './map/DroneMap';
 import './MissionControl.css';
-import { DroneStatusPanel } from './drone/DroneStatus';
+import { DroneStatusPanel } from './drone/DroneStatusPanel';
 
 const droneState = new DroneStateModel();
 

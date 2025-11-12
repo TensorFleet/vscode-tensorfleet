@@ -1,5 +1,7 @@
 import { DroneStateModel, LANDED } from "@/mission-control/drone-state-model";
 import React, { useEffect, useState } from "react";
+import MissionControlPanel from "./MissionControlButtons";
+import "./DroneStatusPanel.css";
 
 // Pure React component using ONLY the model you already have (onUpdate + getState).
 // No new enums/types defined here. No external UI libs.
@@ -42,15 +44,15 @@ const lon = (v?: number | null) =>
 
 function Row({ label, value }: { label: React.ReactNode; value: React.ReactNode }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "baseline", padding: "4px 0" }}>
-      <div style={{ color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
-      <div style={{ textAlign: "right", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{value}</div>
+    <div className="dsp-row">
+      <div className="dsp-row-label">{label}</div>
+      <div className="dsp-row-value">{value}</div>
     </div>
   );
 }
 
 function Dot({ ok, title }: { ok: boolean; title: string }) {
-  return <span title={title} style={{ color: ok ? "#16a34a" : "#dc2626" }}>●</span>;
+  return <span title={title} className={`dsp-dot ${ok ? "ok" : "bad"}`}>●</span>;
 }
 
 function landedText(n?: number) {
@@ -86,23 +88,23 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
   const gcsOk = !!(s?.status?.gcs_link ?? s?.vehicle?.connected);
 
   return (
-    <div style={{ width: "100%", maxWidth: 400, margin: "0 auto", border: "1px solid #e5e7eb", borderRadius: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
-      <div style={{ padding: 16, borderBottom: "1px solid #e5e7eb", display: "flex", gap: 8, alignItems: "center" }}>
-        <div style={{ fontWeight: 600 }}>✈️ Drone Status</div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 12, fontSize: 14 }}>
-          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><Dot ok={fcuOk} title="FCU link" /> FCU</span>
-          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><Dot ok={gcsOk} title="GCS link" /> GCS</span>
+    <div className="drone-status">
+      <div className="dsp-header">
+        <div className="dsp-title">✈️ Drone Status</div>
+        <div className="dsp-links">
+          <span className="dsp-link-item"><Dot ok={fcuOk} title="FCU link" /> FCU</span>
+          <span className="dsp-link-item"><Dot ok={gcsOk} title="GCS link" /> GCS</span>
         </div>
       </div>
 
-      <div style={{ padding: 16 }}>
+      <div className="dsp-body">
         {/* Vehicle */}
         <Row label={<span>📡 Mode</span>} value={s?.vehicle?.mode ?? NDASH} />
         <Row label={<span>Armed</span>} value={s?.vehicle?.armed ? "Yes" : "No"} />
         <Row label={<span>Guided</span>} value={s?.vehicle?.guided ? "Yes" : "No"} />
         <Row label={<span>Landed State</span>} value={landedText(s?.extended?.landed_state)} />
 
-        <hr style={{ border: 0, borderTop: "1px solid #e5e7eb", margin: "12px 0" }} />
+        <hr className="dsp-sep" />
 
         {/* Positioning */}
         <Row label={<span>🛰️ Latitude</span>} value={lat(s?.global_position_int?.lat)} />
@@ -117,7 +119,7 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
         />
         <Row label={<span>🧭 Heading</span>} value={deg(heading)} />
 
-        <hr style={{ border: 0, borderTop: "1px solid #e5e7eb", margin: "12px 0" }} />
+        <hr className="dsp-sep" />
 
         {/* Speeds */}
         <Row label={<span>🏎️ Airspeed</span>} value={num(s?.vfr_hud?.airspeed, " m/s", 1)} />
@@ -125,7 +127,7 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
         <Row label={<span>Throttle</span>} value={throttleText} />
         <Row label={<span>Climb</span>} value={num(s?.vfr_hud?.climb, " m/s", 1)} />
 
-        <hr style={{ border: 0, borderTop: "1px solid #e5e7eb", margin: "12px 0" }} />
+        <hr className="dsp-sep" />
 
         {/* Battery */}
         <Row label={<span>🔋 Battery</span>} value={pctText(s?.battery?.percentage)} />
@@ -133,17 +135,21 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
         <Row label={<span>Current</span>} value={s?.battery?.current !== undefined ? `${s.battery.current.toFixed(1)} A` : NDASH} />
         <Row label={<span>Temp</span>} value={s?.battery?.temperature !== null && s?.battery?.temperature !== undefined ? `${s.battery.temperature.toFixed(1)} °C` : NDASH} />
 
-        <hr style={{ border: 0, borderTop: "1px solid #e5e7eb", margin: "12px 0" }} />
+        <hr className="dsp-sep" />
 
         {/* Home */}
         <Row label={<span>🏠 Home Lat</span>} value={lat(s?.home?.lat)} />
         <Row label={<span>🏠 Home Lon</span>} value={lon(s?.home?.lon)} />
         <Row label={<span>Home Alt</span>} value={num(s?.home?.alt, " m", 1)} />
 
-        <hr style={{ border: 0, borderTop: "1px solid #e5e7eb", margin: "12px 0" }} />
+        <hr className="dsp-sep" />
 
         {/* Faults */}
-        <Row label={<span>🛠️ Faults</span>} value={(s?.status?.faults?.length ? s.status.faults.join(", ") : "None")} />
+        <Row label={<span>🛠️ Faults</span>} value={(faults.length ? faults.join(", ") : "None")} />
+
+        <hr className="dsp-sep" />
+
+        <MissionControlPanel />
       </div>
     </div>
   );
