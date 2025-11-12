@@ -166,9 +166,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.registerCommand('tensorfleet.startVMManager', () => vmManagerIntegration?.start()),
       vscode.commands.registerCommand('tensorfleet.stopVMManager', () => vmManagerIntegration?.stop()),
       vscode.commands.registerCommand('tensorfleet.showVMManagerLogs', () => vmManagerIntegration?.showLogs()),
-      vscode.commands.registerCommand('tensorfleet.selectVMManagerEnvironment', () => vmManagerIntegration?.selectEnvironment()),
-      vscode.commands.registerCommand('tensorfleet.vmManager.login', () => vmManagerIntegration?.promptForLogin()),
-      vscode.commands.registerCommand('tensorfleet.vmManager.logout', () => vmManagerIntegration?.logout())
+      vscode.commands.registerCommand('tensorfleet.selectVMManagerEnvironment', () => vmManagerIntegration?.selectEnvironment())
     );
   }
 

@@ -473,13 +473,13 @@
       </div>
       <p class="card-note" id="vm-service-notice">Detected local repo path is required only when running the Go binary yourself.</p>
     </div>
-    <div class="card card--priority" id="vm-login-card">
+    <div class="card card--priority" id="vm-environment-card">
       <div class="env-summary">
         <div>
-          <h2>Environment &amp; Login</h2>
-          <p class="meta">Authenticate first so every VM action uses the correct environment.</p>
+          <h2>Environment</h2>
+          <p class="meta">Choose which TensorFleet environment the VM Manager should talk to.</p>
         </div>
-        <div id="vm-env-status" class="env-status logged-out">No environment configured</div>
+        <div id="vm-env-status" class="env-status">No environment configured</div>
       </div>
       <div class="env-grid">
         <div class="input-group">
@@ -490,20 +490,8 @@
           </div>
           <span class="helper-text">Base URL: <span id="vm-env-url">—</span></span>
         </div>
-        <div class="input-group">
-          <label for="vm-login-email">Email</label>
-          <input id="vm-login-email" type="email" placeholder="you@example.com" autocomplete="username" />
-        </div>
-        <div class="input-group">
-          <label for="vm-login-password">Password</label>
-          <input id="vm-login-password" type="password" placeholder="••••••••" autocomplete="current-password" />
-        </div>
-        <div class="env-actions">
-          <button id="vm-login-submit">Log In</button>
-          <button id="vm-logout-btn" class="secondary" disabled>Log Out</button>
-        </div>
       </div>
-      <p class="helper-text" id="vm-login-meta">Not logged in yet</p>
+      <p class="helper-text" id="vm-env-meta">Environment selection applies to refreshes and VM actions.</p>
     </div>
 
     <div class="card">
@@ -551,7 +539,7 @@
             <input id="vm-user" name="user_id" placeholder="12d82b4e-c09e-4ca7-a1c7-fb289909b094" required />
             <button type="button" id="vm-generate" class="secondary">Generate</button>
           </div>
-          <span class="helper-text" id="vm-user-helper">Use the default Supabase test user or log in to auto-fill your UUID.</span>
+          <span class="helper-text" id="vm-user-helper">Use the default Supabase test user or generate/enter your own UUID.</span>
         </div>
         <div class="input-group">
           <label for="vm-name">VM Name</label>
@@ -608,11 +596,6 @@
     const envSelect = document.getElementById('vm-env-select');
     const envApplyBtn = document.getElementById('vm-env-apply');
     const envUrlEl = document.getElementById('vm-env-url');
-    const loginEmailInput = document.getElementById('vm-login-email');
-    const loginPasswordInput = document.getElementById('vm-login-password');
-    const loginMetaEl = document.getElementById('vm-login-meta');
-    const loginBtn = document.getElementById('vm-login-submit');
-    const logoutBtn = document.getElementById('vm-logout-btn');
     const userIdInput = document.getElementById('vm-user');
     const userIdHelper = document.getElementById('vm-user-helper');
     const serviceCard = document.getElementById('vm-service-card');
@@ -624,9 +607,6 @@
     let currentState = null;
     let committedApiUrl = '';
     let isVmListLoading = false;
-    if (loginEmailInput) {
-      loginEmailInput.dataset.autofill = 'true';
-    }
     if (userIdInput) {
       userIdInput.dataset.autofill = 'true';
       userIdInput.value = DEFAULT_USER_ID;
@@ -747,17 +727,6 @@
       return success;
     };
 
-    const formatTimestamp = (value) => {
-      if (!value) {
-        return 'Not logged in yet';
-      }
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) {
-        return 'Not logged in yet';
-      }
-      return date.toLocaleString();
-    };
-
     const updateEnvApplyState = () => {
       if (!envApplyBtn || !envSelect) {
         return;
@@ -795,67 +764,23 @@
         } else {
           envStatusEl.textContent = 'No environment configured';
         }
-        const loggedIn = Boolean(state?.auth?.loggedIn);
-        envStatusEl.classList.toggle('logged-in', loggedIn);
-        envStatusEl.classList.toggle('logged-out', !loggedIn);
-      }
-
-      if (loginBtn) {
-        loginBtn.disabled = Boolean(state?.auth?.loggedIn);
-      }
-      if (logoutBtn) {
-        logoutBtn.disabled = !state?.auth?.loggedIn;
-      }
-
-      if (loginMetaEl) {
-        if (state?.auth?.loggedIn) {
-          const email = state.auth.email || 'unknown';
-          const userId = state.auth.userId ? ` (${state.auth.userId})` : '';
-          loginMetaEl.textContent = `Logged in as ${email}${userId}`;
-        } else if (state?.auth?.lastLogin) {
-          loginMetaEl.textContent = `Last login ${formatTimestamp(state.auth.lastLogin)}`;
-        } else {
-          loginMetaEl.textContent = 'Not logged in yet';
-        }
-      }
-
-      if (loginEmailInput) {
-        const selectedEnvId = envSelect?.value || state?.environment?.id;
-        const matchingEnv = envs.find((env) => env.id === selectedEnvId);
-        const preferredEmail = state?.auth?.email || matchingEnv?.defaultEmail || '';
-        if (!loginEmailInput.value || loginEmailInput.dataset.autofill === 'true' || state?.auth?.loggedIn) {
-          loginEmailInput.value = preferredEmail;
-          loginEmailInput.dataset.autofill = preferredEmail ? 'true' : loginEmailInput.dataset.autofill;
-        }
       }
 
       updateEnvApplyState();
     };
 
-    const updateUserIdField = (state) => {
+    const updateUserIdField = () => {
       if (!userIdInput) {
         return;
       }
-      const loggedInUserId = state?.auth?.userId;
-      if (loggedInUserId) {
-        if (userIdInput.dataset.autofill !== 'false') {
-          userIdInput.value = loggedInUserId;
-          userIdInput.dataset.autofill = 'true';
-        }
-        if (userIdHelper) {
-          userIdHelper.textContent = userIdInput.dataset.autofill === 'false'
-            ? 'Using custom UUID instead of your login identity.'
-            : 'Auto-filled from your login. Generate or edit to override.';
-        }
-        return;
-      }
-
       if (userIdInput.dataset.autofill !== 'false') {
         userIdInput.value = DEFAULT_USER_ID;
         userIdInput.dataset.autofill = 'true';
       }
       if (userIdHelper) {
-        userIdHelper.textContent = 'Use the default Supabase test user or log in to auto-fill your UUID.';
+        userIdHelper.textContent = userIdInput.dataset.autofill === 'false'
+          ? 'Using custom UUID override.'
+          : 'Default Supabase test user ID. Generate or edit to override.';
       }
     };
 
@@ -865,7 +790,7 @@
       }
       currentState = state;
       updateEnvironment(state);
-      updateUserIdField(state);
+      updateUserIdField();
       if (apiUrlInput) {
         const targetUrl = state.apiBaseUrl || '';
         if (document.activeElement !== apiUrlInput && apiUrlInput.value !== targetUrl) {
@@ -883,7 +808,7 @@
       if (serviceNotice) {
         serviceNotice.textContent = localServiceAvailable
           ? 'Opens a terminal to run `sudo -E go run ./cmd/vm-manager` from your configured repo path.'
-          : 'Local Go repo not detected. Log in to cloud environments or set tensorfleet.vmManager.repoPath for dev mode.';
+          : 'Local Go repo not detected. Configure tensorfleet.vmManager.repoPath for dev mode.';
       }
 
       if (!localServiceAvailable) {
@@ -929,7 +854,7 @@
         clearInterval(refreshTimer);
         refreshTimer = null;
       }
-      const shouldAutoRefresh = Boolean(state?.auth?.loggedIn) || Boolean(state.running) || Boolean(state.sudoTerminalActive);
+      const shouldAutoRefresh = Boolean(state.running) || Boolean(state.sudoTerminalActive);
       if (shouldAutoRefresh) {
         refreshTimer = setInterval(() => {
           post('vmManager:refresh');
@@ -1079,16 +1004,6 @@
     });
     envSelect?.addEventListener('change', () => {
       updateEnvApplyState();
-      if (!loginEmailInput || currentState?.auth?.loggedIn) {
-        return;
-      }
-      loginEmailInput.dataset.autofill = 'true';
-      const selected = currentState?.environments?.find((env) => env.id === envSelect.value);
-      if (selected?.defaultEmail) {
-        loginEmailInput.value = selected.defaultEmail;
-      } else if (!loginEmailInput.value) {
-        loginEmailInput.value = '';
-      }
     });
     envApplyBtn?.addEventListener('click', () => {
       if (!envSelect?.value || envSelect.value === currentState?.environment?.id) {
@@ -1098,39 +1013,11 @@
       setMessage(errorEl, '');
       post('vmManager:setEnvironment', { id: envSelect.value });
     });
-    loginEmailInput?.addEventListener('input', () => {
-      loginEmailInput.dataset.autofill = 'false';
-    });
     userIdInput?.addEventListener('input', () => {
       userIdInput.dataset.autofill = 'false';
       if (userIdHelper) {
-        userIdHelper.textContent = currentState?.auth?.userId
-          ? 'Using custom UUID instead of your login identity.'
-          : 'Custom UUID will be sent when creating VMs.';
+        userIdHelper.textContent = 'Custom UUID will be sent when creating VMs.';
       }
-    });
-    loginBtn?.addEventListener('click', () => {
-      setMessage(successEl, '');
-      setMessage(errorEl, '');
-      if (!currentState?.environment) {
-        setMessage(errorEl, 'No environment configured. Update tensorfleet settings first.');
-        return;
-      }
-      const email = (loginEmailInput?.value || '').trim();
-      const password = loginPasswordInput?.value || '';
-      if (!email || !password) {
-        setMessage(errorEl, 'Email and password are required.');
-        return;
-      }
-      post('vmManager:login', { email, password });
-      if (loginPasswordInput) {
-        loginPasswordInput.value = '';
-      }
-    });
-    logoutBtn?.addEventListener('click', () => {
-      setMessage(successEl, '');
-      setMessage(errorEl, '');
-      post('vmManager:logout');
     });
     window.addEventListener('unload', () => {
       if (refreshTimer) {
@@ -1155,7 +1042,7 @@
       }
       userIdInput.dataset.autofill = 'false';
       if (userIdHelper) {
-        userIdHelper.textContent = 'Using custom UUID instead of your login identity.';
+        userIdHelper.textContent = 'Using custom UUID override.';
       }
     });
 

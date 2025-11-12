@@ -34,9 +34,7 @@
     "onCommand:tensorfleet.startVMManager",
     "onCommand:tensorfleet.stopVMManager",
     "onCommand:tensorfleet.showVMManagerLogs",
-    "onCommand:tensorfleet.selectVMManagerEnvironment",
-    "onCommand:tensorfleet.vmManager.login",
-    "onCommand:tensorfleet.vmManager.logout"
+    "onCommand:tensorfleet.selectVMManagerEnvironment"
   ],
   "main": "./out/extension.js",
   "packageManager": "bun@1.0.0",
@@ -178,16 +176,6 @@
         "command": "tensorfleet.selectVMManagerEnvironment",
         "title": "TensorFleet: Select VM Manager Environment",
         "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.vmManager.login",
-        "title": "TensorFleet: Log In to VM Manager",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.vmManager.logout",
-        "title": "TensorFleet: Log Out of VM Manager",
-        "category": "TensorFleet"
       }
     ],
     "menus": {
@@ -246,16 +234,6 @@
           "command": "tensorfleet.selectVMManagerEnvironment",
           "when": "view == tensorfleet-vm-manager",
           "group": "navigation@2"
-        },
-        {
-          "command": "tensorfleet.vmManager.login",
-          "when": "view == tensorfleet-vm-manager",
-          "group": "navigation@3"
-        },
-        {
-          "command": "tensorfleet.vmManager.logout",
-          "when": "view == tensorfleet-vm-manager",
-          "group": "navigation@4"
         }
       ]
     },
@@ -278,23 +256,20 @@
             {
               "id": "local",
               "label": "Local Dev",
-              "apiBaseUrl": "http://localhost:8080",
-              "authEndpoint": "http://localhost:8080/login"
+              "apiBaseUrl": "http://localhost:8080"
             },
             {
               "id": "staging",
               "label": "Staging",
-              "apiBaseUrl": "https://staging.vm.tensorfleet.dev",
-              "authEndpoint": "https://staging.vm.tensorfleet.dev/login"
+              "apiBaseUrl": "https://staging.vm.tensorfleet.dev"
             },
             {
               "id": "production",
               "label": "Production",
-              "apiBaseUrl": "https://vm.tensorfleet.com",
-              "authEndpoint": "https://vm.tensorfleet.com/login"
+              "apiBaseUrl": "https://vm.tensorfleet.com"
             }
           ],
-          "description": "List of available VM Manager environments. Each entry should include an id, friendly label, API base URL, and optional auth endpoint.",
+          "description": "List of available VM Manager environments. Each entry should include an id, friendly label, and API base URL.",
           "items": {
             "type": "object",
             "required": [
@@ -314,14 +289,6 @@
               "apiBaseUrl": {
                 "type": "string",
                 "description": "Base URL of the VM Manager API."
-              },
-              "authEndpoint": {
-                "type": "string",
-                "description": "Optional absolute or relative URL to use for login requests. Defaults to /login."
-              },
-              "defaultEmail": {
-                "type": "string",
-                "description": "Optional hint email that will be pre-filled in the login form."
               }
             }
           }

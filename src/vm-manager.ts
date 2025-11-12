@@ -43,25 +43,13 @@ interface VmManagerEnvironment {
   id: string;
   label: string;
   apiBaseUrl: string;
-  authEndpoint?: string;
-  defaultEmail?: string;
-}
-
-interface LoginMetadataEntry {
-  email?: string;
-  timestamp?: number;
-  userId?: string;
 }
 
 interface RequestOptions {
-  skipAuth?: boolean;
   baseUrl?: string;
   fullUrl?: string;
   headers?: http.OutgoingHttpHeaders;
 }
-
-const SECRET_TOKEN_PREFIX = 'tensorfleet.vmManager.token';
-const LOGIN_METADATA_KEY = 'tensorfleet.vmManager.loginMetadata';
 
 export class VMManagerIntegration {
   private process: ChildProcess | null = null;
@@ -72,7 +60,6 @@ export class VMManagerIntegration {
   private readonly webviews = new Set<vscode.Webview>();
   private resolvedRepoPath: string | null = null;
   private repoWarningShown = false;
-  private readonly authWarningIssued = new Set<string>();
   private baseRootfsWarningShown = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -344,12 +331,6 @@ export class VMManagerIntegration {
           }
         });
         break;
-      case 'vmManager:login':
-        this.loginFromWebview(message.payload, webview);
-        break;
-      case 'vmManager:logout':
-        this.logout(webview).catch((error) => this.sendError(webview, error));
-        break;
       case 'vmManager:setApiBaseUrl':
         if (!message.payload?.apiBaseUrl) {
           this.sendError(webview, new Error('Missing API URL'));
@@ -500,8 +481,6 @@ export class VMManagerIntegration {
   private async sendState(webview: vscode.Webview) {
     const environment = this.getActiveEnvironment();
     const environments = this.getConfiguredEnvironments();
-    const hasToken = environment?.id ? Boolean(await this.getAuthToken(environment.id)) : false;
-    const loginMetadata = environment?.id ? this.getLoginMetadataForEnv(environment.id) : undefined;
     const repoPath = this.resolveRepoPath();
 
     await webview.postMessage({
@@ -518,15 +497,8 @@ export class VMManagerIntegration {
         environments: environments.map((env) => ({
           id: env.id,
           label: env.label,
-          apiBaseUrl: env.apiBaseUrl,
-          defaultEmail: env.defaultEmail
-        })),
-        auth: {
-          loggedIn: hasToken,
-          email: loginMetadata?.email,
-          lastLogin: loginMetadata?.timestamp ?? null,
-          userId: loginMetadata?.userId
-        }
+          apiBaseUrl: env.apiBaseUrl
+        }))
       }
     });
   }
@@ -651,12 +623,9 @@ export class VMManagerIntegration {
   private getConfiguredEnvironments(): VmManagerEnvironment[] {
     const config = vscode.workspace.getConfiguration('tensorfleet');
     const environments = config.get<VmManagerEnvironment[]>('vmManager.environments') ?? [];
-    const sanitized = environments
-      .filter((env): env is VmManagerEnvironment => Boolean(env?.id && env?.label && env?.apiBaseUrl))
-      .map((env) => ({
-        ...env,
-        authEndpoint: env.authEndpoint || '/login'
-      }));
+    const sanitized = environments.filter(
+      (env): env is VmManagerEnvironment => Boolean(env?.id && env?.label && env?.apiBaseUrl)
+    );
 
     if (sanitized.length > 0) {
       return sanitized;
@@ -667,8 +636,7 @@ export class VMManagerIntegration {
       {
         id: 'default',
         label: 'Default',
-        apiBaseUrl: fallbackUrl,
-        authEndpoint: '/login'
+        apiBaseUrl: fallbackUrl
       }
     ];
   }
@@ -719,19 +687,6 @@ export class VMManagerIntegration {
       headers['Content-Length'] = Buffer.byteLength(data);
     }
 
-    if (!options.skipAuth) {
-      if (!environment?.id) {
-        throw new Error('Authentication required but no VM Manager environment is active.');
-      }
-
-      const token = await this.getAuthToken(environment.id);
-      if (!token) {
-        const label = environment.label ?? environment.id;
-        throw new Error(`Authentication required for ${label}. Please log in first.`);
-      }
-      headers.Authorization = `Bearer ${token}`;
-    }
-
     return new Promise<T>((resolve, reject) => {
       const req = lib.request(
         {
@@ -760,11 +715,6 @@ export class VMManagerIntegration {
               }
               return;
             }
-
-            if (res.statusCode === 401 && !options.skipAuth && environment?.id) {
-              void this.handleUnauthorized(environment.id);
-            }
-
             const status = res.statusCode ?? 'unknown';
             reject(new Error(`Request failed (${status}): ${bodyText || res.statusMessage || 'Unknown error'}`));
           });
@@ -811,195 +761,6 @@ export class VMManagerIntegration {
     }
   }
 
-  async promptForLogin() {
-    const environment = this.getActiveEnvironment();
-    if (!environment) {
-      vscode.window.showErrorMessage('No VM Manager environment is active.');
-      return;
-    }
-
-    const metadata = environment.id ? this.getLoginMetadataForEnv(environment.id) : undefined;
-    const email = await vscode.window.showInputBox({
-      prompt: `Email for ${environment.label}`,
-      placeHolder: 'you@example.com',
-      value: metadata?.email ?? environment.defaultEmail ?? '',
-      ignoreFocusOut: true
-    });
-
-    if (!email) {
-      return;
-    }
-
-    const password = await vscode.window.showInputBox({
-      prompt: `Password for ${environment.label}`,
-      password: true,
-      ignoreFocusOut: true
-    });
-
-    if (!password) {
-      return;
-    }
-
-    await this.executeLogin(email.trim(), password);
-  }
-
-  async logout(webview?: vscode.Webview) {
-    const environment = this.getActiveEnvironment();
-    if (!environment) {
-      vscode.window.showWarningMessage('No VM Manager environment is active.');
-      return;
-    }
-
-    await this.setAuthToken(environment.id, null);
-    await this.updateLoginMetadata(environment.id, null);
-    this.authWarningIssued.delete(environment.id);
-
-    const message = `Logged out of ${environment.label}`;
-    this.outputChannel.appendLine(`[VM Manager] ${message}`);
-    if (webview) {
-      webview.postMessage({ type: 'vmManager:success', payload: message });
-    } else {
-      vscode.window.showInformationMessage(message);
-    }
-    await this.broadcastState();
-  }
-
-  private loginFromWebview(payload: any, webview: vscode.Webview) {
-    const email = typeof payload?.email === 'string' ? payload.email.trim() : '';
-    const password = typeof payload?.password === 'string' ? payload.password : '';
-    if (!email || !password) {
-      this.sendError(webview, new Error('Email and password are required to log in.'));
-      return;
-    }
-
-    this.executeLogin(email, password, webview).catch((error) => this.sendError(webview, error));
-  }
-
-  private async executeLogin(email: string, password: string, webview?: vscode.Webview) {
-    const environment = this.getActiveEnvironment();
-    if (!environment) {
-      throw new Error('No VM Manager environment configured.');
-    }
-
-    const authEndpoint = environment.authEndpoint || '/login';
-    const requestOptions: RequestOptions = { skipAuth: true };
-    const targetEndpoint = this.isAbsoluteUrl(authEndpoint) ? '/' : authEndpoint;
-    if (this.isAbsoluteUrl(authEndpoint)) {
-      requestOptions.fullUrl = authEndpoint;
-    }
-
-    const response = await this.request<any>('POST', targetEndpoint, { email, password }, requestOptions);
-    const token = this.extractTokenFromResponse(response);
-    if (!token) {
-      throw new Error('Login response did not include an access token.');
-    }
-
-    const userId = this.extractUserIdFromResponse(response, token);
-    await this.setAuthToken(environment.id, token);
-    await this.updateLoginMetadata(environment.id, { email, timestamp: Date.now(), userId });
-    this.authWarningIssued.delete(environment.id);
-    const successMessage = `Logged in to ${environment.label} as ${email}`;
-    this.outputChannel.appendLine(`[VM Manager] ${successMessage}`);
-
-    if (webview) {
-      webview.postMessage({ type: 'vmManager:success', payload: successMessage });
-    } else {
-      vscode.window.showInformationMessage(successMessage);
-    }
-
-    await this.broadcastState();
-  }
-
-  private extractTokenFromResponse(response: any): string | undefined {
-    if (!response) {
-      return undefined;
-    }
-
-    if (typeof response === 'string') {
-      return response;
-    }
-
-    const tokenCandidates = [
-      response.token,
-      response.accessToken,
-      response.access_token,
-      response.jwt,
-      response.session?.access_token,
-      response.data?.token,
-      response.data?.access_token
-    ];
-
-    for (const candidate of tokenCandidates) {
-      if (typeof candidate === 'string' && candidate.trim()) {
-        return candidate.trim();
-      }
-    }
-
-    if (typeof response === 'object') {
-      // Search nested objects for a token field
-      for (const value of Object.values(response)) {
-        if (typeof value === 'object') {
-          const nested = this.extractTokenFromResponse(value);
-          if (nested) {
-            return nested;
-          }
-        }
-      }
-    }
-
-    return undefined;
-  }
-
-  private extractUserIdFromResponse(response: any, token?: string): string | undefined {
-    const candidates: Array<unknown> = [];
-    if (response) {
-      const nestedCandidates = [
-        response.user?.id,
-        response.user?.uuid,
-        response.user?.user_id,
-        response.user_id,
-        response.userId,
-        response.session?.user?.id,
-        response.session?.user?.uuid,
-        response.data?.user?.id,
-        response.data?.user?.uuid
-      ];
-      candidates.push(...nestedCandidates);
-    }
-
-    for (const candidate of candidates) {
-      if (typeof candidate === 'string' && candidate.trim()) {
-        return candidate.trim();
-      }
-    }
-
-    if (!token || !token.includes('.')) {
-      return undefined;
-    }
-
-    const [, payloadSegment] = token.split('.', 2);
-    if (!payloadSegment) {
-      return undefined;
-    }
-
-    try {
-      const normalized = payloadSegment.replace(/-/g, '+').replace(/_/g, '/');
-      const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-      const decoded = Buffer.from(padded, 'base64').toString('utf8');
-      const payload = JSON.parse(decoded);
-      const jwtCandidates = [payload.sub, payload.user_id, payload.userId];
-      for (const candidate of jwtCandidates) {
-        if (typeof candidate === 'string' && candidate.trim()) {
-          return candidate.trim();
-        }
-      }
-    } catch (error) {
-      this.outputChannel.appendLine(`[VM Manager] Failed to extract user id from token: ${this.formatError(error)}`);
-    }
-
-    return undefined;
-  }
-
   private async applyEnvironmentSelection(envId: string, options: { silent?: boolean } = {}) {
     const environments = this.getConfiguredEnvironments();
     const target = environments.find((env) => env.id === envId);
@@ -1010,7 +771,6 @@ export class VMManagerIntegration {
     const config = vscode.workspace.getConfiguration('tensorfleet');
     await config.update('vmManager.activeEnvironment', envId, vscode.ConfigurationTarget.Global);
     this.outputChannel.appendLine(`[VM Manager] Active environment set to ${target.label} (${target.apiBaseUrl})`);
-    this.authWarningIssued.delete(envId);
     if (!options.silent) {
       vscode.window.showInformationMessage(`TensorFleet VM Manager environment set to ${target.label}`);
     }
@@ -1056,10 +816,6 @@ export class VMManagerIntegration {
 
   private isAbsoluteUrl(value?: string): boolean {
     return typeof value === 'string' && /^https?:\/\//i.test(value);
-  }
-
-  private getTokenKey(envId: string) {
-    return `${SECRET_TOKEN_PREFIX}.${envId}`;
   }
 
   private async buildLocalServiceEnv(repoPath: string): Promise<NodeJS.ProcessEnv> {
@@ -1232,53 +988,6 @@ export class VMManagerIntegration {
     }
 
     return undefined;
-  }
-
-  private async getAuthToken(envId?: string): Promise<string | undefined> {
-    const targetEnvId = envId ?? this.getActiveEnvironment()?.id;
-    if (!targetEnvId) {
-      return undefined;
-    }
-    return this.context.secrets.get(this.getTokenKey(targetEnvId));
-  }
-
-  private async setAuthToken(envId: string, token: string | null) {
-    const key = this.getTokenKey(envId);
-    if (!token) {
-      await this.context.secrets.delete(key);
-      return;
-    }
-    await this.context.secrets.store(key, token);
-  }
-
-  private getLoginMetadataMap(): Record<string, LoginMetadataEntry> {
-    return this.context.globalState.get<Record<string, LoginMetadataEntry>>(LOGIN_METADATA_KEY, {});
-  }
-
-  private getLoginMetadataForEnv(envId: string): LoginMetadataEntry | undefined {
-    const metadata = this.getLoginMetadataMap();
-    return metadata[envId];
-  }
-
-  private async updateLoginMetadata(envId: string, entry?: LoginMetadataEntry | null) {
-    const metadata = this.getLoginMetadataMap();
-    if (!entry) {
-      delete metadata[envId];
-    } else {
-      metadata[envId] = entry;
-    }
-    await this.context.globalState.update(LOGIN_METADATA_KEY, metadata);
-  }
-
-  private async handleUnauthorized(envId: string) {
-    await this.setAuthToken(envId, null);
-    await this.updateLoginMetadata(envId, null);
-    if (!this.authWarningIssued.has(envId)) {
-      this.authWarningIssued.add(envId);
-      this.outputChannel.appendLine('[VM Manager] API returned 401. Cleared cached token.');
-      void vscode.window.showWarningMessage('TensorFleet VM Manager authentication expired. Please log in again.');
-    }
-    await this.broadcastState();
   }
 
   private ensureGoAvailable(goCommand: string): boolean {
