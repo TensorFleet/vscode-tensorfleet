@@ -253,18 +253,17 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private notifyStableState() {
-    const { vmState, ipAddress } = this.currentSnapshot;
+    const { vmState } = this.currentSnapshot;
 
     // Only notify for states that weren't user-initiated
     switch (vmState) {
       case 'running': {
         // Only show success notification if this was an unexpected transition
         // (user will see the status bar update for their own actions)
-        const actions = ipAddress ? ['SSH', 'Menu'] : ['Menu'];
+        const actions = ['Menu'];
         void vscode.window
           .showInformationMessage('✅ VM is running and ready.', ...actions)
           .then((choice) => {
-            if (choice === 'SSH') void this.sendSshToTerminal();
             if (choice === 'Menu') void this.showVmActions();
           });
         break;
@@ -338,7 +337,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private buildMenuItems(): VmQuickPickItem[] {
-    const { connection, vmState, ipAddress, error } = this.currentSnapshot;
+    const { connection, vmState, error } = this.currentSnapshot;
     const items: VmQuickPickItem[] = [];
 
     if (connection === 'disconnected') {
@@ -355,12 +354,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       switch (vmState) {
         case 'running':
           items.push(
-            { label: '⏹ Stop VM', detail: 'Shut down the VM', action: () => this.stopVm() },
-            { 
-              label: '📋 SSH to VM', 
-              detail: ipAddress ? `ssh ubuntu@${ipAddress}` : 'IP not available', 
-              action: () => this.sendSshToTerminal() 
-            }
+            { label: '⏹ Stop VM', detail: 'Shut down the VM', action: () => this.stopVm() }
           );
           break;
 
@@ -467,23 +461,6 @@ export class VMManagerIntegration implements vscode.Disposable {
           }
         });
     }
-  }
-
-  private async sendSshToTerminal() {
-    const { ipAddress } = this.currentSnapshot;
-    if (!ipAddress) {
-      void vscode.window.showWarningMessage('IP address not available yet.');
-      return;
-    }
-
-    const command = `ssh ubuntu@${ipAddress}`;
-    let terminal = vscode.window.activeTerminal;
-    if (!terminal) {
-      terminal = vscode.window.createTerminal('TensorFleet VM');
-    }
-    terminal.show();
-    terminal.sendText(command, true);
-    void vscode.window.showInformationMessage('SSH command sent to terminal.');
   }
 
   // ========== HTTP Client ==========
