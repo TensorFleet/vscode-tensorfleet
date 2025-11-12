@@ -114,7 +114,6 @@ export class DroneStateModel extends Emitter {
   }
 
   public ingest = (frame: RosFrame) => {
-    if (!frame || (frame as any).op !== 'publish') return;
     const topic = (frame as any).topic as string;
     const msg = (frame as any).msg;
     const now = Date.now();
@@ -131,6 +130,7 @@ export class DroneStateModel extends Emitter {
         }
         break;
       case '/mavros/global_position/compass_hdg':
+        
         if (isFloat64(msg)) {
           this.ensureGlobal();
           this.state.global_position_int!.time_boot_ms = now;

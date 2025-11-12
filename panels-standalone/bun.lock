@@ -12,6 +12,7 @@
         "@lichtblick/omgidl-serialization": "^1.0.0",
         "@lichtblick/ros2idl-parser": "^1.0.0",
         "@lichtblick/rosmsg": "^1.0.0",
+        "@lichtblick/rosmsg-msgs-common": "^1.0.1",
         "@lichtblick/rosmsg-serialization": "^1.0.0",
         "@lichtblick/rosmsg2-serialization": "^1.0.0",
         "@lichtblick/wasm-bz2": "^1.0.0",
@@ -173,6 +174,8 @@
     "@lichtblick/ros2idl-parser": ["@lichtblick/ros2idl-parser@1.0.0", "", { "dependencies": { "@lichtblick/message-definition": "^1.0.0", "@lichtblick/omgidl-parser": "1.0.0", "md5-typescript": "^1.0.5" } }, "sha512-sLjMFDWvIyk4JJXr8415Z/g8TAC/eK598jnfDcreQA4AIQOwEYSYlAJLappZO99mEBY3qMEY7taFZUTzNuZbLg=="],
 
     "@lichtblick/rosmsg": ["@lichtblick/rosmsg@1.0.0", "", { "dependencies": { "md5-typescript": "^1.0.5" } }, "sha512-gzSHMuoX2gfWv8i+zMqiMf6aN1ASueSwJcVFV6RbgLNik/tG8EKkKs4vUl8593sEOMDjC9kQJdpQ8xxCU5XDZw=="],
+
+    "@lichtblick/rosmsg-msgs-common": ["@lichtblick/rosmsg-msgs-common@1.0.1", "", { "dependencies": { "@lichtblick/message-definition": "1.0.0", "@lichtblick/rosmsg": "1.0.0" } }, "sha512-cm9jSjJ7JNcWrI1LXsqgKp9ZddsCC74H8KaNK53i2PtMyD6hcCiy6ZYggzWSPGg2jGZiy/QXx8yy2Zqep49fxw=="],
 
     "@lichtblick/rosmsg-serialization": ["@lichtblick/rosmsg-serialization@1.0.0", "", {}, "sha512-HzCbDKd5UNyYWjmUFdBQqJmMGgEWPwG9XkgX6NyvUlTkte0WxPePsU3HS7GAN8IyoRG9Or2Bw9ihFHKjPrLCDw=="],
 

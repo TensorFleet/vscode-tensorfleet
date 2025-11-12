@@ -328,6 +328,7 @@
     "@lichtblick/omgidl-serialization": "^1.0.0",
     "@lichtblick/ros2idl-parser": "^1.0.0",
     "@lichtblick/rosmsg": "^1.0.0",
+    "@lichtblick/rosmsg-msgs-common": "^1.0.1",
     "@lichtblick/rosmsg-serialization": "^1.0.0",
     "@lichtblick/rosmsg2-serialization": "^1.0.0",
     "@lichtblick/wasm-bz2": "^1.0.0",

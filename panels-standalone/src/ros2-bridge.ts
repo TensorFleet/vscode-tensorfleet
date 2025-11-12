@@ -186,18 +186,23 @@ export class ROS2Bridge {
     };
 
     this.client.onMessage = (msg) => {
-      console.log(
-        "foxglove msg on",
-        msg.topic,
-        "encoding",
-        msg.encoding,        // <── this is what you’re missing
-        "type",
-        msg.schemaName,
-        "payload",
-        msg.payload
-      );
+      // console.log(
+      //   "foxglove msg on",
+      //   msg.topic,
+      //   "encoding",
+      //   msg.encoding,
+      //   "type",
+      //   msg.schemaName,
+      //   "payload",
+      //   msg.payload
+      // );
+      let refactored_msg = {
+        topic: msg.topic,
+        type: msg.schemaName,
+        msg: msg.payload
+      };
       try {
-        this.handleFoxgloveMessage(msg)
+        this.handleFoxgloveMessage(refactored_msg)
       } catch (err) {
         console.error("[Foxglove] onmessage error:", err);
       }
@@ -304,20 +309,12 @@ export class ROS2Bridge {
 
   private handleFoxgloveMessage(data: any) {
     // Expecting something like: { topic, schemaName, payload, ... }
-    const topic: string | undefined = data?.topic;
-    if (!topic) {
-      console.warn("[FoxgloveBridge] handleFoxgloveMessage called without topic");
-      return;
-    }
+    const topic: string = data.topic;
 
-    const type = this.subscriptions.get(topic)?.type ?? "";
+    const type = data.type;
 
     // FoxgloveWsClient gives `payload`; fall back to `msg` or the object itself if needed.
-    const msg: any = data?.payload ?? data?.msg ?? data;
-    if (!msg || typeof msg !== "object") {
-      this.messageHandlers.get(topic)?.forEach((handler) => handler(data));
-      return;
-    }
+    const msg: any = data.msg
 
     const header = msg.header || {};
     const frameId = header.frame_id || "";
@@ -372,7 +369,7 @@ export class ROS2Bridge {
         console.error("[FoxgloveBridge] Failed to convert compressed image:", error);
       }
     } else {
-      this.messageHandlers.get(topic)?.forEach((handler) => handler(msg));
+      this.messageHandlers.get(topic)?.forEach((handler) => handler(data));
     }
   }
 
