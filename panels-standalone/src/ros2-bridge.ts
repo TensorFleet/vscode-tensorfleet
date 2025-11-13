@@ -3,6 +3,7 @@
  * Connects directly to rosbridge or Foxglove Bridge WebSocket
  */
 import { FoxgloveWsClient } from "./FoxgloveNetworking";
+import { getImageTopicSuggestions } from "./utils/topicSuggestions";
 
 export type ConnectionMode = 'rosbridge' | 'foxglove';
 
@@ -233,7 +234,7 @@ export class ROS2Bridge {
 
     currentSet.add(handler);
 
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.client) {
       console.warn('Not connected, queueing subscription:', { topic, type });
       return () => {};
     }
@@ -291,21 +292,8 @@ export class ROS2Bridge {
   }
 
   getAvailableImageTopics(): Subscription[] {
-  return [
-    { topic: '/camera/image_raw', type: 'sensor_msgs/msg/Image' },
-    { topic: '/camera/image_compressed', type: 'sensor_msgs/msg/CompressedImage' },
-    { topic: '/camera/color/image_raw', type: 'sensor_msgs/msg/Image' },
-    { topic: '/camera/color/image_compressed', type: 'sensor_msgs/msg/CompressedImage' },
-    { topic: '/camera/depth/image_raw', type: 'sensor_msgs/msg/Image' },
-    { topic: '/camera/rgb/image_raw', type: 'sensor_msgs/msg/Image' },
-    { topic: '/camera/rgb/image_compressed', type: 'sensor_msgs/msg/CompressedImage' },
-    { topic: '/usb_cam/image_raw', type: 'sensor_msgs/msg/Image' },
-    { topic: '/usb_cam/image_compressed', type: 'sensor_msgs/msg/CompressedImage' },
-    { topic: '/image', type: 'sensor_msgs/msg/Image' },
-    { topic: '/image_raw', type: 'sensor_msgs/msg/Image' },
-    { topic: '/image_compressed', type: 'sensor_msgs/msg/CompressedImage' },
-  ];
-}
+    return getImageTopicSuggestions().map(({ topic, type }) => ({ topic, type }));
+  }
 
   private handleFoxgloveMessage(data: any) {
     // Expecting something like: { topic, schemaName, payload, ... }
@@ -515,4 +503,3 @@ export const ros2Bridge = new ROS2Bridge();
 
 // Auto-connect on load (using rosbridge by default)
 ros2Bridge.connect('rosbridge');
-

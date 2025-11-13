@@ -23,6 +23,7 @@ export default defineConfig({
         image: resolve(__dirname, 'image.html'),
         teleops: resolve(__dirname, 'teleops.html'),
         map: resolve(__dirname, 'mission_control.html'),
+        raw_messages: resolve(__dirname, 'raw_messages.html'),
       },
       // Treat *.wasm in deps as assets (URLs), not ESM modules
       plugins: [
@@ -37,13 +38,29 @@ export default defineConfig({
   },
 
   resolve: {
-    alias: {
-      '@': resolve(__dirname, './src'),
+    alias: [
+      { find: '@', replacement: resolve(__dirname, './src') },
+      {
+        find: /^@lichtblick\/suite-base\/(.*)$/,
+        replacement: resolve(__dirname, './src/lichtblick/suite-base/$1'),
+      },
+      {
+        find: '@lichtblick/suite-base',
+        replacement: resolve(__dirname, './src/lichtblick/suite-base'),
+      },
+      {
+        find: /^@lichtblick\/mcap-support\/(.*)$/,
+        replacement: resolve(__dirname, './src/lichtblick/mcap-support/$1'),
+      },
+      {
+        find: '@lichtblick/mcap-support',
+        replacement: resolve(__dirname, './src/lichtblick/mcap-support'),
+      },
       // (Optional) keep these if you want Foxglove builds specifically
-      // '@lichtblick/wasm-lz4': '@foxglove/wasm-lz4',
-      // '@lichtblick/wasm-zstd': '@foxglove/wasm-zstd',
-      // '@lichtblick/wasm-bz2': '@foxglove/wasm-bz2',
-    },
+      // { find: '@lichtblick/wasm-lz4', replacement: '@foxglove/wasm-lz4' },
+      // { find: '@lichtblick/wasm-zstd', replacement: '@foxglove/wasm-zstd' },
+      // { find: '@lichtblick/wasm-bz2', replacement: '@foxglove/wasm-bz2' },
+    ],
   },
 
   // Avoid prebundling these so their CJS + require('./*.wasm') pattern survives
