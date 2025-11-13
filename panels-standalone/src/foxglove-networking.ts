@@ -6,6 +6,7 @@ import {
   ServerCapability,
   ServiceCallPayload,
   ServiceCallResponse,
+  Parameter,
 } from "@foxglove/ws-protocol";
 import { parseChannel } from "./lichtblick/mcap-support";
 import { MessageWriter as Ros2MessageWriter } from "@lichtblick/rosmsg2-serialization";
@@ -14,6 +15,7 @@ import CommonRosTypes from "@lichtblick/rosmsg-msgs-common";
 import type { MessageDefinition } from "@lichtblick/message-definition";
 
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 type FoxgloveChannel = {
   id: ChannelId;
@@ -81,6 +83,7 @@ type ResolvedService = {
 
 export class FoxgloveWsClient {
   private client: FoxgloveClient;
+  private requestCounter: number = 0;
 
   // Topics
   private channelsById = new Map<ChannelId, ResolvedChannel>();
@@ -117,6 +120,11 @@ export class FoxgloveWsClient {
 
   // Setup (latched) service calls to be executed on connect/reconnect
   private setupServiceCalls: Array<ServiceCallRequest> = [];
+
+  // Parameters
+  private parameters = new Map<string, unknown>();
+  // private parameterTypes = new Map<string, Parameter["type"]>();
+  private setupParameterSets: Array<{ name: string; value: any }> = [];
 
   // External hooks
   public onOpen?: () => void;
@@ -163,7 +171,12 @@ export class FoxgloveWsClient {
     // Server info (encodings, capabilities, ROS profile)
     this.client.on("serverInfo", (event) => {
       this.supportedEncodings = event.supportedEncodings;
+
       this.serverCapabilities = Array.isArray(event.capabilities) ? event.capabilities : [];
+
+      if (Array.isArray(event.capabilities)) {
+        console.log("[FoxgloveWsClient] Got server capabilities ", event.capabilities);
+      }
 
       const maybeRosDistro = event.metadata?.["ROS_DISTRO"];
       if (maybeRosDistro) {
@@ -172,6 +185,21 @@ export class FoxgloveWsClient {
 
       // Prefer "cdr" for ROS2 services
       this.serviceEncoding = (event.supportedEncodings ?? []).includes("cdr") ? "cdr" : undefined;
+
+      // Parameters capability: fetch all params initially so we know types
+      if (this.serverCapabilities.includes(ServerCapability.parameters)) {
+        try {
+          console.log("[FoxgloveWsClient] requesting parameterValues");
+          // Empty names list => request "all parameters" (Foxglove Bridge behavior)
+          this.client.getParameters([], `${++this.requestCounter}`);
+        } catch (err) {
+          console.warn("[FoxgloveWsClient] Failed to request initial parameters:", err);
+        }
+      }
+
+      // Workaround. for now do this every time this happens.
+      this.processSetupParameterSets();
+      
     });
 
     // Channel advertisement (topics)
@@ -349,6 +377,33 @@ export class FoxgloveWsClient {
       this.serviceCallbacks.delete(resp.callId);
       cb(resp);
     });
+
+    // --- Parameters ---
+
+    this.client.on("parameterValues", ({ parameters }) => {
+      console.log("[FoxgloveWsClient] Got parameterValues ", parameters);
+
+      if (!Array.isArray(parameters)) return;
+
+      // const needsParamSetup = !this.areStartupParametersReady();
+
+      for (const p of parameters as Array<{ name: string; value: unknown; type: Parameter["type"] }>) {
+        let val: unknown = (p as any).value;
+        if (p.type === "byte_array" && typeof val === "string") {
+          const s = atob(val);
+          const out = new Uint8Array(s.length);
+          for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+          val = out;
+        }
+        this.parameters.set(p.name, val);
+        // this.parameterTypes.set(p.name, p.type);
+      }
+      // Workaround. for now don't check .we need proper list
+
+      // if (needsParamSetup && this.areStartupParametersReady()) {
+        // this.processSetupParameterSets();
+      // }
+    });
   }
 
   
@@ -422,7 +477,9 @@ export class FoxgloveWsClient {
     this.setupServiceCalls.push(request);
     // If already open, try immediately (will throw if service isn't up yet; swallow)
     if (this.isOpenFlag) {
-      this.processSetupServiceCalls();
+      if (this.servicesByName.has(request.serviceName)) {
+        this.callService(request);
+      }
     } else {
       console.log(`[FoxgloveWsClient] queueing startup service call :`, request)
     }
@@ -590,6 +647,94 @@ export class FoxgloveWsClient {
       return out as T;
     } catch (err) {
       throw new Error(`Failed to deserialize service response for '${serviceName}': ${String(err)}`);
+    }
+  }
+
+  // ---------- PARAMETERS (ROS 2 via Foxglove) ----------
+
+  /**
+   * Queue a startup parameter set. It will only be sent once the server has advertised
+   * its parameter list and the specific parameter names are known (types available).
+   * Queued sets will be re-applied on reconnect once parameters are fetched again.
+   */
+  public registerSetupParameterSet(name: string, value: any) {
+    console.log("[FoxgloveWsClient] Registering startup parameter set ", { name, value });
+    this.setupParameterSets.push({ name, value });
+    // If we are already connected and types are known for this param, try processing now.
+    if (this.isOpenFlag && this.areStartupParametersReady()) {
+      this.setParameter(name, value);
+    }
+  }
+
+  /**
+   * Immediately set a parameter on the server. Requires parameter type to be known.
+   */
+  public setParameter(name: string, value: any) {
+    console.log(`[FoxgloveWsClient] setting ROS param ${name} to `, value);
+
+    if (!this.serverCapabilities.includes(ServerCapability.parameters)) {
+      throw new Error("Server does not support parameters capability");
+    }
+
+    const param: Parameter = {
+      name,
+      value: value as Parameter["value"],
+    };
+
+    // Special case: binary data -> byte_array
+    if (value instanceof Uint8Array) {
+      let s = "";
+      for (let i = 0; i < value.length; i++) {
+        s += String.fromCharCode(value[i]);
+      }
+      param.value = btoa(s);
+      param.type = "byte_array";
+    }
+
+    // You *could* add heuristics here, e.g. if Array<number> -> float64_array,
+    // but it's not required. Leaving type undefined is fine for normal JSON
+    // scalars / arrays / objects.
+
+    try {
+      this.client.setParameters(
+        [param],
+        `${++this.requestCounter}`, // request id
+      );
+      // Optimistic local cache update
+      this.parameters.set(name, value);
+      console.log(`[FoxgloveWsClient] setParameter sent: ${name}`);
+    } catch (err) {
+      console.error(`[FoxgloveWsClient] setParameter failed: ${name}`, err);
+      throw err;
+    }
+  }
+
+  private areStartupParametersReady(): boolean {
+    
+
+    if (!this.serverCapabilities.includes(ServerCapability.parameters)) return false;
+    return true;
+    // Workaround. for now don't check.
+    // for (const { name } of this.setupParameterSets) {
+    //   if (!this.parameterTypes.has(name)) return false;
+    // }
+    // return true;
+  }
+
+  processSetupParameterSets() {
+    if (!this.isOpenFlag || this.setupParameterSets.length === 0) return;
+    if (!this.areStartupParametersReady()) {
+      console.log(`[FoxgloveWsClient] setup parameters waiting for server parameter list/types.`);
+      return;
+    }
+
+    console.log("[FoxgloveWsClient] Processing startup parameter sets ", this.setupParameterSets);
+    for (const { name, value } of this.setupParameterSets) {
+      try {
+        this.setParameter(name, value);
+      } catch (err) {
+        console.warn(`[FoxgloveWsClient] setup parameter set deferred: ${name}`, err instanceof Error ? err.message : err);
+      }
     }
   }
 }

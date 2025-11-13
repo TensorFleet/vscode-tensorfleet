@@ -168,6 +168,8 @@ export class ROS2Bridge {
   // Services that should be (re)called on every connect before normal ops (optional).
   private setupServiceCalls: Array<{ name: string; request: any }> = [];
 
+  private setupROSParams: Array<{ name: string; value: any }> = [];
+
   constructor() {
     this._configureDefault();
   }
@@ -193,6 +195,9 @@ export class ROS2Bridge {
         request: request
       }
     ));
+
+    console.log("[ROS2Bridge] Forwarding setup ros params :", this.setupROSParams);
+    this.setupROSParams.forEach(({name, value}) => this.client?.registerSetupParameterSet(name, value));
 
     this.client.onOpen = async () => {
       // forward queued subscriptions. If the topics are not available they will just go into pending till they are.
@@ -312,16 +317,24 @@ export class ROS2Bridge {
     // };
     // this.registerSetupServiceCall("/mavros/param/set", setRcNotRequired);
 
-    const heartbeatConfigPayload = {
-      parameters: [
-        {
-          name: "conn/heartbeat_rate",
-          value: { type: 3, double_value: 2.0 } // 2.0 Hz; use 0.0 to disable
-        }
-      ]
-    }
+    // const heartbeatConfigPayload = {
+    //   parameters: [
+    //     {
+    //       name: "conn/heartbeat_rate",
+    //       value: { type: 3, double_value: 2.0 } // 2.0 Hz; use 0.0 to disable
+    //     }
+    //   ]
+    // }
 
-    this.registerSetupServiceCall("/mavros/set_parameters", heartbeatConfigPayload);
+    // this.registerSetupServiceCall("/mavros/set_parameters", heartbeatConfigPayload);
+
+    // Configure heartbeat :
+    this.registerSetupROSParameterSet("/mavros/sys.heartbeat_mav_type", "GCS");
+    this.registerSetupROSParameterSet("/mavros/sys.heartbeat_rate", 2.0);
+  }
+
+  registerSetupROSParameterSet(name: string, value: any): void {
+    this.setupROSParams.push({ name, value});
   }
 
   isConnected(): boolean {
@@ -361,6 +374,8 @@ export class ROS2Bridge {
 
   /** /mavros/cmd/arming (mavros_msgs/srv/CommandBool) */
   async mavrosArmDisarm(value: boolean): Promise<CommandBool_Response> {
+    console.log("[ROS2Bridge] calling mavrosArmDisarm with ", value);
+
     const req: CommandBool_Request = { value };
     return await this.callService<CommandBool_Response>("/mavros/cmd/arming", req);
   }
