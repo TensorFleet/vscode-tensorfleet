@@ -23,6 +23,16 @@ type ReceivedMessage = {
   payload: RawPayloadMessage;
 };
 
+type DiffMode = 'off' | 'previous';
+
+type DiffResult = {
+  type: 'added' | 'removed' | 'modified' | 'unchanged';
+  value: unknown;
+  oldValue?: unknown;
+};
+
+type DiffObject = Record<string, DiffResult>;
+
 const MESSAGE_RATE_WINDOW_MS = 1000; // Calculate rate over 1 second
 
 const jsonTreeTheme: Theme = {
@@ -145,20 +155,130 @@ function getImageDataUri(body: unknown): string | null {
   return null;
 }
 
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  if (typeof a !== typeof b) return false;
+  
+  if (typeof a === "object" && typeof b === "object") {
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      return a.every((val, idx) => deepEqual(val, b[idx]));
+    }
+    if (Array.isArray(a) || Array.isArray(b)) return false;
+    
+    const aObj = a as Record<string, unknown>;
+    const bObj = b as Record<string, unknown>;
+    const aKeys = Object.keys(aObj);
+    const bKeys = Object.keys(bObj);
+    
+    if (aKeys.length !== bKeys.length) return false;
+    return aKeys.every(key => deepEqual(aObj[key], bObj[key]));
+  }
+  
+  return false;
+}
+
+function computeDiff(oldObj: unknown, newObj: unknown): DiffObject {
+  const diff: DiffObject = {};
+  
+  if (oldObj == null && newObj == null) {
+    return diff;
+  }
+  
+  if (oldObj == null && newObj != null) {
+    // Entire object is new
+    if (typeof newObj === "object" && !Array.isArray(newObj)) {
+      const newObjRecord = newObj as Record<string, unknown>;
+      Object.keys(newObjRecord).forEach(key => {
+        diff[key] = { type: 'added', value: newObjRecord[key] };
+      });
+    } else {
+      diff['__root__'] = { type: 'added', value: newObj };
+    }
+    return diff;
+  }
+  
+  if (oldObj != null && newObj == null) {
+    // Entire object was removed
+    if (typeof oldObj === "object" && !Array.isArray(oldObj)) {
+      const oldObjRecord = oldObj as Record<string, unknown>;
+      Object.keys(oldObjRecord).forEach(key => {
+        diff[key] = { type: 'removed', value: oldObjRecord[key], oldValue: oldObjRecord[key] };
+      });
+    } else {
+      diff['__root__'] = { type: 'removed', value: oldObj, oldValue: oldObj };
+    }
+    return diff;
+  }
+  
+  if (typeof oldObj !== "object" || typeof newObj !== "object" || Array.isArray(oldObj) || Array.isArray(newObj)) {
+    // Primitive or array comparison
+    if (!deepEqual(oldObj, newObj)) {
+      diff['__root__'] = { type: 'modified', value: newObj, oldValue: oldObj };
+    } else {
+      diff['__root__'] = { type: 'unchanged', value: newObj };
+    }
+    return diff;
+  }
+  
+  // Both are objects
+  const oldRecord = oldObj as Record<string, unknown>;
+  const newRecord = newObj as Record<string, unknown>;
+  const allKeys = new Set([...Object.keys(oldRecord), ...Object.keys(newRecord)]);
+  
+  allKeys.forEach(key => {
+    const oldVal = oldRecord[key];
+    const newVal = newRecord[key];
+    
+    if (!(key in oldRecord)) {
+      // Added
+      diff[key] = { type: 'added', value: newVal };
+    } else if (!(key in newRecord)) {
+      // Removed
+      diff[key] = { type: 'removed', value: oldVal, oldValue: oldVal };
+    } else if (!deepEqual(oldVal, newVal)) {
+      // Modified - recursively compute diff for nested objects
+      if (typeof oldVal === "object" && typeof newVal === "object" && 
+          !Array.isArray(oldVal) && !Array.isArray(newVal) && 
+          oldVal != null && newVal != null) {
+        const nestedDiff = computeDiff(oldVal, newVal);
+        // If nested diff has changes, mark as modified
+        const hasChanges = Object.values(nestedDiff).some(r => r.type !== 'unchanged');
+        if (hasChanges) {
+          diff[key] = { type: 'modified', value: newVal, oldValue: oldVal };
+        } else {
+          diff[key] = { type: 'unchanged', value: newVal };
+        }
+      } else {
+        diff[key] = { type: 'modified', value: newVal, oldValue: oldVal };
+      }
+    } else {
+      // Unchanged
+      diff[key] = { type: 'unchanged', value: newVal };
+    }
+  });
+  
+  return diff;
+}
+
 export function RawMessagesPanel() {
   const [selectedTopic, setSelectedTopic] = useState("/clock");
   const [currentMessage, setCurrentMessage] = useState<ReceivedMessage | null>(null);
+  const [previousMessage, setPreviousMessage] = useState<ReceivedMessage | null>(null);
   const [activeTopic, setActiveTopic] = useState("");
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isConnected, setIsConnected] = useState(() => ros2Bridge.isConnected());
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(true);
   const [messageRate, setMessageRate] = useState(0);
   const [lastMessageTime, setLastMessageTime] = useState<number>(0);
+  const [diffMode, setDiffMode] = useState<DiffMode>('off');
 
   const cleanupRef = useRef<(() => void) | null>(null);
   const rateIntervalRef = useRef<number | null>(null);
   const messageCountRef = useRef(0);
   const messageTimesRef = useRef<number[]>([]); // Track message timestamps for rate calculation
+  const currentMessageRef = useRef<ReceivedMessage | null>(null); // Use ref to track current message for previous message tracking
 
   const [discoveredTopics, setDiscoveredTopics] = useState<DiscoveredTopic[]>([]);
   
@@ -273,6 +393,9 @@ export function RawMessagesPanel() {
     };
     
     const now = Date.now();
+    // Store previous message before updating current (use ref to get latest value)
+    setPreviousMessage(currentMessageRef.current);
+    currentMessageRef.current = entry;
     setCurrentMessage(entry);
     setLastMessageTime(now);
     // Track message time for rate calculation
@@ -291,6 +414,8 @@ export function RawMessagesPanel() {
     
     cleanupRef.current?.();
     setCurrentMessage(null);
+    currentMessageRef.current = null;
+    setPreviousMessage(null);
     setMessageRate(0);
     setLastMessageTime(0);
     messageCountRef.current = 0;
@@ -319,11 +444,14 @@ export function RawMessagesPanel() {
     setIsSubscribed(false);
     setActiveTopic("");
     setCurrentMessage(null);
+    currentMessageRef.current = null;
+    setPreviousMessage(null);
     setMessageRate(0);
     setLastMessageTime(0);
     messageCountRef.current = 0;
     messageTimesRef.current = [];
   }, []);
+
 
   const handleCopyMessage = useCallback(async (message: ReceivedMessage) => {
     try {
@@ -378,6 +506,138 @@ export function RawMessagesPanel() {
       setSelectedTopic(topic);
     }
   }, []);
+
+
+  // Compute diff based on current mode
+  const diffData = useMemo(() => {
+    if (diffMode === 'off') {
+      return null;
+    }
+    
+    if (diffMode === 'previous') {
+      if (!previousMessage || !currentMessage) {
+        return null;
+      }
+      
+      const oldBody = previousMessage.payload.msg ?? previousMessage.payload.payload ?? {};
+      const newBody = currentMessage.payload.msg ?? currentMessage.payload.payload ?? {};
+      
+      return computeDiff(oldBody, newBody);
+    }
+    
+    return null;
+  }, [diffMode, previousMessage, currentMessage]);
+
+  // Custom renderer for JSONTree that highlights diffs
+  const getLabelStyle = useCallback((label: string, diffData: DiffObject | null): React.CSSProperties => {
+    if (!diffData) {
+      return {};
+    }
+    
+    const diffResult = diffData[label];
+    if (!diffResult) {
+      return {};
+    }
+    
+    switch (diffResult.type) {
+      case 'added':
+        return { backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#4ade80', fontWeight: 500 };
+      case 'removed':
+        return { backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#f87171', fontWeight: 500 };
+      case 'modified':
+        return { backgroundColor: 'rgba(234, 179, 8, 0.2)', color: '#fbbf24', fontWeight: 500 };
+      default:
+        return {};
+    }
+  }, []);
+
+  const getValueStyle = useCallback((label: string, diffData: DiffObject | null): React.CSSProperties => {
+    if (!diffData) {
+      return {};
+    }
+    
+    const diffResult = diffData[label];
+    if (!diffResult) {
+      return {};
+    }
+    
+    switch (diffResult.type) {
+      case 'added':
+        return { backgroundColor: 'rgba(34, 197, 94, 0.15)' };
+      case 'removed':
+        return { backgroundColor: 'rgba(239, 68, 68, 0.15)', textDecoration: 'line-through', opacity: 0.7 };
+      case 'modified':
+        return { backgroundColor: 'rgba(234, 179, 8, 0.15)' };
+      default:
+        return {};
+    }
+  }, []);
+
+  // Helper to check if a key path has diff
+  const getDiffForPath = useCallback((keyPath: (string | number)[]): DiffResult | null => {
+    if (!diffData || keyPath.length === 0) {
+      return null;
+    }
+    
+    // Convert keyPath to a flat path string (excluding root)
+    const path = keyPath.slice().reverse().filter((k, idx) => idx > 0).map(k => String(k));
+    
+    // Check direct match first
+    if (keyPath.length > 0) {
+      const lastKey = String(keyPath[keyPath.length - 1]);
+      if (diffData[lastKey]) {
+        return diffData[lastKey];
+      }
+    }
+    
+    // For nested paths, check if any parent has changes
+    // This is a simplified check - in a full implementation, we'd track nested paths
+    return null;
+  }, [diffData]);
+
+  // Custom label renderer for JSONTree
+  const labelRenderer = useCallback((keyPath: (string | number)[], nodeType: string, expanded: boolean, expandable: boolean) => {
+    if (!diffData || keyPath.length === 0) {
+      return keyPath[keyPath.length - 1] as string;
+    }
+    
+    const label = String(keyPath[keyPath.length - 1]);
+    const diffResult = getDiffForPath(keyPath);
+    
+    if (!diffResult || diffResult.type === 'unchanged') {
+      return label;
+    }
+    
+    const style = getLabelStyle(label, diffData);
+    
+    return (
+      <span style={style}>
+        {label}
+      </span>
+    );
+  }, [diffData, getDiffForPath, getLabelStyle]);
+
+  // Custom value renderer for JSONTree
+  const valueRenderer = useCallback((valueAsString: string, value: unknown, ...keyPath: (string | number)[]) => {
+    if (!diffData || keyPath.length === 0) {
+      return valueAsString;
+    }
+    
+    const label = String(keyPath[keyPath.length - 1]);
+    const diffResult = getDiffForPath(keyPath);
+    
+    if (!diffResult || diffResult.type === 'unchanged') {
+      return valueAsString;
+    }
+    
+    const style = getValueStyle(label, diffData);
+    
+    return (
+      <span style={style}>
+        {valueAsString}
+      </span>
+    );
+  }, [diffData, getDiffForPath, getValueStyle]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -482,6 +742,47 @@ export function RawMessagesPanel() {
                 </button>
               )}
             </div>
+
+            <div className="raw-messages-header__diff-controls">
+              <div className="raw-messages-header__diff-mode">
+                <span className="raw-messages-header__form-label">Diff Mode</span>
+                <div className="raw-messages-header__diff-buttons">
+                  <button
+                    className={`raw-messages-header__diff-button ${diffMode === 'off' ? 'raw-messages-header__diff-button--active' : ''}`}
+                    type="button"
+                    onClick={() => setDiffMode('off')}
+                  >
+                    Off
+                  </button>
+                  <button
+                    className={`raw-messages-header__diff-button ${diffMode === 'previous' ? 'raw-messages-header__diff-button--active' : ''}`}
+                    type="button"
+                    onClick={() => setDiffMode('previous')}
+                    disabled={!isSubscribed}
+                    title="Compare with previous message on the same topic"
+                  >
+                    Previous
+                  </button>
+                </div>
+              </div>
+
+              {diffMode !== 'off' && diffData && (
+                <div className="raw-messages-header__diff-legend">
+                  <span className="raw-messages-header__diff-legend-item">
+                    <span className="raw-messages-header__diff-legend-color raw-messages-header__diff-legend-color--added" />
+                    Added
+                  </span>
+                  <span className="raw-messages-header__diff-legend-item">
+                    <span className="raw-messages-header__diff-legend-color raw-messages-header__diff-legend-color--removed" />
+                    Removed
+                  </span>
+                  <span className="raw-messages-header__diff-legend-item">
+                    <span className="raw-messages-header__diff-legend-color raw-messages-header__diff-legend-color--modified" />
+                    Modified
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </header>
@@ -509,8 +810,24 @@ export function RawMessagesPanel() {
             <div className="raw-messages-empty">
               {isSubscribed ? "Waiting for messages..." : "Subscribe to a topic to see messages"}
             </div>
+          ) : diffMode !== 'off' && !diffData ? (
+            <div className="raw-messages-empty">
+              No previous message available for comparison
+            </div>
           ) : (
             <>
+              {/* Diff mode info */}
+              {diffMode !== 'off' && diffData && (
+                <div className="raw-messages-diff-info">
+                  <div className="raw-messages-diff-info__item">
+                    <span className="raw-messages-diff-info__label">Comparing:</span>
+                    <span className="raw-messages-diff-info__value">
+                      {previousMessage?.payload.topic} (previous) vs {currentMessage.payload.topic} (current)
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Single large message card */}
               {(() => {
                 const body = currentMessage.payload.msg ?? currentMessage.payload.payload ?? {};
@@ -525,7 +842,7 @@ export function RawMessagesPanel() {
                     <header className="raw-message-card__header">
                       <div className="raw-message-card__topic-row">
                         <span className="raw-message-card__topic-icon" aria-hidden="true">
-                          {isImage ? "🖼️" : "🔷"}
+                          {isImage ? "🖼️" : diffMode !== 'off' ? "🔀" : "🔷"}
                         </span>
                         <div className="raw-message-card__topic-info">
                           <div className="raw-message-card__topic">{currentMessage.payload.topic}</div>
@@ -537,6 +854,11 @@ export function RawMessagesPanel() {
                                   {imageBody.width}×{imageBody.height} • {imageBody.encoding}
                                 </span>
                               </>
+                            )}
+                            {diffMode !== 'off' && (
+                              <span className="raw-message-card__diff-badge">
+                                Diff: Previous
+                              </span>
                             )}
                             <span className="raw-message-card__timestamp">
                               {formatRelativeTime(currentMessage.receivedAt)}
@@ -598,6 +920,8 @@ export function RawMessagesPanel() {
                                   invertTheme={false} 
                                   hideRoot 
                                   shouldExpandNode={() => false}
+                                  labelRenderer={diffMode !== 'off' ? labelRenderer : undefined}
+                                  valueRenderer={diffMode !== 'off' ? valueRenderer : undefined}
                                 />
                               ) : (
                                 <pre className="raw-message-card__plaintext">{String(body)}</pre>
@@ -606,7 +930,14 @@ export function RawMessagesPanel() {
                           </details>
                         </div>
                       ) : hasObjectPayload ? (
-                        <JSONTree data={body as object} theme={jsonTreeTheme} invertTheme={false} hideRoot />
+                        <JSONTree 
+                          data={body as object} 
+                          theme={jsonTreeTheme} 
+                          invertTheme={false} 
+                          hideRoot 
+                          labelRenderer={diffMode !== 'off' ? labelRenderer : undefined}
+                          valueRenderer={diffMode !== 'off' ? valueRenderer : undefined}
+                        />
                       ) : (
                         <pre className="raw-message-card__plaintext">{String(body)}</pre>
                       )}
