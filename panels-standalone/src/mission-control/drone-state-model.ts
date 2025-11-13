@@ -126,6 +126,8 @@ export type DroneState = {
     connected: boolean;
     gcs_link: boolean;
     faults: string[];
+    armable?: boolean;
+    arm_reasons?: string[];
   };
 };
 
@@ -574,11 +576,41 @@ export class DroneStateModel extends Emitter {
     const armedNow = !!this.state.vehicle?.armed;
     if (!armedNow && landedEff === LANDED.IN_AIR) faults.push('state.inconsistent');
 
+    let armable = true;
+    const arm_reasons: string[] = [];
+
+    if (!gcs) {
+      armable = false;
+      arm_reasons.push('link.down');
+    }
+    if (!seen(DroneStateModel.T_IMU)) {
+      armable = false;
+      arm_reasons.push('imu.stale');
+    }
+    if (!seen(DroneStateModel.T_FIX)) {
+      armable = false;
+      arm_reasons.push('gps.stale');
+    }
+    if (typeof pct === 'number' && pct <= 0.15) {
+      armable = false;
+      arm_reasons.push('battery.low');
+    }
+    if (typeof v === 'number' && v > 0 && v < 10.5) {
+      armable = false;
+      arm_reasons.push('battery.voltage.low');
+    }
+    if (landedEff === LANDED.IN_AIR || landedEff === LANDED.TAKEOFF || landedEff === LANDED.LANDING) {
+      armable = false;
+      arm_reasons.push('not.on.ground');
+    }
+
     Object.assign(this.state.status!, {
       time_boot_ms: now,
       connected: gcs,
       gcs_link: gcs,
       faults,
+      armable,
+      arm_reasons,
     });
   }
 }

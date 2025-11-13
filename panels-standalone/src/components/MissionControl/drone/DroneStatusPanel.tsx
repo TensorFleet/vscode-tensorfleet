@@ -86,6 +86,14 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
   const faults: string[] = s?.status?.faults || [];
   const fcuOk = !!s?.vehicle?.connected;
   const gcsOk = !!(s?.status?.gcs_link ?? s?.vehicle?.connected);
+  const armable = s?.status?.armable;
+  const armReasons: string[] = s?.status?.arm_reasons || [];
+
+  const armableText =
+    armable === undefined ? NDASH : armable ? "Yes" : "No";
+
+  const armReasonsText =
+    armReasons.length ? armReasons.join(", ") : (armable === false ? "Unknown" : NDASH);
 
   return (
     <div className="drone-status">
@@ -146,6 +154,8 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
 
         {/* Faults */}
         <Row label={<span>🛠️ Faults</span>} value={(faults.length ? faults.join(", ") : "None")} />
+        <Row label={<span>Armable</span>} value={armableText} />
+        <Row label={<span>Arm reasons</span>} value={armReasonsText} />
 
         <hr className="dsp-sep" />
 

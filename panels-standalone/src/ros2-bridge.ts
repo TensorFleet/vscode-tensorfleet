@@ -169,8 +169,7 @@ export class ROS2Bridge {
   private setupServiceCalls: Array<{ name: string; request: any }> = [];
 
   constructor() {
-    // No implicit service calls. If you want a param set at boot, call:
-    // ros2Bridge.registerSetupServiceCall("/mavros/param/set", { param_id, value })
+    this._configureDefault();
   }
 
   connect(_mode: ConnectionMode = "foxglove") {
@@ -181,23 +180,22 @@ export class ROS2Bridge {
     }
     this.client = new FoxgloveWsClient({ url });
 
-    // re-seed setup publishes to the new client
+    // re-seed setup publishes and service calls to the new client
     for (const cmd of this.setupPublishes) {
       this.client.publishSetup(cmd.topic, cmd.type, cmd.message);
     }
 
-    this.client.onOpen = async () => {
-      // Perform setup service calls (if any) on every (re)connect
-      for (const srv of this.setupServiceCalls) {
-        try {
-          await this.callService(srv.name, srv.request);
-        } catch (e) {
-          // Do not throw; continue bringing the system up
-          console.error("[ROS2Bridge] setup service call failed:", srv.name, e);
-        }
+    // Startup service calls will only be sent one all of them are available.
+    console.log("[ROS2Bridge] Forwarding setup service calls :", this.setupServiceCalls);
+    this.setupServiceCalls.forEach(({name, request}) => this.client?.registerSetupServiceCall(
+      {
+        serviceName: name,
+        request: request
       }
+    ));
 
-      // forward queued subscriptions
+    this.client.onOpen = async () => {
+      // forward queued subscriptions. If the topics are not available they will just go into pending till they are.
       this.subscriptions.forEach((sub) => this._forwardSubscription(sub));
     };
 
@@ -294,7 +292,10 @@ export class ROS2Bridge {
 
   /** Arrange for a service call to run once on every (re)connect before normal ops. */
   registerSetupServiceCall(name: string, request: any) {
-    this.setupServiceCalls.push({ name, request });
+    this.setupServiceCalls.push({ 
+      name,
+      request
+     });
   }
 
   /**
@@ -302,12 +303,25 @@ export class ROS2Bridge {
    * Will use publishSetup to set configurations.
    */
   _configureDefault() {
-    const heartbeatConfig = {
-      "param_id": "conn/heartbeat_rate",
-      "value": { "integer": 0, "real": 5.0 }
+    // (Also registers setup service calls to run on connect.)
+
+    // Ensure PX4 does not require RC for arming in SITL:
+    // const setRcNotRequired = {
+    //   "param_id": "COM_RC_IN_MODE",
+    //   "value": { "integer": 1, "real": 0.0 }
+    // };
+    // this.registerSetupServiceCall("/mavros/param/set", setRcNotRequired);
+
+    const heartbeatConfigPayload = {
+      parameters: [
+        {
+          name: "conn/heartbeat_rate",
+          value: { type: 3, double_value: 2.0 } // 2.0 Hz; use 0.0 to disable
+        }
+      ]
     }
 
-    this.publishSetup("/mavros/param/set", "mavros_msgs/srv/ParamSet", heartbeatConfig);
+    this.registerSetupServiceCall("/mavros/set_parameters", heartbeatConfigPayload);
   }
 
   isConnected(): boolean {
@@ -337,7 +351,10 @@ export class ROS2Bridge {
     if (typeof (this.client as any).callService !== "function") {
       throw new Error("FoxgloveWsClient.callService() not available");
     }
-    return await (this.client as any).callService<T>(name, request);
+    return await (this.client as any).callService<T>({
+      serviceName: name,
+      request: request
+    });
   }
 
   // ---------- MAVROS service helpers (exact names and request fields) ----------

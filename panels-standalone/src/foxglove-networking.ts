@@ -66,6 +66,11 @@ type AdvertisedService = {
   responseSchema?: string;
 };
 
+export interface ServiceCallRequest {
+  serviceName: string;
+  request: any;
+}
+
 type ResolvedService = {
   service: AdvertisedService;
   requestWriter: Ros2MessageWriter;
@@ -83,6 +88,7 @@ export class FoxgloveWsClient {
   private subscriptionsByTopic = new Map<string, SubscriptionId>();
   private subscriptionsById = new Map<SubscriptionId, ResolvedChannel>();
   private pendingSubscriptions = new Set<string>();
+  private pendingServiceCalls: Array[]
   private isOpenFlag = false;
 
   // Pubs
@@ -96,6 +102,7 @@ export class FoxgloveWsClient {
   private nextServiceCallId = 1;
   private serviceCallbacks = new Map<number, (resp: ServiceCallResponse) => void>();
   private serviceEncoding: "cdr" | undefined;
+  private servicesById = new Map<number, ResolvedService>();
 
   // Capabilities
   private supportedEncodings: string[] | undefined;
@@ -107,6 +114,9 @@ export class FoxgloveWsClient {
 
   // Setup (latched) pubs
   private setupCommands: SetupCommand[] = [];
+
+  // Setup (latched) service calls to be executed on connect/reconnect
+  private setupServiceCalls: Array<ServiceCallRequest> = [];
 
   // External hooks
   public onOpen?: () => void;
@@ -133,6 +143,11 @@ export class FoxgloveWsClient {
         } catch (err) {
           console.error("[FoxgloveWsClient] Re-publish setup error:", err);
         }
+      }
+
+      // Execute any queued setup service calls (will be retried after services advertise)
+      if (this.areStartupServicesReady()) {
+        this.processSetupServiceCalls();
       }
     });
 
@@ -233,6 +248,7 @@ export class FoxgloveWsClient {
 
     this.client.on("advertiseServices", (services: AdvertisedService[]) => {
       if (!Array.isArray(services)) return;
+      const needsStartup = !this.areStartupServicesReady();
 
       const parseOpts = { allowEmptySchema: true }; // <-- IMPORTANT
 
@@ -275,25 +291,74 @@ export class FoxgloveWsClient {
           const msgdefReq = rosDatatypesToMessageDefinition(parsedReq.datatypes, reqSchemaName);
           const requestWriter = new Ros2MessageWriter(msgdefReq);
 
-          this.servicesByName.set(service.name, {
+          const resolved: ResolvedService = {
             service,
             requestWriter,
             parsedResponse: parsedRes,
             requestEncoding: "cdr",
             responseEncoding: "cdr",
-          });
+          };
+
+          this.servicesByName.set(service.name, resolved);
+          this.servicesById.set(service.id, resolved);
+          console.log(`[FoxgloveWsClient] added service ${service.name}:${service.type}`);
         } catch (err) {
           console.error("[FoxgloveWsClient] Failed to parse service", service.name, err);
         }
       }
+
+      // Now that services are available, try executing any queued setup service calls
+      if (needsStartup && this.areStartupServicesReady()) {
+        this.processSetupServiceCalls();
+      }
+    });
+
+    this.client.on("serviceCallResponse", (resp: ServiceCallResponse) => {
+      const cb = this.serviceCallbacks.get(resp.callId);
+      if (!cb) {
+        console.warn("[FoxgloveWsClient] Unhandled serviceCallResponse", resp.callId);
+        return;
+      }
+
+      const svc = this.servicesById.get(resp.serviceId);
+      if (svc) {
+        try {
+          const bytes = new Uint8Array(
+            resp.data.buffer,
+            resp.data.byteOffset,
+            resp.data.byteLength,
+          );
+          const decoded = svc.parsedResponse.deserialize(bytes);
+          console.log(
+            `[FoxgloveWsClient] service call ${resp.callId} (${svc.service.name}) decoded response`,
+            decoded,
+          );
+        } catch (err) {
+          console.error(
+            `[FoxgloveWsClient] Failed to decode response for service call ${resp.callId} (${svc?.service.name})`,
+            err,
+          );
+        }
+      } else {
+        console.log(
+          `[FoxgloveWsClient] service call ${resp.callId} (serviceId=${resp.serviceId}) got response (no decoder)`,
+          resp,
+        );
+      }
+
+      this.serviceCallbacks.delete(resp.callId);
+      cb(resp);
     });
   }
+
+  
 
   // ---------- Subscriptions ----------
   private processPendingSubscriptions() {
     if (!this.isOpenFlag) return;
 
     for (const topic of Array.from(this.pendingSubscriptions)) {
+      console.log("[FoxgloveWsClient] Processing pending subscription to ", topic)
       const chanInfo = this.channelsByTopic.get(topic);
       if (!chanInfo) continue;
 
@@ -343,6 +408,51 @@ export class FoxgloveWsClient {
           `[FoxgloveWsClient] Failed to publish setup message for '${topic}' (${schemaName})`,
           err,
         );
+      }
+    }
+  }
+
+  // ---------- Queued setup service calls ----------
+  /**
+   * Queue a setup service call that will be attempted on connect and on each reconnect.
+   * Calls are re-attempted after services are advertised.
+   */
+  public registerSetupServiceCall(request: ServiceCallRequest) {
+    console.log("[FoxgloveWsClient] Registarting startup service call ", request);
+    this.setupServiceCalls.push(request);
+    // If already open, try immediately (will throw if service isn't up yet; swallow)
+    if (this.isOpenFlag) {
+      this.processSetupServiceCalls();
+    } else {
+      console.log(`[FoxgloveWsClient] queueing startup service call :`, request)
+    }
+  }
+
+
+  private areStartupServicesReady(): boolean {
+    for (const request of this.setupServiceCalls) {
+      if (!this.servicesByName.has(request.serviceName)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private async processSetupServiceCalls() {
+    console.log("[FoxgloveWsClient] Processing startup service calls")
+
+    if (!this.isOpenFlag || this.setupServiceCalls.length === 0) return;
+    if (!this.areStartupServicesReady()) {
+      console.log(`[FoxgloveWsClient] setup waiting for all startup services to be available.`);
+      return
+    }
+    for (const request of this.setupServiceCalls) {
+      try {
+        await this.callService(request);
+      } catch (err) {
+        // Service may not be advertised yet; ignore and rely on next attempt after advertiseServices
+        console.warn(`[FoxgloveWsClient] setup service call deferred: ${request.serviceName}`, err instanceof Error ? err.message : err);
       }
     }
   }
@@ -428,7 +538,8 @@ export class FoxgloveWsClient {
   }
 
   // ---------- SERVICES (CDR, ROS 2) ----------
-  public async callService<T = any>(serviceName: string, request: any): Promise<T> {
+  public async callService<T = any>(call: ServiceCallRequest): Promise<T> {
+    const { serviceName, request } = call;
     const svc = this.servicesByName.get(serviceName);
     if (!svc) {
       throw new Error(`Service '${serviceName}' not advertised (yet).`);
@@ -436,6 +547,8 @@ export class FoxgloveWsClient {
     if (svc.requestEncoding !== "cdr" || svc.responseEncoding !== "cdr") {
       throw new Error(`Service '${serviceName}' uses unsupported encoding (only 'cdr' supported).`);
     }
+
+    console.log("[FoxgloveWsClient] Sending service call to ", serviceName);
 
     const callId = this.nextServiceCallId++;
     const payload: ServiceCallPayload = {
@@ -447,7 +560,8 @@ export class FoxgloveWsClient {
 
     try {
       const bytes = svc.requestWriter.writeMessage(request);
-      payload.data = new DataView(bytes.buffer);
+      
+      payload.data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     } catch (err) {
       throw new Error(`Failed to serialize service request for '${serviceName}': ${String(err)}`);
     }
@@ -467,7 +581,12 @@ export class FoxgloveWsClient {
     });
 
     try {
-      const out = svc.parsedResponse.deserialize(response.data);
+      const bytes = new Uint8Array(
+        response.data.buffer,
+        response.data.byteOffset,
+        response.data.byteLength,
+      );
+      const out = svc.parsedResponse.deserialize(bytes);
       return out as T;
     } catch (err) {
       throw new Error(`Failed to deserialize service response for '${serviceName}': ${String(err)}`);
