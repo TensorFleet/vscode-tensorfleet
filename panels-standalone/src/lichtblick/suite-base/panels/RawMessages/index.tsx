@@ -10,11 +10,7 @@ import { SaveConfig } from "@lichtblick/suite-base/types/panels";
 
 import { RawMessagesPanelConfig } from "./types";
 import "./RawMessagesPanel.css";
-import {
-  getSuggestionByTopic,
-  getTopicSuggestions,
-  type TopicSuggestion,
-} from "../../../../utils/topicSuggestions";
+import { getSuggestionByTopic, getTopicSuggestionGroups } from "../../../../utils/topicSuggestions";
 
 const DEFAULT_HISTORY = 20;
 
@@ -87,6 +83,7 @@ function RawMessages(props: Props) {
   const { topicPath, historySize = DEFAULT_HISTORY } = config;
   const resolvedHistorySize = Math.max(1, historySize);
   const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({});
+  const [isHeaderExpanded, setIsHeaderExpanded] = useState(true);
 
   const messages = useMessageDataItem(topicPath ? topicPath : "", {
     historySize: resolvedHistorySize,
@@ -96,15 +93,27 @@ function RawMessages(props: Props) {
     return [...messages].slice(-resolvedHistorySize).reverse();
   }, [messages, resolvedHistorySize]);
 
-  const topicSuggestions = useMemo<TopicSuggestion[]>(() => getTopicSuggestions(), []);
+  const topicSuggestionGroups = useMemo(() => getTopicSuggestionGroups(), []);
   const selectedSuggestion = useMemo(
     () => (topicPath ? getSuggestionByTopic(topicPath.trim()) : undefined),
     [topicPath],
   );
+  const latestMessage = orderedMessages[0];
+  const latestPayloadValues = latestMessage?.queriedData?.map(({ value }) => value) ?? [];
+  const latestPayload = buildDisplayValue(latestPayloadValues);
+  const latestPreview = latestMessage ? formatPreview(latestPayload) : "Waiting for data";
 
   const onTopicPathChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       saveConfig({ topicPath: event.target.value });
+    },
+    [saveConfig],
+  );
+
+  const onTopicSuggestionSelect = useCallback(
+    (event: ChangeEvent<HTMLSelectElement>) => {
+      const nextTopic = event.target.value;
+      saveConfig({ topicPath: nextTopic });
     },
     [saveConfig],
   );
@@ -134,7 +143,7 @@ function RawMessages(props: Props) {
         : "raw-messages-panel__chip--waiting",
   ].join(" ");
 
-  const datalistId = "raw-messages-topic-suggestions";
+  const toggleHeaderExpansion = () => setIsHeaderExpanded((prev) => !prev);
 
   const body =
     topicPath.length === 0 ? (
@@ -195,49 +204,115 @@ function RawMessages(props: Props) {
 
   return (
     <div className="raw-messages-panel">
-      <header className="raw-messages-panel__header">
-        <div className="raw-messages-panel__title">Raw Messages</div>
-        <div className="raw-messages-panel__status-row">
-          <span className={statusClassName}>{statusLabel}</span>
-          <span>{hasSelectedTopic ? `Subscribed to ${topicPath}` : "Enter a topic to subscribe"}</span>
-          {hasMessages && <span>{orderedMessages.length} cached</span>}
+      <header
+        className={[
+          "raw-messages-panel__header",
+          isHeaderExpanded ? "raw-messages-panel__header--expanded" : "raw-messages-panel__header--collapsed",
+        ].join(" ")}
+      >
+        <div className="raw-messages-panel__header-top">
+          <div>
+            <div className="raw-messages-panel__title-row">
+              <span className="raw-messages-panel__title">Raw Messages</span>
+              <span className={statusClassName}>{statusLabel}</span>
+            </div>
+            <div className="raw-messages-panel__status-row">
+              <span>{hasSelectedTopic ? `Subscribed to ${topicPath}` : "Select a topic to subscribe"}</span>
+              {hasMessages && <span>{orderedMessages.length} cached</span>}
+            </div>
+          </div>
+          <button
+            className="raw-messages-panel__header-toggle"
+            type="button"
+            onClick={toggleHeaderExpansion}
+            aria-expanded={isHeaderExpanded}
+          >
+            {isHeaderExpanded ? "Hide controls" : "Show controls"}
+            <span aria-hidden="true">{isHeaderExpanded ? "▴" : "▾"}</span>
+          </button>
         </div>
+        {isHeaderExpanded && (
+          <>
+            <div className="raw-messages-panel__insights">
+              <div className="raw-messages-panel__insight">
+                <span className="raw-messages-panel__insight-label">Topic</span>
+                <span className="raw-messages-panel__insight-value">{hasSelectedTopic ? topicPath : "Not set"}</span>
+              </div>
+              <div className="raw-messages-panel__insight">
+                <span className="raw-messages-panel__insight-label">Message type</span>
+                <span className="raw-messages-panel__insight-value">
+                  {selectedSuggestion?.type ?? "Unknown message type"}
+                </span>
+              </div>
+              <div className="raw-messages-panel__insight">
+                <span className="raw-messages-panel__insight-label">Last payload</span>
+                <span className="raw-messages-panel__insight-value raw-messages-panel__insight-value--truncate">
+                  {hasMessages ? latestPreview : "Waiting for messages"}
+                </span>
+              </div>
+            </div>
+            <section className="raw-messages-panel__controls" aria-label="Raw message controls">
+              <label className="raw-messages-panel__form-group raw-messages-panel__form-group--topic">
+                <span className="raw-messages-panel__label">Topic</span>
+                <div className="raw-messages-panel__topic-control">
+                  <select
+                    className="raw-messages-panel__select"
+                    value={selectedSuggestion?.topic ?? ""}
+                    onChange={onTopicSuggestionSelect}
+                  >
+                    <option value="">Select a known topic…</option>
+                    {topicSuggestionGroups.map((group) => (
+                      <optgroup key={group.id} label={group.label}>
+                        {group.suggestions.map((suggestion) => (
+                          <option key={suggestion.topic} value={suggestion.topic}>
+                            {suggestion.topic} — {suggestion.type}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <input
+                    className="raw-messages-panel__input"
+                    value={topicPath}
+                    onChange={onTopicPathChange}
+                    placeholder="/clock"
+                  />
+                </div>
+                <span className="raw-messages-panel__hint">
+                  {selectedSuggestion
+                    ? `${selectedSuggestion.type}${
+                        selectedSuggestion.description ? ` • ${selectedSuggestion.description}` : ""
+                      }`
+                    : "Pick a topic from the dropdown or type a custom topic path"}
+                </span>
+              </label>
+              <label className="raw-messages-panel__form-group" style={{ maxWidth: 160 }}>
+                <span className="raw-messages-panel__label">History size</span>
+                <input
+                  className="raw-messages-panel__input"
+                  type="number"
+                  min={1}
+                  value={resolvedHistorySize}
+                  onChange={onHistorySizeChange}
+                />
+                <span className="raw-messages-panel__hint">Messages retained</span>
+              </label>
+            </section>
+          </>
+        )}
       </header>
-      <section className="raw-messages-panel__controls">
-        <label className="raw-messages-panel__form-group">
-          <span className="raw-messages-panel__label">Topic</span>
-          <input
-            className="raw-messages-panel__input"
-            value={topicPath}
-            onChange={onTopicPathChange}
-            placeholder="/clock"
-            list={datalistId}
-          />
-          {selectedSuggestion && (
-            <span className="raw-messages-panel__hint">
-              {selectedSuggestion.type}
-              {selectedSuggestion.description ? ` • ${selectedSuggestion.description}` : ""}
-            </span>
-          )}
-        </label>
-        <label className="raw-messages-panel__form-group" style={{ maxWidth: 140 }}>
-          <span className="raw-messages-panel__label">History size</span>
-          <input
-            className="raw-messages-panel__input"
-            type="number"
-            min={1}
-            value={resolvedHistorySize}
-            onChange={onHistorySizeChange}
-          />
-          <span className="raw-messages-panel__hint">Messages retained</span>
-        </label>
-      </section>
+      {!isHeaderExpanded && (
+        <section className="raw-messages-panel__collapsed-controls">
+          <div>
+            <span className="raw-messages-panel__label">Topic</span>
+            <span className="raw-messages-panel__collapsed-value">{topicPath || "Not set"}</span>
+          </div>
+          <button className="raw-messages-panel__collapsed-button" type="button" onClick={toggleHeaderExpansion}>
+            Edit
+          </button>
+        </section>
+      )}
       {body}
-      <datalist id={datalistId}>
-        {topicSuggestions.map((suggestion) => (
-          <option key={suggestion.topic} value={suggestion.topic} label={suggestion.type} />
-        ))}
-      </datalist>
     </div>
   );
 }

@@ -7,6 +7,13 @@ export type TopicSuggestion = {
   description?: string;
 };
 
+export type TopicSuggestionGroup = {
+  id: TopicCategory | "common";
+  label: string;
+  description?: string;
+  suggestions: TopicSuggestion[];
+};
+
 const DEFAULT_TOPIC_SUGGESTIONS: TopicSuggestion[] = [
   { topic: "/clock", type: "rosgraph_msgs/msg/Clock", category: "time", description: "Simulation or hardware clock source" },
   { topic: "/tf", type: "tf2_msgs/msg/TFMessage", category: "tf", description: "Transform tree" },
@@ -28,6 +35,19 @@ const DEFAULT_TOPIC_SUGGESTIONS: TopicSuggestion[] = [
   { topic: "/image_compressed", type: "sensor_msgs/msg/CompressedImage", category: "image" },
 ];
 
+const CATEGORY_METADATA: Record<TopicCategory | "common", { label: string; description?: string }> = {
+  common: { label: "Common", description: "Frequently inspected topics" },
+  time: { label: "Time & Clock", description: "Clock synchronization sources" },
+  tf: { label: "Transforms", description: "Robot and sensor frames" },
+  image: { label: "Imaging", description: "Camera and perception feeds" },
+  calibration: { label: "Calibration", description: "Sensor configuration topics" },
+  navigation: { label: "Navigation", description: "Motion and localization" },
+  status: { label: "Status", description: "System health and diagnostics" },
+  misc: { label: "Other", description: "Miscellaneous streams" },
+};
+
+const COMMON_TOPICS = ["/clock", "/tf", "/diagnostics"];
+
 function cloneSuggestions(suggestions: TopicSuggestion[]): TopicSuggestion[] {
   return suggestions.map((suggestion) => ({ ...suggestion }));
 }
@@ -42,4 +62,31 @@ export function getSuggestionByTopic(topic: string): TopicSuggestion | undefined
 
 export function getImageTopicSuggestions(): TopicSuggestion[] {
   return cloneSuggestions(DEFAULT_TOPIC_SUGGESTIONS.filter((suggestion) => suggestion.category === "image"));
+}
+
+export function getTopicSuggestionGroups(): TopicSuggestionGroup[] {
+  const grouped = new Map<TopicSuggestionGroup["id"], TopicSuggestionGroup>();
+
+  const ensureGroup = (id: TopicSuggestionGroup["id"]) => {
+    if (!grouped.has(id)) {
+      const meta = CATEGORY_METADATA[id];
+      grouped.set(id, {
+        id,
+        label: meta?.label ?? id,
+        description: meta?.description,
+        suggestions: [],
+      });
+    }
+    return grouped.get(id)!;
+  };
+
+  DEFAULT_TOPIC_SUGGESTIONS.forEach((suggestion) => {
+    const category = suggestion.category ?? "misc";
+    if (COMMON_TOPICS.includes(suggestion.topic)) {
+      ensureGroup("common").suggestions.push({ ...suggestion });
+    }
+    ensureGroup(category).suggestions.push({ ...suggestion });
+  });
+
+  return Array.from(grouped.values()).filter((group) => group.suggestions.length > 0);
 }
