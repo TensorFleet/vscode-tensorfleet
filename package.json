@@ -19,6 +19,7 @@
     "onView:tensorfleet-image-panel",
     "onView:tensorfleet-teleops-panel",
     "onView:tensorfleet-map-panel",
+    "onView:tensorfleet-raw-messages-panel",
     "onView:tensorfleet-tooling-view",
     "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
@@ -27,6 +28,7 @@
     "onCommand:tensorfleet.openImagePanel",
     "onCommand:tensorfleet.openTeleopsPanel",
     "onCommand:tensorfleet.openMapPanel",
+    "onCommand:tensorfleet.openRawMessagesPanel",
     "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.installTools",
     "onCommand:tensorfleet.openAllPanels",
@@ -101,6 +103,11 @@
           "id": "tensorfleet-map-panel",
           "name": "Map Panel",
           "type": "webview"
+        },
+        {
+          "id": "tensorfleet-raw-messages-panel",
+          "name": "Raw Messages Panel",
+          "type": "webview"
         }
       ],
       "tensorfleet-tooling": [
@@ -145,6 +152,11 @@
       {
         "command": "tensorfleet.openMapPanel",
         "title": "TensorFleet: Open Map Panel",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openRawMessagesPanel",
+        "title": "TensorFleet: Open Raw Messages Panel",
         "category": "TensorFleet"
       },
       {
@@ -295,6 +307,11 @@
         {
           "command": "tensorfleet.openTeleopsPanel",
           "when": "view == tensorfleet-teleops-panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tensorfleet.openRawMessagesPanel",
+          "when": "view == tensorfleet-raw-messages-panel",
           "group": "navigation@1"
         },
         {

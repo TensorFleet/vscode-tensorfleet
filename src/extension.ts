@@ -92,6 +92,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     actionLabel: 'Open Map Panel',
     panelKind: 'standard',
     htmlTemplate: 'map-standalone'
+  },
+  {
+    id: "tensorfleet-raw-messages-panel",
+    title: 'Raw Messages',
+    description: 'Display raw ROS2 messages in real-time - monitor and debug message traffic.',
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openRawMessagesPanel',
+    actionLabel: 'Open Raw Messages Panel',
+    panelKind: 'standard',
+    htmlTemplate: 'raw-messages-standalone'
   }
 ];
 
@@ -463,6 +473,11 @@ async function openDedicatedPanel(
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
     }
+
+    if (view.htmlTemplate == 'raw-messages-standalone') {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    }
   }
 
   const panel = vscode.window.createWebviewPanel(
@@ -542,6 +557,10 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   if (view.htmlTemplate === 'map-standalone') {
     return getStandalonePanelHtml('mission_control', webview, context, cspSource);
   }
+
+  if (view.htmlTemplate === 'raw-messages-standalone') {
+    return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
+  }
   
   // Load the custom HTML template directly
   const templatePath = path.join(__dirname, '..', 'src', 'templates', view.htmlTemplate);
@@ -580,7 +599,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 }
 
 function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
