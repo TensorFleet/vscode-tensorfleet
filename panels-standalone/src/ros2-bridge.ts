@@ -233,7 +233,7 @@ export class ROS2Bridge {
 
     currentSet.add(handler);
 
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.client || !this.client.isConnected()) {
       console.warn('Not connected, queueing subscription:', { topic, type });
       return () => {};
     }
@@ -514,5 +514,4 @@ export class ROS2Bridge {
 export const ros2Bridge = new ROS2Bridge();
 
 // Auto-connect on load (using rosbridge by default)
-ros2Bridge.connect('rosbridge');
-
+ros2Bridge.connect();
