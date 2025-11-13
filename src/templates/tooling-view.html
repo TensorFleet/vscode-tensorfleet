@@ -18,6 +18,16 @@
       </div>
     </section>
 
+    <section class="viewport">
+      <h2 class="viewport__title">Robotic Quick Start</h2>
+      <p class="viewport__description">
+        Spin up a robotics-focused project using the same TensorFleet boilerplate, ready for ROS 2 and mission code.
+      </p>
+      <div class="viewport__actions">
+        <button id="newRoboticProject" class="viewport__action">🤖 New Robotic Project</button>
+      </div>
+    </section>
+
     <hr style="border: none; border-top: 1px solid var(--vscode-editorWidget-border); margin: 24px 0;">
 
     <section class="viewport">
@@ -40,6 +50,9 @@
       document.getElementById('newProject')?.addEventListener('click', () => {
         vscode.postMessage({ command: 'newProject' });
       });
+      document.getElementById('newRoboticProject')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'newRoboticProject' });
+      });
       document.getElementById('installTools')?.addEventListener('click', () => {
         vscode.postMessage({ command: 'installTools' });
       });
@@ -49,4 +62,3 @@
     </script>
   </body>
 </html>
-

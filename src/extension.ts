@@ -120,6 +120,7 @@ let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 let vmManagerIntegration: VMManagerIntegration | null = null;
 
+
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
 let droneStatusBar: vscode.StatusBarItem | null = null;
@@ -172,6 +173,10 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.createNewRoboticProject', () => createNewRoboticProject(context))
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
   );
 
@@ -195,13 +200,13 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
   );
 
-  // ROS bridge commands removed; panels use embedded Foxglove networking.
-
   if (vmManagerIntegration) {
     context.subscriptions.push(
       vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => vmManagerIntegration?.showVmActions())
     );
   }
+
+  // ROS bridge commands removed; panels use embedded Foxglove networking.
 
   context.subscriptions.push(
     vscode.window.onDidCloseTerminal((closedTerminal) => {
@@ -305,6 +310,8 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((message) => {
       if (message?.command === 'newProject') {
         vscode.commands.executeCommand('tensorfleet.createNewProject');
+      } else if (message?.command === 'newRoboticProject') {
+        vscode.commands.executeCommand('tensorfleet.createNewRoboticProject');
       } else if (message?.command === 'installTools') {
         vscode.commands.executeCommand('tensorfleet.installTools');
       } else if (message?.command === 'openAllPanels') {
@@ -572,10 +579,37 @@ function launchTerminalSession(target: string) {
 }
 
 async function createNewProject(context: vscode.ExtensionContext) {
+  await createNewProjectInternal(context, {
+    kindLabel: 'drone',
+    defaultName: 'my-drone-project',
+    commandLabel: 'TensorFleet Project'
+  });
+}
+
+async function createNewRoboticProject(context: vscode.ExtensionContext) {
+  await createNewProjectInternal(context, {
+    kindLabel: 'robotic',
+    defaultName: 'my-robotic-project',
+    commandLabel: 'TensorFleet Robotic Project',
+    templateSubdir: 'robotic-project-templates'
+  });
+}
+
+type NewProjectOptions = {
+  kindLabel: string;
+  defaultName: string;
+  commandLabel: string;
+  templateSubdir?: string;
+};
+
+async function createNewProjectInternal(
+  context: vscode.ExtensionContext,
+  options: NewProjectOptions
+) {
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
-    prompt: 'Enter a name for your new drone project',
-    placeHolder: 'my-drone-project',
+    prompt: `Enter a name for your new ${options.kindLabel} project`,
+    placeHolder: options.defaultName,
     validateInput: (value) => {
       if (!value) {
         return 'Project name cannot be empty';
@@ -605,7 +639,11 @@ async function createNewProject(context: vscode.ExtensionContext) {
 
   const targetFolder = targetFolders[0];
   const projectFolder = vscode.Uri.joinPath(targetFolder, projectName);
-  const templateFolder = vscode.Uri.joinPath(context.extensionUri, 'resources', 'project-templates');
+  const templateFolder = vscode.Uri.joinPath(
+    context.extensionUri,
+    'resources',
+    options.templateSubdir ?? 'project-templates'
+  );
 
   try {
     // Check if folder already exists
@@ -627,7 +665,7 @@ async function createNewProject(context: vscode.ExtensionContext) {
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: 'Creating TensorFleet Project',
+        title: `Creating ${options.commandLabel}`,
         cancellable: false
       },
       async (progress) => {
@@ -638,7 +676,7 @@ async function createNewProject(context: vscode.ExtensionContext) {
     );
 
     const openProject = await vscode.window.showInformationMessage(
-      `✨ Project "${projectName}" created successfully!`,
+      `✨ ${options.commandLabel} "${projectName}" created successfully!`,
       'Open Project',
       'Open in New Window',
       'Close'
