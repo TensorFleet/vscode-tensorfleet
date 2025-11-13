@@ -1,0 +1,15 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="VM Manager">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1f9c8f" />
+      <stop offset="100%" stop-color="#0b4b63" />
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="14" fill="#111927" />
+  <rect x="12" y="20" width="96" height="80" rx="10" fill="#0e2433" stroke="#1f9c8f" stroke-width="2" />
+  <rect x="24" y="36" width="72" height="48" rx="6" fill="#050d16" stroke="#3ad1bf" stroke-width="1.5" />
+  <circle cx="40" cy="60" r="12" fill="url(#grad)" />
+  <rect x="60" y="48" width="28" height="8" rx="4" fill="#143448" />
+  <rect x="60" y="64" width="28" height="8" rx="4" fill="#143448" />
+  <rect x="24" y="90" width="72" height="6" rx="3" fill="#1f9c8f" opacity="0.6" />
+</svg>

@@ -6,6 +6,7 @@ import { MCPBridge } from './mcp-bridge';
 import { ROS2Bridge } from './ros2-bridge';
 import { ROS2WebSocketBridge } from './ros2-websocket-bridge';
 import { FoxgloveBridge } from './foxglove-bridge';
+import { VMManagerIntegration } from './vm-manager';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -117,6 +118,7 @@ let foxgloveBridge: FoxgloveBridge | null = null;
 // Active ROS2 connection mode: 'native' | 'websocket' | 'foxglove'
 let ros2ConnectionMode: 'native' | 'websocket' | 'foxglove' | null = null;
 let preferredConnectionMode: 'auto' | 'native' | 'rosbridge' | 'foxglove' = 'rosbridge';
+let vmManagerIntegration: VMManagerIntegration | null = null;
 
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
@@ -207,6 +209,9 @@ export function activate(context: vscode.ExtensionContext) {
   initializeStatusBarItems(context).catch((error) => {
     console.error('[TensorFleet] Failed to initialize status bars:', error);
   });
+
+  vmManagerIntegration = new VMManagerIntegration(context);
+  vmManagerIntegration.initialize();
   DRONE_VIEWS.forEach((view) => {
     const provider = new DashboardViewProvider(view, context);
     context.subscriptions.push(
@@ -295,6 +300,12 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tensorfleet.startPX4Telemetry', () => startPX4TelemetryMonitor(context))
   );
 
+  if (vmManagerIntegration) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => vmManagerIntegration?.showVmActions())
+    );
+  }
+
   context.subscriptions.push(
     vscode.window.onDidCloseTerminal((closedTerminal) => {
       for (const [key, terminal] of terminalRegistry.entries()) {
@@ -343,6 +354,11 @@ export function deactivate() {
   if (projectWatcher) {
     projectWatcher.dispose();
     projectWatcher = null;
+  }
+
+  if (vmManagerIntegration) {
+    vmManagerIntegration.dispose();
+    vmManagerIntegration = null;
   }
 }
 
