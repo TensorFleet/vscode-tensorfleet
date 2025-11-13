@@ -42,18 +42,22 @@ export const ImagePanel: React.FC = () => {
   const animationFrameRef = useRef<number | null>(null);
   const pendingImageRef = useRef<ImageMessage | null>(null);
 
-  // Initialize: Load available topics and auto-select first one
+  // Initialize: Load available topics and refresh periodically, auto-select first one
   useEffect(() => {
-    // Only show image-capable topics in the main dropdown
-    const imageSubs = ros2Bridge.getAvailableImageTopics();
-    setAvailableSubscriptions(imageSubs);
-    
-    // Auto-select first topic if available
-    if (imageSubs.length > 0 && !selectedSubscription) {
-      setSelectedSubscription(imageSubs[0]);
-    }
-    
-  }, []);
+    const updateImageTopics = () => {
+      const imageSubs = ros2Bridge.getAvailableImageTopics();
+      setAvailableSubscriptions(imageSubs);
+
+      // Auto-select first topic if none selected yet
+      if (!selectedSubscription && imageSubs.length > 0) {
+        setSelectedSubscription(imageSubs[0]);
+      }
+    };
+
+    updateImageTopics();
+    const interval = setInterval(updateImageTopics, 1000);
+    return () => clearInterval(interval);
+  }, [selectedSubscription]);
 
   useEffect(() => {
 
