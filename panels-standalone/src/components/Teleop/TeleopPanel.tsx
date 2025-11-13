@@ -11,6 +11,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
+import { getTopicSuggestions } from '../../utils/discoveredTopics';
 import { DirectionalPad } from './DirectionalPad';
 import { geometryMsgOptions } from './constants';
 import { DirectionalPadAction, TeleopConfig } from './types';
@@ -72,6 +73,7 @@ export function TeleopPanel(): React.JSX.Element {
   const [keyboardAction, setKeyboardAction] = useState<DirectionalPadAction | undefined>();
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<Record<string, unknown> | null>(null);
+  const [availableTopics, setAvailableTopics] = useState<string[]>([]);
   const activeAction = keyboardAction ?? padAction;
 
   // Save config to localStorage when it changes
@@ -91,6 +93,19 @@ export function TeleopPanel(): React.JSX.Element {
     return () => {
       clearInterval(interval);
     };
+  }, []);
+
+  // Discover available topics for dropdown
+  useEffect(() => {
+    const updateTopics = () => {
+      const topics = getTopicSuggestions().map((t) => t.topic);
+      setAvailableTopics(topics);
+    };
+
+    updateTopics();
+
+    const interval = setInterval(updateTopics, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   // Build twist message from current action and config
@@ -279,13 +294,27 @@ export function TeleopPanel(): React.JSX.Element {
               <label className="setting-label">
                 <span className="label-text">Topic</span>
               </label>
-              <input
-                className="setting-input"
-                type="text"
-                value={config.topic ?? ''}
-                onChange={(e) => setConfig({ ...config, topic: e.target.value })}
-                placeholder="/cmd_vel"
-              />
+              {availableTopics.length > 0 ? (
+                <select
+                  className="setting-input"
+                  value={config.topic ?? ''}
+                  onChange={(e) => setConfig({ ...config, topic: e.target.value })}
+                >
+                  {availableTopics.map((topic) => (
+                    <option key={topic} value={topic}>
+                      {topic}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="setting-input"
+                  type="text"
+                  value={config.topic ?? ''}
+                  onChange={(e) => setConfig({ ...config, topic: e.target.value })}
+                  placeholder="/cmd_vel"
+                />
+              )}
             </div>
             <div className="setting-item setting-item-narrow">
               <label className="setting-label">

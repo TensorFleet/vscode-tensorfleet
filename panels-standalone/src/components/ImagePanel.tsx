@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ros2Bridge, Subscription, type ImageMessage } from '../ros2-bridge';
 import { 
-  type CameraInfo, 
+  type CameraInfo,
   type ICameraModel, 
-  PinholeCameraModel, 
   createFallbackCameraModel,
-  normalizeCameraInfo 
 } from '../utils/CameraModel';
 import './ImagePanel.css';
 
@@ -35,38 +33,31 @@ export const ImagePanel: React.FC = () => {
   // Context menu for download
   const [contextMenu, setContextMenu] = useState<{x: number; y: number} | null>(null);
   
-  // Camera calibration state - Phase 4
-  const [cameraInfo, setCameraInfo] = useState<CameraInfo | null>(null);
+  // Keep camera info type around for the info panel (always using fallback model for now)
+  const [cameraInfo] = useState<CameraInfo | null>(null);
   const [cameraModel, setCameraModel] = useState<ICameraModel | null>(null);
-  const [calibrationSubscription, setCalibrationSubscription] = useState<Subscription|null>(null);
-  const [availableCalibrationSubscriptions, setAvailableCalibrationSubscriptions] = useState<Subscription[]>([]);
-  const [frameIdMismatch, setFrameIdMismatch] = useState<boolean>(false);
   const [show3DAnnotations, setShow3DAnnotations] = useState<boolean>(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const pendingImageRef = useRef<ImageMessage | null>(null);
 
-  // Initialize: Load available topics and auto-select first one
+  // Initialize: Load available topics and refresh periodically, auto-select first one
   useEffect(() => {
-    const subs = ros2Bridge.getAvailableImageTopics();
-    setAvailableSubscriptions(subs);
-    
-    // Auto-select first topic if available
-    if (subs.length > 0 && !selectedSubscription) {
-      setSelectedSubscription(subs[0]);
-    }
-    
-    // Get calibration topics (camera_info)
-    // In a real implementation, you'd filter topics by type
-    // For now, we'll look for topics containing "camera_info" or "CameraInfo"
-    const allSubs = subs; // In real app: ros2Bridge.getAllTopics()
-    const calibSubs = allSubs.filter(t => 
-      t.topic.toLowerCase().includes('camera_info') || 
-      t.topic.toLowerCase().includes('camerainfo')
-    );
-    setAvailableCalibrationSubscriptions(calibSubs);
-  }, []);
+    const updateImageTopics = () => {
+      const imageSubs = ros2Bridge.getAvailableImageTopics();
+      setAvailableSubscriptions(imageSubs);
+
+      // Auto-select first topic if none selected yet
+      if (!selectedSubscription && imageSubs.length > 0) {
+        setSelectedSubscription(imageSubs[0]);
+      }
+    };
+
+    updateImageTopics();
+    const interval = setInterval(updateImageTopics, 1000);
+    return () => clearInterval(interval);
+  }, [selectedSubscription]);
 
   useEffect(() => {
 
@@ -340,23 +331,6 @@ export const ImagePanel: React.FC = () => {
     // ros2Bridge.subscribe(newTopic);
     setSelectedSubscription(sub);
 
-    if (!sub) {
-      return;
-    }
-    
-    // Auto-match calibration topic (Phase 4.1)
-    // Try to find matching camera_info topic with same prefix
-    const match = sub.topic.match(/^(.+\/)([^/]+)$/);
-    if (match) {
-      const prefix = match[1]; // e.g., "/camera/"
-      const matchingCalibSub = availableCalibrationSubscriptions.find(t => 
-        t.topic.startsWith(prefix) && 
-        (t.topic.endsWith('camera_info') || t.topic.endsWith('CameraInfo'))
-      );
-      if (matchingCalibSub) {
-        setCalibrationSubscription(matchingCalibSub);
-      }
-    }
   };
 
   // Connection mode is fixed to rosbridge; no handler needed
@@ -535,35 +509,6 @@ export const ImagePanel: React.FC = () => {
     return () => document.removeEventListener('click', handleClick);
   }, [contextMenu]);
 
-  // Subscribe to calibration topic (Phase 4.1)
-  useEffect(() => {
-    if (!calibrationSubscription) {
-      setCameraInfo(null);
-      return;
-    }
-
-    // Subscribe to calibration topic
-    // ros2Bridge.subscribe(calibrationSubscription);
-
-    const cleanup = ros2Bridge.subscribe(
-      calibrationSubscription,
-      (message) => {
-      try {
-        // Normalize CameraInfo (handle ROS1/ROS2 differences)
-        const normalizedInfo = normalizeCameraInfo(message.data);
-        setCameraInfo(normalizedInfo);
-      } catch (error) {
-        console.error('[ImagePanel] Failed to parse CameraInfo:', error);
-        setErrorMessage(`Invalid CameraInfo: ${(error as Error).message}`);
-      }
-    });
-
-    return () => {
-      cleanup();
-      // ros2Bridge.unsubscribe(calibrationTopic);
-    };
-  }, [calibrationSubscription]);
-
   // Create/update camera model (Phase 4.2)
   useEffect(() => {
     if (!currentImage) {
@@ -571,38 +516,15 @@ export const ImagePanel: React.FC = () => {
       return;
     }
 
-    if (cameraInfo) {
-      // Validate frame_id match
-      const imageFrameId = currentImage.frameId || '';
-      const cameraFrameId = cameraInfo.header.frame_id;
-      
-      if (imageFrameId && cameraFrameId && imageFrameId !== cameraFrameId) {
-        setFrameIdMismatch(true);
-        console.warn(`[ImagePanel] Frame ID mismatch: Image (${imageFrameId}) vs CameraInfo (${cameraFrameId})`);
-      } else {
-        setFrameIdMismatch(false);
-      }
-
-      // Create camera model from calibration
-      try {
-        const model = new PinholeCameraModel(cameraInfo);
-        setCameraModel(model);
-      } catch (error) {
-        console.error('[ImagePanel] Failed to create camera model:', error);
-        setErrorMessage(`Camera model error: ${(error as Error).message}`);
-      }
-    } else {
-      // Create fallback camera model (Phase 4.2)
-      const fallbackModel = createFallbackCameraModel(
-        currentImage.width,
-        currentImage.height,
-        currentImage.frameId || 'camera',
-        500 // Default focal length
-      );
-      setCameraModel(fallbackModel);
-      setFrameIdMismatch(false);
-    }
-  }, [currentImage, cameraInfo]);
+    // Create fallback camera model (Phase 4.2)
+    const fallbackModel = createFallbackCameraModel(
+      currentImage.width,
+      currentImage.height,
+      currentImage.frameId || 'camera',
+      500 // Default focal length
+    );
+    setCameraModel(fallbackModel);
+  }, [currentImage]);
 
   return (
     <div className="image-panel">
@@ -622,7 +544,7 @@ export const ImagePanel: React.FC = () => {
         </div>
         
         {/* Layer 2: Primary Settings */}
-        <div className="header-settings">
+          <div className="header-settings">
           <div className="settings-inline">
             <div className="setting-item">
               <label className="setting-label">
@@ -647,46 +569,6 @@ export const ImagePanel: React.FC = () => {
                   </option>
                 ))}
               </select>
-            </div>
-
-            <div className="setting-item">
-              <label className="setting-label">
-                <span className="label-text">Calibration Topic</span>
-              </label>
-
-              <select
-                className="setting-input"
-                value={calibrationSubscription?.topic ?? ""} 
-                onChange={(e) => {
-                  const topic = e.target.value;
-
-                  // "None (use fallback)"
-                  if (topic === "") {
-                    setCalibrationSubscription(null);
-                    return;
-                  }
-
-                  const sub =
-                    availableCalibrationSubscriptions.find(t => t.topic === topic) ?? null;
-
-                  setCalibrationSubscription(sub);
-                }}
-                disabled={availableCalibrationSubscriptions.length === 0}
-              >
-                <option value="">None (use fallback)</option>
-                {availableCalibrationSubscriptions.map(t => (
-                  <option key={t.topic} value={t.topic}>
-                    {t.topic}
-                  </option>
-                ))}
-              </select>
-
-              {cameraInfo && !frameIdMismatch && (
-                <span className="calibration-status success">✓ Loaded</span>
-              )}
-              {frameIdMismatch && (
-                <span className="calibration-status warning">⚠️ Frame mismatch</span>
-              )}
             </div>
           </div>
         </div>
@@ -870,4 +752,3 @@ export const ImagePanel: React.FC = () => {
     </div>
   );
 };
-
