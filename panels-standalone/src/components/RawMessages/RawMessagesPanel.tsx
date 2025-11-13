@@ -273,6 +273,7 @@ export function RawMessagesPanel() {
   const [messageRate, setMessageRate] = useState(0);
   const [lastMessageTime, setLastMessageTime] = useState<number>(0);
   const [diffMode, setDiffMode] = useState<DiffMode>('off');
+  const [diffCopied, setDiffCopied] = useState(false);
 
   const cleanupRef = useRef<(() => void) | null>(null);
   const rateIntervalRef = useRef<number | null>(null);
@@ -528,7 +529,72 @@ export function RawMessagesPanel() {
     return null;
   }, [diffMode, previousMessage, currentMessage]);
 
-  // Custom renderer for JSONTree that highlights diffs
+  const handleCopyDiff = useCallback(async () => {
+    if (!diffData || !currentMessage || !previousMessage) {
+      return;
+    }
+    
+    try {
+      // Format diff data as a readable string
+      const diffReport: string[] = [];
+      diffReport.push('=== Message Diff Report ===\n');
+      diffReport.push(`Topic: ${currentMessage.payload.topic}`);
+      diffReport.push(`Type: ${currentMessage.payload.type}`);
+      
+      const prevTime = new Date(previousMessage.receivedAt).toLocaleTimeString();
+      const currTime = new Date(currentMessage.receivedAt).toLocaleTimeString();
+      diffReport.push(`Previous: ${prevTime}`);
+      diffReport.push(`Current:  ${currTime}\n`);
+      
+      const added: string[] = [];
+      const removed: string[] = [];
+      const modified: string[] = [];
+      
+      Object.entries(diffData).forEach(([key, result]) => {
+        if (result.type === 'added') {
+          added.push(`  ${key}: ${JSON.stringify(result.value)}`);
+        } else if (result.type === 'removed') {
+          removed.push(`  ${key}: ${JSON.stringify(result.oldValue)}`);
+        } else if (result.type === 'modified') {
+          modified.push(`  ${key}:`);
+          modified.push(`    - OLD: ${JSON.stringify(result.oldValue)}`);
+          modified.push(`    + NEW: ${JSON.stringify(result.value)}`);
+        }
+      });
+      
+      if (added.length > 0) {
+        diffReport.push('\n[ADDED]');
+        diffReport.push(...added);
+      }
+      
+      if (removed.length > 0) {
+        diffReport.push('\n[REMOVED]');
+        diffReport.push(...removed);
+      }
+      
+      if (modified.length > 0) {
+        diffReport.push('\n[MODIFIED]');
+        diffReport.push(...modified);
+      }
+      
+      if (added.length === 0 && removed.length === 0 && modified.length === 0) {
+        diffReport.push('\nNo changes detected between messages.');
+      }
+      
+      const diffString = diffReport.join('\n');
+      await navigator.clipboard.writeText(diffString);
+      
+      // Show feedback
+      setDiffCopied(true);
+      setTimeout(() => {
+        setDiffCopied(false);
+      }, 2000);
+    } catch (error) {
+      console.error("Failed to copy diff:", error);
+    }
+  }, [diffData, currentMessage, previousMessage]);
+
+  // Custom renderer for JSONTree that highlights diffs with improved colors
   const getLabelStyle = useCallback((label: string, diffData: DiffObject | null): React.CSSProperties => {
     if (!diffData) {
       return {};
@@ -541,11 +607,33 @@ export function RawMessagesPanel() {
     
     switch (diffResult.type) {
       case 'added':
-        return { backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#4ade80', fontWeight: 500 };
+        return { 
+          backgroundColor: 'rgba(34, 197, 94, 0.25)', 
+          color: '#6ee7b7', 
+          fontWeight: 600,
+          padding: '2px 6px',
+          borderRadius: '3px',
+          border: '1px solid rgba(34, 197, 94, 0.4)'
+        };
       case 'removed':
-        return { backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#f87171', fontWeight: 500 };
+        return { 
+          backgroundColor: 'rgba(239, 68, 68, 0.25)', 
+          color: '#fca5a5', 
+          fontWeight: 600,
+          padding: '2px 6px',
+          borderRadius: '3px',
+          border: '1px solid rgba(239, 68, 68, 0.4)',
+          textDecoration: 'line-through'
+        };
       case 'modified':
-        return { backgroundColor: 'rgba(234, 179, 8, 0.2)', color: '#fbbf24', fontWeight: 500 };
+        return { 
+          backgroundColor: 'rgba(251, 191, 36, 0.25)', 
+          color: '#fde047', 
+          fontWeight: 600,
+          padding: '2px 6px',
+          borderRadius: '3px',
+          border: '1px solid rgba(251, 191, 36, 0.4)'
+        };
       default:
         return {};
     }
@@ -563,11 +651,25 @@ export function RawMessagesPanel() {
     
     switch (diffResult.type) {
       case 'added':
-        return { backgroundColor: 'rgba(34, 197, 94, 0.15)' };
+        return { 
+          backgroundColor: 'rgba(34, 197, 94, 0.2)',
+          color: '#86efac',
+          fontWeight: 500
+        };
       case 'removed':
-        return { backgroundColor: 'rgba(239, 68, 68, 0.15)', textDecoration: 'line-through', opacity: 0.7 };
+        return { 
+          backgroundColor: 'rgba(239, 68, 68, 0.2)', 
+          color: '#fca5a5',
+          textDecoration: 'line-through', 
+          opacity: 0.8,
+          fontWeight: 500
+        };
       case 'modified':
-        return { backgroundColor: 'rgba(234, 179, 8, 0.15)' };
+        return { 
+          backgroundColor: 'rgba(251, 191, 36, 0.2)',
+          color: '#fde68a',
+          fontWeight: 500
+        };
       default:
         return {};
     }
@@ -746,24 +848,15 @@ export function RawMessagesPanel() {
             <div className="raw-messages-header__diff-controls">
               <div className="raw-messages-header__diff-mode">
                 <span className="raw-messages-header__form-label">Diff Mode</span>
-                <div className="raw-messages-header__diff-buttons">
-                  <button
-                    className={`raw-messages-header__diff-button ${diffMode === 'off' ? 'raw-messages-header__diff-button--active' : ''}`}
-                    type="button"
-                    onClick={() => setDiffMode('off')}
-                  >
-                    Off
-                  </button>
-                  <button
-                    className={`raw-messages-header__diff-button ${diffMode === 'previous' ? 'raw-messages-header__diff-button--active' : ''}`}
-                    type="button"
-                    onClick={() => setDiffMode('previous')}
-                    disabled={!isSubscribed}
-                    title="Compare with previous message on the same topic"
-                  >
-                    Previous
-                  </button>
-                </div>
+                <button
+                  className={`raw-messages-header__diff-toggle ${diffMode === 'previous' ? 'raw-messages-header__diff-toggle--active' : ''}`}
+                  type="button"
+                  onClick={() => setDiffMode(diffMode === 'off' ? 'previous' : 'off')}
+                  disabled={!isSubscribed}
+                  title="Compare current message with previous message"
+                >
+                  {diffMode === 'off' ? '🔀 Enable Diff' : '✓ Diff Active'}
+                </button>
               </div>
 
               {diffMode !== 'off' && diffData && (
@@ -872,6 +965,20 @@ export function RawMessagesPanel() {
                       <div className="raw-message-card__actions">
                         {transformCount > 0 && (
                           <span className="raw-message-card__badge">{transformCount} transforms</span>
+                        )}
+                        {diffMode !== 'off' && diffData && (
+                          <button
+                            className="raw-message-card__copy-button raw-message-card__copy-button--diff"
+                            type="button"
+                            onClick={handleCopyDiff}
+                            title="Copy diff report"
+                            style={{
+                              backgroundColor: diffCopied ? 'rgba(34, 197, 94, 0.2)' : undefined,
+                              borderColor: diffCopied ? 'rgba(34, 197, 94, 0.4)' : undefined,
+                            }}
+                          >
+                            {diffCopied ? '✓ Diff Copied!' : '📊 Copy Diff'}
+                          </button>
                         )}
                         <button
                           className="raw-message-card__copy-button"
