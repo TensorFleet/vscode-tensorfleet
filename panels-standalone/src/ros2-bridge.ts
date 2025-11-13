@@ -287,7 +287,7 @@ export class ROS2Bridge {
   }
 
   isConnected(): boolean {
-    return !!this.client;
+    return this.client?.isConnected() ?? false;
   }
 
   getAvailableImageTopics(): Subscription[] {
@@ -515,4 +515,3 @@ export const ros2Bridge = new ROS2Bridge();
 
 // Auto-connect on load (using rosbridge by default)
 ros2Bridge.connect('rosbridge');
-
