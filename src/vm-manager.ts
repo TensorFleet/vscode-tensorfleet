@@ -28,7 +28,6 @@ interface VmInfoResponse extends VmStatusResponse {
 }
 
 interface ApiHealthResponse {
-  active_vms: number;
   status: string;
   time: string;
 }
@@ -210,7 +209,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private async ensureApiHealthy(): Promise<ApiHealthResponse> {
-    return this.apiRequest<ApiHealthResponse>('GET', '/health', undefined, { includeAuth: false });
+    return this.apiRequest<ApiHealthResponse>('GET', '/vms/health', undefined, { includeAuth: false });
   }
 
   private applySnapshot(snapshot: VmSnapshot) {
