@@ -375,12 +375,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     if (connection === 'disconnected') {
       items.push(
         { label: '⚠️ Cannot reach VM Manager API', detail: error || 'Check network and API configuration' },
-        { label: '🔄 Retry Connection', detail: 'Attempt to reconnect', action: () => this.refresh(false) },
-        { 
-          label: '⚙️ Configure API', 
-          detail: 'Open settings', 
-          action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
-        }
+        { label: '🔄 Retry Connection', detail: 'Attempt to reconnect', action: () => this.refresh(false) }
       );
     } else {
       switch (vmState) {
@@ -425,7 +420,13 @@ export class VMManagerIntegration implements vscode.Disposable {
       }
     }
 
-    items.push({ label: '🔄 Refresh Status', detail: 'Check current state', action: () => this.refresh(false) });
+    items.push(
+      { 
+          label: '⚙️ Configure API', 
+          detail: 'Open settings', 
+          action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
+      },
+      { label: '🔄 Refresh Status', detail: 'Check current state', action: () => this.refresh(false) });
     return items;
   }
 
