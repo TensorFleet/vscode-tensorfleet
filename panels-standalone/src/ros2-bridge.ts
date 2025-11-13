@@ -3,7 +3,6 @@
  * Connects directly to rosbridge or Foxglove Bridge WebSocket
  */
 import { FoxgloveWsClient } from "./FoxgloveNetworking";
-import { getImageTopicSuggestions } from "./utils/topicSuggestions";
 
 export type ConnectionMode = 'rosbridge' | 'foxglove';
 
@@ -146,6 +145,9 @@ export class ROS2Bridge {
   // store full Subscription objects keyed by topic
   private subscriptions: Map<string, Subscription> = new Map();
 
+  // track discovered topics from the bridge
+  private discoveredTopics: Map<string, string> = new Map(); // topic -> type
+
   private reconnectTimeout: number | null = null;
 
 
@@ -184,6 +186,7 @@ export class ROS2Bridge {
 
     this.client.onNewTopic = (topic, type) => {
       console.log("new Foxglove topic:", topic, "type:", type);
+      this.discoveredTopics.set(topic, type);
     };
 
     this.client.onMessage = (msg) => {
@@ -219,6 +222,7 @@ export class ROS2Bridge {
       this.client.onClose = undefined;
       this.client.close();
     }
+    this.discoveredTopics.clear();
   }
 
   // Ensure we always capture both topic and type in our map
@@ -292,7 +296,18 @@ export class ROS2Bridge {
   }
 
   getAvailableImageTopics(): Subscription[] {
-    return getImageTopicSuggestions().map(({ topic, type }) => ({ topic, type }));
+    const imageTypes = ["sensor_msgs/msg/Image", "sensor_msgs/msg/CompressedImage"];
+    return Array.from(this.discoveredTopics.entries())
+      .filter(([_, type]) => imageTypes.includes(type))
+      .map(([topic, type]) => ({ topic, type }));
+  }
+
+  getAvailableTopics(): Subscription[] {
+    return Array.from(this.discoveredTopics.entries()).map(([topic, type]) => ({ topic, type }));
+  }
+
+  getTopicType(topic: string): string | undefined {
+    return this.discoveredTopics.get(topic);
   }
 
   private handleFoxgloveMessage(data: any) {

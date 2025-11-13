@@ -10,7 +10,7 @@ import { SaveConfig } from "@lichtblick/suite-base/types/panels";
 
 import { RawMessagesPanelConfig } from "./types";
 import "./RawMessagesPanel.css";
-import { getSuggestionByTopic, getTopicSuggestionGroups } from "../../../../utils/topicSuggestions";
+import { getSuggestionByTopic, getTopicSuggestionGroups } from "../../../../utils/discoveredTopics";
 
 const DEFAULT_HISTORY = 20;
 

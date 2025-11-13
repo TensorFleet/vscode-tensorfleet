@@ -7,7 +7,7 @@ import React, { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useSt
 import type { Theme } from "react-base16-styling";
 import { JSONTree } from "react-json-tree";
 import { Subscription, ros2Bridge, type ImageMessage } from "../../ros2-bridge";
-import { getTopicSuggestions, type TopicSuggestion } from "../../utils/topicSuggestions";
+import { getTopicSuggestions, type DiscoveredTopic } from "../../utils/discoveredTopics";
 import "./RawMessagesPanel.css";
 
 type RawPayloadMessage = {
@@ -160,10 +160,24 @@ export function RawMessagesPanel() {
   const messageCountRef = useRef(0);
   const messageTimesRef = useRef<number[]>([]); // Track message timestamps for rate calculation
 
-  const topicSuggestions = useMemo(() => getTopicSuggestions(), []);
+  const [discoveredTopics, setDiscoveredTopics] = useState<DiscoveredTopic[]>([]);
+  
+  // Update discovered topics periodically to reflect new topics from the bridge
+  useEffect(() => {
+    const updateTopics = () => {
+      const topics = getTopicSuggestions();
+      setDiscoveredTopics(topics);
+    };
+    
+    updateTopics();
+    const interval = setInterval(updateTopics, 2000); // Update every 2 seconds
+    
+    return () => clearInterval(interval);
+  }, []);
+  
   const selectedSuggestion = useMemo(() => {
-    return topicSuggestions.find((s) => s.topic === selectedTopic);
-  }, [selectedTopic, topicSuggestions]);
+    return discoveredTopics.find((s) => s.topic === selectedTopic);
+  }, [selectedTopic, discoveredTopics]);
   
   // Calculate message rate over the last second
   useEffect(() => {
@@ -282,10 +296,10 @@ export function RawMessagesPanel() {
     messageCountRef.current = 0;
     messageTimesRef.current = [];
     
-    const suggestion = getTopicSuggestions().find((s) => s.topic === cleanedTopic);
+    const topicType = ros2Bridge.getTopicType(cleanedTopic);
     const subscription: Subscription = {
       topic: cleanedTopic,
-      type: suggestion?.type || "unknown",
+      type: topicType || "unknown",
     };
     
     console.log('[RawMessages] Subscribing to topic:', cleanedTopic, 'type:', subscription.type);
@@ -448,15 +462,12 @@ export function RawMessagesPanel() {
                   disabled={isSubscribed}
                 >
                   <option value="">Choose a topic...</option>
-                  {topicSuggestions.map((suggestion) => (
-                    <option key={suggestion.topic} value={suggestion.topic}>
-                      {suggestion.topic} — {suggestion.type}
+                  {discoveredTopics.map((topic) => (
+                    <option key={topic.topic} value={topic.topic}>
+                      {topic.topic} — {topic.type}
                     </option>
                   ))}
                 </select>
-                {selectedSuggestion?.description && (
-                  <span className="raw-messages-header__hint">{selectedSuggestion.description}</span>
-                )}
               </label>
               
               {!isSubscribed && (
