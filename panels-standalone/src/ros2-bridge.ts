@@ -19,6 +19,20 @@ export interface Subscription {
   type: string;
 }
 
+/** MAVROS structs */
+export interface CommandLong_Request {
+  command: number;
+  confirmation?: number;
+  param1?: number; param2?: number; param3?: number; param4?: number;
+  param5?: number; param6?: number; param7?: number;
+  broadcast?: boolean;
+}
+export interface CommandLong_Response {
+  success: boolean;
+  result: number;
+}
+
+
 /** ---------- Common message structs ---------- */
 export interface ImageMessage {
   topic: string;
@@ -371,6 +385,11 @@ export class ROS2Bridge {
   }
 
   // ---------- MAVROS service helpers (exact names and request fields) ----------
+
+  async mavrosCommandLong(req: CommandLong_Request): Promise<CommandLong_Response> {
+    // MAVROS2 service: /mavros/cmd/command  (mavros_msgs/srv/CommandLong)
+    return await this.callService<CommandLong_Response>("/mavros/cmd/command", req);
+  }
 
   /** /mavros/cmd/arming (mavros_msgs/srv/CommandBool) */
   async mavrosArmDisarm(value: boolean): Promise<CommandBool_Response> {
