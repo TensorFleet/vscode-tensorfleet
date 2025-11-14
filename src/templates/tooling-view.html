@@ -6,45 +6,164 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TensorFleet Tool Installer</title>
     {{styles}}
+    <style>
+      .tooling {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 12px 8px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+
+      .tooling__header {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .tooling__title {
+        margin: 0;
+        font-size: 1.3rem;
+        font-weight: 600;
+      }
+
+      .tooling__subtitle {
+        margin: 0;
+        font-size: 0.95rem;
+        opacity: 0.8;
+      }
+
+      .tooling__grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+        gap: 16px;
+      }
+
+      @media (max-width: 768px) {
+        .tooling__grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      .tooling-card {
+        border-radius: 8px;
+        padding: 16px 16px 18px;
+        background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+        border: 1px solid var(--vscode-editorWidget-border);
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25);
+      }
+
+      .tooling-card__meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 6px;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        opacity: 0.7;
+      }
+
+      .tooling-card__chip {
+        padding: 2px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--vscode-button-border, var(--vscode-button-background));
+        font-size: 0.7rem;
+        text-transform: uppercase;
+      }
+
+      .tooling-card--accent {
+        border-color: var(--vscode-button-background);
+      }
+
+      .tooling-divider {
+        border: none;
+        border-top: 1px solid var(--vscode-editorWidget-border);
+        margin: 4px 0 0;
+      }
+
+      .tooling-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 0.8rem;
+        opacity: 0.7;
+      }
+
+      @media (max-width: 640px) {
+        .tooling-footer {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+      }
+    </style>
   </head>
   <body>
-    <section class="viewport">
-      <h2 class="viewport__title">Quick Start</h2>
-      <p class="viewport__description">
-        Create a new drone project with pre-configured templates and examples.
-      </p>
-      <div class="viewport__actions">
-        <button id="newProject" class="viewport__action">🚀 New Project</button>
-      </div>
-    </section>
+    <main class="tooling">
+      <header class="tooling__header">
+        <h1 class="tooling__title">TensorFleet Tools</h1>
+        <p class="tooling__subtitle">
+          Create a ready-to-fly workspace, spin up robotics projects, and install the bundled ROS 2 toolchain.
+        </p>
+      </header>
 
-    <section class="viewport">
-      <h2 class="viewport__title">Robotic Quick Start</h2>
-      <p class="viewport__description">
-        Spin up a robotics-focused project using the same TensorFleet boilerplate, ready for ROS 2 and mission code.
-      </p>
-      <div class="viewport__actions">
-        <button id="newRoboticProject" class="viewport__action">🤖 New Robotic Project</button>
-      </div>
-    </section>
+      <div class="tooling__grid">
+        <section class="viewport tooling-card tooling-card--accent">
+          <div class="tooling-card__meta">
+            <span class="tooling-card__chip">Projects</span>
+            <span>Start from curated boilerplates</span>
+          </div>
+          <h2 class="viewport__title">Quick Start</h2>
+          <p class="viewport__description">
+            Create a new drone project with pre-configured templates, example missions, and dashboards wired to ROS topics.
+          </p>
+          <div class="viewport__actions">
+            <button id="newProject" class="viewport__action">🚀 New Drone Project</button>
+          </div>
+        </section>
 
-    <hr style="border: none; border-top: 1px solid var(--vscode-editorWidget-border); margin: 24px 0;">
-
-    <section class="viewport">
-      <h2 class="viewport__title">Install Bundled Tooling</h2>
-      <p class="viewport__description">
-        Deploy ROS 2, mission utilities, and supporting binaries that ship with this extension to a local workspace.
-      </p>
-      <ol class="viewport__list">
-        <li>Select a destination folder on your machine.</li>
-        <li>Confirm the copy operation to extract tools.</li>
-        <li>Add the install path to your PATH or robotics runtime.</li>
-      </ol>
-      <div class="viewport__actions">
-        <button id="installTools" class="viewport__action">Install TensorFleet Toolchain</button>
-        <button id="openAllPanels" class="viewport__action viewport__action--secondary">Open All Dashboards</button>
+        <section class="viewport tooling-card">
+          <div class="tooling-card__meta">
+            <span class="tooling-card__chip">Robotics</span>
+            <span>ROS 2 + mission code</span>
+          </div>
+          <h2 class="viewport__title">Robotic Quick Start</h2>
+          <p class="viewport__description">
+            Spin up a robotics-focused workspace using the same TensorFleet boilerplate, ready for ROS 2, teleop, and perception demos.
+          </p>
+          <div class="viewport__actions">
+            <button id="newRoboticProject" class="viewport__action">🤖 New Robotic Project</button>
+          </div>
+        </section>
       </div>
-    </section>
+
+      <section class="viewport tooling-card">
+        <div class="tooling-card__meta">
+          <span class="tooling-card__chip">Toolchain</span>
+          <span>Local binaries for offline work</span>
+        </div>
+        <h2 class="viewport__title">Install Bundled Tooling</h2>
+        <p class="viewport__description">
+          Deploy ROS 2, mission utilities, and supporting binaries that ship with this extension into a local workspace on your machine.
+        </p>
+        <ol class="viewport__list">
+          <li>Select a destination folder on your machine.</li>
+          <li>Confirm the copy operation to extract tools.</li>
+          <li>Add the install path to your PATH or robotics runtime.</li>
+        </ol>
+        <div class="viewport__actions">
+          <button id="installTools" class="viewport__action">Install TensorFleet Toolchain</button>
+          <button id="openAllPanels" class="viewport__action viewport__action--secondary">Open All Dashboards</button>
+        </div>
+        <hr class="tooling-divider" />
+        <div class="tooling-footer">
+          <span>After install, dashboards and panels will discover the new tooling automatically.</span>
+          <span>Need help? Open the README from the Command Palette.</span>
+        </div>
+      </section>
+    </main>
     <script nonce="tooling">
       const vscode = acquireVsCodeApi();
       document.getElementById('newProject')?.addEventListener('click', () => {
