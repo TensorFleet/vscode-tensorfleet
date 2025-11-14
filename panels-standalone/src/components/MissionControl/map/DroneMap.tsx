@@ -17,7 +17,7 @@ import { fromLonLat } from 'ol/proj';
 import { unByKey } from 'ol/Observable';
 import type { EventsKey } from 'ol/events';
 
-import type { DroneStateModel, DroneState } from '../DroneStateModel';
+import type { DroneStateModel, DroneState } from '../../../mission-control/drone-state-model';
 import { MapButtonsStack, FollowLockButton } from './MapButtons';
 import { FlightPathTools } from './FlightPathTools';
 
