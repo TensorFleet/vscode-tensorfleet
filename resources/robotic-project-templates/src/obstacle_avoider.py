@@ -1,438 +1,237 @@
 #!/usr/bin/env python3
 """
-Simple client for the rosbridge WebSocket server running inside the VM.
+Obstacle avoidance using LiDAR and roslibpy.
 
-This is a trimmed‑down version of the working example you provided, focused on:
+The robot:
+- Moves forward by default
+- If obstacle detected, chooses best escape direction: left, right, or backward
+- Resumes forward movement when path is clear
 
-  - Connectivity test via /rosapi/topics
-  - Sending control commands to ROS 2 topics
-  - Subscribing to a raw image topic, running YOLO on CPU, and
-    republishing an annotated image back into ROS
-
-Dependencies (on the host):
-  pip install roslibpy numpy
-  # For YOLO image mode:
-  pip install ultralytics opencv-python
+Dependencies:
+  pip install roslibpy
 """
 
 import argparse
-import base64
 import sys
 import time
-import threading
 
 try:
-    import roslibpy  # type: ignore[import]
-except ImportError:  # pragma: no cover - import-time check
+    import roslibpy
+except ImportError:
     print("ERROR: The 'roslibpy' package is required.", file=sys.stderr)
-    print("Install it on the host with:", file=sys.stderr)
-    print("  pip install roslibpy", file=sys.stderr)
+    print("Install it with: pip install roslibpy", file=sys.stderr)
     sys.exit(1)
 
-try:
-    import numpy as np  # type: ignore[import]
-except ImportError:  # pragma: no cover - optional
-    np = None  # Image/Yolo mode will check for this explicitly.
 
-try:
-    from ultralytics import YOLO  # type: ignore[import]
-except ImportError:  # pragma: no cover - optional
-    YOLO = None  # YOLO mode will check for this explicitly.
+class ObstacleAvoider:
+    def __init__(self, client, cmd_vel_topic, scan_topic, obstacle_distance, clear_distance, linear_speed, angular_speed):
+        self.client = client
+        self.obstacle_distance = obstacle_distance
+        self.clear_distance = clear_distance
+        self.linear_speed = linear_speed
+        self.angular_speed = angular_speed
+        
+        # Publisher for movement commands
+        self.cmd_vel_pub = roslibpy.Topic(client, cmd_vel_topic, "geometry_msgs/Twist")
+        
+        # Subscriber for LiDAR data
+        self.scan_sub = roslibpy.Topic(client, scan_topic, "sensor_msgs/LaserScan")
+        self.scan_sub.subscribe(self.on_scan)
+        
+        self.latest_scan = None
+        self.running = True
+        self.state = "FORWARD"  # States: FORWARD, TURNING_LEFT, TURNING_RIGHT, BACKING_UP
+        
+        print(f"Obstacle avoider initialized:")
+        print(f"  - Obstacle distance threshold: {obstacle_distance}m")
+        print(f"  - Clear distance required: {clear_distance}m")
+        print(f"  - Linear speed: {linear_speed} m/s")
+        print(f"  - Angular speed: {angular_speed} rad/s")
+    
+    def on_scan(self, message):
+        """Callback for LiDAR scan messages"""
+        self.latest_scan = message
+    
+    def get_min_distance_in_arc(self, ranges, center_idx, arc_degrees):
+        """
+        Get minimum distance in an arc around center_idx.
+        arc_degrees: total arc width in degrees
+        """
+        total_points = len(ranges)
+        angle_increment = self.latest_scan['angle_increment']
+        arc_rad = (arc_degrees / 2) * 3.14159 / 180
+        points_half_arc = int(arc_rad / angle_increment)
+        
+        distances = []
+        for offset in range(-points_half_arc, points_half_arc + 1):
+            idx = (center_idx + offset) % total_points
+            if ranges[idx] is not None and ranges[idx] > 0:
+                distances.append(ranges[idx])
+        
+        return min(distances) if distances else float('inf')
+    
+    def analyze_surroundings(self):
+        """
+        Analyze all directions and choose best escape route.
+        Returns: (action, min_front_distance)
+        action: "FORWARD", "TURN_LEFT", "TURN_RIGHT", "BACK_UP"
+        """
+        if not self.latest_scan:
+            return "FORWARD", float('inf')
+        
+        ranges = self.latest_scan['ranges']
+        
+        # Handle both dict and list formats
+        if isinstance(ranges, dict):
+            ranges = [ranges.get(str(i)) for i in range(len(ranges))]
+        
+        total_points = len(ranges)
+        quarter = total_points // 4
+        
+        # Check all four directions
+        front = self.get_min_distance_in_arc(ranges, 0, 90)           # 0° ± 45°
+        left = self.get_min_distance_in_arc(ranges, quarter, 90)      # 90° ± 45°
+        back = self.get_min_distance_in_arc(ranges, quarter * 2, 90)  # 180° ± 45°
+        right = self.get_min_distance_in_arc(ranges, quarter * 3, 90) # 270° ± 45°
+        
+        # Decide action based on current state
+        if self.state == "FORWARD":
+            # Moving forward, check if we need to avoid
+            if front < self.obstacle_distance:
+                # Obstacle ahead! Choose best escape
+                directions = [
+                    ("TURN_LEFT", left),
+                    ("TURN_RIGHT", right),
+                    ("BACK_UP", back)
+                ]
+                # Pick direction with most space
+                best_action, best_distance = max(directions, key=lambda x: x[1])
+                return best_action, front
+            else:
+                return "FORWARD", front
+        
+        else:  # Currently avoiding (turning or backing up)
+            # Check if path ahead is clear enough to resume
+            if front > self.clear_distance:
+                return "FORWARD", front
+            else:
+                # Keep avoiding, stick with current maneuver
+                return self.state.replace("TURNING_", "TURN_").replace("BACKING_", "BACK_"), front
+    
+    def publish_velocity(self, linear_x, angular_z):
+        """Publish velocity command"""
+        msg = roslibpy.Message({
+            "linear": {"x": linear_x, "y": 0.0, "z": 0.0},
+            "angular": {"x": 0.0, "y": 0.0, "z": angular_z}
+        })
+        self.cmd_vel_pub.publish(msg)
+    
+    def run(self):
+        """Main control loop"""
+        print("\nStarting obstacle avoidance...")
+        print("Robot will move forward and avoid obstacles.")
+        print("Press Ctrl+C to stop.\n")
+        
+        try:
+            while self.running and self.client.is_connected:
+                if self.latest_scan is None:
+                    print("Waiting for LiDAR data...")
+                    time.sleep(0.5)
+                    continue
+                
+                action, front_dist = self.analyze_surroundings()
+                
+                if action == "FORWARD":
+                    if self.state != "FORWARD":
+                        print(f"\n✓ Path clear at {front_dist:.2f}m! Resuming forward...")
+                    self.state = "FORWARD"
+                    print(f"✓ Moving forward (clear: {front_dist:.2f}m)    ", end='\r')
+                    self.publish_velocity(self.linear_speed, 0.0)
+                
+                elif action == "TURN_LEFT":
+                    if self.state != "TURNING_LEFT":
+                        print(f"\n⚠️ Obstacle at {front_dist:.2f}m! Turning LEFT...")
+                    self.state = "TURNING_LEFT"
+                    print(f"🔄 Turning LEFT... (obstacle: {front_dist:.2f}m)    ", end='\r')
+                    self.publish_velocity(0.0, self.angular_speed)
+                
+                elif action == "TURN_RIGHT":
+                    if self.state != "TURNING_RIGHT":
+                        print(f"\n⚠️ Obstacle at {front_dist:.2f}m! Turning RIGHT...")
+                    self.state = "TURNING_RIGHT"
+                    print(f"🔄 Turning RIGHT... (obstacle: {front_dist:.2f}m)    ", end='\r')
+                    self.publish_velocity(0.0, -self.angular_speed)
+                
+                elif action == "BACK_UP":
+                    if self.state != "BACKING_UP":
+                        print(f"\n🚨 Boxed in at {front_dist:.2f}m! BACKING UP...")
+                    self.state = "BACKING_UP"
+                    print(f"⏪ Backing up... (obstacle: {front_dist:.2f}m)    ", end='\r')
+                    self.publish_velocity(-self.linear_speed * 0.7, 0.0)
+                
+                time.sleep(0.05)  # 20Hz control loop
+                
+        except KeyboardInterrupt:
+            print("\n\nStopping robot...")
+        finally:
+            self.stop()
+    
+    def stop(self):
+        """Stop the robot and clean up"""
+        self.running = False
+        self.publish_velocity(0.0, 0.0)
+        time.sleep(0.5)
+        self.scan_sub.unsubscribe()
+        self.cmd_vel_pub.unadvertise()
+        print("Robot stopped.")
 
-try:
-    import cv2  # type: ignore[import]
-except ImportError:  # pragma: no cover - optional
-    cv2 = None  # Compressed image mode will check for this explicitly.
 
-
-YOLO_MODEL = None
-
-
-def parse_args() -> argparse.Namespace:
+def parse_args():
     parser = argparse.ArgumentParser(
-        description="Vision client: subscribe to images over rosbridge, run YOLO, and republish.",
+        description="Obstacle avoidance using LiDAR"
     )
-    parser.add_argument(
-        "--host",
-        default="172.16.0.10",
-        help="ROS bridge host (default: 172.16.0.10 inside VM)",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=9091,
-        help="ROS bridge WebSocket port (default: 9091)",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=5.0,
-        help="Timeout in seconds for rosbridge service calls (default: 5.0).",
-    )
-    parser.add_argument(
-        "--image-topic",
-        default="/camera/image_raw/compressed",
-        help=(
-            "Source image topic for image_yolo mode. "
-            "Default: /camera/image_raw/compressed (sensor_msgs/CompressedImage). "
-            "Use e.g. /camera/image_raw for raw sensor_msgs/Image."
-        ),
-    )
-    parser.add_argument(
-        "--annotated-image-topic",
-        default="/camera/image_annotated",
-        help="Destination topic for annotated images in image_yolo mode (default: /camera/image_annotated).",
-    )
-    parser.add_argument(
-        "--max-images",
-        type=int,
-        default=0,
-        help="Maximum number of images to process in image_yolo mode (default: 0; <=0 means infinite).",
-    )
-    parser.add_argument(
-        "--no-yolo",
-        action="store_true",
-        help="In image_yolo mode, disable YOLO and just republish images.",
-    )
-    parser.add_argument(
-        "--max-wait-seconds",
-        type=float,
-        default=0.0,
-        help=(
-            "In image_yolo mode with --max-images 0, maximum wall-clock "
-            "seconds to wait before exiting (default: 0 for infinite)."
-        ),
-    )
+    parser.add_argument("--host", default="172.16.0.10", help="ROS bridge host")
+    parser.add_argument("--port", type=int, default=9091, help="ROS bridge port")
+    parser.add_argument("--cmd-vel-topic", default="/cmd_vel_raw", help="Velocity command topic")
+    parser.add_argument("--scan-topic", default="/scan", help="LiDAR scan topic")
+    parser.add_argument("--obstacle-distance", type=float, default=0.5, 
+                       help="Distance to trigger avoidance (default: 0.5m)")
+    parser.add_argument("--clear-distance", type=float, default=1.0,
+                       help="Distance needed to resume forward (default: 1.0m)")
+    parser.add_argument("--linear-speed", type=float, default=3.0,
+                       help="Forward speed in m/s (default: 3.0)")
+    parser.add_argument("--angular-speed", type=float, default=4.0,
+                       help="Turning speed in rad/s (default: 4.0)")
     return parser.parse_args()
 
 
-def _require_numpy() -> None:
-    if np is None:  # type: ignore[truthy-function]
-        print(
-            "ERROR: numpy is required for image_yolo mode.\n"
-            "Install it with:\n"
-            "  pip install numpy",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-
-def _require_yolo() -> None:
-    if YOLO is None:  # type: ignore[truthy-function]
-        print(
-            "ERROR: ultralytics YOLO is required for image_yolo mode.\n"
-            "Install it (and CPU deps) with:\n"
-            "  pip install ultralytics opencv-python",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-
-def _get_yolo_model():
-    global YOLO_MODEL
-    _require_yolo()
-    if YOLO_MODEL is None:
-        # Small default model for CPU inference.
-        YOLO_MODEL = YOLO("yolov8n.pt")  # type: ignore[call-arg]
-    return YOLO_MODEL
-
-
-def _run_yolo_on_image(img_np):
-    """
-    Run YOLO on an RGB image and return an annotated RGB image.
-    """
-    print("Running YOLO inference on image ...")
-    model = _get_yolo_model()
-    # YOLO expects BGR images; convert from RGB.
-    bgr = img_np[..., ::-1].copy()
-    try:
-        results = model(bgr, verbose=False, device="cpu")  # type: ignore[call-arg]
-    except TypeError:
-        # Older versions might not accept device kwarg.
-        results = model(bgr, verbose=False)  # type: ignore[call-arg]
-    annotated_bgr = results[0].plot()
-    annotated_rgb = annotated_bgr[..., ::-1]
-    print("YOLO inference finished.")
-    return annotated_rgb
-
-
-def _require_cv2() -> None:
-    if cv2 is None:  # type: ignore[truthy-function]
-        print(
-            "ERROR: OpenCV (cv2) is required for compressed image mode.\n"
-            "Install it with:\n"
-            "  pip install opencv-python",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-
-def _decode_ros_image(img_msg: dict):
-    """
-    Decode a ROS sensor_msgs/Image-style message from rosbridge into a numpy array.
-
-    Returns (image_np, meta) where image_np is HxWxC uint8 and meta tracks how
-    the data field was encoded so we can re-encode it later.
-    """
-    _require_numpy()
-
-    height = img_msg["height"]
-    width = img_msg["width"]
-    step = img_msg.get("step")
-    encoding = img_msg.get("encoding", "rgb8")
-    data_field = img_msg["data"]
-
-    if isinstance(data_field, str):
-        raw = base64.b64decode(data_field)
-        encoding_kind = "base64"
-    else:
-        raw = bytes(data_field)
-        encoding_kind = "list"
-
-    if step is None or step == 0:
-        # Assume tightly packed RGB
-        channels = 3
-        step = width * channels
-    else:
-        channels = step // width
-
-    img = np.frombuffer(raw, dtype=np.uint8)  # type: ignore[arg-type]
-    img = img.reshape((height, width, channels))
-
-    meta = {
-        "encoding": encoding,
-        "encoding_kind": encoding_kind,
-        "step": step,
-        "height": height,
-        "width": width,
-    }
-    return img, meta
-
-
-def _decode_compressed_ros_image(img_msg: dict):
-    """
-    Decode a ROS sensor_msgs/CompressedImage-style message into an RGB numpy array.
-
-    Returns (image_np, meta) where image_np is HxWxC uint8 (RGB) and meta is
-    compatible with _encode_ros_image so that we can republish as a raw
-    sensor_msgs/Image message.
-    """
-    _require_numpy()
-    _require_cv2()
-
-    data_field = img_msg["data"]
-
-    if isinstance(data_field, str):
-        compressed = base64.b64decode(data_field)
-        encoding_kind = "base64"
-    else:
-        compressed = bytes(data_field)
-        encoding_kind = "list"
-
-    buf = np.frombuffer(compressed, dtype=np.uint8)  # type: ignore[arg-type]
-    bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)  # type: ignore[arg-type]
-    if bgr is None:
-        raise RuntimeError("cv2.imdecode returned None for compressed image")
-
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)  # type: ignore[arg-type]
-    height, width, _channels = rgb.shape
-
-    # We republish as rgb8 raw image data.
-    meta = {
-        "encoding": "rgb8",
-        # We always encode annotated images as base64 strings when republishing
-        # (works well over rosbridge and keeps messages compact).
-        "encoding_kind": encoding_kind or "base64",
-        "step": width * 3,
-        "height": height,
-        "width": width,
-    }
-    return rgb, meta
-
-
-def _encode_ros_image(img, template_msg: dict, meta: dict) -> dict:
-    """
-    Encode a numpy image back into a sensor_msgs/Image-style dict.
-
-    This copies the original message and overrides only the image-related fields.
-    """
-    _require_numpy()
-
-    height, width, channels = img.shape
-    buf = img.astype("uint8").tobytes()
-
-    if meta["encoding_kind"] == "base64":
-        data_field = base64.b64encode(buf).decode("ascii")
-    else:
-        data_field = list(buf)
-
-    out = dict(template_msg)
-    out["height"] = height
-    out["width"] = width
-    out["step"] = width * channels
-    out["encoding"] = meta.get("encoding", "rgb8")
-    out["data"] = data_field
-    return out
-
-
-def _lookup_topic_type(client: "roslibpy.Ros", topic: str, timeout: float = 5.0) -> str:
-    """Ask rosapi for the type of a given topic for image streams."""
-    service = roslibpy.Service(client, "/rosapi/topic_type", "rosapi/TopicType")
-    request = roslibpy.ServiceRequest({"topic": topic})
-    try:
-        response = service.call(request, timeout=timeout)
-    except Exception as exc:  # pragma: no cover - network-dependent
-        print(
-            f"WARNING: Failed to query /rosapi/topic_type for '{topic}': {exc}",
-            file=sys.stderr,
-        )
-        return ""
-
-    topic_type_ros2 = response.get("type", "") or ""
-    if not topic_type_ros2:
-        print(
-            f"WARNING: /rosapi/topic_type returned empty type for '{topic}'.",
-            file=sys.stderr,
-        )
-    else:
-        print(f"Resolved topic '{topic}' type as '{topic_type_ros2}'.")
-
-    # roslibpy expects ROS 1 style names (pkg/Msg), but rosapi on ROS 2 returns
-    # 'pkg/msg/Msg'. Convert if needed.
-    if "/msg/" in topic_type_ros2:
-        pkg, msg = topic_type_ros2.split("/msg/", 1)
-        topic_type_ros1 = f"{pkg}/{msg}"
-    else:
-        topic_type_ros1 = topic_type_ros2
-
-    return topic_type_ros1
-
-
-def image_yolo(client: "roslibpy.Ros", args: argparse.Namespace) -> None:
-    """
-    Simple pipeline:
-      - subscribe to an image topic from the VM via rosbridge
-      - convert to numpy
-      - optionally run YOLO on CPU + draw annotations
-      - publish annotated image to another ROS topic
-    """
-    _require_numpy()
-    if not args.no_yolo:
-        _require_yolo()
-
-    src_topic = args.image_topic
-    dst_topic = args.annotated_image_topic
-    max_images = args.max_images
-
-    print(f"Subscribing to image topic '{src_topic}' ...")
-    resolved_type = _lookup_topic_type(client, src_topic, timeout=args.timeout)
-    if not resolved_type:
-        # Fallback to a common ROS 1 style type name expected by roslibpy.
-        # We assume a raw Image here; compressed streams should normally be
-        # discoverable via rosapi.
-        resolved_type = "sensor_msgs/Image"
-        print(
-            f"Falling back to default type '{resolved_type}' for '{src_topic}'.",
-        )
-
-    print(f"Input topic '{src_topic}' resolved type: '{resolved_type}'.")
-    input_is_compressed = "CompressedImage" in resolved_type
-
-    subscriber = roslibpy.Topic(
-        client,
-        src_topic,
-        resolved_type,
-        queue_length=1,
-    )
-
-    # Always publish annotated frames as raw sensor_msgs/Image so that tools
-    # like ImagePanel and RawMessagesPanel can visualize them easily.
-    annotated_type = "sensor_msgs/Image"
-
-    print(
-        f"Advertising annotated image topic '{dst_topic}' "
-        f"({annotated_type}) ...",
-    )
-    publisher = roslibpy.Topic(
-        client,
-        dst_topic,
-        annotated_type,
-    )
-
-    processed = 0
-    done_event = threading.Event()
-    print("Waiting for images ...")
-
-    def _on_image(msg):
-        nonlocal processed
-        print(f"Received image message on '{src_topic}'.")
-        img_msg = msg
-
-        if input_is_compressed:
-            img_np, meta = _decode_compressed_ros_image(img_msg)
-        else:
-            img_np, meta = _decode_ros_image(img_msg)
-
-        if args.no_yolo:
-            annotated = img_np
-        else:
-            # Run YOLO on CPU and get annotated frame.
-            annotated = _run_yolo_on_image(img_np)
-
-        annotated_msg = _encode_ros_image(annotated, img_msg, meta)
-        publisher.publish(roslibpy.Message(annotated_msg))
-
-        processed += 1
-        print(
-            f"Processed image {processed} "
-            f"({meta['width']}x{meta['height']}), "
-            f"published to {dst_topic}",
-        )
-
-        if max_images > 0 and processed >= max_images:
-            subscriber.unsubscribe()
-            done_event.set()
-
-    subscriber.subscribe(_on_image)
-
-    if max_images > 0:
-        # Wait until we've processed the requested number of images.
-        done_event.wait()
-    else:
-        # Run until interrupted or until max_wait_seconds (if > 0) elapses.
-        start = time.time()
-        try:
-            while True:
-                if args.max_wait_seconds > 0.0 and (time.time() - start) > args.max_wait_seconds:
-                    print(
-                        f"No images received within {args.max_wait_seconds} seconds; "
-                        "exiting image_yolo.",
-                    )
-                    subscriber.unsubscribe()
-                    break
-                time.sleep(0.5)
-        except KeyboardInterrupt:
-            subscriber.unsubscribe()
-
-    print("Completed image_yolo processing.")
-
-
-def main() -> None:
+def main():
     args = parse_args()
-    print(f"Connecting to rosbridge at {args.host}:{args.port} using roslibpy ...")
+    
+    print(f"Connecting to rosbridge at {args.host}:{args.port}...")
     client = roslibpy.Ros(host=args.host, port=args.port)
+    
     try:
         client.run()
-    except Exception as exc:  # pragma: no cover - network-dependent
-        print(f"ERROR: Failed to connect to rosbridge: {exc}", file=sys.stderr)
+        print("✓ Connected to rosbridge\n")
+    except Exception as e:
+        print(f"ERROR: Failed to connect: {e}", file=sys.stderr)
         sys.exit(1)
-
-    print("roslibpy connection established successfully.")
-
+    
     try:
-        image_yolo(client, args)
+        avoider = ObstacleAvoider(
+            client=client,
+            cmd_vel_topic=args.cmd_vel_topic,
+            scan_topic=args.scan_topic,
+            obstacle_distance=args.obstacle_distance,
+            clear_distance=args.clear_distance,
+            linear_speed=args.linear_speed,
+            angular_speed=args.angular_speed
+        )
+        avoider.run()
     finally:
         client.terminate()
+        print("Connection closed.")
 
 
 if __name__ == "__main__":
