@@ -1,0 +1,15 @@
+{
+  "name": "tensorfleet-robotic-js-project",
+  "version": "0.0.1",
+  "private": true,
+  "description": "TensorFleet robotics starter using JavaScript and roslib over rosbridge.",
+  "scripts": {
+    "robot:mover": "node src/robot_mover.js",
+    "robot:obstacle": "node src/obstacle_avoider.js",
+    "robot:image": "node src/image_passthrough.js"
+  },
+  "dependencies": {
+    "roslib": "^1.3.0"
+  }
+}
+
