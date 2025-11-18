@@ -243,13 +243,13 @@
       "properties": {
         "tensorfleet.ros2.websocketUrl": {
           "type": "string",
-          "default": "ws://172.16.0.2:9091",
+          "default": "ws://172.16.0.10:9091",
           "description": "ROS2 WebSocket URL (rosbridge_suite) for remote connections (e.g., Firecracker VM)",
           "pattern": "^(ws|wss)://.*$"
         },
         "tensorfleet.ros2.foxgloveUrl": {
           "type": "string",
-          "default": "ws://172.16.0.2:8765",
+          "default": "ws://172.16.0.10:8765",
           "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
           "pattern": "^(ws|wss)://.*$"
         },

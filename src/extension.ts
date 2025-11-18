@@ -108,13 +108,7 @@ const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
 const terminalRegistry = new Map<string, vscode.Terminal>();
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
-let ros2Bridge: ROS2Bridge | null = null;
-let ros2WebSocketBridge: ROS2WebSocketBridge | null = null;
-let foxgloveBridge: FoxgloveBridge | null = null;
 
-// Active ROS2 connection mode: 'native' | 'websocket' | 'foxglove'
-let ros2ConnectionMode: 'native' | 'websocket' | 'foxglove' | null = null;
-let preferredConnectionMode: 'auto' | 'native' | 'rosbridge' | 'foxglove' = 'rosbridge';
 let vmManagerIntegration: VMManagerIntegration | null = null;
 
 // Status bar items for TensorFleet projects
@@ -190,42 +184,6 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.connectROS2', () => connectToROS2(context))
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.connectROS2WebSocket', () => connectToROS2WebSocket(context))
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.disconnectROS2WebSocket', () => disconnectROS2WebSocket())
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.configureROS2WebSocket', () => configureROS2WebSocket())
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.connectFoxgloveBridge', () => connectToFoxgloveBridge(context))
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.disconnectFoxgloveBridge', () => disconnectFoxgloveBridge())
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.configureFoxgloveBridge', () => configureFoxgloveBridge())
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.disconnectROS2', () => disconnectFromROS2())
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.startPX4Telemetry', () => startPX4TelemetryMonitor(context))
   );
 
   if (vmManagerIntegration) {

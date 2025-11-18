@@ -128,8 +128,8 @@
       </div>
       <div class="connection-controls">
         <select id="connectionType">
-          <option value="rosbridge">ROS Bridge (ws://172.16.0.2:9091)</option>
-          <option value="foxglove">Foxglove Bridge (ws://172.16.0.2:8765)</option>
+          <option value="rosbridge">ROS Bridge (ws://172.16.0.10:9091)</option>
+          <option value="foxglove">Foxglove Bridge (ws://172.16.0.10:8765)</option>
         </select>
         <button id="connectBtn" style="padding: 0.5rem 1rem; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer;">
           Connect
@@ -186,7 +186,7 @@
     
     connectBtn.addEventListener('click', () => {
       const type = document.getElementById('connectionType').value;
-      const url = type === 'rosbridge' ? 'ws://172.16.0.2:9091' : 'ws://172.16.0.2:8765';
+      const url = type === 'rosbridge' ? 'ws://172.16.0.10:9091' : 'ws://172.16.0.10:8765';
       
       connectionStatus.textContent = 'Connecting...';
       statusDot.className = 'status-dot status-disconnected';
