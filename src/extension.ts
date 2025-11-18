@@ -642,7 +642,7 @@ async function createNewProjectInternal(
   const templateFolder = vscode.Uri.joinPath(
     context.extensionUri,
     'resources',
-    options.templateSubdir ?? 'project-templates'
+    options.templateSubdir ?? 'drone-js-project-templates'
   );
 
   try {
