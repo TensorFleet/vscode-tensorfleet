@@ -230,10 +230,6 @@ export class ROS2Bridge {
       console.error("Foxglove client error", err);
     };
 
-    this.client.onNewTopic = (topic, type) => {
-      console.log("new Foxglove topic:", topic, "type:", type);
-    };
-
     this.client.onMessage = (msg) => {
       const ref = { topic: msg.topic, type: msg.schemaName, msg: msg.payload };
       this.handleFoxgloveMessage(ref);
@@ -353,6 +349,15 @@ export class ROS2Bridge {
 
   isConnected(): boolean {
     return !!this.client && this.client.isConnected();
+    return this.client?.isConnected() ?? false;
+  }
+
+  getAvailableTopics(): Subscription[] {
+    return this.client?.getAvailableTopics() ?? [];
+  }
+
+  getTopicType(topic: string): string | undefined {
+    return this.client?.getTopicType(topic);
   }
 
   getAvailableImageTopics(): Subscription[] {
@@ -643,5 +648,5 @@ export class ROS2Bridge {
 
 export const ros2Bridge = new ROS2Bridge();
 
-// Auto-connect Foxglove (no rosbridge)
-ros2Bridge.connect("foxglove");
+// Auto-connect on load (using rosbridge by default)
+ros2Bridge.connect();

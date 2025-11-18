@@ -263,14 +263,14 @@ bun run compile
 ### Connection Status (Updated Nov 5, 2025)
 
 **🏆 Foxglove Bridge (RECOMMENDED for smooth video)**  
-- **Endpoint:** `ws://172.16.0.2:8765`
+- **Endpoint:** `ws://172.16.0.10:8765`
 - **Protocol:** Binary WebSocket (C++ bridge)
 - **Best for:** CompressedImage (JPEG/PNG) - hardware-accelerated browser decoding
 - **Performance:** <1% CPU, ~15 MB RAM, 30-60 FPS
 - **Status:** ✅ Working with compressed images
 
 **rosbridge (fallback for raw images)**  
-- **Endpoint:** `ws://172.16.0.2:9091`
+- **Endpoint:** `ws://172.16.0.10:9091`
 - **Protocol:** JSON over WebSocket (Python bridge)
 - **Best for:** Raw images (RGB8, BGR8, MONO8, MONO16) - CPU pixel decoding
 - **Performance:** ~3% CPU, ~20 MB RAM, 10-15 FPS
@@ -336,7 +336,7 @@ cd /home/shane/vscode-tensorfleet
 ### Commands
 - `TensorFleet: Connect to Foxglove Bridge` - Connect via Foxglove (best for video)
 - `TensorFleet: Connect to ROS2 (WebSocket)` - Connect via rosbridge (fallback)
-- `TensorFleet: Configure Foxglove Bridge URL` - Change endpoint (default: ws://172.16.0.2:8765)
+- `TensorFleet: Configure Foxglove Bridge URL` - Change endpoint (default: ws://172.16.0.10:8765)
 
 ### Technical Details
 - **Foxglove:** `src/foxglove-bridge.ts` - Binary protocol, C++ bridge
@@ -347,8 +347,8 @@ cd /home/shane/vscode-tensorfleet
 
 ```bash
 # Check connection
-nc -zv 172.16.0.2 8765  # Foxglove
-nc -zv 172.16.0.2 9091  # rosbridge
+nc -zv 172.16.0.10 8765  # Foxglove
+nc -zv 172.16.0.10 9091  # rosbridge
 
 # Enable compressed image topics in ROS2
 ros2 run image_transport republish raw compressed \

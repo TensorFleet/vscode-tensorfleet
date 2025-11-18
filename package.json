@@ -19,6 +19,7 @@
     "onView:tensorfleet-image-panel",
     "onView:tensorfleet-teleops-panel",
     "onView:tensorfleet-map-panel",
+    "onView:tensorfleet-raw-messages-panel",
     "onView:tensorfleet-tooling-view",
     "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
@@ -27,6 +28,7 @@
     "onCommand:tensorfleet.openImagePanel",
     "onCommand:tensorfleet.openTeleopsPanel",
     "onCommand:tensorfleet.openMapPanel",
+    "onCommand:tensorfleet.openRawMessagesPanel",
     "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.installTools",
     "onCommand:tensorfleet.openAllPanels",
@@ -35,6 +37,7 @@
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
     "onCommand:tensorfleet.showDroneStatus",
+    "onCommand:tensorfleet.showVMManagerMenu",
     "onCommand:tensorfleet.connectROS2",
     "onCommand:tensorfleet.disconnectROS2",
     "onCommand:tensorfleet.startPX4Telemetry",
@@ -100,6 +103,11 @@
           "id": "tensorfleet-map-panel",
           "name": "Map Panel",
           "type": "webview"
+        },
+        {
+          "id": "tensorfleet-raw-messages-panel",
+          "name": "Raw Messages Panel",
+          "type": "webview"
         }
       ],
       "tensorfleet-tooling": [
@@ -144,6 +152,11 @@
       {
         "command": "tensorfleet.openMapPanel",
         "title": "TensorFleet: Open Map Panel",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openRawMessagesPanel",
+        "title": "TensorFleet: Open Raw Messages Panel",
         "category": "TensorFleet"
       },
       {
@@ -230,6 +243,11 @@
         "command": "tensorfleet.configureFoxgloveBridge",
         "title": "TensorFleet: Configure Foxglove Bridge URL",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.showVMManagerMenu",
+        "title": "TensorFleet: Show VM Actions",
+        "category": "TensorFleet"
       }
     ],
     "configuration": {
@@ -237,15 +255,25 @@
       "properties": {
         "tensorfleet.ros2.websocketUrl": {
           "type": "string",
-          "default": "ws://172.16.0.2:9091",
+          "default": "ws://172.16.0.10:9091",
           "description": "ROS2 WebSocket URL (rosbridge_suite) for remote connections (e.g., Firecracker VM)",
           "pattern": "^(ws|wss)://.*$"
         },
         "tensorfleet.ros2.foxgloveUrl": {
           "type": "string",
-          "default": "ws://172.16.0.2:8765",
+          "default": "ws://172.16.0.10:8765",
           "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
           "pattern": "^(ws|wss)://.*$"
+        },
+        "tensorfleet.vmManager.apiBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Base URL for the vm-manager HTTP API used by the VM status bar."
+        },
+        "tensorfleet.vmManager.authToken": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional bearer token that will be sent as `Authorization: Bearer <token>` with every `/vms/self/*` request. Leave blank when developing against a server that skips auth."
         }
       }
     },
@@ -279,6 +307,11 @@
         {
           "command": "tensorfleet.openTeleopsPanel",
           "when": "view == tensorfleet-teleops-panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tensorfleet.openRawMessagesPanel",
+          "when": "view == tensorfleet-raw-messages-panel",
           "group": "navigation@1"
         },
         {
@@ -337,16 +370,11 @@
     "@mcap/core": "^2.1.7",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@protobufjs/base64": "^1.1.2",
-    "@types/ws": "^8.18.1",
     "flatbuffers": "^25.9.23",
     "flatbuffers_reflection": "^1.2.0",
-    "protobufjs": "^7.5.4",
-    "roslib": "^1.4.1",
-    "ws": "^8.18.3"
+    "protobufjs": "^7.5.4"
   },
-  "optionalDependencies": {
-    "rclnodejs": "^0.21.4"
-  },
+  "optionalDependencies": {},
   "devDependencies": {
     "@types/node": "^18.17.0",
     "@types/vscode": "^1.85.0",
