@@ -1,16 +1,39 @@
+// ros2-bridge.ts
 /**
  * ROS2 Bridge for Standalone Mode
- * Connects directly to rosbridge or Foxglove Bridge WebSocket
+ * Connects directly to Foxglove Bridge WebSocket (CDR + services).
+ *
+ * Strict constraints honored:
+ *  - No rosbridge usage.
+ *  - Controller only interacts with DroneStateModel & this ROS2Bridge for publish/service.
+ *  - Subscriptions are forwarded to the Foxglove client; reconnect resubscribes automatically.
+ *  - No "workarounds" (no std_msgs/String hacks). Use real MAVROS types & Foxglove services.
  */
-import { FoxgloveWsClient } from "./FoxgloveNetworking";
 
-export type ConnectionMode = 'rosbridge' | 'foxglove';
+import { FoxgloveWsClient } from "./foxglove-networking";
+
+export type ConnectionMode = "foxglove";
 
 export interface Subscription {
-  topic: string,
-  type: string
+  topic: string;
+  type: string;
 }
 
+/** MAVROS structs */
+export interface CommandLong_Request {
+  command: number;
+  confirmation?: number;
+  param1?: number; param2?: number; param3?: number; param4?: number;
+  param5?: number; param6?: number; param7?: number;
+  broadcast?: boolean;
+}
+export interface CommandLong_Response {
+  success: boolean;
+  result: number;
+}
+
+
+/** ---------- Common message structs ---------- */
 export interface ImageMessage {
   topic: string;
   timestamp: string; // ISO string
@@ -20,72 +43,28 @@ export interface ImageMessage {
   width: number;
   height: number;
   data: string; // base64 or data URI
-  messageType: 'raw' | 'compressed';
+  messageType: "raw" | "compressed";
 }
 
 export interface TwistMessage {
   linear: { x: number; y: number; z: number };
   angular: { x: number; y: number; z: number };
 }
+export interface BuiltinTime { sec: number; nanosec: number }
+export interface StdHeader { stamp: BuiltinTime; frame_id: string }
 
-export interface BuiltinTime {
-  sec: number;
-  nanosec: number;
-}
+export interface GeometryVector3 { x: number; y: number; z: number }
+export interface GeometryPoint { x: number; y: number; z: number }
+export interface GeometryQuaternion { x: number; y: number; z: number; w: number }
 
-export interface StdHeader {
-  stamp: BuiltinTime;
-  frame_id: string;
-}
+export interface GeometryPose { position: GeometryPoint; orientation: GeometryQuaternion }
+export interface GeometryTwist { linear: GeometryVector3; angular: GeometryVector3 }
 
-export interface GeometryVector3 {
-  x: number;
-  y: number;
-  z: number;
-}
+export interface GeometryPoseWithCovariance { pose: GeometryPose; covariance: number[] }
+export interface GeometryTwistWithCovariance { twist: GeometryTwist; covariance: number[] }
 
-export interface GeometryPoint {
-  x: number;
-  y: number;
-  z: number;
-}
-
-export interface GeometryQuaternion {
-  x: number;
-  y: number;
-  z: number;
-  w: number;
-}
-
-export interface GeometryPose {
-  position: GeometryPoint;
-  orientation: GeometryQuaternion;
-}
-
-export interface GeometryTwist {
-  linear: GeometryVector3;
-  angular: GeometryVector3;
-}
-
-export interface GeometryPoseWithCovariance {
-  pose: GeometryPose;
-  covariance: number[]; // length 36
-}
-
-export interface GeometryTwistWithCovariance {
-  twist: GeometryTwist;
-  covariance: number[]; // length 36
-}
-
-export interface GeometryPoseStamped {
-  header: StdHeader;
-  pose: GeometryPose;
-}
-
-export interface GeometryTwistStamped {
-  header: StdHeader;
-  twist: GeometryTwist;
-}
+export interface GeometryPoseStamped { header: StdHeader; pose: GeometryPose }
+export interface GeometryTwistStamped { header: StdHeader; twist: GeometryTwist }
 
 export interface NavMsgsOdometry {
   header: StdHeader;
@@ -94,88 +73,158 @@ export interface NavMsgsOdometry {
   twist: GeometryTwistWithCovariance;
 }
 
-export interface SensorMsgsNavSatStatus {
-  status: number;  // e.g., STATUS_FIX, STATUS_NO_FIX
-  service: number; // SERVICE_GPS, SERVICE_GLONASS, etc.
-}
-
+export interface SensorMsgsNavSatStatus { status: number; service: number }
 export interface SensorMsgsNavSatFix {
   header: StdHeader;
   status: SensorMsgsNavSatStatus;
-  latitude: number;
-  longitude: number;
-  altitude: number;
-  position_covariance: number[]; // length 9
-  position_covariance_type: number;
+  latitude: number; longitude: number; altitude: number;
+  position_covariance: number[]; position_covariance_type: number;
 }
 
-export interface StdMsgsFloat64 {
-  data: number;
-}
+export interface StdMsgsFloat64 { data: number }
 
-export interface GeographicMsgsGeoPoint {
-  latitude: number;
-  longitude: number;
-  altitude: number;
-}
+export interface GeographicMsgsGeoPoint { latitude: number; longitude: number; altitude: number }
 
 export interface MavrosMsgsAltitude {
   header: StdHeader;
-  monotonic: number;        // meters
-  amsl: number;             // meters
-  local: number;            // meters
-  relative: number;         // meters
-  terrain: number;          // meters
-  bottom_clearance: number; // meters
+  monotonic: number; amsl: number; local: number; relative: number; terrain: number; bottom_clearance: number;
 }
 
 export interface MavrosMsgsHomePosition {
   header: StdHeader;
-  geo: GeographicMsgsGeoPoint;     // geographic (lat/lon/alt)
-  position: GeometryPoint;         // local position (m)
-  orientation: GeometryQuaternion; // local orientation
-  approach: GeometryVector3;       // approach vector
+  geo: GeographicMsgsGeoPoint;
+  position: GeometryPoint;
+  orientation: GeometryQuaternion;
+  approach: GeometryVector3;
 }
 
-export class ROS2Bridge {
-  private client: FoxgloveWsClient | null;
-  private messageHandlers: Map<string, Set<(message: any) => void>> = new Map();
-  private currentMode: ConnectionMode = 'foxglove';
+/** MAVROS State & ExtendedState */
+export interface MavrosMsgsState {
+  header?: StdHeader;
+  connected: boolean; armed: boolean; guided: boolean; manual_input: boolean;
+  mode: string; system_status: number;
+}
+export interface MavrosMsgsExtendedState { header?: StdHeader; landed_state: number; vtol_state: number }
 
-  // store full Subscription objects keyed by topic
-  private subscriptions: Map<string, Subscription> = new Map();
+/** Battery & IMU */
+export interface SensorMsgsBatteryState {
+  header: StdHeader;
+  voltage: number; temperature?: number | null; current?: number; charge?: number;
+  capacity?: number; design_capacity?: number; percentage?: number;
+  power_supply_status?: number; power_supply_health?: number; power_supply_technology?: number;
+  present?: boolean; cell_voltage?: number[]; cell_temperature?: number[];
+  location?: string; serial_number?: string;
+}
+export interface MavrosMsgsVFRHUD {
+  airspeed?: number; groundspeed?: number; heading?: number; throttle?: number; altitude?: number; climb?: number;
+}
+export interface SensorMsgsImu {
+  header: StdHeader;
+  orientation: GeometryQuaternion; orientation_covariance?: number[];
+  angular_velocity: GeometryVector3; angular_velocity_covariance?: number[];
+  linear_acceleration: GeometryVector3; linear_acceleration_covariance?: number[];
+}
+
+/** Aliases for geometry_msgs names used elsewhere */
+export type GeometryMsgsPoseStamped = GeometryPoseStamped;
+export type GeometryMsgsTwistStamped = GeometryTwistStamped;
+
+/** Convenience for consumers that expect decoded images */
+export interface ImageMessage {
+  topic: string;
+  timestamp: string;
+  timestampNanos?: number;
+  frameId: string;
+  encoding: string;
+  width: number;
+  height: number;
+  data: string; // data URI
+  messageType: "raw" | "compressed";
+}
+
+export interface TwistMessage {
+  linear: { x: number; y: number; z: number };
+  angular: { x: number; y: number; z: number };
+}
+
+/** ---------- MAVROS service request/response types ---------- */
+/** mavros_msgs/srv/CommandBool */
+export interface CommandBool_Request { value: boolean }
+export interface CommandBool_Response { success: boolean; result: number }
+
+/** mavros_msgs/srv/SetMode */
+export interface SetMode_Request { base_mode: number; custom_mode: string }
+export interface SetMode_Response { mode_sent: boolean }
+
+/** mavros_msgs/srv/CommandTOL */
+export interface CommandTOL_Request {
+  min_pitch: number; yaw: number; latitude: number; longitude: number; altitude: number;
+}
+export interface CommandTOL_Response { success: boolean; result: number }
+
+/** mavros_msgs/srv/ParamSet */
+export interface ParamValue { integer: number; real: number }
+export interface ParamSet_Request { param_id: string; value: ParamValue }
+export interface ParamSet_Response { success: boolean; value: ParamValue }
+
+/** ---------- Bridge Implementation ---------- */
+export class ROS2Bridge {
+  private client: FoxgloveWsClient | null = null;
+
+  private messageHandlers = new Map<string, Set<(message: any) => void>>();
+  private subscriptions = new Map<string, Subscription>();
 
   // track discovered topics from the bridge
   private discoveredTopics: Map<string, string> = new Map(); // topic -> type
 
   private reconnectTimeout: number | null = null;
 
+  // Topics that should be (re)published once on connect (e.g., latched configs if you need them).
+  private setupPublishes: Array<{ topic: string; type: string; message: any }> = [];
 
-  connect() {
-    // TODO : this is just hardcoded ip
-    const url ='ws://172.16.0.10:8765';
+  // Services that should be (re)called on every connect before normal ops (optional).
+  private setupServiceCalls: Array<{ name: string; request: any }> = [];
 
-    console.log(`Connecting to foxglove at ${url}...`);
+  private setupROSParams: Array<{ name: string; value: any }> = [];
+
+  constructor() {
+    this._configureDefault();
+  }
+
+  connect(_mode: ConnectionMode = "foxglove") {
+    const url = "ws://172.16.0.10:8765";
 
     if (this.client) {
-      this.client.close();
+      try { this.client.close(); } catch {}
     }
-
     this.client = new FoxgloveWsClient({ url });
 
-    // set hooks directly
-    this.client.onOpen = () => {
-      console.log("connected");
-      
-      this.subscriptions.forEach((sub) => {
-        this._forwardSubscribtion(sub);
-      });
+    // re-seed setup publishes and service calls to the new client
+    for (const cmd of this.setupPublishes) {
+      this.client.publishSetup(cmd.topic, cmd.type, cmd.message);
+    }
+
+    // Startup service calls will only be sent one all of them are available.
+    console.log("[ROS2Bridge] Forwarding setup service calls :", this.setupServiceCalls);
+    this.setupServiceCalls.forEach(({name, request}) => this.client?.registerSetupServiceCall(
+      {
+        serviceName: name,
+        request: request
+      }
+    ));
+
+    console.log("[ROS2Bridge] Forwarding setup ros params :", this.setupROSParams);
+    this.setupROSParams.forEach(({name, value}) => this.client?.registerSetupParameterSet(name, value));
+
+    this.client.onOpen = async () => {
+      // forward queued subscriptions. If the topics are not available they will just go into pending till they are.
+      this.subscriptions.forEach((sub) => this._forwardSubscription(sub));
     };
 
     this.client.onClose = () => {
       console.log("Foxglove connection closed");
       this.reconnectTimeout = window.setTimeout(() => {
-        console.log('Attempting to reconnect...');
+        console.log("Attempting to reconnect...");
         this.connect();
       }, 3000);
     };
@@ -190,26 +239,8 @@ export class ROS2Bridge {
     };
 
     this.client.onMessage = (msg) => {
-      // console.log(
-      //   "foxglove msg on",
-      //   msg.topic,
-      //   "encoding",
-      //   msg.encoding,
-      //   "type",
-      //   msg.schemaName,
-      //   "payload",
-      //   msg.payload
-      // );
-      let refactored_msg = {
-        topic: msg.topic,
-        type: msg.schemaName,
-        msg: msg.payload
-      };
-      try {
-        this.handleFoxgloveMessage(refactored_msg)
-      } catch (err) {
-        console.error("[Foxglove] onmessage error:", err);
-      }
+      const ref = { topic: msg.topic, type: msg.schemaName, msg: msg.payload };
+      this.handleFoxgloveMessage(ref);
     };
   }
 
@@ -218,81 +249,115 @@ export class ROS2Bridge {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
-    if (this.client) {
-      this.client.onClose = undefined;
-      this.client.close();
-    }
+    try { this.client?.close(); } catch {}
+    this.client = null;
     this.discoveredTopics.clear();
   }
 
-  // Ensure we always capture both topic and type in our map
-  subscribe(subscription: Subscription, handler: (message: any) => void): () => void  {
+  /** Store a subscription and (re)apply it on connect. */
+  subscribe(subscription: Subscription, handler: (message: any) => void): () => void {
     const { topic, type } = subscription;
     this.subscriptions.set(topic, { topic, type });
 
-    let currentSet = this.messageHandlers.get(topic);
-    if (!currentSet) {
-      currentSet = new Set<(message: any) => void>();
-      this.messageHandlers.set(topic, currentSet);
+    let set = this.messageHandlers.get(topic);
+    if (!set) {
+      set = new Set();
+      this.messageHandlers.set(topic, set);
     }
 
-    currentSet.add(handler);
+    set.add(handler);
 
     if (!this.client || !this.client.isConnected()) {
-      console.warn('Not connected, queueing subscription:', { topic, type });
-      return () => {};
+      console.warn("Not connected, queueing subscription:", { topic, type });
+      return () => {
+        this.unsubscribe(topic, handler);
+      };
     }
-  
-    this._forwardSubscribtion(subscription);
 
-    return () => { 
-      this.unsubscribe(topic, handler);
-    };
+    this._forwardSubscription(subscription);
+
+    return () => this.unsubscribe(topic, handler);
   }
 
-  _forwardSubscribtion(sub: Subscription) {
-    if (!this.client) {
-      return;
-    }
-
-    const { topic, type } = sub;
-
-    // Foxglove: subscribe by topic name
-    this.client.subscribe(topic);
-
-    console.log(`Subscribed to [${type}] : ${topic}`);
+  private _forwardSubscription(sub: Subscription) {
+    if (!this.client) return;
+    // Foxglove subscribes by *topic name* (schemaName is resolved server-side)
+    this.client.subscribe(sub.topic);
   }
 
   unsubscribe(topic: string, handler: (message: any) => void) {
-    const handlers = this.messageHandlers.get(topic);
-    if (handlers) {
-      handlers.delete(handler);
-      if (handlers.size) {
-        return;
+    const set = this.messageHandlers.get(topic);
+    if (set) {
+      set.delete(handler);
+      if (set.size === 0) {
+        this.messageHandlers.delete(topic);
+        this.subscriptions.delete(topic);
+        this.client?.unsubscribe(topic);
       }
     }
-
-    this.subscriptions.delete(topic);
-
-    if (!this.client) {
-      return;
-    }
-
-    this.client.unsubscribe(topic);
   }
 
+  /** Generic topic publish. Uses exact ROS 2 schemaName for serialization. */
   publish(topic: string, messageType: string, message: any) {
     if (!this.client) {
-      console.warn("Cannot publish: Foxglove client not created");
+      console.warn("publish() ignored: Foxglove client not ready");
       return;
     }
-
-    // messageType here is the Foxglove schemaName (e.g. "geometry_msgs/msg/Twist")
     this.client.publish(topic, messageType, message);
   }
 
+  /** Arrange for a topic publish to be sent immediately after connect and on every reconnect. */
+  publishSetup(topic: string, type: string, message: any) {
+    this.setupPublishes.push({ topic, type, message });
+    if (this.client) {
+      this.client.publishSetup(topic, type, message);
+    }
+  }
+
+  /** Arrange for a service call to run once on every (re)connect before normal ops. */
+  registerSetupServiceCall(name: string, request: any) {
+    this.setupServiceCalls.push({ 
+      name,
+      request
+     });
+  }
+
+  /**
+   * Set default configs to this.client for the drone.
+   * Will use publishSetup to set configurations.
+   */
+  _configureDefault() {
+    // (Also registers setup service calls to run on connect.)
+
+    // Ensure PX4 does not require RC for arming in SITL:
+    // const setRcNotRequired = {
+    //   "param_id": "COM_RC_IN_MODE",
+    //   "value": { "integer": 1, "real": 0.0 }
+    // };
+    // this.registerSetupServiceCall("/mavros/param/set", setRcNotRequired);
+
+    // const heartbeatConfigPayload = {
+    //   parameters: [
+    //     {
+    //       name: "conn/heartbeat_rate",
+    //       value: { type: 3, double_value: 2.0 } // 2.0 Hz; use 0.0 to disable
+    //     }
+    //   ]
+    // }
+
+    // this.registerSetupServiceCall("/mavros/set_parameters", heartbeatConfigPayload);
+
+    // Configure heartbeat :
+    this.registerSetupROSParameterSet("/mavros/sys.heartbeat_mav_type", "GCS");
+    this.registerSetupROSParameterSet("/mavros/sys.heartbeat_rate", 2.0);
+  }
+
+  registerSetupROSParameterSet(name: string, value: any): void {
+    this.setupROSParams.push({ name, value});
+  }
+
   isConnected(): boolean {
-    return this.client?.isConnected() ?? false;
+    return !!this.client && this.client.isConnected();
   }
 
   getAvailableImageTopics(): Subscription[] {
@@ -311,15 +376,12 @@ export class ROS2Bridge {
   }
 
   private handleFoxgloveMessage(data: any) {
-    // Expecting something like: { topic, schemaName, payload, ... }
+    // Expecting something like: { topic, type, msg }
     const topic: string = data.topic;
-
     const type = data.type;
+    const msg: any = data.msg;
 
-    // FoxgloveWsClient gives `payload`; fall back to `msg` or the object itself if needed.
-    const msg: any = data.msg
-
-    const header = msg.header || {};
+    const header = msg?.header || {};
     const frameId = header.frame_id || "";
     let timestamp = new Date().toISOString();
     let timestampNanos: number | undefined;
@@ -351,23 +413,20 @@ export class ROS2Bridge {
       }
     } else if (type === "sensor_msgs/msg/CompressedImage") {
       try {
-        this.convertCompressedImageToDataURI(
-          msg,
-          (dataURI, width, height) => {
-            const imageMsg: ImageMessage = {
-              topic,
-              timestamp,
-              timestampNanos,
-              frameId,
-              encoding: msg.format,
-              width,
-              height,
-              data: dataURI,
-              messageType: "compressed",
-            };
-            this.messageHandlers.get(topic)?.forEach((handler) => handler(imageMsg));
-          },
-        );
+        this.convertCompressedImageToDataURI(msg, (dataURI, width, height) => {
+          const imageMsg: ImageMessage = {
+            topic,
+            timestamp,
+            timestampNanos,
+            frameId,
+            encoding: msg.format,
+            width,
+            height,
+            data: dataURI,
+            messageType: "compressed",
+          };
+          this.messageHandlers.get(topic)?.forEach((handler) => handler(imageMsg));
+        });
       } catch (error) {
         console.error("[FoxgloveBridge] Failed to convert compressed image:", error);
       }
@@ -381,7 +440,7 @@ export class ROS2Bridge {
 
     // Decode base64 data to byte array
     let imageData: Uint8Array;
-    if (typeof data === 'string') {
+    if (typeof data === "string") {
       const binaryString = atob(data);
       imageData = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
@@ -392,19 +451,19 @@ export class ROS2Bridge {
     } else if (data instanceof Uint8Array) {
       imageData = data;
     } else {
-      throw new Error('Unknown data type');
+      throw new Error("Unknown data type");
     }
 
     // Convert to RGBA
     const rgba = this.convertToRGBA(imageData, encoding, width, height);
 
     // Create canvas and draw RGBA data
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     if (!ctx) {
-      throw new Error('Failed to get canvas context');
+      throw new Error("Failed to get canvas context");
     }
 
     const imageDataObj = ctx.createImageData(width, height);
@@ -412,62 +471,68 @@ export class ROS2Bridge {
     ctx.putImageData(imageDataObj, 0, 0);
 
     // Return as data URI (JPEG for efficiency)
-    return canvas.toDataURL('image/jpeg', 0.92);
+    return canvas.toDataURL("image/jpeg", 0.92);
   }
-  private convertToRGBA(data: Uint8Array, encoding: string, width: number, height: number): Uint8ClampedArray {
+
+  private convertToRGBA(
+    data: Uint8Array,
+    encoding: string,
+    width: number,
+    height: number,
+  ): Uint8ClampedArray {
     const pixelCount = width * height;
     const rgba = new Uint8ClampedArray(pixelCount * 4);
 
-    switch (encoding.toLowerCase()) {
-      case 'rgb8':
+    switch ((encoding || "").toLowerCase()) {
+      case "rgb8":
         for (let i = 0; i < pixelCount; i++) {
-          rgba[i * 4] = data[i * 3];       // R
+          rgba[i * 4] = data[i * 3]; // R
           rgba[i * 4 + 1] = data[i * 3 + 1]; // G
           rgba[i * 4 + 2] = data[i * 3 + 2]; // B
-          rgba[i * 4 + 3] = 255;             // A
+          rgba[i * 4 + 3] = 255; // A
         }
         break;
 
-      case 'rgba8':
+      case "rgba8":
         rgba.set(data.slice(0, pixelCount * 4));
         break;
 
-      case 'bgr8':
+      case "bgr8":
         for (let i = 0; i < pixelCount; i++) {
-          rgba[i * 4] = data[i * 3 + 2];     // R (from B)
+          rgba[i * 4] = data[i * 3 + 2]; // R (from B)
           rgba[i * 4 + 1] = data[i * 3 + 1]; // G
-          rgba[i * 4 + 2] = data[i * 3];     // B (from R)
-          rgba[i * 4 + 3] = 255;             // A
+          rgba[i * 4 + 2] = data[i * 3]; // B (from R)
+          rgba[i * 4 + 3] = 255; // A
         }
         break;
 
-      case 'bgra8':
+      case "bgra8":
         for (let i = 0; i < pixelCount; i++) {
-          rgba[i * 4] = data[i * 4 + 2];     // R (from B)
+          rgba[i * 4] = data[i * 4 + 2]; // R (from B)
           rgba[i * 4 + 1] = data[i * 4 + 1]; // G
-          rgba[i * 4 + 2] = data[i * 4];     // B (from R)
+          rgba[i * 4 + 2] = data[i * 4]; // B (from R)
           rgba[i * 4 + 3] = data[i * 4 + 3]; // A
         }
         break;
 
-      case 'mono8':
+      case "mono8":
         for (let i = 0; i < pixelCount; i++) {
           const gray = data[i];
-          rgba[i * 4] = gray;     // R
+          rgba[i * 4] = gray; // R
           rgba[i * 4 + 1] = gray; // G
           rgba[i * 4 + 2] = gray; // B
-          rgba[i * 4 + 3] = 255;  // A
+          rgba[i * 4 + 3] = 255; // A
         }
         break;
 
-      case 'mono16':
+      case "mono16":
         for (let i = 0; i < pixelCount; i++) {
           // Convert 16-bit to 8-bit by taking high byte
           const gray = data[i * 2 + 1];
-          rgba[i * 4] = gray;     // R
+          rgba[i * 4] = gray; // R
           rgba[i * 4 + 1] = gray; // G
           rgba[i * 4 + 2] = gray; // B
-          rgba[i * 4 + 3] = 255;  // A
+          rgba[i * 4 + 3] = 255; // A
         }
         break;
 
@@ -485,30 +550,30 @@ export class ROS2Bridge {
 
   private convertCompressedImageToDataURI(
     msg: any,
-    callback: (dataURI: string, width: number, height: number) => void
+    callback: (dataURI: string, width: number, height: number) => void,
   ): void {
     const { format, data } = msg;
-    
+
     // Determine MIME type from format
-    let mimeType = 'image/jpeg'; // default
-    const formatLower = format.toLowerCase();
-    if (formatLower.includes('png')) {
-      mimeType = 'image/png';
-    } else if (formatLower.includes('webp')) {
-      mimeType = 'image/webp';
+    let mimeType = "image/jpeg"; // default
+    const formatLower = (format || "").toLowerCase();
+    if (formatLower.includes("png")) {
+      mimeType = "image/png";
+    } else if (formatLower.includes("webp")) {
+      mimeType = "image/webp";
     }
-    
+
     // Create data URI from base64 data
     // rosbridge sends the data already base64 encoded
     const dataURI = `data:${mimeType};base64,${data}`;
-    
+
     // Load image to get dimensions
     const img = new Image();
     img.onload = () => {
       callback(dataURI, img.width, img.height);
     };
     img.onerror = (error) => {
-      console.error('[ROS2Bridge] Failed to load compressed image:', error);
+      console.error("[ROS2Bridge] Failed to load compressed image:", error);
     };
     img.src = dataURI;
   }
