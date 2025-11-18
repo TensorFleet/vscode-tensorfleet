@@ -627,7 +627,7 @@ export class FoxgloveWsClient {
       const timeout = setTimeout(() => {
         this.serviceCallbacks.delete(callId);
         reject(new Error(`Service call timeout: ${serviceName}`));
-      }, 10000);
+      }, 30000);
 
       this.serviceCallbacks.set(callId, (resp) => {
         clearTimeout(timeout);

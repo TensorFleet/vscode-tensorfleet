@@ -29,12 +29,7 @@ interface AppRequestDetail<T = any> {
 
 const EVENT_NAME = "app:request";
 
-/**
- * Dispatches a global mission-control request event.
- * @param action Mission action identifier.
- * @param payload Optional action payload.
- * @returns Dispatched request detail.
- */
+/** Dispatches a global mission-control request event. */
 function postMissionRequest<T = any>(action: MissionAction, payload?: T) {
   const requestId =
     (globalThis as any).crypto?.randomUUID?.() ??
@@ -51,25 +46,83 @@ function postMissionRequest<T = any>(action: MissionAction, payload?: T) {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { maxWidth: 880, margin: "0 auto", padding: 16, fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" },
-  card: { border: "1px solid #e5e7eb", borderRadius: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)", padding: 16 },
+  container: {
+    maxWidth: 880,
+    margin: "0 auto",
+    padding: 16,
+    fontFamily:
+      "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial",
+  },
+  card: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 12,
+    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+    padding: 16,
+  },
   header: { fontSize: 18, fontWeight: 600, marginBottom: 12 },
   row: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
   col: { display: "flex", gap: 8 },
   label: { fontSize: 12, color: "#6b7280", marginBottom: 4 },
-  input: { width: "100%", height: 40, border: "1px solid #e5e7eb", borderRadius: 8, padding: "0 10px", fontSize: 14 },
-  // NEW: slightly more compact input for stacked Goto panel
-  inputCompact: { width: "100%", height: 36, border: "1px solid #e5e7eb", borderRadius: 8, padding: "0 10px", fontSize: 14 },
-  button: { height: 44, padding: "0 14px", borderRadius: 10, background: "#111827", color: "white", border: "1px solid #111827", cursor: "pointer", fontSize: 14 },
-  buttonSecondary: { height: 44, padding: "0 14px", borderRadius: 10, background: "white", color: "#111827", border: "1px solid #e5e7eb", cursor: "pointer", fontSize: 14 },
-  buttonDanger: { height: 44, padding: "0 14px", borderRadius: 10, background: "#ef4444", color: "white", border: "1px solid #ef4444", cursor: "pointer", fontSize: 14 },
+  input: {
+    width: "100%",
+    height: 40,
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    padding: "0 10px",
+    fontSize: 14,
+  },
+  inputCompact: {
+    width: "100%",
+    height: 36,
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    padding: "0 10px",
+    fontSize: 14,
+  },
+  button: {
+    height: 44,
+    padding: "0 14px",
+    borderRadius: 10,
+    background: "#111827",
+    color: "white",
+    border: "1px solid #111827",
+    cursor: "pointer",
+    fontSize: 14,
+  },
+  buttonSecondary: {
+    height: 44,
+    padding: "0 14px",
+    borderRadius: 10,
+    background: "white",
+    color: "#111827",
+    border: "1px solid #e5e7eb",
+    cursor: "pointer",
+    fontSize: 14,
+  },
+  buttonDanger: {
+    height: 44,
+    padding: "0 14px",
+    borderRadius: 10,
+    background: "#ef4444",
+    color: "white",
+    border: "1px solid #ef4444",
+    cursor: "pointer",
+    fontSize: 14,
+  },
   sectionTitle: { fontSize: 14, fontWeight: 600, marginTop: 8 },
   divider: { height: 1, background: "#f3f4f6", margin: "8px 0 12px" },
   right: { display: "flex", justifyContent: "flex-end" },
   toggleWrap: { display: "flex", alignItems: "center", justifyContent: "space-between" },
   help: { fontSize: 12, color: "#6b7280" },
   checkbox: { width: 18, height: 18 },
-  debug: { background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 10, padding: 10, fontSize: 12, color: "#6b7280" },
+  debug: {
+    background: "#f9fafb",
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: 10,
+    fontSize: 12,
+    color: "#6b7280",
+  },
 };
 
 export default function MissionControlPanel() {
@@ -108,6 +161,20 @@ export default function MissionControlPanel() {
     };
     setLastRequest(postMissionRequest("goto", payload));
   }, [lat, lon, alt, yaw, auto]);
+
+  // Emits a simulation-control restart request (kept separate from lastRequest to avoid widening its type).
+  const onRestartSim = useCallback(() => {
+    const requestId =
+      (globalThis as any).crypto?.randomUUID?.() ??
+      Math.random().toString(36).slice(2);
+    const detail = {
+      category: "simulation_control",
+      action: "restart",
+      requestId,
+      timestamp: Date.now(),
+    };
+    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail }));
+  }, []);
 
   const disabledGoto = useMemo(() => lat === "" || lon === "" || alt === "", [lat, lon, alt]);
 
@@ -221,6 +288,16 @@ export default function MissionControlPanel() {
             >
               Goto
             </button>
+          </div>
+        </div>
+
+        <div style={styles.divider} />
+
+        {/* Simulation */}
+        <div>
+          <div style={styles.sectionTitle}>Simulation</div>
+          <div style={styles.right}>
+            <button style={styles.buttonSecondary} onClick={onRestartSim}>Restart simulation</button>
           </div>
         </div>
 
