@@ -130,8 +130,8 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private updatePollingSpeed(vmState: VmState) {
-    const newInterval = (vmState === 'starting' || vmState === 'stopping') 
-      ? VMManagerIntegration.FAST_POLL_MS 
+    const newInterval = (vmState === 'starting' || vmState === 'stopping')
+      ? VMManagerIntegration.FAST_POLL_MS
       : VMManagerIntegration.NORMAL_POLL_MS;
 
     if (newInterval !== this.pollInterval) {
@@ -149,7 +149,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     } catch (error) {
       const message = this.formatError(error);
       this.outputChannel.appendLine(`[VM Manager] Refresh failed: ${message}`);
-      
+
       // Mark as disconnected but preserve last known VM state
       this.applySnapshot(
         this.createSnapshot({
@@ -215,7 +215,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   private applySnapshot(snapshot: VmSnapshot) {
     const previousState = this.currentSnapshot.vmState;
     const previousConnection = this.currentSnapshot.connection;
-    
+
     this.currentSnapshot = snapshot;
     this.updateStatusBar();
     this.handleStateChange(previousConnection, previousState);
@@ -327,8 +327,8 @@ export class VMManagerIntegration implements vscode.Disposable {
 
     if (connection === 'disconnected') {
       const lastState = this.getVmStateLabel(vmState);
-      this.statusBarItem.text = lastState 
-        ? `⚠️ API Disconnected · Last: ${lastState}${ip}` 
+      this.statusBarItem.text = lastState
+        ? `⚠️ API Disconnected · Last: ${lastState}${ip}`
         : '⚠️ API Disconnected';
     } else {
       this.statusBarItem.text = this.getVmStateIcon(vmState) + ' ' + this.getVmStateLabel(vmState) + ip;
@@ -356,10 +356,10 @@ export class VMManagerIntegration implements vscode.Disposable {
     if (ipAddress) lines.push(`IP: ${ipAddress}`);
     if (provider) lines.push(`Provider: ${provider}`);
     if (region) lines.push(`Region: ${region}`);
-    
+
     const uptime = this.formatUptime(uptimeSeconds);
     if (uptime) lines.push(`Uptime: ${uptime}`);
-    
+
     if (error) lines.push(`Error: ${error}`);
     lines.push(`API: ${this.getApiBaseUrl()}`);
     lines.push(`Updated: ${new Date(timestamp).toLocaleTimeString()}`);
@@ -380,6 +380,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       switch (vmState) {
         case 'running':
           items.push(
+            { label: '🔄 Restart VM', detail: 'Stop and restart the VM', action: () => this.restartVm() },
             { label: '⏹ Stop VM', detail: 'Shut down the VM', action: () => this.stopVm() }
           );
           break;
@@ -414,16 +415,19 @@ export class VMManagerIntegration implements vscode.Disposable {
           break;
 
         case 'stopped':
-          items.push({ label: '▶ Start VM', detail: 'Boot up your VM', action: () => this.startVm() });
+          items.push(
+            { label: '▶ Start VM', detail: 'Boot up your VM', action: () => this.startVm() },
+            { label: '🔄 Restart VM', detail: 'Restart the VM', action: () => this.restartVm() }
+          );
           break;
       }
     }
 
     items.push(
-      { 
-          label: '⚙️ Configure API', 
-          detail: 'Open settings', 
-          action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
+      {
+        label: '⚙️ Configure API',
+        detail: 'Open settings',
+        action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
       },
       { label: '🔄 Refresh Status', detail: 'Check current state', action: () => this.refresh(false) });
     return items;
@@ -432,7 +436,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   private getMenuPlaceholder(): string {
     const { connection, vmState } = this.currentSnapshot;
     if (connection === 'disconnected') return 'API Disconnected';
-    
+
     switch (vmState) {
       case 'running': return 'VM is Running';
       case 'starting': return 'VM is Starting';
@@ -474,6 +478,31 @@ export class VMManagerIntegration implements vscode.Disposable {
     }
   }
 
+  private async restartVm() {
+    try {
+      const { vmState } = this.currentSnapshot;
+
+      // Set user action based on current state
+      // If running/starting, we're stopping (will need to start again)
+      // If stopped/failed, we're starting
+      if (vmState === 'running' || vmState === 'starting') {
+        this.userInitiatedAction = 'stop';
+        this.setOptimisticState('stopping');
+      } else if (vmState === 'stopped' || vmState === 'failed') {
+        this.userInitiatedAction = 'start';
+        this.setOptimisticState('starting');
+      }
+
+      await this.apiRequest<{ status: string; message?: string }>('POST', '/vms/self/restart');
+      await this.refresh(true);
+      this.outputChannel.appendLine('[VM Manager] VM restart initiated');
+    } catch (error) {
+      this.userInitiatedAction = null;
+      await this.refresh(true);
+      this.handleCommandError('restart', error);
+    }
+  }
+
   private handleCommandError(action: string, error: unknown) {
     const message = this.formatError(error);
     this.outputChannel.appendLine(`[VM Manager] ${action} failed: ${message}`);
@@ -495,7 +524,13 @@ export class VMManagerIntegration implements vscode.Disposable {
         .showErrorMessage(`VM ${action} failed: ${message}`, 'Retry', 'Logs')
         .then((choice) => {
           if (choice === 'Retry') {
-            void (action === 'start' ? this.startVm() : this.stopVm());
+            if (action === 'start') {
+              void this.startVm();
+            } else if (action === 'stop') {
+              void this.stopVm();
+            } else if (action === 'restart') {
+              void this.restartVm();
+            }
           } else if (choice === 'Logs') {
             this.outputChannel.show();
           }
@@ -542,7 +577,7 @@ export class VMManagerIntegration implements vscode.Disposable {
           res.on('data', (chunk) => chunks.push(chunk));
           res.on('end', () => {
             const bodyText = Buffer.concat(chunks).toString('utf8');
-            
+
             if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
               if (!bodyText) {
                 resolve(undefined as T);
