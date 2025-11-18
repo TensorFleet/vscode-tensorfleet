@@ -591,7 +591,7 @@ async function createNewRoboticProject(context: vscode.ExtensionContext) {
     kindLabel: 'robotic',
     defaultName: 'my-robotic-project',
     commandLabel: 'TensorFleet Robotic Project',
-    templateSubdir: 'robotic-project-templates'
+    templateSubdir: 'robotic-js-project-templates'
   });
 }
 

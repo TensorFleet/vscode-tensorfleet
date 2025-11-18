@@ -9,25 +9,30 @@
  *   - Resumes FORWARD when the path ahead is clear
  *
  * Usage:
- *   node src/obstacle_avoider.js
+ *   bun src/obstacle_avoider.js
  *
  * Environment overrides:
  *   ROS_HOST, ROS_PORT, CMD_VEL_TOPIC, SCAN_TOPIC,
  *   OBSTACLE_DISTANCE, CLEAR_DISTANCE,
  *   LINEAR_SPEED, ANGULAR_SPEED
  */
-
 const ROSLIB = require("roslib");
+const {
+  getRosConnectionDetails,
+  getCmdVelTopic,
+  getScanTopic,
+  getObstacleParams
+} = require("./config");
 
-const HOST = process.env.ROS_HOST ?? "172.16.0.10";
-const PORT = Number(process.env.ROS_PORT ?? 9091);
-const CMD_VEL_TOPIC = process.env.CMD_VEL_TOPIC ?? "/cmd_vel_raw";
-const SCAN_TOPIC = process.env.SCAN_TOPIC ?? "/scan";
-
-const OBSTACLE_DISTANCE = Number(process.env.OBSTACLE_DISTANCE ?? 0.5);
-const CLEAR_DISTANCE = Number(process.env.CLEAR_DISTANCE ?? 1.0);
-const LINEAR_SPEED = Number(process.env.LINEAR_SPEED ?? 3.0);
-const ANGULAR_SPEED = Number(process.env.ANGULAR_SPEED ?? 4.0);
+const { url: ROSBRIDGE_URL } = getRosConnectionDetails();
+const CMD_VEL_TOPIC = getCmdVelTopic();
+const SCAN_TOPIC = getScanTopic();
+const {
+  obstacleDistance: OBSTACLE_DISTANCE,
+  clearDistance: CLEAR_DISTANCE,
+  linearSpeed: LINEAR_SPEED,
+  angularSpeed: ANGULAR_SPEED
+} = getObstacleParams();
 
 class ObstacleAvoider {
   constructor(ros) {
@@ -239,10 +244,9 @@ class ObstacleAvoider {
 }
 
 function main() {
-  const url = `ws://${HOST}:${PORT}`;
-  console.log(`Connecting to rosbridge at ${url} ...`);
+  console.log(`Connecting to rosbridge at ${ROSBRIDGE_URL} ...`);
 
-  const ros = new ROSLIB.Ros({ url });
+  const ros = new ROSLIB.Ros({ url: ROSBRIDGE_URL });
 
   ros.on("connection", () => {
     console.log("Connected to rosbridge.");
@@ -275,4 +279,3 @@ function main() {
 if (require.main === module) {
   main();
 }
-

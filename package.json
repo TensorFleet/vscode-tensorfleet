@@ -196,7 +196,6 @@
         "category": "TensorFleet"
       }
     ],
-    
     "menus": {
       "view/title": [
         {
@@ -292,6 +291,7 @@
     "@protobufjs/base64": "^1.1.2",
     "flatbuffers": "^25.9.23",
     "flatbuffers_reflection": "^1.2.0",
+    "jpeg-js": "^0.4.4",
     "protobufjs": "^7.5.4"
   },
   "optionalDependencies": {},

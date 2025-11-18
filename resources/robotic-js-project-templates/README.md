@@ -14,7 +14,7 @@ The examples assume:
 ├── src/
 │   ├── robot_mover.js        # Timed movement sequence over /cmd_vel_raw
 │   ├── obstacle_avoider.js   # LiDAR-based obstacle avoidance state machine
-│   └── image_passthrough.js  # Image subscribe/republish helper over rosbridge
+│   └── vision_yolo.js        # Image subscribe/republish helper over rosbridge
 ├── config/
 │   └── robot_config.yaml     # Robot & network configuration (VM IP, rosbridge URL, topics)
 ├── launch/                   # (Optional) ROS 2 launch files
@@ -27,9 +27,6 @@ The examples assume:
 From the project root (the directory containing this README and `package.json`):
 
 ```bash
-# Install Node dependencies (roslib)
-npm install
-# or, if you prefer bun:
 bun install
 ```
 
@@ -49,10 +46,11 @@ motion:
   cmd_vel_topic: "/cmd_vel_raw"
 ```
 
-Each script also reads simple environment variables so you can override settings without editing code:
+Each script reads from this YAML file for its defaults and also accepts environment variables so you can override settings without editing code:
 
-- `ROS_HOST` / `ROS_PORT` – rosbridge host and port (default `172.16.0.10:9091`)
-- `CMD_VEL_TOPIC` – velocity command topic (default `/cmd_vel_raw`)
+- `ROSBRIDGE_URL` – full rosbridge WebSocket URL, e.g. `ws://172.16.0.10:9091`
+- `ROS_HOST` / `ROS_PORT` – rosbridge host and port (fallback if `ROSBRIDGE_URL` is not set)
+- `CMD_VEL_TOPIC` – velocity command topic (default from `motion.cmd_vel_topic`)
 - `SCAN_TOPIC` – LiDAR scan topic for obstacle avoidance (default `/scan`)
 - `LINEAR_SPEED`, `ANGULAR_SPEED` – motion tuning
 - `OBSTACLE_DISTANCE`, `CLEAR_DISTANCE` – avoidance thresholds
@@ -63,7 +61,7 @@ Each script also reads simple environment variables so you can override settings
 Run a simple movement sequence (forward, stop, backward, stop, turn left/right, stop):
 
 ```bash
-node src/robot_mover.js
+bun src/robot_mover.js
 ```
 
 This script:
@@ -83,7 +81,7 @@ ROS_HOST=172.16.0.10 ROS_PORT=9091 CMD_VEL_TOPIC=/cmd_vel_raw LINEAR_SPEED=0.3 n
 Run a LiDAR-based obstacle avoidance state machine:
 
 ```bash
-node src/obstacle_avoider.js
+bun src/obstacle_avoider.js
 ```
 
 Behavior:
@@ -95,12 +93,12 @@ Behavior:
 
 Logs are printed to the terminal to mirror the Python sample, and velocity commands are sent to the same `/cmd_vel_raw` topic.
 
-## Example: Image Passthrough (`image_passthrough.js`)
+## Example: Image Passthrough (`vision_yolo.js`)
 
 This script demonstrates a lightweight image pipeline suitable for pairing with a Python YOLO node:
 
 ```bash
-node src/image_passthrough.js
+bun src/vision_yolo.js
 ```
 
 By default it:
@@ -116,4 +114,3 @@ Use this pattern as a starting point for building web-based or Node-based visual
 - `rclpy` and `roslibpy` are replaced by `roslib` over a WebSocket connection to rosbridge.
 - Blocking loops with `time.sleep` are replaced with `setInterval` and `Promise`-based helpers.
 - Python classes and methods are ported to JavaScript classes using the same state-machine logic and topic names.
-

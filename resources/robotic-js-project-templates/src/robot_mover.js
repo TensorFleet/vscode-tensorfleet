@@ -8,19 +8,23 @@
  *   - Runs a short movement sequence (forward, backward, left, right, stop)
  *
  * Usage:
- *   node src/robot_mover.js
+ *   bun src/robot_mover.js
  *
  * Environment overrides:
  *   ROS_HOST, ROS_PORT, CMD_VEL_TOPIC, LINEAR_SPEED, ANGULAR_SPEED
  */
 
 const ROSLIB = require("roslib");
+const {
+  getRosConnectionDetails,
+  getCmdVelTopic,
+  getMovementSpeeds
+} = require("./config");
 
-const HOST = process.env.ROS_HOST ?? "172.16.0.10";
-const PORT = Number(process.env.ROS_PORT ?? 9091);
-const CMD_VEL_TOPIC = process.env.CMD_VEL_TOPIC ?? "/cmd_vel_raw";
-const LINEAR_SPEED = Number(process.env.LINEAR_SPEED ?? 0.2);
-const ANGULAR_SPEED = Number(process.env.ANGULAR_SPEED ?? 0.5);
+const { url: ROSBRIDGE_URL } = getRosConnectionDetails();
+const CMD_VEL_TOPIC = getCmdVelTopic();
+const { linearSpeed: LINEAR_SPEED, angularSpeed: ANGULAR_SPEED } =
+  getMovementSpeeds();
 
 function makeTwist(linearX, angularZ) {
   return new ROSLIB.Message({
@@ -101,10 +105,11 @@ async function runMovement(ros) {
 }
 
 function main() {
-  const url = `ws://${HOST}:${PORT}`;
-  console.log(`Connecting to rosbridge at ${url} using roslib ...`);
+  console.log(
+    `Connecting to rosbridge at ${ROSBRIDGE_URL} using roslib ...`
+  );
 
-  const ros = new ROSLIB.Ros({ url });
+  const ros = new ROSLIB.Ros({ url: ROSBRIDGE_URL });
 
   ros.on("connection", async () => {
     console.log("roslib connection established successfully.");
@@ -135,4 +140,3 @@ function main() {
 if (require.main === module) {
   main();
 }
-

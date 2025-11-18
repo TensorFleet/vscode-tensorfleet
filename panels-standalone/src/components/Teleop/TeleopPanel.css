@@ -223,6 +223,29 @@
   font-weight: 500;
 }
 
+/* Match RawMessages dark select styling */
+select.setting-input,
+.setting-group select {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.55rem;
+  color: #f1f5f9;
+  cursor: pointer;
+}
+
+select.setting-input:focus,
+.setting-group select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.35);
+}
+
+select.setting-input option,
+.setting-group select option {
+  background: #020617;
+  color: #e5e7eb;
+}
+
 .setting-input::placeholder {
   color: rgba(255, 255, 255, 0.3);
   font-weight: 400;

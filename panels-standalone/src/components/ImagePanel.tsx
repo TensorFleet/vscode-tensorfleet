@@ -551,7 +551,7 @@ export const ImagePanel: React.FC = () => {
                 <span className="label-text">Image Topic</span>
               </label>
               <select
-                className="setting-input"
+                className="setting-input setting-select"
                 value={selectedSubscription?.topic}
                 onChange={(e) => {
                   const topic = e.target.value;
