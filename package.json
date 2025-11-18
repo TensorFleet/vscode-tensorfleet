@@ -34,7 +34,17 @@
     "onCommand:tensorfleet.stopMCPServer",
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
-    "onCommand:tensorfleet.showDroneStatus"
+    "onCommand:tensorfleet.showDroneStatus",
+    "onCommand:tensorfleet.showVMManagerMenu",
+    "onCommand:tensorfleet.connectROS2",
+    "onCommand:tensorfleet.disconnectROS2",
+    "onCommand:tensorfleet.startPX4Telemetry",
+    "onCommand:tensorfleet.connectROS2WebSocket",
+    "onCommand:tensorfleet.disconnectROS2WebSocket",
+    "onCommand:tensorfleet.configureROS2WebSocket",
+    "onCommand:tensorfleet.connectFoxgloveBridge",
+    "onCommand:tensorfleet.disconnectFoxgloveBridge",
+    "onCommand:tensorfleet.configureFoxgloveBridge"
   ],
   "main": "./out/extension.js",
   "packageManager": "bun@1.0.0",
@@ -176,10 +186,85 @@
         "command": "tensorfleet.showDroneStatus",
         "title": "TensorFleet: Show Drone Status",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.connectROS2",
+        "title": "TensorFleet: Connect to ROS2",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.disconnectROS2",
+        "title": "TensorFleet: Disconnect from ROS2",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.startPX4Telemetry",
+        "title": "TensorFleet: Start PX4 Telemetry Monitor",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.connectROS2WebSocket",
+        "title": "TensorFleet: Connect to ROS2 (WebSocket)",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.disconnectROS2WebSocket",
+        "title": "TensorFleet: Disconnect from ROS2 (WebSocket)",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.configureROS2WebSocket",
+        "title": "TensorFleet: Configure ROS2 WebSocket URL",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.connectFoxgloveBridge",
+        "title": "TensorFleet: Connect to Foxglove Bridge",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.disconnectFoxgloveBridge",
+        "title": "TensorFleet: Disconnect from Foxglove Bridge",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.configureFoxgloveBridge",
+        "title": "TensorFleet: Configure Foxglove Bridge URL",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.showVMManagerMenu",
+        "title": "TensorFleet: Show VM Actions",
+        "category": "TensorFleet"
       }
-      
     ],
-    
+    "configuration": {
+      "title": "TensorFleet",
+      "properties": {
+        "tensorfleet.ros2.websocketUrl": {
+          "type": "string",
+          "default": "ws://172.16.0.10:9091",
+          "description": "ROS2 WebSocket URL (rosbridge_suite) for remote connections (e.g., Firecracker VM)",
+          "pattern": "^(ws|wss)://.*$"
+        },
+        "tensorfleet.ros2.foxgloveUrl": {
+          "type": "string",
+          "default": "ws://172.16.0.10:8765",
+          "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
+          "pattern": "^(ws|wss)://.*$"
+        },
+        "tensorfleet.vmManager.apiBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Base URL for the vm-manager HTTP API used by the VM status bar."
+        },
+        "tensorfleet.vmManager.authToken": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional bearer token that will be sent as `Authorization: Bearer <token>` with every `/vms/self/*` request. Leave blank when developing against a server that skips auth."
+        }
+      }
+    },
     "menus": {
       "view/title": [
         {

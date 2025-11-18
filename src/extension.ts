@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
+import { VMManagerIntegration } from './vm-manager';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -108,6 +109,8 @@ const terminalRegistry = new Map<string, vscode.Terminal>();
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 
+let vmManagerIntegration: VMManagerIntegration | null = null;
+
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
 let droneStatusBar: vscode.StatusBarItem | null = null;
@@ -128,6 +131,9 @@ export function activate(context: vscode.ExtensionContext) {
   initializeStatusBarItems(context).catch((error) => {
     console.error('[TensorFleet] Failed to initialize status bars:', error);
   });
+
+  vmManagerIntegration = new VMManagerIntegration(context);
+  vmManagerIntegration.initialize();
   DRONE_VIEWS.forEach((view) => {
     const provider = new DashboardViewProvider(view, context);
     context.subscriptions.push(
@@ -180,6 +186,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
   );
 
+  if (vmManagerIntegration) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => vmManagerIntegration?.showVmActions())
+    );
+  }
   // ROS bridge commands removed; panels use embedded Foxglove networking.
 
   context.subscriptions.push(
@@ -219,6 +230,11 @@ export function deactivate() {
   if (projectWatcher) {
     projectWatcher.dispose();
     projectWatcher = null;
+  }
+
+  if (vmManagerIntegration) {
+    vmManagerIntegration.dispose();
+    vmManagerIntegration = null;
   }
 }
 
