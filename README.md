@@ -17,6 +17,7 @@ and bundles a simple installer for shipping external tooling such as ROS 2.
 - Tooling panel with a guided installer that copies bundled binaries (e.g.,
   ROS 2) to a user-selected directory.
 - **MCP Server**: Expose TensorFleet drone tools to AI assistants like Cursor, Claude, an OpenAI Codex via the Model Context Protocol.
+- **🟢 VM Status Bar**: Watch VM lifecycle states from the status bar with instant quick actions and smart notifications.
 
 Each dashboard is implemented as a webview view so panes can be arranged in the
 side bar or panel area. Commands exposed in the command palette open equivalent
@@ -85,6 +86,35 @@ folder and copies all files from `resources/tools` into a `tensorfleet-tools`
 directory at the chosen location. Replace the placeholder files in
 `resources/tools/` with your actual ROS 2 archives and supporting binaries
 before packaging the extension.
+
+## VM Manager Integration
+
+TensorFleet now surfaces VM health through a lightweight status bar item—no extra panels to open or processes to manage.
+
+1. **Configure the endpoint**  
+   - `tensorfleet.vmManager.apiBaseUrl`: default HTTP endpoint (defaults to `http://localhost:8080`).  
+   - `tensorfleet.vmManager.authToken`: optional bearer token sent to `/vms/self/*` APIs when your server enforces JWT auth.
+
+2. **Watch the status bar**  
+   The indicator auto-polls every 30 seconds and rotates through intuitive states:  
+   - `🟡 VM Starting…`  
+   - `🟢 VM Ready (ip)`  
+   - `⚫ VM Stopped`  
+   - `🔴 VM Failed`  
+   - `$(debug-disconnect) VM Unreachable`
+
+3. **Click for quick actions**  
+   `TensorFleet: Show VM Actions` (or simply click the status bar item) opens a Quick Pick menu tuned to the current state:
+   - Running → Connect via Remote SSH, Restart VM, Stop VM, Copy SSH command, Details, Support.
+   - Stopped → Start VM, Details, Support.
+   - Starting/Stopping → Busy indicator plus Details/Support.
+   - Failed → Retry Start, Details, Support.
+   - Disconnected → Retry Status, Support.
+
+4. **Smart notifications**  
+   When the backend reports major state changes (running, stopped, failed) you get a subtle toast so you know exactly when it’s safe to connect again.
+
+Graceful degradation is built in—if the API can’t be reached you’ll see a “VM Unreachable” badge plus a Retry option in the quick menu. No local Go binary or sudo terminals required anymore.
 
 ## Packaging
 

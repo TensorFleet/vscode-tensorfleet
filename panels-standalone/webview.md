@@ -14,7 +14,7 @@ Standalone panels connect directly to ROS2 via WebSocket (rosbridge or Foxglove)
 
 ```typescript
 // ros2-bridge.ts
-ros2Bridge.connect('rosbridge'); // ws://172.16.0.2:9091
+ros2Bridge.connect('rosbridge'); // ws://172.16.0.10:9091
 ros2Bridge.subscribe('/camera/image_raw');
 ros2Bridge.publish('/cmd_vel', 'geometry_msgs/Twist', twistMsg);
 ```
