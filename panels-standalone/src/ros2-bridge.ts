@@ -292,7 +292,7 @@ export class ROS2Bridge {
   }
 
   isConnected(): boolean {
-    return !!this.client;
+    return this.client?.isConnected() ?? false;
   }
 
   getAvailableImageTopics(): Subscription[] {
