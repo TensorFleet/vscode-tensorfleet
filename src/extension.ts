@@ -118,8 +118,8 @@ const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
 const terminalRegistry = new Map<string, vscode.Terminal>();
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
-let vmManagerIntegration: VMManagerIntegration | null = null;
 
+let vmManagerIntegration: VMManagerIntegration | null = null;
 
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
@@ -205,7 +205,6 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => vmManagerIntegration?.showVmActions())
     );
   }
-
   // ROS bridge commands removed; panels use embedded Foxglove networking.
 
   context.subscriptions.push(

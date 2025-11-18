@@ -52,7 +52,7 @@ bun run build  # or: npm run build
 Connects to your ROS2 system via:
 
 **ROS Bridge** (default)
-- WebSocket: `ws://172.16.0.2:9091`
+- WebSocket: `ws://172.16.0.10:9091`
 - Protocol: rosbridge_suite
 - Install: `sudo apt install ros-${ROS_DISTRO}-rosbridge-suite`
 - Launch: `ros2 launch rosbridge_server rosbridge_websocket_launch.xml`
