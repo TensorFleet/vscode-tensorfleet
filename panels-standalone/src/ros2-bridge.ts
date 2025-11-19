@@ -189,10 +189,12 @@ export class ROS2Bridge {
   }
 
   connect(_mode: ConnectionMode = "foxglove") {
-    const url = "ws://172.16.0.10:8765";
+    // @ts-ignore
+    const vmIp = (window as any).TENSORFLEET_VM_IP || "172.16.0.10";
+    const url = `ws://${vmIp}:8765`;
 
     if (this.client) {
-      try { this.client.close(); } catch {}
+      try { this.client.close(); } catch { }
     }
     this.client = new FoxgloveWsClient({ url });
 
@@ -203,7 +205,7 @@ export class ROS2Bridge {
 
     // Startup service calls will only be sent one all of them are available.
     console.log("[ROS2Bridge] Forwarding setup service calls :", this.setupServiceCalls);
-    this.setupServiceCalls.forEach(({name, request}) => this.client?.registerSetupServiceCall(
+    this.setupServiceCalls.forEach(({ name, request }) => this.client?.registerSetupServiceCall(
       {
         serviceName: name,
         request: request
@@ -211,7 +213,7 @@ export class ROS2Bridge {
     ));
 
     console.log("[ROS2Bridge] Forwarding setup ros params :", this.setupROSParams);
-    this.setupROSParams.forEach(({name, value}) => this.client?.registerSetupParameterSet(name, value));
+    this.setupROSParams.forEach(({ name, value }) => this.client?.registerSetupParameterSet(name, value));
 
     this.client.onOpen = async () => {
       // forward queued subscriptions. If the topics are not available they will just go into pending till they are.
@@ -241,7 +243,7 @@ export class ROS2Bridge {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
-    try { this.client?.close(); } catch {}
+    try { this.client?.close(); } catch { }
     this.client = null;
   }
 
@@ -307,10 +309,10 @@ export class ROS2Bridge {
 
   /** Arrange for a service call to run once on every (re)connect before normal ops. */
   registerSetupServiceCall(name: string, request: any) {
-    this.setupServiceCalls.push({ 
+    this.setupServiceCalls.push({
       name,
       request
-     });
+    });
   }
 
   /**
@@ -344,7 +346,7 @@ export class ROS2Bridge {
   }
 
   registerSetupROSParameterSet(name: string, value: any): void {
-    this.setupROSParams.push({ name, value});
+    this.setupROSParams.push({ name, value });
   }
 
   isConnected(): boolean {
@@ -362,7 +364,7 @@ export class ROS2Bridge {
 
   getAvailableImageTopics(): Subscription[] {
     return [
-      { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image"},
+      { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
       { topic: "/camera/color/image_raw", type: "sensor_msgs/msg/Image" },
@@ -384,10 +386,10 @@ export class ROS2Bridge {
     if (typeof (this.client as any).callService !== "function") {
       throw new Error("FoxgloveWsClient.callService() not available");
     }
-    return await (this.client as any).callService<T>({
+    return await (this.client as any).callService({
       serviceName: name,
       request: request
-    });
+    }) as T;
   }
 
   // ---------- MAVROS service helpers (exact names and request fields) ----------
@@ -427,6 +429,7 @@ export class ROS2Bridge {
   async mavrosLand(args: { altitude?: number; yaw?: number; latitude?: number; longitude?: number } = {}): Promise<CommandTOL_Response> {
     const req: CommandTOL_Request = {
       altitude: args.altitude ?? 0.0,
+      min_pitch: 0.0,
       yaw: args.yaw ?? 0.0,
       latitude: args.latitude ?? 0.0,
       longitude: args.longitude ?? 0.0,

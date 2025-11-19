@@ -62,6 +62,10 @@ export class VMManagerIntegration implements vscode.Disposable {
   private pollInterval = 30_000;
   private userInitiatedAction: 'start' | 'stop' | null = null;
 
+  public get snapshot(): VmSnapshot {
+    return this.currentSnapshot;
+  }
+
   private static readonly NORMAL_POLL_MS = 30_000;
   private static readonly FAST_POLL_MS = 5_000;
 
