@@ -221,7 +221,7 @@ export function deactivate() {
     mcpBridge.stop().catch(console.error);
     mcpBridge = null;
   }
-  
+
   // Clean up MCP server if running
   if (mcpServerProcess) {
     mcpServerProcess.kill();
@@ -249,7 +249,7 @@ export function deactivate() {
 }
 
 class DashboardViewProvider implements vscode.WebviewViewProvider {
-  constructor(private readonly config: DroneViewport, private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly config: DroneViewport, private readonly context: vscode.ExtensionContext) { }
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
     webviewView.webview.options = {
@@ -293,7 +293,7 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
 }
 
 class ToolingViewProvider implements vscode.WebviewViewProvider {
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly context: vscode.ExtensionContext) { }
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
     webviewView.webview.options = {
@@ -316,7 +316,7 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
   private renderHtml(webview: vscode.Webview): string {
     const styles = getBaseStyles();
     const cspSource = webview.cspSource;
-    
+
     return loadTemplate('tooling-view.html', {
       cspSource,
       styles
@@ -424,7 +424,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 
   if (view.htmlTemplate === 'teleops-standalone') {
     return getStandalonePanelHtml('teleops', webview, context, cspSource);
-  } 
+  }
 
   if (view.htmlTemplate === 'image-standalone') {
     return getStandalonePanelHtml('image', webview, context, cspSource);
@@ -437,11 +437,11 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
-  
+
   // Load the custom HTML template directly
   const templatePath = path.join(__dirname, '..', 'src', 'templates', view.htmlTemplate);
   let template = fs.readFileSync(templatePath, 'utf8');
-  
+
   // Convert asset paths to webview URIs
   template = template.replace(
     /src="\/assets\/([^"]+)"/g,
@@ -452,7 +452,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
       return `src="${assetUri}"`;
     }
   );
-  
+
   template = template.replace(
     /href="\/assets\/([^"]+)"/g,
     (match, assetPath) => {
@@ -462,15 +462,15 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
       return `href="${assetUri}"`;
     }
   );
-  
+
   // Add CSP meta tag for security
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https:; frame-src ${cspSource};">`;
-  
+
   // Insert CSP meta tag in head if not already present
   if (!template.includes('Content-Security-Policy')) {
     template = template.replace('<head>', `<head>\n    ${cspMeta}`);
   }
-  
+
   return template;
 }
 
@@ -499,10 +499,14 @@ function getStandalonePanelHtml(
   );
 
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
+  const vmIp = vmManagerIntegration?.snapshot?.ipAddress || '172.16.0.10';
+  const injectionScript = `<script>window.TENSORFLEET_VM_IP = "${vmIp}";</script>`;
+
   if (html.includes('Content-Security-Policy')) {
     html = html.replace(/<meta[^>]+Content-Security-Policy[^>]+>/i, cspMeta);
+    html = html.replace('<head>', `<head>\n  ${injectionScript}`);
   } else {
-    html = html.replace('<head>', `<head>\n  ${cspMeta}`);
+    html = html.replace('<head>', `<head>\n  ${cspMeta}\n  ${injectionScript}`);
   }
 
   return html;
@@ -806,11 +810,11 @@ function getBaseStyles(): string {
 function loadTemplate(templateName: string, replacements: Record<string, string>): string {
   const templatePath = path.join(__dirname, '..', 'src', 'templates', templateName);
   let template = fs.readFileSync(templatePath, 'utf8');
-  
+
   for (const [key, value] of Object.entries(replacements)) {
     template = template.replace(new RegExp(`{{${key}}}`, 'g'), value);
   }
-  
+
   return template;
 }
 
@@ -821,7 +825,7 @@ function startMCPServer(context: vscode.ExtensionContext) {
   }
 
   const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
-  
+
   if (!fs.existsSync(mcpServerPath)) {
     vscode.window.showErrorMessage(
       'MCP server not found. Please compile the extension first (run "bun run compile")'
@@ -904,7 +908,7 @@ let drones: DroneInfo[] = [];
 
 async function initializeStatusBarItems(context: vscode.ExtensionContext) {
   console.log('[TensorFleet] Initializing status bar items...');
-  
+
   // Create ROS version status bar item
   rosVersionStatusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
@@ -937,11 +941,11 @@ async function initializeStatusBarItems(context: vscode.ExtensionContext) {
   // Watch for config file changes
   const configPattern = '**/config/drone_config.yaml';
   projectWatcher = vscode.workspace.createFileSystemWatcher(configPattern);
-  
+
   projectWatcher.onDidCreate(() => updateStatusBars());
   projectWatcher.onDidChange(() => updateStatusBars());
   projectWatcher.onDidDelete(() => updateStatusBars());
-  
+
   context.subscriptions.push(projectWatcher);
 
   // Update status periodically (every 5 seconds)
@@ -995,10 +999,10 @@ async function updateStatusBars() {
 
   if (isTFProject) {
     console.log('[TensorFleet] TensorFleet project detected, showing status bars');
-    
+
     // Detect ROS version from config or system
     await detectRosVersion();
-    
+
     // Initialize drone status
     await updateDroneStatus();
 
@@ -1039,8 +1043,8 @@ async function detectRosVersion() {
     const versionMatch = configText.match(/ros_?version:\s*["']?([^"'\n]+)["']?/i);
     if (versionMatch) {
       const versionName = versionMatch[1].toLowerCase();
-      const found = AVAILABLE_ROS_VERSIONS.find((v) => 
-        v.distro.toLowerCase() === versionName || 
+      const found = AVAILABLE_ROS_VERSIONS.find((v) =>
+        v.distro.toLowerCase() === versionName ||
         v.name.toLowerCase().includes(versionName)
       );
       if (found) {
@@ -1102,7 +1106,7 @@ async function updateDroneStatus() {
       const flyingCount = drones.filter((d) => d.status === 'flying').length;
 
       let statusText = `$(radio-tower) ${activeCount} Drone${activeCount !== 1 ? 's' : ''}`;
-      
+
       if (flyingCount > 0) {
         statusText += ` (${flyingCount} Flying)`;
       }
@@ -1143,7 +1147,7 @@ async function selectRosVersion() {
 
   if (selected) {
     currentRosVersion = selected.version;
-    
+
     if (rosVersionStatusBar) {
       rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
     }
@@ -1217,15 +1221,15 @@ async function showDroneStatus() {
   const items = drones.map((drone) => {
     const statusIcon =
       drone.status === 'flying' ? '$(rocket)' :
-      drone.status === 'armed' ? '$(zap)' :
-      drone.status === 'idle' ? '$(circle-outline)' :
-      '$(circle-slash)';
+        drone.status === 'armed' ? '$(zap)' :
+          drone.status === 'idle' ? '$(circle-outline)' :
+            '$(circle-slash)';
 
     const batteryIcon =
       drone.battery > 75 ? '$(battery-full)' :
-      drone.battery > 50 ? '$(battery)' :
-      drone.battery > 25 ? '$(battery-charging)' :
-      '$(battery-empty)';
+        drone.battery > 50 ? '$(battery)' :
+          drone.battery > 25 ? '$(battery-charging)' :
+            '$(battery-empty)';
 
     return {
       label: `${statusIcon} ${drone.name}`,
@@ -1313,7 +1317,7 @@ Click "Open Gazebo Workspace" to view in simulation.
 
 async function showMCPConfiguration(context: vscode.ExtensionContext) {
   const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
-  
+
   const config = {
     mcpServers: {
       'tensorfleet-drone': {
@@ -1325,14 +1329,14 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
   };
 
   const configText = JSON.stringify(config, null, 2);
-  
+
   const document = await vscode.workspace.openTextDocument({
     content: configText,
     language: 'json'
   });
-  
+
   await vscode.window.showTextDocument(document);
-  
+
   vscode.window.showInformationMessage(
     'MCP Configuration copied! Add this to your Cursor or Claude Desktop config.',
     'Open Setup Guide'
