@@ -1,0 +1,22 @@
+# TensorFleet Robotic Configuration
+
+robot:
+  type: "differential_drive"
+  id: "robot_1"
+  base_frame: "base_link"
+
+network:
+  vm_ip: "172.16.0.10"
+  rosbridge_url: "ws://172.16.0.10:9091"
+  foxglove_bridge_url: "ws://172.16.0.10:8765"
+
+motion:
+  cmd_vel_topic: "/cmd_vel_raw"
+  default_linear_speed: 0.2     # m/s
+  default_angular_speed: 0.5    # rad/s
+
+logging:
+  level: "INFO"
+  save_to_file: false
+  directory: "./logs"
+

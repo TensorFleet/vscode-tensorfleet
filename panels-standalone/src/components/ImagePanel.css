@@ -195,6 +195,27 @@
   font-weight: 500;
 }
 
+/* Match RawMessages dark select styling */
+.setting-select {
+  background: #0f172a;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  border-radius: 0.55rem;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.setting-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.35);
+}
+
+.setting-select option {
+  background: #020617;
+  color: #e5e7eb;
+}
+
 .setting-input::placeholder {
   color: rgba(255, 255, 255, 0.3);
   font-weight: 400;
@@ -596,4 +617,3 @@ canvas {
     font-size: 11px;
   }
 }
-

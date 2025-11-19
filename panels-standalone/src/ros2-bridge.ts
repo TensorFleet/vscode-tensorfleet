@@ -174,6 +174,9 @@ export class ROS2Bridge {
   private messageHandlers = new Map<string, Set<(message: any) => void>>();
   private subscriptions = new Map<string, Subscription>();
 
+  // track discovered topics from the bridge
+  private discoveredTopics: Map<string, string> = new Map(); // topic -> type
+
   private reconnectTimeout: number | null = null;
 
   // Topics that should be (re)published once on connect (e.g., latched configs if you need them).
@@ -230,6 +233,11 @@ export class ROS2Bridge {
       console.error("Foxglove client error", err);
     };
 
+    this.client.onNewTopic = (topic, type) => {
+      console.log("new Foxglove topic:", topic, "type:", type);
+      this.discoveredTopics.set(topic, type);
+    };
+
     this.client.onMessage = (msg) => {
       const ref = { topic: msg.topic, type: msg.schemaName, msg: msg.payload };
       this.handleFoxgloveMessage(ref);
@@ -243,6 +251,7 @@ export class ROS2Bridge {
     }
     try { this.client?.close(); } catch {}
     this.client = null;
+    this.discoveredTopics.clear();
   }
 
   /** Store a subscription and (re)apply it on connect. */
@@ -349,36 +358,16 @@ export class ROS2Bridge {
 
   isConnected(): boolean {
     return !!this.client && this.client.isConnected();
-    return this.client?.isConnected() ?? false;
-  }
-
-  getAvailableTopics(): Subscription[] {
-    return this.client?.getAvailableTopics() ?? [];
-  }
-
-  getTopicType(topic: string): string | undefined {
-    return this.client?.getTopicType(topic);
   }
 
   getAvailableImageTopics(): Subscription[] {
-    return [
-      { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image"},
-      { topic: "/camera/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/camera/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
-      { topic: "/camera/color/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/camera/color/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
-      { topic: "/camera/depth/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/camera/rgb/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/camera/rgb/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
-      { topic: "/usb_cam/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/usb_cam/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
-      { topic: "/image", type: "sensor_msgs/msg/Image" },
-      { topic: "/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
-    ];
+    const imageTypes = ["sensor_msgs/msg/Image", "sensor_msgs/msg/CompressedImage"];
+    return Array.from(this.discoveredTopics.entries())
+      .filter(([_, type]) => imageTypes.includes(type))
+      .map(([topic, type]) => ({ topic, type }));
   }
 
-  /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
+ /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
   async callService<T = any>(name: string, request: any): Promise<T> {
     if (!this.client) throw new Error("callService() before connect");
     if (typeof (this.client as any).callService !== "function") {
@@ -434,13 +423,19 @@ export class ROS2Bridge {
     return await this.callService<CommandTOL_Response>("/mavros/cmd/land", req);
   }
 
-  /** /mavros/param/set (mavros_msgs/srv/ParamSet) */
+  getAvailableTopics(): Subscription[] {
+    return Array.from(this.discoveredTopics.entries()).map(([topic, type]) => ({ topic, type }));
+  }
+
+    /** /mavros/param/set (mavros_msgs/srv/ParamSet) */
   async mavrosParamSet(param_id: string, value: ParamValue): Promise<ParamSet_Response> {
     const req: ParamSet_Request = { param_id, value };
     return await this.callService<ParamSet_Response>("/mavros/param/set", req);
   }
 
-  // ---------- Image conversions (used by consumers that want a Data URI) ----------
+  getTopicType(topic: string): string | undefined {
+    return this.discoveredTopics.get(topic);
+  }
 
   private handleFoxgloveMessage(data: any) {
     // Expecting something like: { topic, type, msg }

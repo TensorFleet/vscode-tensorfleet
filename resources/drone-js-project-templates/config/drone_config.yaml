@@ -1,0 +1,61 @@
+# TensorFleet Drone JS Configuration
+
+network:
+  vm_ip: "172.16.0.10"
+  rosbridge_url: "ws://172.16.0.10:9091"  # rosbridge websocket URL
+  rosbridge_port: 9091
+  namespace: "/drone"
+  setpoint_frame: "map"
+
+simulation:
+  world: "empty"  # Options: empty, warehouse, outdoor
+  headless: false
+  enable_gui: true
+
+sensors:
+  camera:
+    enabled: true
+    resolution: [640, 480]
+    fps: 30
+
+  lidar:
+    enabled: false
+    range: 10.0
+
+  gps:
+    enabled: true
+    update_rate: 10  # Hz
+
+flight:
+  max_altitude: 100.0  # meters
+  max_speed: 10.0      # m/s
+  waypoint_hold_ms: 5000
+  waypoints:
+    - [0.0, 0.0, 5.0]
+    - [10.0, 0.0, 5.0]
+    - [10.0, 10.0, 5.0]
+    - [0.0, 10.0, 5.0]
+    - [0.0, 0.0, 5.0]
+    - [0.0, 0.0, 0.0]
+
+offboard:
+  alt_target: 2.0
+  edge_m: 10.0
+  waypoint_radius: 2.0
+  slow_radius: 10.0
+  v_fast: 20.0
+  v_min: 1.0
+  setpoint_hz: 20.0
+  arm_wait: 3.0
+  takeoff_timeout: 60.0
+  land_timeout: 300.0
+
+ai_models:
+  object_detection:
+    model: "yolov8n"
+    confidence_threshold: 0.5
+
+logging:
+  level: "info"
+  save_to_file: true
+  directory: "./logs"

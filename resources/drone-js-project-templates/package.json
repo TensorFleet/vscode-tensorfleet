@@ -1,0 +1,17 @@
+{
+  "name": "tensorfleet-drone-js-project",
+  "version": "0.0.1",
+  "private": true,
+  "description": "TensorFleet drone starter using JavaScript and roslib over rosbridge.",
+  "scripts": {
+    "drone:mover": "node src/drone_mover.js",
+    "drone:vision": "node src/vision_yolo.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "jpeg-js": "^0.4.4",
+    "js-yaml": "^4.1.0",
+    "onnxruntime-node": "^1.18.0",
+    "roslib": "^1.3.0"
+  }
+}
