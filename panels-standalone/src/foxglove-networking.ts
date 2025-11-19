@@ -737,4 +737,12 @@ export class FoxgloveWsClient {
       }
     }
   }
+
+  getAvailableTopics(): { topic: string, type: string }[]{
+      return Array.from(this.channelsByTopic.entries()).map(([topic, type]) => ({ topic, type: type.channel.schemaName }));
+  }
+
+  getTopicType(topic: string): string | undefined {
+    return this.channelsByTopic.get(topic)?.channel.schemaName;
+  }
 }

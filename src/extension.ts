@@ -206,6 +206,11 @@ export function activate(context: vscode.ExtensionContext) {
     );
   }
 
+  if (vmManagerIntegration) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => vmManagerIntegration?.showVmActions())
+    );
+  }
   // ROS bridge commands removed; panels use embedded Foxglove networking.
 
   context.subscriptions.push(
