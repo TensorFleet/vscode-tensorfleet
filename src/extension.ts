@@ -44,6 +44,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     htmlTemplate: 'visualization.html'
   },
   {
+    id: 'tensorfleet-gzweb',
+    title: 'Gazebo Web',
+    description: 'Interact with Gazebo through the bundled gzweb build for quick in-editor visualization.',
+    image: 'gazebo-placeholder.svg',
+    command: 'tensorfleet.openGzwebPanel',
+    actionLabel: 'Open Gazebo Web Viewer',
+    panelKind: 'standard',
+    htmlTemplate: 'gzweb-standalone'
+  },
+  {
     id: 'tensorfleet-aiops',
     title: 'AI Model Ops',
     description: 'Run TensorFleet AI models on live or recorded video feeds, and inspect inference metrics.',
@@ -341,24 +351,25 @@ async function openDedicatedPanel(
   const localResourceRoots = [vscode.Uri.joinPath(context.extensionUri, 'media')];
   if (view.htmlTemplate) {
     localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'src', 'templates'));
-    if (view.htmlTemplate === 'teleops-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    const standaloneDistRoot = vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist');
+    const standaloneAssetsRoot = vscode.Uri.joinPath(standaloneDistRoot, 'assets');
+    const standaloneTemplates = new Set([
+      'teleops-standalone',
+      'image-standalone',
+      'map-standalone',
+      'raw-messages-standalone',
+      'gzweb-standalone'
+    ]);
+
+    if (standaloneTemplates.has(view.htmlTemplate)) {
+      localResourceRoots.push(standaloneDistRoot, standaloneAssetsRoot);
     }
 
-    if (view.htmlTemplate === 'image-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-
-    if (view.htmlTemplate == 'map-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-
-    if (view.htmlTemplate == 'raw-messages-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    if (view.htmlTemplate === 'gzweb-standalone') {
+      localResourceRoots.push(
+        vscode.Uri.joinPath(standaloneDistRoot, 'gzweb'),
+        vscode.Uri.joinPath(standaloneDistRoot, 'gzweb', 'assets')
+      );
     }
   }
 
@@ -440,6 +451,10 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
     return getStandalonePanelHtml('mission_control', webview, context, cspSource);
   }
 
+  if (view.htmlTemplate === 'gzweb-standalone') {
+    return getStandalonePanelHtml('gzweb/gzweb', webview, context, cspSource);
+  }
+
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
@@ -481,7 +496,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 }
 
 function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'gzweb/gzweb',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
@@ -494,17 +509,29 @@ function getStandalonePanelHtml(
 
   let html = fs.readFileSync(htmlPath, 'utf8');
 
+  const distRootUri = vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist');
+  const panelPathSegments = panelName.split('/').slice(0, -1);
+  const panelDirUri =
+    panelPathSegments.length > 0 ? vscode.Uri.joinPath(distRootUri, ...panelPathSegments) : distRootUri;
+
   html = html.replace(
-    /(src|href)="\/assets\/([^"]+)"/g,
+    /(src|href)="(?!https?:|vscode-webview:|data:|mailto:|ws:|wss:)([^"#]+)"/g,
     (match, attr, assetPath) => {
-      const assetUri = webview.asWebviewUri(
-        vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets', assetPath)
-      );
-      return `${attr}="${assetUri}"`;
+      let targetUri: vscode.Uri;
+
+      if (assetPath.startsWith('/')) {
+        const normalized = assetPath.replace(/^\/+/, '');
+        targetUri = vscode.Uri.joinPath(distRootUri, normalized);
+      } else {
+        const normalized = assetPath.replace(/^\.\//, '');
+        targetUri = vscode.Uri.joinPath(panelDirUri, normalized);
+      }
+
+      return `${attr}="${webview.asWebviewUri(targetUri)}"`;
     }
   );
 
-  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https: blob:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:; media-src ${cspSource} https: http: data: blob:; worker-src ${cspSource} blob:;">`;
   if (html.includes('Content-Security-Policy')) {
     html = html.replace(/<meta[^>]+Content-Security-Policy[^>]+>/i, cspMeta);
   } else {

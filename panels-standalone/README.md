@@ -41,6 +41,11 @@ bun run build  # or: npm run build
 - Adjustable publish rate (Hz)
 - Emergency stop button
 
+### ✅ Gazebo Web (gzweb)
+- Prebuilt gzweb viewer bundled under `public/gzweb/`
+- Uses `public/gzweb/gzweb-config.js` for runtime bridge URL (defaults to `ws://localhost:9000`)
+- Open via `/gzweb/gzweb.html` in dev or the VS Code panel
+
 ### 🚧 Coming Soon
 - Plot Panel
 - 3D View Panel
@@ -132,4 +137,3 @@ The panels will work exactly the same in VS Code!
 - **Vite** - Fast dev server & bundler
 - **Canvas API** - Image rendering
 - **WebSocket** - ROS2 connection
-

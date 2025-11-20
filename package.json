@@ -14,6 +14,7 @@
     "onStartupFinished",
     "onView:tensorfleet-qgroundcontrol",
     "onView:tensorfleet-gazebo",
+    "onView:tensorfleet-gzweb",
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
     "onView:tensorfleet-image-panel",
@@ -23,6 +24,7 @@
     "onView:tensorfleet-tooling-view",
     "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
+    "onCommand:tensorfleet.openGzwebPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
     "onCommand:tensorfleet.openImagePanel",
@@ -68,6 +70,11 @@
         {
           "id": "tensorfleet-gazebo",
           "name": "Gazebo World",
+          "type": "webview"
+        },
+        {
+          "id": "tensorfleet-gzweb",
+          "name": "Gazebo Web",
           "type": "webview"
         },
         {
@@ -118,6 +125,11 @@
       {
         "command": "tensorfleet.openGazeboPanel",
         "title": "TensorFleet: Open Gazebo Workspace",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openGzwebPanel",
+        "title": "TensorFleet: Open Gazebo Web Viewer",
         "category": "TensorFleet"
       },
       {
@@ -209,6 +221,11 @@
           "group": "navigation@1"
         },
         {
+          "command": "tensorfleet.openGzwebPanel",
+          "when": "view == tensorfleet-gzweb",
+          "group": "navigation@1"
+        },
+        {
           "command": "tensorfleet.openAIPanel",
           "when": "view == tensorfleet-aiops",
           "group": "navigation@1"
@@ -241,6 +258,11 @@
         {
           "command": "tensorfleet.openAllPanels",
           "when": "view == tensorfleet-gazebo",
+          "group": "navigation@9"
+        },
+        {
+          "command": "tensorfleet.openAllPanels",
+          "when": "view == tensorfleet-gzweb",
           "group": "navigation@9"
         },
         {
