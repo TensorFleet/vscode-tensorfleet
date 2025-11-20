@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
-import { VMManagerIntegration } from './vm-manager';
+import { VMManagerIntegration, VmConnectionInfo } from './vm-manager';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -406,7 +406,7 @@ async function openDedicatedPanel(
 
   // Check if view has a custom HTML template
   if (view.htmlTemplate) {
-    panel.webview.html = getCustomPanelHtml(view, panel.webview, context, cspSource);
+    panel.webview.html = await getCustomPanelHtml(view, panel.webview, context, cspSource);
     return panel;
   }
 
@@ -434,7 +434,12 @@ function getTerminalPanelHtml(view: DroneViewport, imageUri: string, cspSource: 
   });
 }
 
-function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, context: vscode.ExtensionContext, cspSource: string): string {
+async function getCustomPanelHtml(
+  view: DroneViewport,
+  webview: vscode.Webview,
+  context: vscode.ExtensionContext,
+  cspSource: string
+): Promise<string> {
   if (!view.htmlTemplate) {
     throw new Error('No HTML template specified for custom panel');
   }
@@ -452,7 +457,8 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   }
 
   if (view.htmlTemplate === 'gzweb-standalone') {
-    return getStandalonePanelHtml('gzweb/gzweb', webview, context, cspSource);
+    const proxyInfo = await vmManagerIntegration?.getVmConnectionInfo();
+    return getGzwebPanelHtml(webview, context, cspSource, proxyInfo);
   }
 
   if (view.htmlTemplate === 'raw-messages-standalone') {
@@ -493,6 +499,16 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   }
   
   return template;
+}
+
+function getGzwebPanelHtml(
+  webview: vscode.Webview,
+  context: vscode.ExtensionContext,
+  cspSource: string,
+  proxyInfo?: VmConnectionInfo
+): string {
+  const html = getStandalonePanelHtml('gzweb/gzweb', webview, context, cspSource);
+  return injectGzwebProxyConfig(html, proxyInfo);
 }
 
 function getStandalonePanelHtml(
@@ -540,6 +556,208 @@ function getStandalonePanelHtml(
 
   return html;
 }
+
+function injectGzwebProxyConfig(html: string, proxyInfo?: VmConnectionInfo): string {
+  const hasVmTarget = Boolean(proxyInfo?.vmId);
+  const configuredWebsocket = proxyInfo?.wsProxyUrl;
+
+  const proxyConfigScript = `
+<script>
+  window.__GZWEB_CONFIG__ = window.__GZWEB_CONFIG__ || {};
+  ${configuredWebsocket ? `window.__GZWEB_CONFIG__.websocketUrl = ${JSON.stringify(configuredWebsocket)};` : ''}
+  window.__GZWEB_PROXY_CONFIG__ = {
+    enableVmProxy: ${hasVmTarget},
+    nodeId: ${JSON.stringify(proxyInfo?.vmId ?? '')},
+    token: ${JSON.stringify(proxyInfo?.token ?? '')},
+    targetIp: ${JSON.stringify(proxyInfo?.ipAddress ?? '')},
+    wsProxyUrl: ${JSON.stringify(proxyInfo?.wsProxyUrl ?? '')}
+  };
+</script>
+<script>${GZWEB_PROXY_SHIM}</script>`;
+
+  return insertBeforeFirstScriptTag(html, proxyConfigScript);
+}
+
+function insertBeforeFirstScriptTag(html: string, snippet: string): string {
+  const firstScriptIndex = html.indexOf('<script');
+  if (firstScriptIndex === -1) {
+    return `${snippet}\n${html}`;
+  }
+  return `${html.slice(0, firstScriptIndex)}${snippet}\n${html.slice(firstScriptIndex)}`;
+}
+
+const GZWEB_PROXY_SHIM = `
+(() => {
+  const cfg = (window).__GZWEB_PROXY_CONFIG__ || {};
+  if (!cfg.enableVmProxy || !cfg.nodeId) {
+    console.info('[TensorFleet][gzweb] VM proxy shim disabled (missing node ID)');
+    return;
+  }
+
+  const NativeWS = window.WebSocket;
+  if (typeof NativeWS !== 'function') {
+    console.warn('[TensorFleet][gzweb] No native WebSocket found; skipping proxy shim');
+    return;
+  }
+
+  class ProxyLoginWebSocket extends EventTarget {
+    constructor(url, protocols) {
+      super();
+      this.url = url;
+      this.protocols = protocols;
+      this._native = new NativeWS(url, protocols);
+      this.readyState = NativeWS.CONNECTING;
+      this.binaryType = 'arraybuffer';
+      this._useProxy = shouldProxy(url, cfg);
+      this._loginComplete = !this._useProxy;
+      this._queue = [];
+      this._handlers = {};
+
+      this._native.addEventListener('open', () => {
+        if (!this._useProxy) {
+          this._promoteOpen();
+          return;
+        }
+        try {
+          this._native.send(JSON.stringify({
+            type: 'login',
+            nodeId: cfg.nodeId,
+            token: cfg.token || ''
+          }));
+        } catch (err) {
+          this._emitError(err);
+          this.close();
+        }
+      });
+
+      this._native.addEventListener('message', (event) => {
+        if (this._useProxy && !this._loginComplete) {
+          const parsed = safeParse(event.data);
+          if (parsed && parsed.type === 'loginResponse') {
+            if (parsed.success) {
+              this._loginComplete = true;
+              this._promoteOpen();
+              this._flushQueue();
+            } else {
+              this._emitError(new Error(parsed.message || 'Proxy login failed'));
+              this.close(1011, parsed.message || 'Proxy login failed');
+            }
+            return;
+          }
+        }
+        this._emitMessage(event.data);
+      });
+
+      this._native.addEventListener('close', (event) => {
+        this.readyState = NativeWS.CLOSED;
+        this.dispatchEvent(event);
+        this._invokeHandler('close', event);
+      });
+
+      this._native.addEventListener('error', (event) => {
+        this.dispatchEvent(event);
+        this._invokeHandler('error', event);
+      });
+    }
+
+    get bufferedAmount() { return this._native.bufferedAmount; }
+    get extensions() { return this._native.extensions; }
+    get protocol() { return this._native.protocol; }
+    get binaryType() { return this._native.binaryType; }
+    set binaryType(type) { this._native.binaryType = type; }
+
+    set onopen(handler) { this._handlers.open = handler; }
+    get onopen() { return this._handlers.open; }
+    set onmessage(handler) { this._handlers.message = handler; }
+    get onmessage() { return this._handlers.message; }
+    set onclose(handler) { this._handlers.close = handler; }
+    get onclose() { return this._handlers.close; }
+    set onerror(handler) { this._handlers.error = handler; }
+    get onerror() { return this._handlers.error; }
+
+    send(data) {
+      if (this._useProxy && !this._loginComplete) {
+        this._queue.push(data);
+        return;
+      }
+      this._native.send(data);
+    }
+
+    close(code, reason) {
+      this.readyState = NativeWS.CLOSING;
+      this._native.close(code, reason);
+    }
+
+    _emitMessage(data) {
+      const evt = new MessageEvent('message', { data });
+      this.dispatchEvent(evt);
+      this._invokeHandler('message', evt);
+    }
+
+    _emitError(err) {
+      const evt = new Event('error');
+      evt.error = err;
+      this.dispatchEvent(evt);
+      this._invokeHandler('error', evt);
+    }
+
+    _promoteOpen() {
+      if (this.readyState === NativeWS.OPEN) return;
+      this.readyState = NativeWS.OPEN;
+      const evt = new Event('open');
+      this.dispatchEvent(evt);
+      this._invokeHandler('open', evt);
+    }
+
+    _flushQueue() {
+      if (!this._queue.length) return;
+      const pending = [...this._queue];
+      this._queue = [];
+      pending.forEach((item) => {
+        try {
+          this._native.send(item);
+        } catch (err) {
+          console.warn('[TensorFleet][gzweb] Failed to flush queued message', err);
+        }
+      });
+    }
+
+    _invokeHandler(key, evt) {
+      const handler = this._handlers[key];
+      if (typeof handler === 'function') {
+        try {
+          handler.call(this, evt);
+        } catch (err) {
+          console.error('[TensorFleet][gzweb] Handler error', err);
+        }
+      }
+    }
+  }
+
+  ProxyLoginWebSocket.CONNECTING = NativeWS.CONNECTING;
+  ProxyLoginWebSocket.OPEN = NativeWS.OPEN;
+  ProxyLoginWebSocket.CLOSING = NativeWS.CLOSING;
+  ProxyLoginWebSocket.CLOSED = NativeWS.CLOSED;
+
+  function shouldProxy(url, config) {
+    if (!config.wsProxyUrl) return config.enableVmProxy;
+    return typeof url === 'string' && url.startsWith(config.wsProxyUrl);
+  }
+
+  function safeParse(payload) {
+    try {
+      if (typeof payload === 'string') return JSON.parse(payload);
+      if (payload instanceof ArrayBuffer) return JSON.parse(new TextDecoder().decode(payload));
+    } catch (err) {
+      return null;
+    }
+    return null;
+  }
+
+  window.WebSocket = ProxyLoginWebSocket;
+  console.info('[TensorFleet][gzweb] VM proxy shim enabled', cfg.wsProxyUrl || '');
+})();
+`;
 
 async function handleOption3Message(_panel: vscode.WebviewPanel, message: any, _context: vscode.ExtensionContext) {
   if (!message || !message.command) {
