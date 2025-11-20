@@ -1,18 +1,29 @@
 #!/bin/bash
 # TensorFleet Build Script
-# Builds React panels and extension
+# Builds React panels (including bundled gzweb) and the VS Code extension
 
-set -e  # Exit on error
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PANELS_DIR="$ROOT_DIR/panels-standalone"
+GZWEB_BUNDLE="$PANELS_DIR/src/static/gzweb/gzweb.html"
 
 echo "🔨 Building TensorFleet Extension..."
 echo ""
 
-# 1. Build React panels
+# Ensure gzweb bundle exists so the panel ships with the extension.
+if [ ! -f "$GZWEB_BUNDLE" ]; then
+  echo "❌ Missing gzweb bundle at $GZWEB_BUNDLE"
+  echo "   Add the gzweb build into src/static/gzweb/ before running this script."
+  exit 1
+fi
+
+# 1. Build React panels (includes gzweb assets via Vite publicDir)
 echo "📦 Step 1/2: Building React panels..."
-cd panels-standalone
+cd "$PANELS_DIR"
 bun install
 bun run build
-cd ../
+cd "$ROOT_DIR"
 echo ""
 
 # 2. Build extension
@@ -25,5 +36,4 @@ echo "✅ Build complete!"
 echo ""
 echo "🚀 To launch:"
 echo "   Press F5 in VS Code"
-echo "   or run: code --extensionDevelopmentPath=$(pwd)"
-
+echo "   or run: code --extensionDevelopmentPath=$ROOT_DIR"

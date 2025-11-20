@@ -6,6 +6,7 @@ import url from '@rollup/plugin-url'
 
 export default defineConfig({
   plugins: [react()],
+  publicDir: resolve(__dirname, 'src/static'),
 
   // (Optional; you can omit this whole worker block if you don't use workers)
   worker: {
