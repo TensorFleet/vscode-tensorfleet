@@ -4,6 +4,7 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
 import { VMManagerIntegration } from './vm-manager';
+import { TelemetryService } from './telemetry';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -120,6 +121,7 @@ let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 
 let vmManagerIntegration: VMManagerIntegration | null = null;
+let telemetryService: TelemetryService | null = null;
 
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
@@ -127,23 +129,50 @@ let droneStatusBar: vscode.StatusBarItem | null = null;
 let projectWatcher: vscode.FileSystemWatcher | null = null;
 
 export function activate(context: vscode.ExtensionContext) {
+  telemetryService = new TelemetryService(context);
+  context.subscriptions.push(telemetryService);
+  telemetryService.trackEvent('extension.activate', {
+    mode:
+      context.extensionMode === vscode.ExtensionMode.Production
+        ? 'production'
+        : context.extensionMode === vscode.ExtensionMode.Development
+          ? 'development'
+          : 'test'
+  });
+
   // Start MCP bridge for communication between MCP server and VS Code
   mcpBridge = new MCPBridge(context);
-  mcpBridge.start().then(() => {
-    console.log('TensorFleet MCP Bridge started');
-  }).catch((error) => {
-    console.error('Failed to start MCP Bridge:', error);
-  });
+  mcpBridge
+    .start()
+    .then(() => {
+      telemetryService?.trackEvent('mcpBridge.start', { status: 'success' });
+      console.log('TensorFleet MCP Bridge started');
+    })
+    .catch((error) => {
+      telemetryService?.captureError(error, { source: 'mcpBridge.start' });
+      console.error('Failed to start MCP Bridge:', error);
+    });
 
   // Panels handle ROS2 networking internally via panels-standalone Foxglove client.
 
   // Initialize status bar items for TensorFleet projects
-  initializeStatusBarItems(context).catch((error) => {
-    console.error('[TensorFleet] Failed to initialize status bars:', error);
-  });
+  initializeStatusBarItems(context)
+    .then(() => {
+      telemetryService?.trackEvent('statusBar.initialize', { status: 'success' });
+    })
+    .catch((error) => {
+      telemetryService?.captureError(error, { source: 'initializeStatusBarItems' });
+      console.error('[TensorFleet] Failed to initialize status bars:', error);
+    });
 
-  vmManagerIntegration = new VMManagerIntegration(context);
-  vmManagerIntegration.initialize();
+  vmManagerIntegration = new VMManagerIntegration(context, telemetryService);
+  try {
+    vmManagerIntegration.initialize();
+    telemetryService?.trackEvent('vmManager.initialize', { status: 'success' });
+  } catch (error) {
+    telemetryService?.captureError(error, { source: 'vmManager.initialize' });
+  }
+
   DRONE_VIEWS.forEach((view) => {
     const provider = new DashboardViewProvider(view, context);
     context.subscriptions.push(
@@ -153,7 +182,11 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
-      vscode.commands.registerCommand(view.command, () => openDedicatedPanel(view, context))
+      registerTensorFleetCommand(
+        view.command,
+        () => openDedicatedPanel(view, context),
+        { feature: 'panel' }
+      )
     );
   });
 
@@ -165,40 +198,60 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.installTools', () => installBundledTools(context))
+    registerTensorFleetCommand('tensorfleet.installTools', () => installBundledTools(context), {
+      feature: 'tooling'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.createNewProject', () => createNewProject(context))
+    registerTensorFleetCommand('tensorfleet.createNewProject', () => createNewProject(context), {
+      feature: 'projects'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
+    registerTensorFleetCommand('tensorfleet.openAllPanels', () => openAllPanels(context), {
+      feature: 'panel'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.startMCPServer', () => startMCPServer(context))
+    registerTensorFleetCommand('tensorfleet.startMCPServer', () => startMCPServer(context), {
+      feature: 'mcp'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.stopMCPServer', () => stopMCPServer())
+    registerTensorFleetCommand('tensorfleet.stopMCPServer', () => stopMCPServer(), {
+      feature: 'mcp'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context))
+    registerTensorFleetCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context), {
+      feature: 'mcp'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.selectRosVersion', () => selectRosVersion())
+    registerTensorFleetCommand('tensorfleet.selectRosVersion', () => selectRosVersion(), {
+      feature: 'ros'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
+    registerTensorFleetCommand('tensorfleet.showDroneStatus', () => showDroneStatus(), {
+      feature: 'status'
+    })
   );
 
   if (vmManagerIntegration) {
     context.subscriptions.push(
-      vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => vmManagerIntegration?.showVmActions())
+      registerTensorFleetCommand(
+        'tensorfleet.showVMManagerMenu',
+        () => vmManagerIntegration?.showVmActions(),
+        { feature: 'vmManager' }
+      )
     );
   }
   // ROS bridge commands removed; panels use embedded Foxglove networking.
@@ -208,6 +261,7 @@ export function activate(context: vscode.ExtensionContext) {
       for (const [key, terminal] of terminalRegistry.entries()) {
         if (terminal === closedTerminal) {
           terminalRegistry.delete(key);
+          telemetryService?.trackEvent('terminal.closed', { target: key });
           break;
         }
       }
@@ -216,15 +270,27 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  telemetryService?.trackEvent('extension.deactivate');
+
   // Clean up MCP bridge
   if (mcpBridge) {
-    mcpBridge.stop().catch(console.error);
+    mcpBridge
+      .stop()
+      .catch((error) => {
+        telemetryService?.captureError(error, { source: 'mcpBridge.stop' });
+        console.error(error);
+      });
     mcpBridge = null;
   }
   
   // Clean up MCP server if running
   if (mcpServerProcess) {
-    mcpServerProcess.kill();
+    try {
+      mcpServerProcess.kill();
+      telemetryService?.trackEvent('mcpServer.stop', { reason: 'deactivate' });
+    } catch (error) {
+      telemetryService?.captureError(error, { source: 'mcpServer.stop' });
+    }
     mcpServerProcess = null;
   }
 
@@ -246,6 +312,34 @@ export function deactivate() {
     vmManagerIntegration.dispose();
     vmManagerIntegration = null;
   }
+
+  telemetryService?.dispose();
+  telemetryService = null;
+}
+
+function getTelemetry() {
+  return telemetryService;
+}
+
+function registerTensorFleetCommand(
+  commandId: string,
+  handler: (...args: any[]) => unknown,
+  options?: { feature?: string }
+) {
+  return vscode.commands.registerCommand(commandId, async (...args: unknown[]) => {
+    const telemetry = getTelemetry();
+    const feature = options?.feature ?? 'core';
+    telemetry?.trackEvent('command.execute', { commandId, feature, phase: 'start' });
+    try {
+      const result = await Promise.resolve(handler(...args));
+      telemetry?.trackEvent('command.execute', { commandId, feature, phase: 'success' });
+      return result;
+    } catch (error) {
+      telemetry?.captureError(error, { commandId, feature });
+      telemetry?.trackEvent('command.execute', { commandId, feature, phase: 'error' });
+      throw error;
+    }
+  });
 }
 
 class DashboardViewProvider implements vscode.WebviewViewProvider {
@@ -261,10 +355,12 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.onDidReceiveMessage((message) => {
       if (message?.command === 'openPanel') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: this.config.id, action: 'openPanel' });
         vscode.commands.executeCommand(this.config.command).then(undefined, (error) => {
           vscode.window.showErrorMessage(`Failed to open panel: ${error instanceof Error ? error.message : error}`);
         });
       } else if (message?.command === 'openAllPanels') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: this.config.id, action: 'openAllPanels' });
         vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
           vscode.window.showErrorMessage(
             `Failed to open all dashboards: ${error instanceof Error ? error.message : error}`
@@ -304,10 +400,13 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.renderHtml(webviewView.webview);
     webviewView.webview.onDidReceiveMessage((message) => {
       if (message?.command === 'newProject') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'newProject' });
         vscode.commands.executeCommand('tensorfleet.createNewProject');
       } else if (message?.command === 'installTools') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'installTools' });
         vscode.commands.executeCommand('tensorfleet.installTools');
       } else if (message?.command === 'openAllPanels') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'openAllPanels' });
         vscode.commands.executeCommand('tensorfleet.openAllPanels');
       }
     });
@@ -330,71 +429,112 @@ async function openDedicatedPanel(
   viewColumn: vscode.ViewColumn = vscode.ViewColumn.Active,
   preserveFocus = false
 ) {
-  const viewType = `tensorfleetPanel.${view.id.replace(/[^A-Za-z0-9.-]/g, '-')}`;
-  // Set up local resource roots based on panel type
-  const localResourceRoots = [vscode.Uri.joinPath(context.extensionUri, 'media')];
-  if (view.htmlTemplate) {
-    localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'src', 'templates'));
-    if (view.htmlTemplate === 'teleops-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-
-    if (view.htmlTemplate === 'image-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-
-    if (view.htmlTemplate == 'map-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-
-    if (view.htmlTemplate == 'raw-messages-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-  }
-
-  const panel = vscode.window.createWebviewPanel(
-    viewType,
-    view.title,
-    { viewColumn, preserveFocus },
-    {
-      enableScripts: true,
-      retainContextWhenHidden: true,
-      localResourceRoots
-    }
-  );
-
-  const webview = panel.webview;
-  const imageUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', view.image)).toString();
-  const cspSource = webview.cspSource;
-
-  panel.webview.onDidReceiveMessage((message) => {
-    if (message?.command === 'launchTerminal' && typeof message.target === 'string') {
-      launchTerminalSession(message.target);
-    } else if (message?.command === 'openAllPanels') {
-      void vscode.commands.executeCommand('tensorfleet.openAllPanels');
-    } else {
-      // Handle Option 3 panel messages
-      handleOption3Message(panel, message, context);
-    }
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('panel.open', {
+    panelId: view.id,
+    kind: view.panelKind ?? 'standard',
+    template: view.htmlTemplate ?? 'standard',
+    phase: 'start'
   });
 
-  if (view.panelKind === 'terminalTabs') {
-    panel.webview.html = getTerminalPanelHtml(view, imageUri, cspSource);
-    return panel;
-  }
+  try {
+    const viewType = `tensorfleetPanel.${view.id.replace(/[^A-Za-z0-9.-]/g, '-')}`;
+    // Set up local resource roots based on panel type
+    const localResourceRoots = [vscode.Uri.joinPath(context.extensionUri, 'media')];
+    if (view.htmlTemplate) {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'src', 'templates'));
+      if (view.htmlTemplate === 'teleops-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
 
-  // Check if view has a custom HTML template
-  if (view.htmlTemplate) {
-    panel.webview.html = getCustomPanelHtml(view, panel.webview, context, cspSource);
-    return panel;
-  }
+      if (view.htmlTemplate === 'image-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
 
-  panel.webview.html = getStandardPanelHtml(view, imageUri, cspSource);
-  return panel;
+      if (view.htmlTemplate == 'map-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+
+      if (view.htmlTemplate == 'raw-messages-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+    }
+
+    const panel = vscode.window.createWebviewPanel(
+      viewType,
+      view.title,
+      { viewColumn, preserveFocus },
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots
+      }
+    );
+
+    const webview = panel.webview;
+    const imageUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', view.image)).toString();
+    const cspSource = webview.cspSource;
+
+    panel.webview.onDidReceiveMessage((message) => {
+      telemetry?.trackEvent('panel.message', {
+        panelId: view.id,
+        command: message?.command ?? 'unknown'
+      });
+      if (message?.command === 'launchTerminal' && typeof message.target === 'string') {
+        launchTerminalSession(message.target);
+      } else if (message?.command === 'openAllPanels') {
+        void vscode.commands.executeCommand('tensorfleet.openAllPanels');
+      } else {
+        // Handle Option 3 panel messages
+        handleOption3Message(panel, message, context);
+      }
+    });
+
+    if (view.panelKind === 'terminalTabs') {
+      panel.webview.html = getTerminalPanelHtml(view, imageUri, cspSource);
+      telemetry?.trackEvent('panel.open', {
+        panelId: view.id,
+        kind: view.panelKind,
+        template: view.htmlTemplate ?? 'standard',
+        phase: 'success'
+      });
+      return panel;
+    }
+
+    // Check if view has a custom HTML template
+    if (view.htmlTemplate) {
+      panel.webview.html = getCustomPanelHtml(view, panel.webview, context, cspSource);
+      telemetry?.trackEvent('panel.open', {
+        panelId: view.id,
+        kind: view.panelKind ?? 'standard',
+        template: view.htmlTemplate,
+        phase: 'success'
+      });
+      return panel;
+    }
+
+    panel.webview.html = getStandardPanelHtml(view, imageUri, cspSource);
+    telemetry?.trackEvent('panel.open', {
+      panelId: view.id,
+      kind: view.panelKind ?? 'standard',
+      template: 'standard',
+      phase: 'success'
+    });
+    return panel;
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'openDedicatedPanel', panelId: view.id });
+    telemetry?.trackEvent('panel.open', {
+      panelId: view.id,
+      kind: view.panelKind ?? 'standard',
+      template: view.htmlTemplate ?? 'standard',
+      phase: 'error'
+    });
+    throw error;
+  }
 }
 
 function getStandardPanelHtml(view: DroneViewport, imageUri: string, cspSource: string): string {
@@ -513,6 +653,7 @@ async function handleOption3Message(_panel: vscode.WebviewPanel, message: any, _
     console.warn('[TensorFleet] Invalid message received from webview');
     return;
   }
+  getTelemetry()?.trackEvent('panel.option3Message', { command: message.command });
   // Standalone panels manage ROS2 via embedded Foxglove. No extension-side action.
   console.log('[TensorFleet] Webview message (handled in panel):', message.command);
 }
@@ -523,55 +664,76 @@ async function handleOption3Message(_panel: vscode.WebviewPanel, message: any, _
 // (Removed extension-side ROS helpers; panels handle ROS entirely.)
 
 async function openAllPanels(context: vscode.ExtensionContext) {
-  await vscode.commands.executeCommand('vscode.setEditorLayout', {
-    orientation: 0,
-    groups: [
-      {
-        orientation: 1,
-        groups: [{}, {}]
-      },
-      {
-        orientation: 1,
-        groups: [{}, {}]
-      }
-    ]
-  });
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('panels.openAll', { phase: 'start' }, { totalPanels: DRONE_VIEWS.length });
+  try {
+    await vscode.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [
+        {
+          orientation: 1,
+          groups: [{}, {}]
+        },
+        {
+          orientation: 1,
+          groups: [{}, {}]
+        }
+      ]
+    });
 
-  const columns: vscode.ViewColumn[] = [
-    vscode.ViewColumn.One,
-    vscode.ViewColumn.Two,
-    vscode.ViewColumn.Three,
-    vscode.ViewColumn.Four
-  ];
+    const columns: vscode.ViewColumn[] = [
+      vscode.ViewColumn.One,
+      vscode.ViewColumn.Two,
+      vscode.ViewColumn.Three,
+      vscode.ViewColumn.Four
+    ];
 
-  for (let index = 0; index < DRONE_VIEWS.length; index += 1) {
-    const view = DRONE_VIEWS[index];
-    const column = columns[index] ?? vscode.ViewColumn.Active;
-    const preserveFocus = index !== 0;
-    await openDedicatedPanel(view, context, column, preserveFocus);
+    for (let index = 0; index < DRONE_VIEWS.length; index += 1) {
+      const view = DRONE_VIEWS[index];
+      const column = columns[index] ?? vscode.ViewColumn.Active;
+      const preserveFocus = index !== 0;
+      await openDedicatedPanel(view, context, column, preserveFocus);
+    }
+
+    telemetry?.trackEvent('panels.openAll', { phase: 'success' }, { totalPanels: DRONE_VIEWS.length });
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'openAllPanels' });
+    telemetry?.trackEvent('panels.openAll', { phase: 'error' });
+    throw error;
   }
 }
 
 function launchTerminalSession(target: string) {
+  const telemetry = getTelemetry();
   const config = TERMINAL_CONFIGS[target as keyof typeof TERMINAL_CONFIGS];
   if (!config) {
     vscode.window.showErrorMessage(`Unknown terminal target: ${target}`);
+    telemetry?.trackEvent('terminal.launch', { target, phase: 'invalid' });
     return;
   }
+  telemetry?.trackEvent('terminal.launch', { target: config.id, phase: 'start' });
 
   let terminal = terminalRegistry.get(config.id);
+  let created = false;
   if (!terminal) {
     terminal = vscode.window.createTerminal({ name: config.name });
     terminalRegistry.set(config.id, terminal);
     config.startupCommands?.forEach((command) => {
       terminal?.sendText(command);
     });
+    created = true;
   }
 
   terminal.show();
+  telemetry?.trackEvent('terminal.launch', {
+    target: config.id,
+    phase: created ? 'created' : 'reused'
+  });
 }
 
 async function createNewProject(context: vscode.ExtensionContext) {
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('project.create', { phase: 'start' });
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
     prompt: 'Enter a name for your new drone project',
@@ -588,6 +750,7 @@ async function createNewProject(context: vscode.ExtensionContext) {
   });
 
   if (!projectName) {
+    telemetry?.trackEvent('project.create', { phase: 'cancelled', reason: 'name' });
     return;
   }
 
@@ -600,6 +763,7 @@ async function createNewProject(context: vscode.ExtensionContext) {
   });
 
   if (!targetFolders || targetFolders.length === 0) {
+    telemetry?.trackEvent('project.create', { phase: 'cancelled', reason: 'location' });
     return;
   }
 
@@ -618,6 +782,7 @@ async function createNewProject(context: vscode.ExtensionContext) {
         'Cancel'
       );
       if (overwrite !== 'Overwrite') {
+        telemetry?.trackEvent('project.create', { phase: 'cancelled', reason: 'overwriteRejected' });
         return;
       }
     } catch {
@@ -644,12 +809,15 @@ async function createNewProject(context: vscode.ExtensionContext) {
       'Close'
     );
 
+    telemetry?.trackEvent('project.create', { phase: 'success' });
     if (openProject === 'Open Project') {
       await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
     } else if (openProject === 'Open in New Window') {
       await vscode.commands.executeCommand('vscode.openFolder', projectFolder, true);
     }
   } catch (error) {
+    telemetry?.captureError(error, { source: 'createNewProject' });
+    telemetry?.trackEvent('project.create', { phase: 'error' });
     vscode.window.showErrorMessage(
       `Failed to create project: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -657,6 +825,8 @@ async function createNewProject(context: vscode.ExtensionContext) {
 }
 
 async function installBundledTools(context: vscode.ExtensionContext) {
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('tools.install', { phase: 'start' });
   const targetFolders = await vscode.window.showOpenDialog({
     canSelectFiles: false,
     canSelectFolders: true,
@@ -665,6 +835,7 @@ async function installBundledTools(context: vscode.ExtensionContext) {
   });
 
   if (!targetFolders || targetFolders.length === 0) {
+    telemetry?.trackEvent('tools.install', { phase: 'cancelled', reason: 'location' });
     return;
   }
 
@@ -686,8 +857,11 @@ async function installBundledTools(context: vscode.ExtensionContext) {
       }
     );
 
+    telemetry?.trackEvent('tools.install', { phase: 'success' });
     vscode.window.showInformationMessage(`TensorFleet tools installed to ${installFolder.fsPath}`);
   } catch (error) {
+    telemetry?.captureError(error, { source: 'installBundledTools' });
+    telemetry?.trackEvent('tools.install', { phase: 'error' });
     vscode.window.showErrorMessage(
       `Failed to install TensorFleet tools: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -815,7 +989,9 @@ function loadTemplate(templateName: string, replacements: Record<string, string>
 }
 
 function startMCPServer(context: vscode.ExtensionContext) {
+  const telemetry = getTelemetry();
   if (mcpServerProcess) {
+    telemetry?.trackEvent('mcpServer.start', { phase: 'skipped', reason: 'alreadyRunning' });
     vscode.window.showInformationMessage('TensorFleet MCP Server is already running');
     return;
   }
@@ -823,6 +999,7 @@ function startMCPServer(context: vscode.ExtensionContext) {
   const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
   
   if (!fs.existsSync(mcpServerPath)) {
+    telemetry?.trackEvent('mcpServer.start', { phase: 'error', reason: 'missingBinary' });
     vscode.window.showErrorMessage(
       'MCP server not found. Please compile the extension first (run "bun run compile")'
     );
@@ -830,6 +1007,7 @@ function startMCPServer(context: vscode.ExtensionContext) {
   }
 
   try {
+    telemetry?.trackEvent('mcpServer.start', { phase: 'spawn' });
     mcpServerProcess = spawn('node', [mcpServerPath], {
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -840,22 +1018,29 @@ function startMCPServer(context: vscode.ExtensionContext) {
 
     mcpServerProcess.stderr?.on('data', (data) => {
       console.error(`MCP Server Error: ${data}`);
+      telemetry?.trackEvent('mcpServer.stderr', { message: data.toString()?.trim() ?? '' });
     });
 
     mcpServerProcess.on('exit', (code) => {
       console.log(`MCP Server exited with code ${code}`);
+      telemetry?.trackEvent('mcpServer.exit', { code: String(code ?? 0) });
       mcpServerProcess = null;
     });
 
-    vscode.window.showInformationMessage(
-      'TensorFleet MCP Server started! Configure it in Cursor or Claude Desktop.',
-      'Show Config'
-    ).then((selection) => {
-      if (selection === 'Show Config') {
-        showMCPConfiguration(context);
-      }
-    });
+    vscode.window
+      .showInformationMessage(
+        'TensorFleet MCP Server started! Configure it in Cursor or Claude Desktop.',
+        'Show Config'
+      )
+      .then((selection) => {
+        if (selection === 'Show Config') {
+          showMCPConfiguration(context);
+        }
+      });
+    telemetry?.trackEvent('mcpServer.start', { phase: 'success' });
   } catch (error) {
+    telemetry?.captureError(error, { source: 'startMCPServer' });
+    telemetry?.trackEvent('mcpServer.start', { phase: 'error' });
     vscode.window.showErrorMessage(
       `Failed to start MCP server: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -863,13 +1048,22 @@ function startMCPServer(context: vscode.ExtensionContext) {
 }
 
 function stopMCPServer() {
+  const telemetry = getTelemetry();
   if (!mcpServerProcess) {
+    telemetry?.trackEvent('mcpServer.stop', { phase: 'skipped', reason: 'notRunning' });
     vscode.window.showInformationMessage('TensorFleet MCP Server is not running');
     return;
   }
 
-  mcpServerProcess.kill();
-  mcpServerProcess = null;
+  try {
+    mcpServerProcess.kill();
+    telemetry?.trackEvent('mcpServer.stop', { phase: 'success' });
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'stopMCPServer' });
+    telemetry?.trackEvent('mcpServer.stop', { phase: 'error' });
+  } finally {
+    mcpServerProcess = null;
+  }
   vscode.window.showInformationMessage('TensorFleet MCP Server stopped');
 }
 
@@ -1047,7 +1241,8 @@ async function detectRosVersion() {
         currentRosVersion = found;
       }
     }
-  } catch {
+  } catch (error) {
+    getTelemetry()?.captureError(error, { source: 'detectRosVersion' });
     // Config not found or parse error, use default
   }
 
@@ -1110,7 +1305,8 @@ async function updateDroneStatus() {
       droneStatusBar.text = statusText;
       console.log('[TensorFleet] Drone status set to:', statusText);
     }
-  } catch {
+  } catch (error) {
+    getTelemetry()?.captureError(error, { source: 'updateDroneStatus' });
     // Config not found, show default
     drones = [
       {
@@ -1129,6 +1325,8 @@ async function updateDroneStatus() {
 }
 
 async function selectRosVersion() {
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('ros.version.select', { phase: 'start' });
   const items = AVAILABLE_ROS_VERSIONS.map((version) => ({
     label: version.name,
     description: version.path,
@@ -1141,28 +1339,40 @@ async function selectRosVersion() {
     title: 'TensorFleet: ROS Version'
   });
 
-  if (selected) {
-    currentRosVersion = selected.version;
-    
-    if (rosVersionStatusBar) {
-      rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
-    }
-
-    // Optionally update the config file
-    const shouldUpdateConfig = await vscode.window.showInformationMessage(
-      `Switched to ${currentRosVersion.name}. Update drone_config.yaml?`,
-      'Yes',
-      'No'
-    );
-
-    if (shouldUpdateConfig === 'Yes') {
-      await updateConfigWithRosVersion(currentRosVersion);
-    }
-
-    vscode.window.showInformationMessage(
-      `ROS version set to ${currentRosVersion.name}. Run: source ${currentRosVersion.path}/setup.bash`
-    );
+  if (!selected) {
+    telemetry?.trackEvent('ros.version.select', { phase: 'cancelled' });
+    return;
   }
+
+  currentRosVersion = selected.version;
+  telemetry?.trackEvent('ros.version.select', {
+    phase: 'selected',
+    distro: currentRosVersion.distro
+  });
+  
+  if (rosVersionStatusBar) {
+    rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
+  }
+
+  // Optionally update the config file
+  const shouldUpdateConfig = await vscode.window.showInformationMessage(
+    `Switched to ${currentRosVersion.name}. Update drone_config.yaml?`,
+    'Yes',
+    'No'
+  );
+
+  if (shouldUpdateConfig === 'Yes') {
+    telemetry?.trackEvent('ros.version.select', {
+      phase: 'updateConfig',
+      distro: currentRosVersion.distro
+    });
+    await updateConfigWithRosVersion(currentRosVersion);
+  }
+
+  vscode.window.showInformationMessage(
+    `ROS version set to ${currentRosVersion.name}. Run: source ${currentRosVersion.path}/setup.bash`
+  );
+  telemetry?.trackEvent('ros.version.select', { phase: 'success', distro: currentRosVersion.distro });
 }
 
 async function updateConfigWithRosVersion(version: RosVersion) {
@@ -1200,8 +1410,11 @@ async function updateConfigWithRosVersion(version: RosVersion) {
     }
 
     await vscode.workspace.fs.writeFile(configPath, Buffer.from(configText, 'utf8'));
+    getTelemetry()?.trackEvent('ros.version.configUpdate', { status: 'success', distro: version.distro });
     vscode.window.showInformationMessage('Updated drone_config.yaml with ROS version');
   } catch (error) {
+    getTelemetry()?.captureError(error, { source: 'updateConfigWithRosVersion', distro: version.distro });
+    getTelemetry()?.trackEvent('ros.version.configUpdate', { status: 'error', distro: version.distro });
     vscode.window.showErrorMessage(
       `Failed to update config: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -1209,7 +1422,10 @@ async function updateConfigWithRosVersion(version: RosVersion) {
 }
 
 async function showDroneStatus() {
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('droneStatus.show', { phase: 'start', droneCount: drones.length.toString() });
   if (drones.length === 0) {
+    telemetry?.trackEvent('droneStatus.show', { phase: 'empty' });
     vscode.window.showInformationMessage('No drones detected. Start a simulation to see drone status.');
     return;
   }
@@ -1256,16 +1472,22 @@ async function showDroneStatus() {
     title: 'TensorFleet: Connected Drones'
   });
 
-  if (selected) {
-    if (selected.label.includes('Refresh')) {
-      await updateDroneStatus();
-      vscode.window.showInformationMessage('Drone status refreshed');
-    } else if (selected.label.includes('Start Simulation')) {
-      vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
-    } else if (selected.drone) {
-      // Show detailed drone info
-      showDetailedDroneInfo(selected.drone);
-    }
+  if (!selected) {
+    telemetry?.trackEvent('droneStatus.show', { phase: 'dismissed' });
+    return;
+  }
+
+  if (selected.label.includes('Refresh')) {
+    telemetry?.trackEvent('droneStatus.action', { action: 'refresh' });
+    await updateDroneStatus();
+    vscode.window.showInformationMessage('Drone status refreshed');
+  } else if (selected.label.includes('Start Simulation')) {
+    telemetry?.trackEvent('droneStatus.action', { action: 'openSimulation' });
+    vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
+  } else if (selected.drone) {
+    telemetry?.trackEvent('droneStatus.action', { action: 'details', droneId: selected.drone.id });
+    // Show detailed drone info
+    showDetailedDroneInfo(selected.drone);
   }
 }
 
@@ -1284,6 +1506,7 @@ Click "Open Gazebo Workspace" to view in simulation.
 
   vscode.window.showInformationMessage(info, 'Open Gazebo Workspace', 'Close').then((choice) => {
     if (choice === 'Open Gazebo Workspace') {
+      getTelemetry()?.trackEvent('droneStatus.action', { action: 'openGazebo', droneId: drone.id });
       vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
     }
   });
@@ -1312,34 +1535,50 @@ Click "Open Gazebo Workspace" to view in simulation.
 // ============================================================================
 
 async function showMCPConfiguration(context: vscode.ExtensionContext) {
-  const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
-  
-  const config = {
-    mcpServers: {
-      'tensorfleet-drone': {
-        command: 'node',
-        args: [mcpServerPath],
-        env: {}
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('mcp.config', { phase: 'start' });
+  try {
+    const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
+    
+    const config = {
+      mcpServers: {
+        'tensorfleet-drone': {
+          command: 'node',
+          args: [mcpServerPath],
+          env: {}
+        }
       }
-    }
-  };
+    };
 
-  const configText = JSON.stringify(config, null, 2);
-  
-  const document = await vscode.workspace.openTextDocument({
-    content: configText,
-    language: 'json'
-  });
-  
-  await vscode.window.showTextDocument(document);
-  
-  vscode.window.showInformationMessage(
-    'MCP Configuration copied! Add this to your Cursor or Claude Desktop config.',
-    'Open Setup Guide'
-  ).then((selection) => {
-    if (selection === 'Open Setup Guide') {
-      const setupPath = vscode.Uri.file(path.join(context.extensionPath, 'MCP_SETUP.md'));
-      vscode.commands.executeCommand('markdown.showPreview', setupPath);
-    }
-  });
+    const configText = JSON.stringify(config, null, 2);
+    
+    const document = await vscode.workspace.openTextDocument({
+      content: configText,
+      language: 'json'
+    });
+    
+    await vscode.window.showTextDocument(document);
+    
+    vscode.window
+      .showInformationMessage(
+        'MCP Configuration copied! Add this to your Cursor or Claude Desktop config.',
+        'Open Setup Guide'
+      )
+      .then((selection) => {
+        telemetry?.trackEvent('mcp.config.guide', {
+          action: selection === 'Open Setup Guide' ? 'openGuide' : 'dismiss'
+        });
+        if (selection === 'Open Setup Guide') {
+          const setupPath = vscode.Uri.file(path.join(context.extensionPath, 'MCP_SETUP.md'));
+          vscode.commands.executeCommand('markdown.showPreview', setupPath);
+        }
+      });
+    telemetry?.trackEvent('mcp.config', { phase: 'success' });
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'showMCPConfiguration' });
+    telemetry?.trackEvent('mcp.config', { phase: 'error' });
+    vscode.window.showErrorMessage(
+      `Failed to show MCP configuration: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }

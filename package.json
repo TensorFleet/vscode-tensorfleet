@@ -344,8 +344,9 @@
   },
   "scripts": {
     "vscode:prepublish": "bun run compile",
-    "compile": "bunx tsc -p ./",
-    "watch": "bunx tsc -watch -p ./",
+    "prepare:telemetry": "bun scripts/write-telemetry-config.ts",
+    "compile": "bun run prepare:telemetry && bunx tsc -p ./",
+    "watch": "bun run prepare:telemetry && bunx tsc -watch -p ./",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
     "mcp": "node out/mcp-server.js"
@@ -370,6 +371,8 @@
     "@mcap/core": "^2.1.7",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@protobufjs/base64": "^1.1.2",
+    "@sentry/node": "^10.26.0",
+    "@vscode/extension-telemetry": "^1.2.0",
     "flatbuffers": "^25.9.23",
     "flatbuffers_reflection": "^1.2.0",
     "protobufjs": "^7.5.4"
