@@ -21,6 +21,9 @@ interface VmStatusResponse {
 }
 
 interface VmInfoResponse extends VmStatusResponse {
+  id?: string;
+  node_id?: string;
+  vm_id?: string;
   created_at?: string;
   uptime_seconds?: number | null;
   provider?: string;
@@ -30,6 +33,27 @@ interface VmInfoResponse extends VmStatusResponse {
 interface ApiHealthResponse {
   status: string;
   time: string;
+}
+
+interface VmInventoryEntry {
+  id?: string;
+  node_id?: string;
+  vm_id?: string;
+  status: string;
+  ip_address?: string;
+  name?: string;
+}
+
+interface VmInventoryResponse {
+  vms?: VmInventoryEntry[];
+  count?: number;
+}
+
+export interface VmConnectionInfo {
+  vmId?: string;
+  ipAddress?: string;
+  wsProxyUrl: string;
+  token?: string;
 }
 
 // Internal state representation
@@ -661,6 +685,58 @@ export class VMManagerIntegration implements vscode.Disposable {
     } catch {
       return 'Unknown error';
     }
+  }
+
+  async getVmConnectionInfo(): Promise<VmConnectionInfo> {
+    const apiBaseUrl = this.getApiBaseUrl();
+    const wsProxyUrl = this.toWebsocketUrl(apiBaseUrl);
+    const token = this.getAuthToken();
+
+    let vmId: string | undefined;
+    let ipAddress: string | undefined;
+
+    try {
+      const inventory = await this.apiRequest<VmInventoryResponse>('GET', '/vms/status');
+      const runningVm = inventory?.vms?.find((vm) => vm.status === 'running' && (vm.ip_address || this.extractVmId(vm)));
+      if (runningVm) {
+        vmId = this.extractVmId(runningVm);
+        ipAddress = runningVm.ip_address;
+      }
+    } catch (error) {
+      this.outputChannel.appendLine(`[VM Manager] Unable to fetch VM list for WebSocket proxying: ${this.formatError(error)}`);
+    }
+
+    if (!vmId || !ipAddress) {
+      try {
+        const info = await this.apiRequest<VmInfoResponse>('GET', '/vms/self/info');
+        vmId = vmId ?? this.extractVmId(info);
+        ipAddress = ipAddress ?? info?.ip_address;
+      } catch (error) {
+        this.outputChannel.appendLine(`[VM Manager] Unable to fetch VM info for WebSocket proxying: ${this.formatError(error)}`);
+      }
+    }
+
+    this.outputChannel.appendLine(
+      `[VM Manager] GZWeb proxy config → ws=${wsProxyUrl} vm=${vmId ?? 'none'} ip=${ipAddress ?? 'unknown'}`
+    );
+
+    return { vmId, ipAddress, wsProxyUrl, token };
+  }
+
+  private toWebsocketUrl(apiBaseUrl: string): string {
+    const trimmed = apiBaseUrl.replace(/\/+$/, '');
+
+    if (trimmed.startsWith('ws://') || trimmed.startsWith('wss://')) {
+      return trimmed.endsWith('/ws') ? trimmed : `${trimmed}/ws`;
+    }
+
+    const wsBase = trimmed.replace(/^http(s?):\/\//, (_match, secure) => (secure ? 'wss://' : 'ws://'));
+    return wsBase.endsWith('/ws') ? wsBase : `${wsBase}/ws`;
+  }
+
+  private extractVmId(entry?: Partial<VmInventoryEntry | VmInfoResponse>): string | undefined {
+    if (!entry) return undefined;
+    return entry.id ?? entry.vm_id ?? entry.node_id ?? entry.name;
   }
 
   private getApiBaseUrl(): string {
