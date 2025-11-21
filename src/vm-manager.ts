@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import * as https from 'https';
+import type { TelemetryService } from './telemetry';
 
 // Core state types
 type ConnectionState = 'connected' | 'disconnected';
@@ -65,7 +66,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   private static readonly NORMAL_POLL_MS = 30_000;
   private static readonly FAST_POLL_MS = 5_000;
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(context: vscode.ExtensionContext, private readonly telemetry?: TelemetryService | null) {
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
     this.statusBarItem.name = 'TensorFleet VM';
@@ -88,6 +89,14 @@ export class VMManagerIntegration implements vscode.Disposable {
         }
       })
     );
+  }
+
+  private trackVmEvent(eventName: string, properties?: Record<string, string>) {
+    this.telemetry?.trackEvent(eventName, properties);
+  }
+
+  private captureVmError(error: unknown, properties?: Record<string, string>) {
+    this.telemetry?.captureError(error, properties);
   }
 
   initialize() {
@@ -449,13 +458,17 @@ export class VMManagerIntegration implements vscode.Disposable {
   private async startVm() {
     try {
       this.userInitiatedAction = 'start';
+      this.trackVmEvent('vm.start', { phase: 'start' });
       this.setOptimisticState('starting');
       await this.apiRequest<{ status: string }>('POST', '/vms/self/start');
       await this.refresh(true);
       this.outputChannel.appendLine('[VM Manager] VM start initiated');
+      this.trackVmEvent('vm.start', { phase: 'success' });
     } catch (error) {
       this.userInitiatedAction = null;
       await this.refresh(true);
+      this.captureVmError(error, { source: 'vm.start' });
+      this.trackVmEvent('vm.start', { phase: 'error' });
       this.handleCommandError('start', error);
     }
   }
@@ -463,13 +476,17 @@ export class VMManagerIntegration implements vscode.Disposable {
   private async stopVm() {
     try {
       this.userInitiatedAction = 'stop';
+      this.trackVmEvent('vm.stop', { phase: 'start' });
       this.setOptimisticState('stopping');
       await this.apiRequest<{ status: string }>('POST', '/vms/self/stop');
       await this.refresh(true);
       this.outputChannel.appendLine('[VM Manager] VM stop initiated');
+      this.trackVmEvent('vm.stop', { phase: 'success' });
     } catch (error) {
       this.userInitiatedAction = null;
       await this.refresh(true);
+      this.captureVmError(error, { source: 'vm.stop' });
+      this.trackVmEvent('vm.stop', { phase: 'error' });
       this.handleCommandError('stop', error);
     }
   }
