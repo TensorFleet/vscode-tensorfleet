@@ -32,6 +32,66 @@
   gap: 10px;
 }
 
+.gzweb-status-pill {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  padding: 10px 12px;
+  background: rgba(8, 10, 16, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.gzweb-status-pill .gzweb-connection-dot {
+  flex-shrink: 0;
+}
+
+.gzweb-status-pill-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gzweb-pill-label {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+
+.gzweb-pill-value {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.gzweb-pill-button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--vscode-foreground, #e5e5e5);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.gzweb-pill-button:hover {
+  border-color: var(--vscode-button-background, #2b7cff);
+  color: #fff;
+  background: rgba(43, 124, 255, 0.12);
+}
+
+.gzweb-pill-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .gzweb-overlay.collapsed {
   width: auto;
   min-width: 200px;
@@ -92,6 +152,23 @@
 .gzweb-collapse-btn {
   color: var(--vscode-foreground, #e5e5e5) !important;
   padding: 4px !important;
+}
+
+.gzweb-hide-config-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--vscode-foreground, #e5e5e5);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.gzweb-hide-config-btn:hover {
+  border-color: var(--vscode-button-background, #2b7cff);
+  color: #fff;
+  background: rgba(43, 124, 255, 0.12);
 }
 
 .status-icon-connected {

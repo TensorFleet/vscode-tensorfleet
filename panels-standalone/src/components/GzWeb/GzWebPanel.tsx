@@ -268,6 +268,11 @@ const getInitialValue = (key: string, fallback: string) => {
   return params.get(key) ?? fallback;
 };
 
+const getInitialFlag = (key: string, fallback: boolean) => {
+  const raw = getInitialValue(key, fallback ? '1' : '0').toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+};
+
 export const GzWebPanel: React.FC = () => {
   const originalWebSocket = useRef<typeof WebSocket | null>(null);
   const sceneManagerRef = useRef<SceneManagerInstance | null>(null);
@@ -278,6 +283,7 @@ export const GzWebPanel: React.FC = () => {
   const [nodeId, setNodeId] = useState(() => getInitialValue('nodeId', ''));
   const [token, setToken] = useState(() => getInitialValue('token', ''));
 
+  const [showConfig, setShowConfig] = useState(() => getInitialFlag('showConfig', false));
   const [activeWsUrl, setActiveWsUrl] = useState('');
   const [statusText, setStatusText] = useState('');
   const [statusTone, setStatusTone] = useState<LoginStatus>('muted');
@@ -426,103 +432,138 @@ export const GzWebPanel: React.FC = () => {
     }
   }, [statusTone]);
 
+  const statusLabel = useMemo(() => {
+    if (statusText) return statusText;
+    if (isConnecting) return 'Connecting...';
+    if (isConnected) return 'Connected';
+    return 'Disconnected';
+  }, [isConnected, isConnecting, statusText]);
+
   return (
     <div className="gzweb-root">
-      <div className={`gzweb-overlay ${isCollapsed ? 'collapsed' : ''}`}>
-        <div className="gzweb-header">
-          <div className="gzweb-header-left">
-            <div className={`gzweb-connection-dot ${statusTone}`} />
-            <div className="gzweb-title">gzweb viewer</div>
+      {!showConfig && (
+        <div className={`gzweb-status-pill ${statusTone}`}>
+          <div className={`gzweb-connection-dot ${statusTone}`} />
+          <div className="gzweb-status-pill-text">
+            <span className="gzweb-pill-label">gzweb</span>
+            <span className="gzweb-pill-value">{statusLabel}</span>
           </div>
-          <div className="gzweb-header-right">
-            <Tooltip title={isConnected ? "Connected" : "Disconnected"}>
-              {isConnected ? <Wifi fontSize="small" className="status-icon-connected" /> : <WifiOff fontSize="small" className="status-icon-disconnected" />}
-            </Tooltip>
-            <IconButton
-              size="small"
-              onClick={() => setIsCollapsed(!isCollapsed)}
-              className="gzweb-collapse-btn"
-            >
-              {isCollapsed ? <ExpandMore /> : <ExpandLess />}
-            </IconButton>
-          </div>
+          <button
+            type="button"
+            className="gzweb-pill-button"
+            onClick={isConnected ? handleDisconnect : () => setShowConfig(true)}
+            disabled={isConnecting}
+          >
+            {isConnected ? 'Disconnect' : 'Configure'}
+          </button>
         </div>
+      )}
 
-        {!isCollapsed && (
-          <div className="gzweb-content">
-            <p className="gzweb-subtitle">
-              Connect to Gazebo through the VM manager websocket proxy (/ws) with login handshake.
-            </p>
-
-            <div className="gzweb-meta">
-              <div>
-                Proxy WS: <code>{activeWsUrl || 'unset'}</code>
-              </div>
-              <div>
-                VM ID: <code>{nodeId.trim() || 'unset'}</code>
-              </div>
-              {statusText && (
-                <div className={`gzweb-status ${statusClass}`}>
-                  Status: <span>{statusText}</span>
-                </div>
-              )}
+      {showConfig && (
+        <div className={`gzweb-overlay ${isCollapsed ? 'collapsed' : ''}`}>
+          <div className="gzweb-header">
+            <div className="gzweb-header-left">
+              <div className={`gzweb-connection-dot ${statusTone}`} />
+              <div className="gzweb-title">gzweb viewer</div>
             </div>
-
-            <form
-              className="gzweb-controls"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (isConnected) {
-                  handleDisconnect();
-                } else {
-                  void connect();
-                }
-              }}
-            >
-              <label>
-                VM Base
-                <input
-                  value={vmBase}
-                  onChange={(e) => setVmBase(e.target.value)}
-                  placeholder="http://localhost:8080"
-                  spellCheck={false}
-                  disabled={isConnected}
-                />
-              </label>
-
-              <label>
-                VM ID
-                <input
-                  value={nodeId}
-                  onChange={(e) => setNodeId(e.target.value)}
-                  placeholder="vm id from /vms/status"
-                  spellCheck={false}
-                  disabled={isConnected}
-                />
-              </label>
-
-              <label>
-                Token
-                <input
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="optional (if SKIP_JWT_VALIDATION=true)"
-                  spellCheck={false}
-                  disabled={isConnected}
-                />
-              </label>
-
+            <div className="gzweb-header-right">
+              <Tooltip title={isConnected ? "Connected" : "Disconnected"}>
+                {isConnected ? <Wifi fontSize="small" className="status-icon-connected" /> : <WifiOff fontSize="small" className="status-icon-disconnected" />}
+              </Tooltip>
               <button
-                type="submit"
-                disabled={isConnecting}
-                className={isConnected ? 'btn-disconnect' : 'btn-connect'}
+                className="gzweb-hide-config-btn"
+                type="button"
+                onClick={() => {
+                  setShowConfig(false);
+                  setIsCollapsed(false);
+                }}
               >
-                {isConnecting ? 'Connecting...' : isConnected ? 'Disconnect' : 'Connect'}
+                Hide
               </button>
-            </form>
+              <IconButton
+                size="small"
+                onClick={() => setIsCollapsed(!isCollapsed)}
+                className="gzweb-collapse-btn"
+              >
+                {isCollapsed ? <ExpandMore /> : <ExpandLess />}
+              </IconButton>
+            </div>
           </div>
-        )}
-      </div>
+
+          {!isCollapsed && (
+            <div className="gzweb-content">
+              <p className="gzweb-subtitle">
+                Connect to Gazebo through the VM manager websocket proxy (/ws) with login handshake.
+              </p>
+
+              <div className="gzweb-meta">
+                <div>
+                  Proxy WS: <code>{activeWsUrl || 'unset'}</code>
+                </div>
+                <div>
+                  VM ID: <code>{nodeId.trim() || 'unset'}</code>
+                </div>
+                <div className={`gzweb-status ${statusClass}`}>
+                  Status: <span>{statusLabel}</span>
+                </div>
+              </div>
+
+              <form
+                className="gzweb-controls"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (isConnected) {
+                    handleDisconnect();
+                  } else {
+                    void connect();
+                  }
+                }}
+              >
+                <label>
+                  VM Base
+                  <input
+                    value={vmBase}
+                    onChange={(e) => setVmBase(e.target.value)}
+                    placeholder="http://localhost:8080"
+                    spellCheck={false}
+                    disabled={isConnected}
+                  />
+                </label>
+
+                <label>
+                  VM ID
+                  <input
+                    value={nodeId}
+                    onChange={(e) => setNodeId(e.target.value)}
+                    placeholder="vm id from /vms/status"
+                    spellCheck={false}
+                    disabled={isConnected}
+                  />
+                </label>
+
+                <label>
+                  Token
+                  <input
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    placeholder="optional (if SKIP_JWT_VALIDATION=true)"
+                    spellCheck={false}
+                    disabled={isConnected}
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={isConnecting}
+                  className={isConnected ? 'btn-disconnect' : 'btn-connect'}
+                >
+                  {isConnecting ? 'Connecting...' : isConnected ? 'Disconnect' : 'Connect'}
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      )}
 
       <div id={SCENE_ELEMENT_ID} className="gzweb-scene" />
     </div>
