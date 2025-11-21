@@ -1,0 +1,321 @@
+.gzweb-root {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  background: radial-gradient(circle at 20% 20%, rgba(67, 110, 255, 0.08), transparent 35%),
+    radial-gradient(circle at 80% 10%, rgba(255, 138, 76, 0.08), transparent 30%),
+    var(--vscode-editor-background, #0f1117);
+  color: var(--vscode-foreground, #e5e5e5);
+  overflow: hidden;
+}
+
+.gzweb-scene {
+  width: 100%;
+  height: 100%;
+}
+
+.gzweb-overlay {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  padding: 12px 14px;
+  background: rgba(8, 10, 16, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  max-width: 420px;
+  width: 320px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gzweb-status-pill {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  padding: 10px 12px;
+  background: rgba(8, 10, 16, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.gzweb-status-pill .gzweb-connection-dot {
+  flex-shrink: 0;
+}
+
+.gzweb-status-pill-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gzweb-pill-label {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+
+.gzweb-pill-value {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.gzweb-pill-button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--vscode-foreground, #e5e5e5);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.gzweb-pill-button:hover {
+  border-color: var(--vscode-button-background, #2b7cff);
+  color: #fff;
+  background: rgba(43, 124, 255, 0.12);
+}
+
+.gzweb-pill-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.gzweb-overlay.collapsed {
+  width: auto;
+  min-width: 200px;
+  padding: 8px 12px;
+}
+
+.gzweb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.gzweb-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gzweb-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gzweb-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.gzweb-connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #cbd0d8;
+  transition: background-color 0.3s ease;
+}
+
+.gzweb-connection-dot.ok {
+  background-color: #7ff5c4;
+  box-shadow: 0 0 8px rgba(127, 245, 196, 0.4);
+}
+
+.gzweb-connection-dot.pending {
+  background-color: #ffd76c;
+}
+
+.gzweb-connection-dot.error {
+  background-color: #ffb9b9;
+}
+
+.gzweb-connection-dot.muted {
+  background-color: #5a5d63;
+}
+
+.gzweb-collapse-btn {
+  color: var(--vscode-foreground, #e5e5e5) !important;
+  padding: 4px !important;
+}
+
+.gzweb-hide-config-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--vscode-foreground, #e5e5e5);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.gzweb-hide-config-btn:hover {
+  border-color: var(--vscode-button-background, #2b7cff);
+  color: #fff;
+  background: rgba(43, 124, 255, 0.12);
+}
+
+.status-icon-connected {
+  color: #7ff5c4;
+}
+
+.status-icon-disconnected {
+  color: #5a5d63;
+}
+
+.gzweb-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.gzweb-subtitle {
+  font-size: 12px;
+  opacity: 0.8;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.gzweb-meta {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px;
+  border-radius: 6px;
+}
+
+.gzweb-meta code {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+
+.gzweb-status {
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  width: fit-content;
+  font-size: 11px;
+}
+
+.gzweb-status-muted {
+  background: rgba(255, 255, 255, 0.05);
+  color: #cbd0d8;
+}
+
+.gzweb-status-pending {
+  background: rgba(255, 193, 7, 0.18);
+  color: #ffd76c;
+}
+
+.gzweb-status-ok {
+  background: rgba(35, 183, 121, 0.2);
+  color: #7ff5c4;
+}
+
+.gzweb-status-error {
+  background: rgba(255, 82, 82, 0.14);
+  color: #ffb9b9;
+}
+
+.gzweb-controls {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.gzweb-controls label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  font-weight: 500;
+}
+
+.gzweb-controls input {
+  background: var(--vscode-input-background, #1b1f2a);
+  border: 1px solid var(--vscode-input-border, #282d3a);
+  color: var(--vscode-foreground, #e5e5e5);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  transition: border-color 0.2s ease;
+}
+
+.gzweb-controls input:focus {
+  border-color: var(--vscode-focusBorder, #007fd4);
+  outline: none;
+}
+
+.gzweb-controls input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.gzweb-controls button {
+  margin-top: 4px;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 13px;
+}
+
+.btn-connect {
+  background: var(--vscode-button-background, #2b7cff);
+}
+
+.btn-connect:hover {
+  background: var(--vscode-button-hoverBackground, #1f6ae0);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(43, 124, 255, 0.3);
+}
+
+.btn-disconnect {
+  background: #d32f2f;
+}
+
+.btn-disconnect:hover {
+  background: #b71c1c;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(211, 47, 47, 0.3);
+}
+
+.gzweb-controls button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+  transform: none;
+  box-shadow: none;
+}

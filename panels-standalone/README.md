@@ -41,9 +41,15 @@ bun run build  # or: npm run build
 - Adjustable publish rate (Hz)
 - Emergency stop button
 
+### ✅ gzweb 3D View Panel
+- Uses gzweb 2.0.14 (loaded via CDN) to render Gazebo scenes
+- Connect directly to a Gazebo WebSocket (`ws://...`) or via VM Manager login handshake
+- Login shim sends `{type:"login", token, nodeId}` and queues traffic until accepted
+- Fallback protobuf enum injection for `PixelFormatType` to keep camera streams working
+- Accepts query params `?ws=`, `?vm=`, `?nodeId=`, `?token=` to prefill controls
+
 ### 🚧 Coming Soon
 - Plot Panel
-- 3D View Panel
 - Map Panel
 - Log Panel
 
@@ -75,14 +81,17 @@ panels-standalone/
 ├── index.html              # Panel selector (home page)
 ├── image.html              # Image panel entry
 ├── teleops.html            # Teleops panel entry
+├── gzweb.html              # gzweb 3D view entry
 ├── src/
 │   ├── image.tsx           # Image panel React entry
 │   ├── teleops.tsx         # Teleops panel React entry
+│   ├── gzweb.tsx           # gzweb panel React entry
 │   ├── ros2-bridge.ts      # ROS2 WebSocket connection
 │   ├── global.css          # Global styles
 │   └── components/
 │       ├── ImagePanel.tsx/.css
-│       └── TeleopsPanel.tsx/.css
+│       ├── TeleopsPanel.tsx/.css
+│       └── GzWeb/GzWebPanel.tsx/.css
 ├── package.json
 ├── vite.config.ts
 └── tsconfig.json
@@ -132,4 +141,3 @@ The panels will work exactly the same in VS Code!
 - **Vite** - Fast dev server & bundler
 - **Canvas API** - Image rendering
 - **WebSocket** - ROS2 connection
-

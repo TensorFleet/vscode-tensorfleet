@@ -23,6 +23,7 @@ export default defineConfig({
         image: resolve(__dirname, 'image.html'),
         teleops: resolve(__dirname, 'teleops.html'),
         map: resolve(__dirname, 'mission_control.html'),
+        gzweb: resolve(__dirname, 'gzweb.html'),
         raw_messages: resolve(__dirname, 'raw_messages.html'),
       },
       // Treat *.wasm in deps as assets (URLs), not ESM modules

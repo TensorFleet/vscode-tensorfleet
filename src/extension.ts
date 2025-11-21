@@ -44,6 +44,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     htmlTemplate: 'visualization.html'
   },
   {
+    id: 'tensorfleet-gzweb-panel',
+    title: 'gzweb 3D View',
+    description: 'Render Gazebo scenes via gzweb with direct WS or VM manager login shims.',
+    image: 'gazebo-placeholder.svg',
+    command: 'tensorfleet.openGzWebPanel',
+    actionLabel: 'Open gzweb Viewer',
+    panelKind: 'standard',
+    htmlTemplate: 'gzweb-standalone'
+  },
+  {
     id: 'tensorfleet-aiops',
     title: 'AI Model Ops',
     description: 'Run TensorFleet AI models on live or recorded video feeds, and inspect inference metrics.',
@@ -360,6 +370,11 @@ async function openDedicatedPanel(
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
     }
+
+    if (view.htmlTemplate === 'gzweb-standalone') {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    }
   }
 
   const panel = vscode.window.createWebviewPanel(
@@ -443,6 +458,10 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
+
+  if (view.htmlTemplate === 'gzweb-standalone') {
+    return getStandalonePanelHtml('gzweb', webview, context, cspSource);
+  }
   
   // Load the custom HTML template directly
   const templatePath = path.join(__dirname, '..', 'src', 'templates', view.htmlTemplate);
@@ -481,7 +500,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 }
 
 function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'gzweb',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
@@ -504,7 +523,8 @@ function getStandalonePanelHtml(
     }
   );
 
-  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
+  const remoteScriptSrc = panelName === 'gzweb' ? ' https://esm.sh' : '';
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource}${remoteScriptSrc} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
   if (html.includes('Content-Security-Policy')) {
     html = html.replace(/<meta[^>]+Content-Security-Policy[^>]+>/i, cspMeta);
   } else {
