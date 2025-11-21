@@ -1,0 +1,133 @@
+.gzweb-root {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  background: radial-gradient(circle at 20% 20%, rgba(67, 110, 255, 0.08), transparent 35%),
+    radial-gradient(circle at 80% 10%, rgba(255, 138, 76, 0.08), transparent 30%),
+    var(--vscode-editor-background, #0f1117);
+  color: var(--vscode-foreground, #e5e5e5);
+  overflow: hidden;
+}
+
+.gzweb-scene {
+  width: 100%;
+  height: 100%;
+}
+
+.gzweb-overlay {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  padding: 12px 14px;
+  background: rgba(8, 10, 16, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  backdrop-filter: blur(4px);
+  max-width: 420px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.gzweb-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-bottom: 4px;
+}
+
+.gzweb-subtitle {
+  font-size: 12px;
+  opacity: 0.8;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.gzweb-meta {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.gzweb-meta code {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.gzweb-status {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  width: fit-content;
+}
+
+.gzweb-status-muted {
+  background: rgba(255, 255, 255, 0.05);
+  color: #cbd0d8;
+}
+
+.gzweb-status-pending {
+  background: rgba(255, 193, 7, 0.18);
+  color: #ffd76c;
+}
+
+.gzweb-status-ok {
+  background: rgba(35, 183, 121, 0.2);
+  color: #7ff5c4;
+}
+
+.gzweb-status-error {
+  background: rgba(255, 82, 82, 0.14);
+  color: #ffb9b9;
+}
+
+.gzweb-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.gzweb-controls label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+
+.gzweb-controls input {
+  background: var(--vscode-input-background, #1b1f2a);
+  border: 1px solid var(--vscode-input-border, #282d3a);
+  color: var(--vscode-foreground, #e5e5e5);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.gzweb-controls button {
+  margin-top: 2px;
+  background: var(--vscode-button-background, #2b7cff);
+  border: none;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.gzweb-controls button:hover {
+  background: var(--vscode-button-hoverBackground, #1f6ae0);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.25);
+}
+
+.gzweb-controls button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+  transform: none;
+  box-shadow: none;
+}
