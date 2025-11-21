@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>gzweb panel (standalone)</title>
   <style>
+    /* Fill the viewport. */
     html, body {
       margin: 0;
       padding: 0;
@@ -31,7 +32,9 @@
       z-index: 10;
       max-width: 360px;
     }
-    #hud code { color: #b7ff8f; }
+    #hud code {
+      color: #b7ff8f;
+    }
     #controls {
       margin-top: 8px;
       display: grid;
@@ -62,7 +65,9 @@
       cursor: pointer;
       font-weight: 600;
     }
-    #controls button:hover { background: #1f6ae0; }
+    #controls button:hover {
+      background: #1f6ae0;
+    }
   </style>
 </head>
 <body>
@@ -82,30 +87,26 @@
   <div id="gz-scene"></div>
 
   <script type="module">
+    // Import gzweb via esm.sh with bundling so all deps are resolved inline.
     import { SceneManager } from 'https://esm.sh/gzweb@2.0.14?bundle';
 
-    const DEFAULT_VM_BASE = '';
-    const DEFAULT_NODE_ID = '';
-    const DEFAULT_TOKEN = '';
-    const DEFAULT_WS = 'ws://localhost:7681';
+    // Defaults (you can change these constants).
+    // For DEFAULT_NODE_ID, use any id from /vms/status where status=="running".
+    const DEFAULT_VM_BASE = 'http://localhost:8080';
+    const DEFAULT_NODE_ID = '<id from /vms/status where status=="running">';
+    const DEFAULT_TOKEN = ''; // if SKIP_JWT_VALIDATION=true & LOCAL_DEV=1
+    const DEFAULT_WS = 'ws://localhost:7681'; // unused when VM Base + VM ID are set
 
-    const params = new URLSearchParams(window.location.search);
     const vmBaseInput = document.getElementById('vm-base');
     const nodeIdInput = document.getElementById('vm-id-input');
     const tokenInput = document.getElementById('token-input');
     const wsInput = document.getElementById('ws-input');
     const connectBtn = document.getElementById('connect-btn');
 
-    const vmBaseFromQuery = params.get('vmBase') ?? params.get('vm') ?? '';
-    const nodeIdFromQuery = params.get('nodeId') ?? params.get('vmId') ?? '';
-    const tokenFromQuery = params.get('token') ?? '';
-    const directWsFromQuery = params.get('ws') ?? params.get('websocketUrl') ?? '';
-    const autoConnect = params.get('auto') !== '0';
-
-    vmBaseInput.value = vmBaseFromQuery || DEFAULT_VM_BASE;
-    nodeIdInput.value = nodeIdFromQuery || DEFAULT_NODE_ID;
-    tokenInput.value = tokenFromQuery || DEFAULT_TOKEN;
-    wsInput.value = directWsFromQuery || DEFAULT_WS;
+    vmBaseInput.value = DEFAULT_VM_BASE;
+    nodeIdInput.value = DEFAULT_NODE_ID;
+    tokenInput.value = DEFAULT_TOKEN;
+    wsInput.value = DEFAULT_WS;
 
     const hudStatus = document.getElementById('status');
     const hudStatusText = document.getElementById('status-text');
@@ -118,6 +119,12 @@
     let resizeHandler;
     let enumPatched = false;
 
+    /**
+     * Optional shim: when connecting to a VM Manager websocket that requires a JSON
+     * login handshake, we inject the login as the first message and queue all
+     * subsequent sends until the login succeeds. Only enabled when vmBase/nodeId
+     * query params are present.
+     */
     const dataToString = async (data) => {
       if (typeof data === 'string') return data;
       if (data instanceof Blob) return await data.text();
@@ -138,8 +145,14 @@
           this.binaryType = this._ws.binaryType;
           this._listeners = { open: [], message: [], close: [], error: [] };
 
+          // Relay open immediately (gzweb waits for 'open' to start sending).
           this._ws.addEventListener('open', (ev) => {
-            const loginMsg = { type: 'login', token: token ?? '', nodeId };
+            // Send the required login first.
+            const loginMsg = {
+              type: 'login',
+              token: token ?? '',
+              nodeId,
+            };
             this._ws.send(JSON.stringify(loginMsg));
             this._emit('open', ev);
           });
@@ -153,14 +166,16 @@
                   if (msg.type === 'loginResponse') {
                     if (msg.success) {
                       this._ready = true;
-                      hudStatusText.textContent = 'login ok';
-                      hudStatus.style.display = 'block';
+                      document.getElementById('status-text').textContent = 'login ok';
+                      document.getElementById('status').style.display = 'block';
                       this._flushQueue();
                     } else {
-                      hudStatusText.textContent = msg.message || 'login failed';
-                      hudStatus.style.display = 'block';
+                      document.getElementById('status-text').textContent = msg.message || 'login failed';
+                      document.getElementById('status').style.display = 'block';
                       this._ws.close();
                     }
+                  } else {
+                    // Unexpected pre-login message; ignore.
                   }
                 } catch (err) {
                   console.warn('Failed to parse login response', err);
@@ -169,6 +184,7 @@
               return;
             }
 
+            // Ensure gzweb sees Blob data (it expects to FileReader.readAsText on event.data).
             let dataForClient = ev.data;
             if (!(dataForClient instanceof Blob)) {
               if (dataForClient instanceof ArrayBuffer || ArrayBuffer.isView(dataForClient)) {
@@ -185,10 +201,21 @@
           this._ws.addEventListener('close', (ev) => this._emit('close', ev));
         }
 
-        get readyState() { return this._ws.readyState; }
-        get bufferedAmount() { return this._ws.bufferedAmount; }
-        set binaryType(type) { this._ws.binaryType = type; }
-        get binaryType() { return this._ws.binaryType; }
+        get readyState() {
+            return this._ws.readyState;
+        }
+
+        get bufferedAmount() {
+          return this._ws.bufferedAmount;
+        }
+
+        set binaryType(type) {
+          this._ws.binaryType = type;
+        }
+
+        get binaryType() {
+          return this._ws.binaryType;
+        }
 
         send(data) {
           if (!this._ready) {
@@ -198,15 +225,17 @@
           this._ws.send(data);
         }
 
-        close(code, reason) { this._ws.close(code, reason); }
+        close(code, reason) {
+          this._ws.close(code, reason);
+        }
 
-        addEventListener(type, listener) {
+        addEventListener(type, listener, options) {
           if (this._listeners[type]) {
             this._listeners[type].push(listener);
           }
         }
 
-        removeEventListener(type, listener) {
+        removeEventListener(type, listener, options) {
           if (!this._listeners[type]) return;
           this._listeners[type] = this._listeners[type].filter((l) => l !== listener);
         }
@@ -231,10 +260,13 @@
         }
       }
 
+      // Replace global WebSocket so gzweb uses the shim automatically.
       window.WebSocket = VmManagerWebSocket;
     }
 
-    function resetWebSocketToNative() { window.WebSocket = NativeWebSocket; }
+    function resetWebSocketToNative() {
+      window.WebSocket = NativeWebSocket;
+    }
 
     function bindResize() {
       if (resizeHandler) {
@@ -259,7 +291,6 @@
       destroyScene();
       hudStatus.style.display = 'none';
       hudVmInfo.style.display = 'none';
-      enumPatched = false;
 
       const vmBase = vmBaseInput.value.trim();
       const nodeId = nodeIdInput.value.trim();
@@ -277,13 +308,7 @@
         resetWebSocketToNative();
       }
 
-      hudWsUrl.textContent = websocketUrl || 'unset';
-
-      if (!websocketUrl) {
-        hudStatusText.textContent = 'Set a websocket URL first';
-        hudStatus.style.display = 'block';
-        return;
-      }
+      hudWsUrl.textContent = websocketUrl;
 
       sceneMgr = new SceneManager({
         elementId: 'gz-scene',
@@ -293,6 +318,7 @@
 
       bindResize();
 
+      // Patch missing PixelFormatType enum once protobuf root is ready.
       const interval = setInterval(async () => {
         if (enumPatched) {
           clearInterval(interval);
@@ -302,6 +328,7 @@
         const root = transport && transport.root;
         if (!root) return;
         try {
+          const namespace = root.lookup('gz.msgs');
           const existing = root.lookup('gz.msgs.PixelFormatType');
           if (existing) {
             enumPatched = true;
@@ -358,10 +385,17 @@
       }, 300);
     }
 
-    connectBtn.addEventListener('click', () => { connect(); });
-    if (autoConnect) { connect(); }
+    connectBtn.addEventListener('click', () => {
+      connect();
+    });
 
-    window.addEventListener('beforeunload', () => { destroyScene(); });
+    // Initial connect using defaults.
+    connect();
+
+    // Cleanup when the page unloads (useful when embedded in a VS Code webview later).
+    window.addEventListener('beforeunload', () => {
+      destroyScene();
+    });
   </script>
 </body>
 </html>

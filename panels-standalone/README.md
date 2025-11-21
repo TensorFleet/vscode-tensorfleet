@@ -42,13 +42,10 @@ bun run build  # or: npm run build
 - Emergency stop button
 
 ### ✅ Gazebo Web (gzweb)
-- Prebuilt gzweb viewer bundled under `src/static/gzweb/`
-- Uses `src/static/gzweb/gzweb-config.js` for runtime bridge URL (defaults to `ws://localhost:9000`)
-- Open via `/gzweb/gzweb.html` in dev or the VS Code panel
-
-#### Updating gzweb bundle
-- Replace the contents of `src/static/gzweb/` with a fresh gzweb build
-- Run `bun run build` to emit the updated bundle into `dist/gzweb/` for the extension
+- Minimal static gzweb panel at `src/static/gzweb/index.html` (pulled from CDN)
+- Accepts `?ws=ws://...` or `?vmBase=http://...&nodeId=...&token=...` for VM-manager login
+- Open via `/gzweb/index.html` in dev or the VS Code panel
+- Optional standalone host: `bun scripts/gzweb-serve.ts` (uses Bun to serve the static files)
 
 ### 🚧 Coming Soon
 - Plot Panel

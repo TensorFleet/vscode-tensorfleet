@@ -46,7 +46,7 @@ const DRONE_VIEWS: DroneViewport[] = [
   {
     id: 'tensorfleet-gzweb',
     title: 'Gazebo Web',
-    description: 'Interact with Gazebo through the bundled gzweb build for quick in-editor visualization.',
+    description: 'Interact with Gazebo through the lightweight CDN-loaded gzweb panel (with VM login shim).',
     image: 'gazebo-placeholder.svg',
     command: 'tensorfleet.openGzwebPanel',
     actionLabel: 'Open Gazebo Web Viewer',
@@ -367,8 +367,7 @@ async function openDedicatedPanel(
 
     if (view.htmlTemplate === 'gzweb-standalone') {
       localResourceRoots.push(
-        vscode.Uri.joinPath(standaloneDistRoot, 'gzweb'),
-        vscode.Uri.joinPath(standaloneDistRoot, 'gzweb', 'assets')
+        vscode.Uri.joinPath(standaloneDistRoot, 'gzweb')
       );
     }
   }
@@ -452,7 +451,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   }
 
   if (view.htmlTemplate === 'gzweb-standalone') {
-    return getStandalonePanelHtml('gzweb/gzweb', webview, context, cspSource);
+    return getStandalonePanelHtml('gzweb/index', webview, context, cspSource);
   }
 
   if (view.htmlTemplate === 'raw-messages-standalone') {
@@ -496,7 +495,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 }
 
 function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'gzweb/gzweb',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'gzweb/index',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
@@ -531,7 +530,12 @@ function getStandalonePanelHtml(
     }
   );
 
-  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https: blob:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:; media-src ${cspSource} https: http: data: blob:; worker-src ${cspSource} blob:;">`;
+  const scriptSrc = [`${cspSource}`, `'unsafe-inline'`, `'unsafe-eval'`];
+  if (panelName.startsWith('gzweb/')) {
+    scriptSrc.push('https://esm.sh');
+  }
+
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${scriptSrc.join(' ')}; img-src ${cspSource} data: https: blob:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:; media-src ${cspSource} https: http: data: blob:; worker-src ${cspSource} blob:;">`;
   if (html.includes('Content-Security-Policy')) {
     html = html.replace(/<meta[^>]+Content-Security-Policy[^>]+>/i, cspMeta);
   } else {
