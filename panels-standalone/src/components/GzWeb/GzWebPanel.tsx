@@ -117,11 +117,13 @@ type VmManagerShimOptions = {
   token: string;
   nodeId: string;
   onStatus: (status: { text: string; tone: LoginStatus }) => void;
+  onConnected: () => void;
+  onDisconnected: () => void;
 };
 
 const installVmManagerWebSocketShim = (
   NativeWebSocket: typeof WebSocket,
-  { token, nodeId, onStatus }: VmManagerShimOptions,
+  { token, nodeId, onStatus, onConnected, onDisconnected }: VmManagerShimOptions,
 ) => {
   class VmManagerWebSocket {
     private _ws: WebSocket;
@@ -166,6 +168,7 @@ const installVmManagerWebSocketShim = (
                 if (msg.success) {
                   this._ready = true;
                   onStatus({ text: 'Login accepted', tone: 'ok' });
+                  onConnected(); // Notify that we're actually connected
                   this._flushQueue();
                 } else {
                   onStatus({ text: msg.message || 'Login failed', tone: 'error' });
@@ -194,8 +197,15 @@ const installVmManagerWebSocketShim = (
         this._emit('message', wrappedEvent);
       });
 
-      this._ws.addEventListener('error', (ev) => this._emit('error', ev));
-      this._ws.addEventListener('close', (ev) => this._emit('close', ev));
+      this._ws.addEventListener('error', (ev) => {
+        this._emit('error', ev);
+        onDisconnected();
+      });
+
+      this._ws.addEventListener('close', (ev) => {
+        this._emit('close', ev);
+        onDisconnected();
+      });
     }
 
     get readyState() {
@@ -267,7 +277,6 @@ export const GzWebPanel: React.FC = () => {
   const [vmBase, setVmBase] = useState(() => getInitialValue('vm', 'http://localhost:8080'));
   const [nodeId, setNodeId] = useState(() => getInitialValue('nodeId', ''));
   const [token, setToken] = useState(() => getInitialValue('token', ''));
-  const [directWs, setDirectWs] = useState(() => getInitialValue('ws', 'ws://localhost:7681'));
 
   const [activeWsUrl, setActiveWsUrl] = useState('');
   const [statusText, setStatusText] = useState('');
@@ -275,8 +284,6 @@ export const GzWebPanel: React.FC = () => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
-
-  const connectThroughVmManager = vmBase.trim() !== '' && nodeId.trim() !== '';
 
   const resetWebSocketToNative = useCallback(() => {
     if (originalWebSocket.current) {
@@ -308,9 +315,21 @@ export const GzWebPanel: React.FC = () => {
   }, []);
 
   const connect = useCallback(async () => {
+    const trimmedVmBase = vmBase.trim();
+    const trimmedNodeId = nodeId.trim();
+
+    if (!trimmedVmBase || !trimmedNodeId) {
+      setIsConnecting(false);
+      setStatusTone('error');
+      setStatusText('VM base and VM ID are required');
+      setIsConnected(false);
+      setActiveWsUrl('');
+      return;
+    }
+
     setIsConnecting(true);
-    setStatusText(connectThroughVmManager ? 'Awaiting login...' : 'Connecting...');
-    setStatusTone(connectThroughVmManager ? 'pending' : 'muted');
+    setStatusText('Awaiting login...');
+    setStatusTone('pending');
 
     destroyScene();
 
@@ -319,18 +338,25 @@ export const GzWebPanel: React.FC = () => {
     }
     resetWebSocketToNative();
 
-    let websocketUrl = directWs.trim() || 'ws://localhost:7681';
-    if (connectThroughVmManager) {
-      websocketUrl = vmBase.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws';
-      installVmManagerWebSocketShim(originalWebSocket.current, {
-        token: token.trim(),
-        nodeId: nodeId.trim(),
-        onStatus: ({ text, tone }) => {
-          setStatusText(text);
-          setStatusTone(tone);
-        },
-      });
-    }
+    const websocketUrl = trimmedVmBase.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws';
+    installVmManagerWebSocketShim(originalWebSocket.current, {
+      token: token.trim(),
+      nodeId: trimmedNodeId,
+      onStatus: ({ text, tone }) => {
+        setStatusText(text);
+        setStatusTone(tone);
+      },
+      onConnected: () => {
+        setIsConnected(true);
+        setIsCollapsed(true); // Auto-collapse on successful connection
+      },
+      onDisconnected: () => {
+        setIsConnected(false);
+        setStatusText('Connection lost');
+        setStatusTone('error');
+        setIsCollapsed(false); // Auto-expand on disconnect
+      },
+    });
 
     setActiveWsUrl(websocketUrl);
 
@@ -348,10 +374,10 @@ export const GzWebPanel: React.FC = () => {
       patchTransportRoot(manager.transport);
       sceneManagerRef.current = manager;
       bindResize(manager);
-      setStatusTone(connectThroughVmManager ? 'pending' : 'ok');
-      setStatusText(connectThroughVmManager ? 'Awaiting login...' : 'Connected to websocket');
-      setIsConnected(true);
-      setIsCollapsed(true); // Auto-collapse on successful connection start
+
+      // Keep status as pending until login succeeds
+      setStatusTone('pending');
+      setStatusText('Awaiting login...');
     } catch (err) {
       console.error('Failed to load gzweb', err);
       setStatusTone('error');
@@ -360,7 +386,7 @@ export const GzWebPanel: React.FC = () => {
     } finally {
       setIsConnecting(false);
     }
-  }, [bindResize, connectThroughVmManager, destroyScene, directWs, nodeId, resetWebSocketToNative, token, vmBase]);
+  }, [bindResize, destroyScene, nodeId, resetWebSocketToNative, token, vmBase]);
 
   const handleDisconnect = useCallback(() => {
     destroyScene();
@@ -374,9 +400,11 @@ export const GzWebPanel: React.FC = () => {
   useEffect(() => {
     if (!hasAutoConnected.current) {
       hasAutoConnected.current = true;
-      void connect();
+      if (vmBase.trim() && nodeId.trim()) {
+        void connect();
+      }
     }
-  }, [connect]);
+  }, [connect, nodeId, vmBase]);
 
   useEffect(() => {
     return () => {
@@ -423,18 +451,16 @@ export const GzWebPanel: React.FC = () => {
         {!isCollapsed && (
           <div className="gzweb-content">
             <p className="gzweb-subtitle">
-              Connect directly to a Gazebo websocket or through a VM manager login handshake.
+              Connect to Gazebo through the VM manager websocket proxy (/ws) with login handshake.
             </p>
 
             <div className="gzweb-meta">
               <div>
-                WS: <code>{activeWsUrl || 'unset'}</code>
+                Proxy WS: <code>{activeWsUrl || 'unset'}</code>
               </div>
-              {connectThroughVmManager && (
-                <div>
-                  VM: <code>{nodeId.trim() || 'unset'}</code>
-                </div>
-              )}
+              <div>
+                VM ID: <code>{nodeId.trim() || 'unset'}</code>
+              </div>
               {statusText && (
                 <div className={`gzweb-status ${statusClass}`}>
                   Status: <span>{statusText}</span>
@@ -481,17 +507,6 @@ export const GzWebPanel: React.FC = () => {
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
                   placeholder="optional (if SKIP_JWT_VALIDATION=true)"
-                  spellCheck={false}
-                  disabled={isConnected}
-                />
-              </label>
-
-              <label>
-                WS (direct)
-                <input
-                  value={directWs}
-                  onChange={(e) => setDirectWs(e.target.value)}
-                  placeholder="ws://localhost:7681"
                   spellCheck={false}
                   disabled={isConnected}
                 />
