@@ -397,6 +397,8 @@ async function openDedicatedPanel(
       launchTerminalSession(message.target);
     } else if (message?.command === 'openAllPanels') {
       void vscode.commands.executeCommand('tensorfleet.openAllPanels');
+    } else if (message?.command === 'tensorfleet.vmManagerInfo') {
+      void sendVmManagerInfoToWebview(panel.webview, message?.payload);
     } else {
       // Handle Option 3 panel messages
       handleOption3Message(panel, message, context);
@@ -532,6 +534,34 @@ function getStandalonePanelHtml(
   }
 
   return html;
+}
+
+async function sendVmManagerInfoToWebview(
+  webview: vscode.Webview,
+  payload?: { vmBase?: string; token?: string }
+) {
+  if (!vmManagerIntegration) {
+    webview.postMessage({
+      command: 'tensorfleet.vmManagerInfo',
+      payload: { error: 'VM Manager integration not initialized' }
+    });
+    return;
+  }
+
+  try {
+    const requestedVmBase = typeof payload?.vmBase === 'string' ? payload.vmBase : undefined;
+    const requestedToken = typeof payload?.token === 'string' ? payload.token : undefined;
+    const info = await vmManagerIntegration.fetchVmManagerInfo({
+      vmBase: requestedVmBase,
+      token: requestedToken
+    });
+    webview.postMessage({ command: 'tensorfleet.vmManagerInfo', payload: info });
+  } catch (error) {
+    webview.postMessage({
+      command: 'tensorfleet.vmManagerInfo',
+      payload: { error: error instanceof Error ? error.message : String(error) }
+    });
+  }
 }
 
 async function handleOption3Message(_panel: vscode.WebviewPanel, message: any, _context: vscode.ExtensionContext) {

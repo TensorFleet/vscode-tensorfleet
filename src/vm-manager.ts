@@ -18,6 +18,8 @@ interface VmStatusResponse {
   status: string;
   ip_address?: string;
   updated_at?: string;
+  vm_id?: string;
+  vmId?: string;
 }
 
 interface VmInfoResponse extends VmStatusResponse {
@@ -509,9 +511,9 @@ export class VMManagerIntegration implements vscode.Disposable {
     method: string,
     endpoint: string,
     body?: any,
-    options?: { includeAuth?: boolean }
+    options?: { includeAuth?: boolean; baseUrlOverride?: string; tokenOverride?: string }
   ): Promise<T> {
-    const baseUrl = this.getApiBaseUrl();
+    const baseUrl = (options?.baseUrlOverride ?? this.getApiBaseUrl()).trim() || this.getApiBaseUrl();
     const url = new URL(endpoint.replace(/^\//, ''), baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
     const isHttps = url.protocol === 'https:';
     const lib = isHttps ? https : http;
@@ -523,7 +525,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     };
 
     const includeAuth = options?.includeAuth ?? true;
-    const token = this.getAuthToken();
+    const token = options?.tokenOverride ?? this.getAuthToken();
     if (includeAuth && token) {
       headers.Authorization = `Bearer ${token}`;
     }
@@ -660,6 +662,37 @@ export class VMManagerIntegration implements vscode.Disposable {
       return JSON.stringify(error);
     } catch {
       return 'Unknown error';
+    }
+  }
+
+  public async fetchVmManagerInfo(options?: { vmBase?: string; token?: string }): Promise<{
+    vmId?: string;
+    vmBase: string;
+    token?: string;
+    status?: string;
+    error?: string;
+  }> {
+    const vmBase = (options?.vmBase ?? this.getApiBaseUrl()).trim() || this.getApiBaseUrl();
+    const token = options?.token !== undefined ? options.token.trim() : this.getAuthToken();
+
+    try {
+      const status = await this.apiRequest<VmStatusResponse>('GET', '/vms/self/status', undefined, {
+        baseUrlOverride: vmBase,
+        tokenOverride: token
+      });
+      const vmId = status?.vm_id ?? status?.vmId;
+      return {
+        vmId,
+        vmBase,
+        token,
+        status: status?.status
+      };
+    } catch (error) {
+      return {
+        vmBase,
+        token,
+        error: this.formatError(error)
+      };
     }
   }
 

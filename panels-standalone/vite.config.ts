@@ -4,6 +4,9 @@ import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 import url from '@rollup/plugin-url'
 
+const vmProxyTarget = process.env.VM_MANAGER_PROXY ?? process.env.VITE_VM_MANAGER_PROXY ?? 'http://localhost:8080'
+const wsProxyTarget = vmProxyTarget.replace(/^http/, 'ws')
+
 export default defineConfig({
   plugins: [react()],
 
@@ -78,4 +81,20 @@ export default defineConfig({
 
   // Helps Vite treat wasm as an asset type too (harmless redundancy)
   assetsInclude: ['**/*.wasm'],
+
+  server: {
+    proxy: vmProxyTarget
+      ? {
+          '/vms': {
+            target: vmProxyTarget,
+            changeOrigin: true,
+          },
+          '/ws': {
+            target: wsProxyTarget,
+            ws: true,
+            changeOrigin: true,
+          },
+        }
+      : undefined,
+  },
 })

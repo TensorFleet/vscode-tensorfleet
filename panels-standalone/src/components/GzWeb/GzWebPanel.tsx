@@ -17,6 +17,30 @@ type SceneManagerConstructor = new (args: {
 }) => SceneManagerInstance;
 
 type LoginStatus = 'muted' | 'pending' | 'ok' | 'error';
+type VmStatusResponse = {
+  vm_id?: string;
+  vmId?: string;
+  status?: string;
+  ip_address?: string;
+};
+
+type HostVmInfo = {
+  vmId?: string;
+  vmBase?: string;
+  token?: string;
+  status?: string;
+  error?: string;
+};
+
+type VsCodeApi = {
+  postMessage: (message: any) => void;
+};
+
+declare global {
+  interface Window {
+    acquireVsCodeApi?: () => VsCodeApi;
+  }
+}
 
 const GZWEB_MODULE_URL = 'https://esm.sh/gzweb@2.0.14?bundle';
 const SCENE_ELEMENT_ID = 'gz-scene';
@@ -268,6 +292,16 @@ const getInitialValue = (key: string, fallback: string) => {
   return params.get(key) ?? fallback;
 };
 
+const getInitialVmBase = () => {
+  const fromQuery = getInitialValue('vm', '');
+  if (fromQuery) return fromQuery;
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost' && window.location.port === '5173') {
+    // Use same-origin so Vite dev proxy handles CORS
+    return window.location.origin;
+  }
+  return 'http://localhost:8080';
+};
+
 const getInitialFlag = (key: string, fallback: boolean) => {
   const raw = getInitialValue(key, fallback ? '1' : '0').toLowerCase();
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
@@ -278,10 +312,32 @@ export const GzWebPanel: React.FC = () => {
   const sceneManagerRef = useRef<SceneManagerInstance | null>(null);
   const resizeHandlerRef = useRef<(() => void) | null>(null);
   const hasAutoConnected = useRef(false);
+  const vmIdAbortRef = useRef<AbortController | null>(null);
+  const userEditedNodeId = useRef(false);
+  const nodeIdRef = useRef('');
+  const vscodeApiRef = useRef<VsCodeApi | null>(null);
+  const hostVmInfoRef = useRef<HostVmInfo | null>(null);
+  const hostVmResolversRef = useRef<Array<(info: HostVmInfo | null) => void>>([]);
+  const vmBaseRef = useRef('');
+  const tokenRef = useRef('');
+  const userEditedVmBase = useRef(false);
+  const userEditedToken = useRef(false);
 
-  const [vmBase, setVmBase] = useState(() => getInitialValue('vm', 'http://localhost:8080'));
+  const [vmBase, setVmBase] = useState(getInitialVmBase);
   const [nodeId, setNodeId] = useState(() => getInitialValue('nodeId', ''));
   const [token, setToken] = useState(() => getInitialValue('token', ''));
+  const [autoVmId, setAutoVmId] = useState<string | null>(null);
+  const [vmIdFetchState, setVmIdFetchState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [vmIdFetchError, setVmIdFetchError] = useState('');
+  const [hasVsCodeBridge, setHasVsCodeBridge] = useState(false);
+
+  if (!vmBaseRef.current) {
+    vmBaseRef.current = vmBase;
+  }
+
+  if (!tokenRef.current) {
+    tokenRef.current = token;
+  }
 
   const [showConfig, setShowConfig] = useState(() => getInitialFlag('showConfig', false));
   const [activeWsUrl, setActiveWsUrl] = useState('');
@@ -296,6 +352,18 @@ export const GzWebPanel: React.FC = () => {
       window.WebSocket = originalWebSocket.current;
     }
   }, []);
+
+  useEffect(() => {
+    nodeIdRef.current = nodeId;
+  }, [nodeId]);
+
+  useEffect(() => {
+    vmBaseRef.current = vmBase;
+  }, [vmBase]);
+
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
 
   const destroyScene = useCallback(() => {
     if (resizeHandlerRef.current) {
@@ -320,22 +388,224 @@ export const GzWebPanel: React.FC = () => {
     window.addEventListener('resize', handler);
   }, []);
 
-  const connect = useCallback(async () => {
-    const trimmedVmBase = vmBase.trim();
-    const trimmedNodeId = nodeId.trim();
+  const fetchVmIdFromManager = useCallback(
+    async (
+      options?: { quiet?: boolean },
+    ): Promise<{
+      vmId: string | null;
+      error?: string;
+    }> => {
+      const trimmedVmBase = vmBase.trim();
+      if (!trimmedVmBase) {
+        if (!options?.quiet) {
+          setVmIdFetchState('idle');
+          setVmIdFetchError('');
+        }
+        return { vmId: null };
+      }
 
-    if (!trimmedVmBase || !trimmedNodeId) {
+      vmIdAbortRef.current?.abort();
+      const controller = new AbortController();
+      vmIdAbortRef.current = controller;
+
+      if (!options?.quiet) {
+        setVmIdFetchState('loading');
+        setVmIdFetchError('');
+      }
+
+      try {
+        const response = await fetch(trimmedVmBase.replace(/\/$/, '') + '/vms/self/status', {
+          headers: token.trim() ? { Authorization: `Bearer ${token.trim()}` } : undefined,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`VM status returned ${response.status}`);
+        }
+
+        const payload = (await response.json()) as VmStatusResponse;
+        const detectedVmId = payload.vm_id || payload.vmId;
+        if (!detectedVmId) {
+          throw new Error('VM ID missing from status response');
+        }
+
+        setVmIdFetchState('success');
+        setVmIdFetchError('');
+        setAutoVmId(detectedVmId);
+
+        if (!userEditedNodeId.current || !nodeIdRef.current.trim()) {
+          setNodeId(detectedVmId);
+        }
+
+        return { vmId: detectedVmId };
+      } catch (error) {
+        if ((error as Error)?.name === 'AbortError') {
+          return { vmId: null };
+        }
+        setVmIdFetchState('error');
+        const message = error instanceof Error ? error.message : 'VM ID lookup failed';
+        setVmIdFetchError(message);
+        return { vmId: null, error: message };
+      }
+    },
+    [token, vmBase],
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.acquireVsCodeApi !== 'function') return;
+
+    const api = window.acquireVsCodeApi();
+    vscodeApiRef.current = api;
+    setHasVsCodeBridge(true);
+    setVmIdFetchState((prev) => (prev === 'success' ? prev : 'loading'));
+    setVmIdFetchError('');
+
+    const handleMessage = (event: MessageEvent) => {
+      const msg = event.data;
+      if (!msg || msg.command !== 'tensorfleet.vmManagerInfo') return;
+      const payload = (msg.payload ?? {}) as HostVmInfo;
+      hostVmInfoRef.current = payload;
+
+      if (payload.vmBase && !userEditedVmBase.current) {
+        setVmBase(payload.vmBase);
+      }
+      if (payload.token && !userEditedToken.current) {
+        setToken(payload.token);
+      }
+
+      if (payload.vmId) {
+        setAutoVmId(payload.vmId);
+        setVmIdFetchState('success');
+        setVmIdFetchError('');
+        if (!userEditedNodeId.current || !nodeIdRef.current.trim()) {
+          setNodeId(payload.vmId);
+        }
+      } else if (payload.error) {
+        setAutoVmId(null);
+        setVmIdFetchState('error');
+        setVmIdFetchError(payload.error);
+      }
+
+      const pendingResolvers = hostVmResolversRef.current.splice(0);
+      for (const resolve of pendingResolvers) {
+        resolve(payload);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    api.postMessage({
+      command: 'tensorfleet.vmManagerInfo',
+      payload: {
+        vmBase: vmBaseRef.current.trim() || undefined,
+        token: tokenRef.current.trim(),
+      },
+    });
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      hostVmResolversRef.current = [];
+    };
+  }, [setVmBase, setToken]);
+
+  const requestHostVmInfo = useCallback(async (): Promise<HostVmInfo | null> => {
+    const api = vscodeApiRef.current;
+    if (!api) return null;
+
+    return new Promise<HostVmInfo | null>((resolve) => {
+      let timeout: ReturnType<typeof setTimeout>;
+      const wrappedResolver = (info: HostVmInfo | null) => {
+        clearTimeout(timeout);
+        resolve(info);
+      };
+
+      timeout = setTimeout(() => {
+        const idx = hostVmResolversRef.current.indexOf(wrappedResolver);
+        if (idx !== -1) {
+          hostVmResolversRef.current.splice(idx, 1);
+        }
+        resolve(hostVmInfoRef.current);
+      }, 4000);
+
+      hostVmResolversRef.current.push(wrappedResolver);
+      api.postMessage({
+        command: 'tensorfleet.vmManagerInfo',
+        payload: {
+          vmBase: vmBaseRef.current.trim() || undefined,
+          token: tokenRef.current.trim(),
+        },
+      });
+    });
+  }, []);
+
+  const connect = useCallback(async () => {
+    let effectiveVmBase = vmBaseRef.current.trim();
+    if (!effectiveVmBase && hasVsCodeBridge && hostVmInfoRef.current?.vmBase) {
+      effectiveVmBase = hostVmInfoRef.current.vmBase.trim();
+    }
+
+    if (!effectiveVmBase) {
       setIsConnecting(false);
       setStatusTone('error');
-      setStatusText('VM base and VM ID are required');
+      setStatusText('VM base URL is required');
       setIsConnected(false);
       setActiveWsUrl('');
       return;
     }
 
     setIsConnecting(true);
-    setStatusText('Awaiting login...');
     setStatusTone('pending');
+    setStatusText(nodeIdRef.current.trim() ? 'Preparing connection...' : 'Fetching VM ID...');
+
+    let resolvedNodeId = nodeIdRef.current.trim();
+    let vmIdError: string | undefined;
+
+    if (!resolvedNodeId) {
+      if (hasVsCodeBridge) {
+        setVmIdFetchState((prev) => (prev === 'success' ? prev : 'loading'));
+        setVmIdFetchError('');
+        const hostInfo = hostVmInfoRef.current ?? (await requestHostVmInfo());
+
+        if (hostInfo?.vmBase) {
+          effectiveVmBase = hostInfo.vmBase.trim();
+          if (!userEditedVmBase.current) {
+            setVmBase(hostInfo.vmBase);
+          }
+        }
+
+        if (hostInfo?.token && !userEditedToken.current) {
+          setToken(hostInfo.token);
+        }
+
+        resolvedNodeId = hostInfo?.vmId?.trim() ?? '';
+        vmIdError = hostInfo?.error;
+
+        if (resolvedNodeId) {
+          setAutoVmId(resolvedNodeId);
+          setVmIdFetchState('success');
+          setVmIdFetchError('');
+        } else if (vmIdError) {
+          setVmIdFetchState('error');
+          setVmIdFetchError(vmIdError);
+        }
+      }
+
+      if (!resolvedNodeId && !hasVsCodeBridge) {
+        const { vmId, error } = await fetchVmIdFromManager();
+        resolvedNodeId = vmId?.trim() ?? '';
+        vmIdError = error;
+      }
+    }
+
+    if (!resolvedNodeId) {
+      setVmIdFetchState('error');
+      setVmIdFetchError(vmIdError || 'VM ID unavailable');
+      setIsConnecting(false);
+      setStatusTone('error');
+      setStatusText(vmIdError ? `VM ID unavailable: ${vmIdError}` : 'VM ID unavailable');
+      setIsConnected(false);
+      setActiveWsUrl('');
+      return;
+    }
 
     destroyScene();
 
@@ -344,10 +614,10 @@ export const GzWebPanel: React.FC = () => {
     }
     resetWebSocketToNative();
 
-    const websocketUrl = trimmedVmBase.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws';
+    const websocketUrl = effectiveVmBase.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws';
     installVmManagerWebSocketShim(originalWebSocket.current, {
       token: token.trim(),
-      nodeId: trimmedNodeId,
+      nodeId: resolvedNodeId,
       onStatus: ({ text, tone }) => {
         setStatusText(text);
         setStatusTone(tone);
@@ -392,7 +662,7 @@ export const GzWebPanel: React.FC = () => {
     } finally {
       setIsConnecting(false);
     }
-  }, [bindResize, destroyScene, nodeId, resetWebSocketToNative, token, vmBase]);
+  }, [bindResize, destroyScene, fetchVmIdFromManager, hasVsCodeBridge, requestHostVmInfo, resetWebSocketToNative, token]);
 
   const handleDisconnect = useCallback(() => {
     destroyScene();
@@ -404,20 +674,44 @@ export const GzWebPanel: React.FC = () => {
   }, [destroyScene, resetWebSocketToNative]);
 
   useEffect(() => {
-    if (!hasAutoConnected.current) {
-      hasAutoConnected.current = true;
-      if (vmBase.trim() && nodeId.trim()) {
-        void connect();
-      }
-    }
-  }, [connect, nodeId, vmBase]);
+    if (hasAutoConnected.current) return;
+    if (!vmBase.trim()) return;
+    if (!nodeId.trim() && vmIdFetchState !== 'success') return;
+
+    hasAutoConnected.current = true;
+    void connect();
+  }, [connect, nodeId, vmBase, vmIdFetchState]);
 
   useEffect(() => {
     return () => {
       destroyScene();
       resetWebSocketToNative();
+      vmIdAbortRef.current?.abort();
     };
   }, [destroyScene, resetWebSocketToNative]);
+
+  useEffect(() => {
+    if (hasVsCodeBridge) return;
+    if (!vmBase.trim()) return;
+    void fetchVmIdFromManager({ quiet: true });
+    return () => vmIdAbortRef.current?.abort();
+  }, [fetchVmIdFromManager, hasVsCodeBridge, vmBase]);
+
+  useEffect(() => {
+    if (!hasVsCodeBridge) return;
+    const trimmedVmBase = vmBase.trim();
+    if (!trimmedVmBase) return;
+    if (hostVmInfoRef.current?.vmBase?.trim() === trimmedVmBase) return;
+    void requestHostVmInfo();
+  }, [hasVsCodeBridge, requestHostVmInfo, vmBase]);
+
+  useEffect(() => {
+    if (vmBase.trim()) return;
+    vmIdAbortRef.current?.abort();
+    setAutoVmId(null);
+    setVmIdFetchState('idle');
+    setVmIdFetchError('');
+  }, [vmBase]);
 
   const statusClass = useMemo(() => {
     switch (statusTone) {
@@ -523,7 +817,10 @@ export const GzWebPanel: React.FC = () => {
                   VM Base
                   <input
                     value={vmBase}
-                    onChange={(e) => setVmBase(e.target.value)}
+                    onChange={(e) => {
+                      userEditedVmBase.current = e.target.value.trim().length > 0;
+                      setVmBase(e.target.value);
+                    }}
                     placeholder="http://localhost:8080"
                     spellCheck={false}
                     disabled={isConnected}
@@ -534,18 +831,36 @@ export const GzWebPanel: React.FC = () => {
                   VM ID
                   <input
                     value={nodeId}
-                    onChange={(e) => setNodeId(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      userEditedNodeId.current = value.trim().length > 0;
+                      setNodeId(value);
+                    }}
                     placeholder="vm id from /vms/status"
                     spellCheck={false}
                     disabled={isConnected}
                   />
+                  <div className="gzweb-hint">
+                    {vmIdFetchState === 'loading' && 'Auto-detecting from VM Manager...'}
+                    {vmIdFetchState === 'success' &&
+                      `Auto-detected ${autoVmId ?? nodeId.trim()}`}
+                    {vmIdFetchState === 'error' && (
+                      <span className="gzweb-hint-error">
+                        Auto-detect failed: {vmIdFetchError}
+                      </span>
+                    )}
+                    {vmIdFetchState === 'idle' && 'We will fetch your VM ID automatically.'}
+                  </div>
                 </label>
 
                 <label>
                   Token
                   <input
                     value={token}
-                    onChange={(e) => setToken(e.target.value)}
+                    onChange={(e) => {
+                      userEditedToken.current = e.target.value.trim().length > 0;
+                      setToken(e.target.value);
+                    }}
                     placeholder="optional (if SKIP_JWT_VALIDATION=true)"
                     spellCheck={false}
                     disabled={isConnected}

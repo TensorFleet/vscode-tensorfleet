@@ -280,6 +280,16 @@
   cursor: not-allowed;
 }
 
+.gzweb-hint {
+  font-size: 11px;
+  opacity: 0.8;
+  color: #cbd0d8;
+}
+
+.gzweb-hint-error {
+  color: #ffb9b9;
+}
+
 .gzweb-controls button {
   margin-top: 4px;
   border: none;
