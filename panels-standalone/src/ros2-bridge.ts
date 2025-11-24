@@ -184,6 +184,17 @@ export class ROS2Bridge {
 
   private setupROSParams: Array<{ name: string; value: any }> = [];
 
+  // All known frame_ids (from headers, tf, odom, etc.)
+  private frameIds = new Set<string>();
+
+  // frame_id -> topics that have produced that frame
+  private frameTopics = new Map<string, Set<string>>();
+
+  // -------- Added: available topics change notifications --------
+  private availableTopicsListeners = new Set<(topics: Subscription[]) => void>();
+  private topicsWatchTimer: number | null = null;
+  private _lastTopicsSig: string | null = null;
+
   constructor() {
     this._configureDefault();
   }
@@ -195,6 +206,10 @@ export class ROS2Bridge {
       try { this.client.close(); } catch {}
     }
     this.client = new FoxgloveWsClient({ url });
+    
+    // Needed to compute 3D transforms.
+    this.client.subscribe("/tf");
+    this.client.subscribe("/tf_static");
 
     // re-seed setup publishes and service calls to the new client
     for (const cmd of this.setupPublishes) {
@@ -216,10 +231,14 @@ export class ROS2Bridge {
     this.client.onOpen = async () => {
       // forward queued subscriptions. If the topics are not available they will just go into pending till they are.
       this.subscriptions.forEach((sub) => this._forwardSubscription(sub));
+
+      // start topics watcher
+      this._startTopicsWatcher(1000);
     };
 
     this.client.onClose = () => {
       console.log("Foxglove connection closed");
+      this._stopTopicsWatcher();
       this.reconnectTimeout = window.setTimeout(() => {
         console.log("Attempting to reconnect...");
         this.connect();
@@ -241,6 +260,7 @@ export class ROS2Bridge {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
+    this._stopTopicsWatcher();
     try { this.client?.close(); } catch {}
     this.client = null;
   }
@@ -449,7 +469,8 @@ export class ROS2Bridge {
     const msg: any = data.msg;
 
     const header = msg?.header || {};
-    const frameId = header.frame_id || "";
+    const frameId = header.frame_id || msg?.frame_id || msg?.child_frame_id || "";
+
     let timestamp = new Date().toISOString();
     let timestampNanos: number | undefined;
 
@@ -458,6 +479,22 @@ export class ROS2Bridge {
       const nanosec = header.stamp.nanosec || header.stamp.nsec || 0;
       timestampNanos = sec * 1_000_000_000 + nanosec;
       timestamp = new Date(sec * 1000 + nanosec / 1_000_000).toISOString();
+    }
+
+    if (frameId) {
+      this.noteFrame(frameId, topic);
+    }
+
+    if (type === "tf2_msgs/msg/TFMessage" && Array.isArray(msg.transforms)) {
+      for (const tf of msg.transforms as Array<{
+        header?: { frame_id?: string };
+        child_frame_id?: string;
+      }>) {
+        const parent = tf.header?.frame_id;
+        const child = tf.child_frame_id;
+        if (parent) this.noteFrame(parent, topic);
+        if (child) this.noteFrame(child, topic);
+      }
     }
 
     if (type === "sensor_msgs/msg/Image") {
@@ -495,7 +532,7 @@ export class ROS2Bridge {
           this.messageHandlers.get(topic)?.forEach((handler) => handler(imageMsg));
         });
       } catch (error) {
-        console.error("[FoxgloveBridge] Failed to convert compressed image:", error);
+        console.error("[ROS2Bridge] Failed to load compressed image:", error);
       }
     } else {
       this.messageHandlers.get(topic)?.forEach((handler) => handler(data));
@@ -644,7 +681,73 @@ export class ROS2Bridge {
     };
     img.src = dataURI;
   }
+
+  private noteFrame(frameId: string, topic: string) {
+    if (!frameId) return;
+    this.frameIds.add(frameId);
+    let topics = this.frameTopics.get(frameId);
+    if (!topics) {
+      topics = new Set();
+      this.frameTopics.set(frameId, topics);
+    }
+    topics.add(topic);
+  }
+
+  getKnownFrames(): string[] {
+    return Array.from(this.frameIds.values()).sort();
+  }
+
+  getFrameSources(frameId: string): string[] {
+    const set = this.frameTopics.get(frameId);
+    return set ? Array.from(set.values()).sort() : [];
+  }
+
+  // ---------------- Available topics change API ----------------
+
+  /**
+   * Subscribe to changes in the available topics list.
+   * Returns an unsubscribe function.
+   */
+  onAvailableTopicsChanged(cb: (topics: Subscription[]) => void): () => void {
+    this.availableTopicsListeners.add(cb);
+    // fire immediately with current list
+    try { cb(this.getAvailableTopics()); } catch {}
+    return () => {
+      this.availableTopicsListeners.delete(cb);
+    };
+  }
+
+  private _notifyAvailableTopicsChanged(topics: Subscription[]) {
+    for (const fn of this.availableTopicsListeners) {
+      try { fn(topics); } catch (e) {
+        console.error("[ROS2Bridge] topicsChanged listener error:", e);
+      }
+    }
+  }
+
+  private _startTopicsWatcher(intervalMs = 1000) {
+    const tick = () => {
+      const topics = this.getAvailableTopics() || [];
+      const sig = JSON.stringify(topics.map(t => `${t.topic}:${t.type}`).sort());
+      if (sig !== this._lastTopicsSig) {
+        this._lastTopicsSig = sig;
+        this._notifyAvailableTopicsChanged(topics);
+      }
+    };
+    if (this.topicsWatchTimer) clearInterval(this.topicsWatchTimer);
+    this.topicsWatchTimer = window.setInterval(tick, intervalMs);
+    tick(); // initial fire
+  }
+
+  private _stopTopicsWatcher() {
+    if (this.topicsWatchTimer) {
+      clearInterval(this.topicsWatchTimer);
+      this.topicsWatchTimer = null;
+    }
+    this._lastTopicsSig = null;
+  }
 }
+
 
 export const ros2Bridge = new ROS2Bridge();
 

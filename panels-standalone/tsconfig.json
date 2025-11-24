@@ -1,3 +1,4 @@
+// tsconfig.json
 {
   "compilerOptions": {
     "target": "ES2020",
@@ -18,7 +19,16 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@lichtblick/*": ["./src/lichtblick/*"]
+
+      // Use local source for these vendored packages
+      "@lichtblick/suite-base": ["./src/lichtblick/suite-base"],
+      "@lichtblick/suite-base/*": ["./src/lichtblick/suite-base/*"],
+      "@lichtblick/mcap-support": ["./src/lichtblick/mcap-support"],
+      "@lichtblick/mcap-support/*": ["./src/lichtblick/mcap-support/*"],
+
+      // Point @lichtblick/den to the workspace source
+      "@lichtblick/den": ["packages/den/src"],
+      "@lichtblick/den/*": ["packages/den/src/*"]
     }
   },
   "include": ["src"],

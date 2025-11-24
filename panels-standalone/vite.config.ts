@@ -1,4 +1,3 @@
-// vite.config.ts
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
@@ -29,9 +28,8 @@ export default defineConfig({
       plugins: [
         url({
           include: ['**/*.wasm'],
-          limit: 0,                        // always emit a file
+          limit: 0,
           fileName: 'assets/[name]-[hash][extname]',
-          // publicPath is unnecessary for most Vite setups; the default works
         }),
       ],
     },
@@ -40,6 +38,8 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: '@', replacement: resolve(__dirname, './src') },
+
+      // Use local source for these vendored packages
       {
         find: /^@lichtblick\/suite-base\/(.*)$/,
         replacement: resolve(__dirname, './src/lichtblick/suite-base/$1'),
@@ -56,10 +56,12 @@ export default defineConfig({
         find: '@lichtblick/mcap-support',
         replacement: resolve(__dirname, './src/lichtblick/mcap-support'),
       },
-      // (Optional) keep these if you want Foxglove builds specifically
-      // { find: '@lichtblick/wasm-lz4', replacement: '@foxglove/wasm-lz4' },
-      // { find: '@lichtblick/wasm-zstd', replacement: '@foxglove/wasm-zstd' },
-      // { find: '@lichtblick/wasm-bz2', replacement: '@foxglove/wasm-bz2' },
+
+      // Point @lichtblick/den to the workspace source
+      {
+        find: '@lichtblick/den',
+        replacement: resolve(__dirname, './packages/den/src'),
+      },
     ],
   },
 
