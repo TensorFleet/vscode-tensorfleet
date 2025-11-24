@@ -647,6 +647,21 @@ export const GzWebPanel: React.FC = () => {
         enableLights: true,
       });
 
+      let frameCount = 0;
+      let lastFrameLog = Date.now();
+
+      const monitorPerformance = () => {
+        frameCount++;
+        const now = Date.now();
+        if (now - lastFrameLog > 5000) {
+          console.log(`📊 Client rendering: ${frameCount} frames/5s (${(frameCount / 5).toFixed(1)} fps)`);
+          frameCount = 0;
+          lastFrameLog = now;
+        }
+        requestAnimationFrame(monitorPerformance);
+      };
+      requestAnimationFrame(monitorPerformance);
+
       patchTransportRoot(manager.transport);
       sceneManagerRef.current = manager;
       bindResize(manager);
