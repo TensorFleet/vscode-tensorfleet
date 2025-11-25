@@ -378,8 +378,9 @@ export async function clearToken(context: vscode.ExtensionContext): Promise<void
 
 /**
  * Check if user is authenticated
- * MOCK: Just checks if token exists
- * TODO: Add token verification with backend when ready
+ * Performs basic JWT validation (check expiration without calling backend)
+ * TODO: Add actual token verification endpoint call when backend is ready
+ * TODO: Cache result for 30 seconds to avoid excessive API calls
  */
 export async function isAuthenticated(context: vscode.ExtensionContext): Promise<boolean> {
     const token = await getToken(context);
@@ -387,8 +388,26 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
         return false;
     }
 
-    // MOCK: For now, just check if token exists
-    // TODO: Verify token with backend when ready
+    // Basic JWT validation (check expiration without calling backend)
+    try {
+        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+        const now = Math.floor(Date.now() / 1000);
+        
+        if (payload.exp && payload.exp < now) {
+            await clearToken(context); // Auto-clear expired token
+            return false;
+        }
+        
+        return true;
+    } catch (error) {
+        // Invalid token format
+        await clearToken(context);
+        return false;
+    }
+
+    // TODO: Better fix (when backend ready):
+    // Add actual token verification endpoint call
+    // Cache result for 30 seconds to avoid excessive API calls
     /*
     try {
         const BACKEND_URL = 'http://localhost:3000';
@@ -407,8 +426,6 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
         return false;
     }
     */
-    
-    return true; // MOCK: Assume valid if token exists
 }
 
 /**
