@@ -269,11 +269,6 @@
           "type": "string",
           "default": "http://localhost:8080",
           "description": "Base URL for the vm-manager HTTP API used by the VM status bar."
-        },
-        "tensorfleet.vmManager.authToken": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Optional bearer token that will be sent as `Authorization: Bearer <token>` with every `/vms/self/*` request. Leave blank when developing against a server that skips auth."
         }
       }
     },

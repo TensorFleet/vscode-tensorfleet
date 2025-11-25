@@ -83,10 +83,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       this.statusBarItem,
       this.outputChannel,
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (
-          event.affectsConfiguration('tensorfleet.vmManager.apiBaseUrl') ||
-          event.affectsConfiguration('tensorfleet.vmManager.authToken')
-        ) {
+        if (event.affectsConfiguration('tensorfleet.vmManager.apiBaseUrl')) {
           void this.refresh(true);
         }
       })
@@ -191,7 +188,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private async fetchSnapshot(): Promise<VmSnapshot> {
-    // Check auth first
+    // Check auth first - no token means not authenticated
     const token = await this.getAuthToken();
     if (!token) {
       return this.createSnapshot({
@@ -217,7 +214,11 @@ export class VMManagerIntegration implements vscode.Disposable {
         if (this.isAuthError(statusError)) {
           // Token is invalid - clear it and return not_authenticated
           await auth.clearToken(this.context);
-          throw statusError;
+          return this.createSnapshot({
+            connection: 'not_authenticated',
+            vmState: 'unknown',
+            error: 'Authentication expired - please login again'
+          });
         }
         if (this.isNotFoundError(statusError)) {
           sawVmMissing = true;
@@ -233,7 +234,11 @@ export class VMManagerIntegration implements vscode.Disposable {
         if (this.isAuthError(infoError)) {
           // Token is invalid - clear it and return not_authenticated
           await auth.clearToken(this.context);
-          throw infoError;
+          return this.createSnapshot({
+            connection: 'not_authenticated',
+            vmState: 'unknown',
+            error: 'Authentication expired - please login again'
+          });
         }
         if (this.isNotFoundError(infoError)) {
           sawVmMissing = true;
@@ -408,7 +413,7 @@ export class VMManagerIntegration implements vscode.Disposable {
 
     if (connection === 'not_authenticated') {
       lines.push('🔒 Not authenticated');
-      lines.push('Please login to access VM Manager');
+      lines.push('Click to login to TensorFleet');
       if (error) lines.push(`Error: ${error}`);
     } else if (connection === 'disconnected') {
       lines.push('⚠️ Cannot reach VM Manager API');
@@ -450,8 +455,14 @@ export class VMManagerIntegration implements vscode.Disposable {
           label: '🔑 Login', 
           detail: 'Authenticate with TensorFleet', 
           action: () => vscode.commands.executeCommand('tensorfleet.login').then(() => this.refresh(false))
+        },
+        { 
+          label: '⚙️ Configure API', 
+          detail: 'Set VM Manager API URL', 
+          action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
         }
       );
+      return items;
     } else if (connection === 'disconnected') {
       items.push(
         { label: '⚠️ Cannot reach VM Manager API', detail: error || 'Check network and API configuration' },
@@ -560,6 +571,18 @@ export class VMManagerIntegration implements vscode.Disposable {
     const message = this.formatError(error);
     this.outputChannel.appendLine(`[VM Manager] ${action} failed: ${message}`);
 
+    // Check for authentication errors first
+    if (message === 'NOT_AUTHENTICATED' || message.includes('Authentication expired') || this.isAuthError(error)) {
+      void vscode.window
+        .showWarningMessage('Please login to use VM Manager', 'Login', 'Cancel')
+        .then((choice) => {
+          if (choice === 'Login') {
+            void vscode.commands.executeCommand('tensorfleet.login').then(() => this.refresh(false));
+          }
+        });
+      return;
+    }
+
     const isConnectionIssue = /not responding|timed out|econnrefused/i.test(message);
 
     if (isConnectionIssue) {
@@ -607,9 +630,10 @@ export class VMManagerIntegration implements vscode.Disposable {
     const includeAuth = options?.includeAuth ?? true;
     if (includeAuth) {
       const token = await this.getAuthToken();
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
+      if (!token) {
+        throw new Error('NOT_AUTHENTICATED');
       }
+      headers.Authorization = `Bearer ${token}`;
     }
 
     return new Promise<T>((resolve, reject) => {
@@ -637,6 +661,18 @@ export class VMManagerIntegration implements vscode.Disposable {
               } catch (error) {
                 reject(error);
               }
+              return;
+            }
+
+            // Handle auth errors (401/403) - clear token and throw special error
+            if (res.statusCode === 401 || res.statusCode === 403) {
+              auth.clearToken(this.context).catch((err) => {
+                this.outputChannel.appendLine(`[VM Manager] Failed to clear expired token: ${this.formatError(err)}`);
+              });
+              const httpError: HttpError = new Error('Authentication expired - please login again');
+              httpError.status = res.statusCode;
+              httpError.body = bodyText;
+              reject(httpError);
               return;
             }
 
@@ -753,21 +789,14 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private async getAuthToken(): Promise<string | undefined> {
-    // Try to get token from auth module first (preferred)
-    // This uses the secure token storage from the auth module
+    // Get token from auth module (single source of truth)
     try {
       const authToken = await auth.getToken(this.context);
-      if (authToken) {
-        return authToken;
-      }
+      return authToken;
     } catch (error) {
       this.outputChannel.appendLine(`[VM Manager] Failed to get auth token: ${this.formatError(error)}`);
+      return undefined;
     }
-    
-    // Fallback to config token (for backward compatibility during migration)
-    // TODO: Remove this fallback when all users have migrated to auth module
-    const config = vscode.workspace.getConfiguration('tensorfleet');
-    return config.get<string>('vmManager.authToken')?.trim() || undefined;
   }
 
   private isNotFoundError(error: unknown): boolean {
