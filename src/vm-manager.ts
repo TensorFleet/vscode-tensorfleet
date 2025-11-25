@@ -419,17 +419,14 @@ export class VMManagerIntegration implements vscode.Disposable {
     if (connection === 'not_authenticated') {
       items.push(
         { 
-          label: '🔒 Not Logged In', 
-          detail: 'Please login to access VM Manager' 
+          label: '🔒 Not Logged In'
         },
         { 
           label: '🔑 Login', 
-          detail: 'Authenticate with TensorFleet', 
           action: () => vscode.commands.executeCommand('tensorfleet.login').then(() => this.refresh(false))
         },
         { 
           label: '⚙️ Configure API', 
-          detail: 'Set VM Manager API URL', 
           action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
         }
       );
@@ -437,13 +434,13 @@ export class VMManagerIntegration implements vscode.Disposable {
     } else if (connection === 'disconnected') {
       items.push(
         { label: '⚠️ Cannot reach VM Manager API', detail: error || 'Check network and API configuration' },
-        { label: '🔄 Retry Connection', detail: 'Attempt to reconnect', action: () => this.refresh(false) }
+        { label: '🔄 Retry Connection', action: () => this.refresh(false) }
       );
     } else {
       switch (vmState) {
         case 'running':
           items.push(
-            { label: '⏹ Stop VM', detail: 'Shut down the VM', action: () => this.stopVm() }
+            { label: '⏹ Stop VM', action: () => this.stopVm() }
           );
           break;
 
@@ -457,27 +454,27 @@ export class VMManagerIntegration implements vscode.Disposable {
 
         case 'pending':
           items.push(
-            { label: '🔵 VM not started', detail: 'VM has not booted yet' },
-            { label: '▶ Start VM', detail: 'Attempt to create/start VM', action: () => this.startVm() }
+            { label: '🔵 VM not started' },
+            { label: '▶ Start VM', detail: 'May create VM if it doesn\'t exist', action: () => this.startVm() }
           );
           break;
 
         case 'failed':
           items.push(
             { label: '❌ VM failed', detail: error || 'Check logs for details' },
-            { label: '🔄 Retry Start', detail: 'Try starting again', action: () => this.startVm() }
+            { label: '🔄 Retry Start', action: () => this.startVm() }
           );
           break;
 
         case 'unknown':
           items.push(
             { label: '❓ VM status unclear', detail: 'VM may not exist yet' },
-            { label: '▶ Start VM', detail: 'Attempt to create/start VM', action: () => this.startVm() }
+            { label: '▶ Start VM', detail: 'May create VM if it doesn\'t exist', action: () => this.startVm() }
           );
           break;
 
         case 'stopped':
-          items.push({ label: '▶ Start VM', detail: 'Boot up your VM', action: () => this.startVm() });
+          items.push({ label: '▶ Start VM', action: () => this.startVm() });
           break;
       }
     }
@@ -485,10 +482,9 @@ export class VMManagerIntegration implements vscode.Disposable {
     items.push(
       { 
           label: '⚙️ Configure API', 
-          detail: 'Open settings', 
           action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
       },
-      { label: '🔄 Refresh Status', detail: 'Check current state', action: () => this.refresh(false) });
+      { label: '🔄 Refresh Status', action: () => this.refresh(false) });
     return items;
   }
 

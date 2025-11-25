@@ -1499,14 +1499,12 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     case 'running':
       items.push(
         {
-          label: '$(stop-circle) Stop VM',
-          detail: 'Shut down the VM'
+          label: '$(stop-circle) Stop VM'
         }
       );
       if (ipAddress) {
         items.push({
-          label: '$(terminal) Connect via SSH',
-          detail: 'Open terminal session'
+          label: '$(terminal) Connect via SSH'
         });
       }
       break;
@@ -1515,15 +1513,13 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     case 'pending':
     case 'unknown':
       items.push({
-        label: '$(play) Start VM',
-        detail: 'Boot up your VM'
+        label: '$(play) Start VM'
       });
       break;
 
     case 'failed':
       items.push({
-        label: '$(refresh) Retry Start',
-        detail: 'Try starting again'
+        label: '$(refresh) Retry Start'
       });
       break;
   }
@@ -1537,16 +1533,13 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   // Common actions
   items.push(
     {
-      label: '$(refresh) Refresh Status',
-      detail: 'Check current state'
+      label: '$(refresh) Refresh Status'
     },
     {
-      label: '$(gear) Settings',
-      detail: 'Open TensorFleet settings'
+      label: '$(gear) Settings'
     },
     {
-      label: '$(sign-out) Logout',
-      detail: 'Sign out of TensorFleet'
+      label: '$(sign-out) Logout'
     }
   );
 

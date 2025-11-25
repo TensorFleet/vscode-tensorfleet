@@ -227,7 +227,10 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     const uptime = this.formatUptime(uptimeSeconds);
     if (uptime) lines.push(`Uptime: ${uptime}`);
     
-    if (error) lines.push(`Error: ${error}`);
+    // Only show error if not already shown in not_authenticated section
+    if (error && auth !== 'not_authenticated' && connection !== 'not_authenticated') {
+      lines.push(`Error: ${error}`);
+    }
     lines.push(`Updated: ${new Date(timestamp).toLocaleTimeString()}`);
 
     return lines.join('\n');
