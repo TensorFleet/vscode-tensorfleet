@@ -1405,6 +1405,76 @@ async function updateUnifiedAuthStatus(context: vscode.ExtensionContext) {
 }
 
 /**
+ * Build menu items with visual grouping (primary actions, separator, secondary actions)
+ */
+function buildMenuForState(
+  vmState: 'unknown' | 'stopped' | 'starting' | 'running' | 'stopping' | 'failed' | 'pending',
+  ipAddress?: string
+): vscode.QuickPickItem[] {
+  const items: vscode.QuickPickItem[] = [];
+  const primaryActions: vscode.QuickPickItem[] = [];
+
+  // Build primary actions based on VM state
+  switch (vmState) {
+    case 'running':
+      primaryActions.push({
+        label: '$(stop-circle) Stop VM'
+      });
+      if (ipAddress) {
+        primaryActions.push({
+          label: '$(terminal) Connect via SSH'
+        });
+      }
+      break;
+
+    case 'stopped':
+    case 'pending':
+    case 'unknown':
+      primaryActions.push({
+        label: '$(play) Start VM'
+      });
+      break;
+
+    case 'failed':
+      primaryActions.push({
+        label: '$(refresh) Retry Start'
+      });
+      break;
+
+    case 'starting':
+    case 'stopping':
+      // No primary actions during transitions
+      break;
+  }
+
+  // Add primary actions if any exist
+  if (primaryActions.length > 0) {
+    items.push(...primaryActions);
+    
+    // Add separator after primary actions
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+  }
+
+  // Add secondary actions (always shown)
+  items.push(
+    {
+      label: '$(refresh) Refresh Status'
+    },
+    {
+      label: '$(gear) Settings'
+    },
+    {
+      label: '$(sign-out) Logout'
+    }
+  );
+
+  return items;
+}
+
+/**
  * Show unified menu (adaptive based on state)
  */
 async function showUnifiedMenu(context: vscode.ExtensionContext) {
@@ -1417,23 +1487,25 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
   // Not authenticated state
   if (state.auth === 'not_authenticated' || state.connection === 'not_authenticated') {
-    items.push(
-      {
-        label: '$(lock) Not Logged In',
-        detail: 'Please login to access VM Manager',
-        kind: vscode.QuickPickItemKind.Default
-      },
-      {
-        label: '$(key) Login',
-        detail: 'Authenticate with TensorFleet',
-        kind: vscode.QuickPickItemKind.Default
-      },
-      {
-        label: '$(gear) Configure API URL',
-        detail: 'Set VM Manager endpoint',
-        kind: vscode.QuickPickItemKind.Default
-      }
-    );
+    // Primary action
+    items.push({
+      label: '$(key) Login',
+      detail: 'Authenticate with TensorFleet',
+      kind: vscode.QuickPickItemKind.Default
+    });
+    
+    // Separator
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+    
+    // Secondary actions (only actionable items)
+    items.push({
+      label: '$(gear) Configure API URL',
+      detail: 'Set VM Manager endpoint',
+      kind: vscode.QuickPickItemKind.Default
+    });
 
     const selection = await vscode.window.showQuickPick(items, {
       placeHolder: 'Not Logged In',
@@ -1450,14 +1522,23 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
   // API disconnected state
   if (state.connection === 'disconnected') {
+    // Primary action
+    items.push({
+      label: '$(refresh) Retry Connection',
+      detail: state.error || 'Attempt to reconnect'
+    });
+    
+    // Separator
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+    
+    // Secondary actions (only actionable items)
     items.push(
       {
-        label: '$(warning) API Disconnected',
-        detail: state.error || 'Check network and API configuration'
-      },
-      {
-        label: '$(refresh) Retry Connection',
-        detail: 'Attempt to reconnect'
+        label: '$(gear) Settings',
+        detail: 'Configure API endpoint'
       }
     );
 
@@ -1468,6 +1549,8 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
     if (selection?.label.includes('Retry') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
+    } else if (selection?.label.includes('Settings')) {
+      await vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager');
     }
     return;
   }
@@ -1494,54 +1577,9 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     kind: vscode.QuickPickItemKind.Default
   });
 
-  // Actions based on VM state
-  switch (vmState) {
-    case 'running':
-      items.push(
-        {
-          label: '$(stop-circle) Stop VM'
-        }
-      );
-      if (ipAddress) {
-        items.push({
-          label: '$(terminal) Connect via SSH'
-        });
-      }
-      break;
-
-    case 'stopped':
-    case 'pending':
-    case 'unknown':
-      items.push({
-        label: '$(play) Start VM'
-      });
-      break;
-
-    case 'failed':
-      items.push({
-        label: '$(refresh) Retry Start'
-      });
-      break;
-  }
-
-  // Separator
-  items.push({
-    label: '',
-    kind: vscode.QuickPickItemKind.Separator
-  });
-
-  // Common actions
-  items.push(
-    {
-      label: '$(refresh) Refresh Status'
-    },
-    {
-      label: '$(gear) Settings'
-    },
-    {
-      label: '$(sign-out) Logout'
-    }
-  );
+  // Build menu with visual grouping (primary actions, separator, secondary actions)
+  const menuItems = buildMenuForState(vmState, ipAddress);
+  items.push(...menuItems);
 
   const selection = await vscode.window.showQuickPick(items, {
     placeHolder: headerLabel.replace(/\$\([^)]+\)\s*/, ''),

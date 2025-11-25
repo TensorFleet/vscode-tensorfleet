@@ -417,14 +417,22 @@ export class VMManagerIntegration implements vscode.Disposable {
     const items: VmQuickPickItem[] = [];
 
     if (connection === 'not_authenticated') {
+      // Primary action
       items.push(
-        { 
-          label: '🔒 Not Logged In'
-        },
         { 
           label: '🔑 Login', 
           action: () => vscode.commands.executeCommand('tensorfleet.login').then(() => this.refresh(false))
-        },
+        }
+      );
+      
+      // Separator
+      items.push({
+        label: '',
+        kind: vscode.QuickPickItemKind.Separator
+      });
+      
+      // Secondary actions (only actionable items)
+      items.push(
         { 
           label: '⚙️ Configure API', 
           action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
@@ -432,59 +440,94 @@ export class VMManagerIntegration implements vscode.Disposable {
       );
       return items;
     } else if (connection === 'disconnected') {
+      // Primary action
       items.push(
-        { label: '⚠️ Cannot reach VM Manager API', detail: error || 'Check network and API configuration' },
-        { label: '🔄 Retry Connection', action: () => this.refresh(false) }
+        { 
+          label: '🔄 Retry Connection', 
+          detail: error || 'Check network and API configuration',
+          action: () => this.refresh(false) 
+        }
+      );
+      
+      // Separator
+      items.push({
+        label: '',
+        kind: vscode.QuickPickItemKind.Separator
+      });
+      
+      // Secondary actions (only actionable items)
+      items.push(
+        { 
+          label: '⚙️ Configure API', 
+          action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
+        },
+        { label: '🔄 Refresh Status', action: () => this.refresh(false) }
       );
     } else {
+      const primaryActions: VmQuickPickItem[] = [];
+      
+      // Add informational status items for certain states (before primary actions)
+      if (vmState === 'pending') {
+        items.push({ label: '🔵 VM not started' });
+      } else if (vmState === 'failed') {
+        items.push({ label: '❌ VM failed', detail: error || 'Check logs for details' });
+      } else if (vmState === 'unknown') {
+        items.push({ label: '❓ VM status unclear', detail: 'VM may not exist yet' });
+      } else if (vmState === 'starting') {
+        items.push({ label: '$(sync~spin) VM is starting...', detail: 'Usually takes 30-60 seconds' });
+      } else if (vmState === 'stopping') {
+        items.push({ label: '$(sync~spin) VM is stopping...', detail: 'Usually takes 10-20 seconds' });
+      }
+      
+      // Build primary actions based on VM state
       switch (vmState) {
         case 'running':
-          items.push(
+          primaryActions.push(
             { label: '⏹ Stop VM', action: () => this.stopVm() }
           );
           break;
 
-        case 'starting':
-          items.push({ label: '$(sync~spin) VM is starting...', detail: 'Usually takes 30-60 seconds' });
-          break;
-
-        case 'stopping':
-          items.push({ label: '$(sync~spin) VM is stopping...', detail: 'Usually takes 10-20 seconds' });
+        case 'stopped':
+          primaryActions.push(
+            { label: '▶ Start VM', action: () => this.startVm() }
+          );
           break;
 
         case 'pending':
-          items.push(
-            { label: '🔵 VM not started' },
+        case 'unknown':
+          primaryActions.push(
             { label: '▶ Start VM', detail: 'May create VM if it doesn\'t exist', action: () => this.startVm() }
           );
           break;
 
         case 'failed':
-          items.push(
-            { label: '❌ VM failed', detail: error || 'Check logs for details' },
+          primaryActions.push(
             { label: '🔄 Retry Start', action: () => this.startVm() }
           );
           break;
-
-        case 'unknown':
-          items.push(
-            { label: '❓ VM status unclear', detail: 'VM may not exist yet' },
-            { label: '▶ Start VM', detail: 'May create VM if it doesn\'t exist', action: () => this.startVm() }
-          );
-          break;
-
-        case 'stopped':
-          items.push({ label: '▶ Start VM', action: () => this.startVm() });
-          break;
       }
-    }
 
-    items.push(
-      { 
+      // Add primary actions if any exist
+      if (primaryActions.length > 0) {
+        items.push(...primaryActions);
+        
+        // Add separator after primary actions
+        items.push({
+          label: '',
+          kind: vscode.QuickPickItemKind.Separator
+        });
+      }
+
+      // Add secondary actions (always shown)
+      items.push(
+        { 
           label: '⚙️ Configure API', 
           action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
-      },
-      { label: '🔄 Refresh Status', action: () => this.refresh(false) });
+        },
+        { label: '🔄 Refresh Status', action: () => this.refresh(false) }
+      );
+    }
+    
     return items;
   }
 
