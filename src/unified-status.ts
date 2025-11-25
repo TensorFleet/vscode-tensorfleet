@@ -137,13 +137,13 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
 
     // Priority 1: Not authenticated
     if (auth === 'not_authenticated' || connection === 'not_authenticated') {
-      icon = '$(lock)';
+      icon = '$(sign-in)';
       text = 'TensorFleet · Not Logged In';
       backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     }
     // Priority 2: API disconnected
     else if (connection === 'disconnected') {
-      icon = '$(warning)';
+      icon = '$(vm-connect)';
       text = 'TensorFleet · Disconnected';
       backgroundColor = undefined;
     }
@@ -157,15 +157,15 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     else {
       switch (vmState) {
         case 'starting':
-          icon = '$(loading~spin)';
+          icon = '$(vm-pending)';
           text = 'TensorFleet · Starting...';
           break;
         case 'stopping':
-          icon = '$(loading~spin)';
+          icon = '$(debug-stop)';
           text = 'TensorFleet · Stopping...';
           break;
         case 'running':
-          icon = '$(circle-filled)';
+          icon = '$(vm-active)';
           text = ipAddress ? `TensorFleet · ${ipAddress}` : 'TensorFleet · Running';
           // Subtle green tint for running state
           color = new vscode.ThemeColor('terminal.ansiGreen');
@@ -176,11 +176,11 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
           backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
           break;
         case 'stopped':
-          icon = '$(circle-outline)';
+          icon = '$(vm-outline)';
           text = 'TensorFleet · Stopped';
           break;
         case 'pending':
-          icon = '$(sync~spin)';
+          icon = '$(vm-pending)';
           text = 'TensorFleet · Pending...';
           break;
         case 'unknown':
@@ -205,18 +205,18 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     const lines: string[] = [];
 
     if (auth === 'not_authenticated' || connection === 'not_authenticated') {
-      lines.push('$(lock) Not authenticated');
+      lines.push('Not authenticated');
       lines.push('Click to login to TensorFleet');
       if (error) lines.push(`Error: ${error}`);
     } else if (connection === 'disconnected') {
-      lines.push('$(warning) Cannot reach VM Manager API');
+      lines.push('$(vm-connect) Cannot reach VM Manager API');
       lines.push(`Last known state: ${vmState}`);
       if (ipAddress) lines.push(`Last known IP: ${ipAddress}`);
     } else {
-      lines.push('$(check) Connected to VM Manager API');
+      lines.push('Connected to VM Manager API');
       lines.push(`VM State: ${vmState}`);
       if (vmState === 'pending') {
-        lines.push('$(warning) VM exists but has not started yet');
+        lines.push('$(vm-pending) VM exists but has not started yet');
       }
     }
 

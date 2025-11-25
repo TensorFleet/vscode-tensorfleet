@@ -468,15 +468,15 @@ export class VMManagerIntegration implements vscode.Disposable {
       
       // Add informational status items for certain states (before primary actions)
       if (vmState === 'pending') {
-        items.push({ label: '$(circle-outline) VM not started' });
+        items.push({ label: '$(vm-outline) VM not started' });
       } else if (vmState === 'failed') {
         items.push({ label: '$(error) VM failed', detail: error || 'Check logs for details' });
       } else if (vmState === 'unknown') {
         items.push({ label: '$(question) VM status unclear', detail: 'VM may not exist yet' });
       } else if (vmState === 'starting') {
-        items.push({ label: '$(sync~spin) VM is starting...', detail: 'Usually takes 30-60 seconds' });
+        items.push({ label: '$(vm-pending) VM is starting...', detail: 'Usually takes 30-60 seconds' });
       } else if (vmState === 'stopping') {
-        items.push({ label: '$(sync~spin) VM is stopping...', detail: 'Usually takes 10-20 seconds' });
+        items.push({ label: '$(debug-stop) VM is stopping...', detail: 'Usually takes 10-20 seconds' });
       }
       
       // Build primary actions based on VM state
@@ -489,20 +489,20 @@ export class VMManagerIntegration implements vscode.Disposable {
 
         case 'stopped':
           primaryActions.push(
-            { label: '$(play) Start VM', action: () => this.startVm() }
+            { label: '$(debug-start) Start VM', action: () => this.startVm() }
           );
           break;
 
         case 'pending':
         case 'unknown':
           primaryActions.push(
-            { label: '$(play) Start VM', detail: 'May create VM if it doesn\'t exist', action: () => this.startVm() }
+            { label: '$(debug-start) Start VM', detail: 'May create VM if it doesn\'t exist', action: () => this.startVm() }
           );
           break;
 
         case 'failed':
           primaryActions.push(
-            { label: '$(refresh) Retry Start', action: () => this.startVm() }
+            { label: '$(debug-restart) Retry Start', action: () => this.startVm() }
           );
           break;
       }

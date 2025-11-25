@@ -1097,7 +1097,7 @@ async function detectRosVersion() {
 
   // Update status bar
   if (rosVersionStatusBar) {
-    rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
+    rosVersionStatusBar.text = `$(layers) ${currentRosVersion.name}`;
     console.log('[TensorFleet] ROS version set to:', currentRosVersion.name);
   }
 }
@@ -1189,7 +1189,7 @@ async function selectRosVersion() {
     currentRosVersion = selected.version;
     
     if (rosVersionStatusBar) {
-      rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
+      rosVersionStatusBar.text = `$(layers) ${currentRosVersion.name}`;
     }
 
     // Optionally update the config file
@@ -1259,17 +1259,16 @@ async function showDroneStatus() {
   }
 
   const items = drones.map((drone) => {
-    const statusIcon =
-      drone.status === 'flying' ? '$(rocket)' :
-      drone.status === 'armed' ? '$(zap)' :
-      drone.status === 'idle' ? '$(circle-outline)' :
-      '$(circle-slash)';
+      const statusIcon =
+        drone.status === 'flying' ? '$(rocket)' :
+        drone.status === 'armed' ? '$(target)' :
+        drone.status === 'idle' ? '$(circle-outline)' :
+        '$(circle-slash)';
 
-    const batteryIcon =
-      drone.battery > 75 ? '$(battery-full)' :
-      drone.battery > 50 ? '$(battery)' :
-      drone.battery > 25 ? '$(battery-charging)' :
-      '$(battery-empty)';
+      const batteryIcon =
+        drone.battery > 50 ? '$(pulse)' :
+        drone.battery > 25 ? '$(warning)' :
+        '$(alert)';
 
     return {
       label: `${statusIcon} ${drone.name}`,
