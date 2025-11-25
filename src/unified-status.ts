@@ -205,18 +205,18 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     const lines: string[] = [];
 
     if (auth === 'not_authenticated' || connection === 'not_authenticated') {
-      lines.push('🔒 Not authenticated');
+      lines.push('$(lock) Not authenticated');
       lines.push('Click to login to TensorFleet');
       if (error) lines.push(`Error: ${error}`);
     } else if (connection === 'disconnected') {
-      lines.push('⚠️ Cannot reach VM Manager API');
+      lines.push('$(warning) Cannot reach VM Manager API');
       lines.push(`Last known state: ${vmState}`);
       if (ipAddress) lines.push(`Last known IP: ${ipAddress}`);
     } else {
-      lines.push('✓ Connected to VM Manager API');
+      lines.push('$(check) Connected to VM Manager API');
       lines.push(`VM State: ${vmState}`);
       if (vmState === 'pending') {
-        lines.push('⚠️ VM exists but has not started yet');
+        lines.push('$(warning) VM exists but has not started yet');
       }
     }
 
@@ -270,4 +270,3 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     this.listeners.clear();
   }
 }
-

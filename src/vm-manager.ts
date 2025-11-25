@@ -420,7 +420,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       // Primary action
       items.push(
         { 
-          label: '🔑 Login', 
+          label: '$(key) Login', 
           action: () => vscode.commands.executeCommand('tensorfleet.login').then(() => this.refresh(false))
         }
       );
@@ -434,7 +434,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       // Secondary actions (only actionable items)
       items.push(
         { 
-          label: '⚙️ Configure API', 
+          label: '$(gear) Configure API', 
           action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
         }
       );
@@ -443,7 +443,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       // Primary action
       items.push(
         { 
-          label: '🔄 Retry Connection', 
+          label: '$(refresh) Retry Connection', 
           detail: error || 'Check network and API configuration',
           action: () => this.refresh(false) 
         }
@@ -458,21 +458,21 @@ export class VMManagerIntegration implements vscode.Disposable {
       // Secondary actions (only actionable items)
       items.push(
         { 
-          label: '⚙️ Configure API', 
+          label: '$(gear) Configure API', 
           action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
         },
-        { label: '🔄 Refresh Status', action: () => this.refresh(false) }
+        { label: '$(refresh) Refresh Status', action: () => this.refresh(false) }
       );
     } else {
       const primaryActions: VmQuickPickItem[] = [];
       
       // Add informational status items for certain states (before primary actions)
       if (vmState === 'pending') {
-        items.push({ label: '🔵 VM not started' });
+        items.push({ label: '$(circle-outline) VM not started' });
       } else if (vmState === 'failed') {
-        items.push({ label: '❌ VM failed', detail: error || 'Check logs for details' });
+        items.push({ label: '$(error) VM failed', detail: error || 'Check logs for details' });
       } else if (vmState === 'unknown') {
-        items.push({ label: '❓ VM status unclear', detail: 'VM may not exist yet' });
+        items.push({ label: '$(question) VM status unclear', detail: 'VM may not exist yet' });
       } else if (vmState === 'starting') {
         items.push({ label: '$(sync~spin) VM is starting...', detail: 'Usually takes 30-60 seconds' });
       } else if (vmState === 'stopping') {
@@ -483,26 +483,26 @@ export class VMManagerIntegration implements vscode.Disposable {
       switch (vmState) {
         case 'running':
           primaryActions.push(
-            { label: '⏹ Stop VM', action: () => this.stopVm() }
+            { label: '$(debug-stop) Stop VM', action: () => this.stopVm() }
           );
           break;
 
         case 'stopped':
           primaryActions.push(
-            { label: '▶ Start VM', action: () => this.startVm() }
+            { label: '$(play) Start VM', action: () => this.startVm() }
           );
           break;
 
         case 'pending':
         case 'unknown':
           primaryActions.push(
-            { label: '▶ Start VM', detail: 'May create VM if it doesn\'t exist', action: () => this.startVm() }
+            { label: '$(play) Start VM', detail: 'May create VM if it doesn\'t exist', action: () => this.startVm() }
           );
           break;
 
         case 'failed':
           primaryActions.push(
-            { label: '🔄 Retry Start', action: () => this.startVm() }
+            { label: '$(refresh) Retry Start', action: () => this.startVm() }
           );
           break;
       }
@@ -521,10 +521,10 @@ export class VMManagerIntegration implements vscode.Disposable {
       // Add secondary actions (always shown)
       items.push(
         { 
-          label: '⚙️ Configure API', 
+          label: '$(gear) Configure API', 
           action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
         },
-        { label: '🔄 Refresh Status', action: () => this.refresh(false) }
+        { label: '$(refresh) Refresh Status', action: () => this.refresh(false) }
       );
     }
     

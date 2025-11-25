@@ -118,7 +118,7 @@ function createCallbackServer(resolve: (token: string) => void, reject: (error: 
             res.end(`
                 <html>
                     <body style="font-family: Arial; text-align: center; padding: 50px;">
-                        <h1>✅ Authentication Successful!</h1>
+                        <h1>Authentication Successful</h1>
                         <p>Token received. You can close this window and return to VSCode.</p>
                         <script>setTimeout(() => window.close(), 2000);</script>
                     </body>
@@ -241,7 +241,7 @@ function getTokenInputHtml(): string {
 </head>
 <body>
     <div class="container">
-        <h1>🔐 TensorFleet Authentication</h1>
+        <h1>TensorFleet Authentication</h1>
         <p class="subtitle">Enter your authentication token</p>
         
         <form id="tokenForm">
@@ -460,4 +460,3 @@ export async function authenticatedFetch(
 
     return response;
 }
-

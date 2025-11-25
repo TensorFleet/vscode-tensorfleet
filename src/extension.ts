@@ -1418,7 +1418,7 @@ function buildMenuForState(
   switch (vmState) {
     case 'running':
       primaryActions.push({
-        label: '$(stop-circle) Stop VM'
+        label: '$(debug-stop) Stop VM'
       });
       if (ipAddress) {
         primaryActions.push({
