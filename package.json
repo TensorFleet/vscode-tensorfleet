@@ -38,6 +38,10 @@
     "onCommand:tensorfleet.selectRosVersion",
     "onCommand:tensorfleet.showDroneStatus",
     "onCommand:tensorfleet.showVMManagerMenu",
+    "onCommand:tensorfleet.showUnifiedMenu",
+    "onCommand:tensorfleet.login",
+    "onCommand:tensorfleet.logout",
+    "onCommand:tensorfleet.authStatus",
     "onCommand:tensorfleet.connectROS2",
     "onCommand:tensorfleet.disconnectROS2",
     "onCommand:tensorfleet.startPX4Telemetry",
@@ -247,6 +251,26 @@
       {
         "command": "tensorfleet.showVMManagerMenu",
         "title": "TensorFleet: Show VM Actions",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.showUnifiedMenu",
+        "title": "TensorFleet: Show Status Menu",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.login",
+        "title": "TensorFleet: Login",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.logout",
+        "title": "TensorFleet: Logout",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.authStatus",
+        "title": "TensorFleet: Show Auth Status",
         "category": "TensorFleet"
       }
     ],

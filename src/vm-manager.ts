@@ -2,8 +2,11 @@ import * as vscode from 'vscode';
 import * as http from 'http';
 import * as https from 'https';
 import * as auth from './auth';
+import { UnifiedStatusCoordinator } from './unified-status';
 
-// Core state types
+// Core state types (imported from unified-status, keeping local types for backward compatibility)
+// Note: These types are now imported from unified-status.ts, but keeping local definitions
+// for internal use to avoid breaking changes
 type ConnectionState = 'connected' | 'disconnected' | 'not_authenticated';
 type VmState =
   | 'unknown'
@@ -58,6 +61,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   private readonly context: vscode.ExtensionContext;
   private readonly statusBarItem: vscode.StatusBarItem;
   private readonly outputChannel: vscode.OutputChannel;
+  private readonly unifiedCoordinator: UnifiedStatusCoordinator | null;
   private pollTimer: NodeJS.Timeout | null = null;
   private currentSnapshot: VmSnapshot;
   private lastNotifiedState: VmState | null = null;
@@ -67,13 +71,16 @@ export class VMManagerIntegration implements vscode.Disposable {
   private static readonly NORMAL_POLL_MS = 30_000;
   private static readonly FAST_POLL_MS = 5_000;
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(context: vscode.ExtensionContext, unifiedCoordinator?: UnifiedStatusCoordinator | null) {
     this.context = context;
+    this.unifiedCoordinator = unifiedCoordinator || null;
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
+    
+    // Keep status bar item for backward compatibility, but hide it (unified coordinator shows it)
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
     this.statusBarItem.name = 'TensorFleet VM';
     this.statusBarItem.command = 'tensorfleet.showVMManagerMenu';
-    this.statusBarItem.show();
+    this.statusBarItem.hide(); // Hide - unified coordinator handles display
 
     // Initialize with unknown state
     this.currentSnapshot = this.createSnapshot({ connection: 'disconnected', vmState: 'unknown' });
@@ -285,6 +292,19 @@ export class VMManagerIntegration implements vscode.Disposable {
     this.updateStatusBar();
     this.handleStateChange(previousConnection, previousState);
     this.updatePollingSpeed(snapshot.vmState);
+    
+    // Update unified coordinator
+    if (this.unifiedCoordinator) {
+      this.unifiedCoordinator.updateVmState({
+        connection: snapshot.connection,
+        vmState: snapshot.vmState,
+        ipAddress: snapshot.ipAddress,
+        provider: snapshot.provider,
+        region: snapshot.region,
+        uptimeSeconds: snapshot.uptimeSeconds,
+        error: snapshot.error
+      });
+    }
   }
 
   private handleStateChange(previousConnection: ConnectionState, previousState: VmState) {
@@ -387,58 +407,9 @@ export class VMManagerIntegration implements vscode.Disposable {
   // ========== UI ==========
 
   private updateStatusBar() {
-    const { connection, vmState, ipAddress } = this.currentSnapshot;
-    const ip = ipAddress ? ` (${ipAddress})` : '';
-
-    if (connection === 'not_authenticated') {
-      this.statusBarItem.text = '🔒 Not Logged In';
-      this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    } else if (connection === 'disconnected') {
-      const lastState = this.getVmStateLabel(vmState);
-      this.statusBarItem.text = lastState 
-        ? `⚠️ API Disconnected · Last: ${lastState}${ip}` 
-        : '⚠️ API Disconnected';
-      this.statusBarItem.backgroundColor = undefined;
-    } else {
-      this.statusBarItem.text = this.getVmStateIcon(vmState) + ' ' + this.getVmStateLabel(vmState) + ip;
-      this.statusBarItem.backgroundColor = undefined;
-    }
-
-    this.statusBarItem.tooltip = this.buildTooltip();
-  }
-
-  private buildTooltip(): string {
-    const { connection, vmState, ipAddress, provider, region, uptimeSeconds, error, timestamp } = this.currentSnapshot;
-    const lines: string[] = [];
-
-    if (connection === 'not_authenticated') {
-      lines.push('🔒 Not authenticated');
-      lines.push('Click to login to TensorFleet');
-      if (error) lines.push(`Error: ${error}`);
-    } else if (connection === 'disconnected') {
-      lines.push('⚠️ Cannot reach VM Manager API');
-      lines.push(`Last known state: ${vmState}`);
-      if (ipAddress) lines.push(`Last known IP: ${ipAddress}`);
-    } else {
-      lines.push('✓ Connected to VM Manager API');
-      lines.push(`VM State: ${vmState}`);
-      if (vmState === 'pending') {
-        lines.push('⚠️ VM exists but has not started yet');
-      }
-    }
-
-    if (ipAddress) lines.push(`IP: ${ipAddress}`);
-    if (provider) lines.push(`Provider: ${provider}`);
-    if (region) lines.push(`Region: ${region}`);
-    
-    const uptime = this.formatUptime(uptimeSeconds);
-    if (uptime) lines.push(`Uptime: ${uptime}`);
-    
-    if (error) lines.push(`Error: ${error}`);
-    lines.push(`API: ${this.getApiBaseUrl()}`);
-    lines.push(`Updated: ${new Date(timestamp).toLocaleTimeString()}`);
-
-    return lines.join('\n');
+    // Status bar is now handled by unified coordinator
+    // Keep this method for backward compatibility but don't show the status bar
+    // The unified coordinator will handle all status bar updates
   }
 
   private buildMenuItems(): VmQuickPickItem[] {
@@ -539,7 +510,10 @@ export class VMManagerIntegration implements vscode.Disposable {
 
   // ========== VM Actions ==========
 
-  private async startVm() {
+  /**
+   * Public method to start VM
+   */
+  async startVm() {
     try {
       this.userInitiatedAction = 'start';
       this.setOptimisticState('starting');
@@ -553,7 +527,10 @@ export class VMManagerIntegration implements vscode.Disposable {
     }
   }
 
-  private async stopVm() {
+  /**
+   * Public method to stop VM
+   */
+  async stopVm() {
     try {
       this.userInitiatedAction = 'stop';
       this.setOptimisticState('stopping');
@@ -736,42 +713,6 @@ export class VMManagerIntegration implements vscode.Disposable {
     return 'unknown';
   }
 
-  private getVmStateIcon(state: VmState): string {
-    switch (state) {
-      case 'running': return '🟢';
-      case 'starting': return '🟡';
-      case 'stopping': return '🟡';
-      case 'failed': return '🔴';
-      case 'stopped': return '⚫';
-      case 'pending': return '🔵';
-      default: return '❓';
-    }
-  }
-
-  private getVmStateLabel(state: VmState): string {
-    switch (state) {
-      case 'running': return 'Running';
-      case 'starting': return 'Starting...';
-      case 'stopping': return 'Stopping...';
-      case 'failed': return 'Failed';
-      case 'stopped': return 'Stopped';
-      case 'pending': return 'Pending...';
-      default: return 'Unknown';
-    }
-  }
-
-  private formatUptime(seconds?: number | null): string | undefined {
-    if (seconds == null) return undefined;
-    const total = Math.max(0, Math.floor(seconds));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    const parts: string[] = [];
-    if (h > 0) parts.push(`${h}h`);
-    if (m > 0) parts.push(`${m}m`);
-    if (parts.length === 0 || s > 0) parts.push(`${s}s`);
-    return parts.join(' ');
-  }
 
   private formatError(error: unknown): string {
     if (error instanceof Error) return error.message;
