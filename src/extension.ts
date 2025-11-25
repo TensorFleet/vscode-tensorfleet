@@ -4,6 +4,7 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
 import { VMManagerIntegration } from './vm-manager';
+import * as auth from './auth';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -126,6 +127,9 @@ let rosVersionStatusBar: vscode.StatusBarItem | null = null;
 let droneStatusBar: vscode.StatusBarItem | null = null;
 let projectWatcher: vscode.FileSystemWatcher | null = null;
 
+// Auth status bar item
+let authStatusBar: vscode.StatusBarItem | null = null;
+
 export function activate(context: vscode.ExtensionContext) {
   // Start MCP bridge for communication between MCP server and VS Code
   mcpBridge = new MCPBridge(context);
@@ -141,6 +145,9 @@ export function activate(context: vscode.ExtensionContext) {
   initializeStatusBarItems(context).catch((error) => {
     console.error('[TensorFleet] Failed to initialize status bars:', error);
   });
+
+  // Initialize auth status bar
+  initializeAuthStatusBar(context);
 
   vmManagerIntegration = new VMManagerIntegration(context);
   vmManagerIntegration.initialize();
@@ -201,6 +208,20 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => vmManagerIntegration?.showVmActions())
     );
   }
+
+  // Auth commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.login', () => handleLogin(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.logout', () => handleLogout(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.authStatus', () => showAuthStatus(context))
+  );
+
   // ROS bridge commands removed; panels use embedded Foxglove networking.
 
   context.subscriptions.push(
@@ -245,6 +266,12 @@ export function deactivate() {
   if (vmManagerIntegration) {
     vmManagerIntegration.dispose();
     vmManagerIntegration = null;
+  }
+
+  // Clean up auth status bar
+  if (authStatusBar) {
+    authStatusBar.dispose();
+    authStatusBar = null;
   }
 }
 
@@ -1342,4 +1369,121 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('markdown.showPreview', setupPath);
     }
   });
+}
+
+// ============================================================================
+// Authentication Functions
+// ============================================================================
+
+/**
+ * Initialize auth status bar item
+ */
+function initializeAuthStatusBar(context: vscode.ExtensionContext) {
+  authStatusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    97 // Position before VM Manager (98) and drone status (99)
+  );
+  authStatusBar.name = 'TensorFleet Auth';
+  authStatusBar.command = 'tensorfleet.authStatus';
+  context.subscriptions.push(authStatusBar);
+
+  // Update status bar on activation
+  updateAuthStatusBar(context);
+
+  // Update status bar periodically (every 30 seconds)
+  const interval = setInterval(() => {
+    updateAuthStatusBar(context);
+  }, 30000);
+
+  context.subscriptions.push(new vscode.Disposable(() => clearInterval(interval)));
+}
+
+/**
+ * Update auth status bar display
+ */
+async function updateAuthStatusBar(context: vscode.ExtensionContext) {
+  if (!authStatusBar) {
+    return;
+  }
+
+  const isAuth = await auth.isAuthenticated(context);
+  if (isAuth) {
+    authStatusBar.text = '$(account) Logged In';
+    authStatusBar.tooltip = 'Click to view authentication status';
+    authStatusBar.backgroundColor = undefined; // Use default
+  } else {
+    authStatusBar.text = '$(account) Not Logged In';
+    authStatusBar.tooltip = 'Click to login';
+    authStatusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+  }
+  authStatusBar.show();
+}
+
+/**
+ * Handle login command
+ */
+async function handleLogin(context: vscode.ExtensionContext) {
+  try {
+    await auth.authenticate(context);
+    await updateAuthStatusBar(context);
+    
+    // Notify VM Manager that auth state changed (if it needs to refresh)
+    if (vmManagerIntegration) {
+      // VM Manager will pick up the token from config on next API call
+      // But we could trigger a refresh here if needed
+    }
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Login failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Handle logout command
+ */
+async function handleLogout(context: vscode.ExtensionContext) {
+  await auth.clearToken(context);
+  await updateAuthStatusBar(context);
+  vscode.window.showInformationMessage('Logged out successfully');
+  
+  // Notify VM Manager that auth state changed
+  if (vmManagerIntegration) {
+    // VM Manager will handle 401 errors gracefully
+  }
+}
+
+/**
+ * Show authentication status
+ */
+async function showAuthStatus(context: vscode.ExtensionContext) {
+  const isAuth = await auth.isAuthenticated(context);
+  
+  if (isAuth) {
+    const token = await auth.getToken(context);
+    const tokenPreview = token 
+      ? `${token.substring(0, 20)}...${token.substring(token.length - 10)}`
+      : 'No token';
+    
+    const action = await vscode.window.showInformationMessage(
+      `✅ Logged in\nToken: ${tokenPreview}`,
+      'Logout',
+      'Refresh Token'
+    );
+    
+    if (action === 'Logout') {
+      await handleLogout(context);
+    } else if (action === 'Refresh Token') {
+      await handleLogin(context);
+    }
+  } else {
+    const action = await vscode.window.showWarningMessage(
+      'Not logged in. Please login to use VM Manager features.',
+      'Login'
+    );
+    
+    if (action === 'Login') {
+      await handleLogin(context);
+    }
+  }
 }

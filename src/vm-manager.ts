@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import * as https from 'https';
+import * as auth from './auth';
 
 // Core state types
 type ConnectionState = 'connected' | 'disconnected';
@@ -54,6 +55,7 @@ interface HttpError extends Error {
 }
 
 export class VMManagerIntegration implements vscode.Disposable {
+  private readonly context: vscode.ExtensionContext;
   private readonly statusBarItem: vscode.StatusBarItem;
   private readonly outputChannel: vscode.OutputChannel;
   private pollTimer: NodeJS.Timeout | null = null;
@@ -66,6 +68,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   private static readonly FAST_POLL_MS = 5_000;
 
   constructor(context: vscode.ExtensionContext) {
+    this.context = context;
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
     this.statusBarItem.name = 'TensorFleet VM';
@@ -523,9 +526,11 @@ export class VMManagerIntegration implements vscode.Disposable {
     };
 
     const includeAuth = options?.includeAuth ?? true;
-    const token = this.getAuthToken();
-    if (includeAuth && token) {
-      headers.Authorization = `Bearer ${token}`;
+    if (includeAuth) {
+      const token = await this.getAuthToken();
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
     }
 
     return new Promise<T>((resolve, reject) => {
@@ -668,7 +673,20 @@ export class VMManagerIntegration implements vscode.Disposable {
     return config.get<string>('vmManager.apiBaseUrl', 'http://localhost:8080').trim() || 'http://localhost:8080';
   }
 
-  private getAuthToken(): string | undefined {
+  private async getAuthToken(): Promise<string | undefined> {
+    // Try to get token from auth module first (preferred)
+    // This uses the secure token storage from the auth module
+    try {
+      const authToken = await auth.getToken(this.context);
+      if (authToken) {
+        return authToken;
+      }
+    } catch (error) {
+      this.outputChannel.appendLine(`[VM Manager] Failed to get auth token: ${this.formatError(error)}`);
+    }
+    
+    // Fallback to config token (for backward compatibility during migration)
+    // TODO: Remove this fallback when all users have migrated to auth module
     const config = vscode.workspace.getConfiguration('tensorfleet');
     return config.get<string>('vmManager.authToken')?.trim() || undefined;
   }
