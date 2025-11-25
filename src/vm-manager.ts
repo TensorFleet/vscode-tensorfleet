@@ -498,13 +498,13 @@ export class VMManagerIntegration implements vscode.Disposable {
     if (connection === 'disconnected') return 'API Disconnected';
     
     switch (vmState) {
-      case 'running': return 'VM is Running';
-      case 'starting': return 'VM is Starting';
-      case 'stopping': return 'VM is Stopping';
-      case 'failed': return 'VM Failed';
-      case 'stopped': return 'VM is Stopped';
-      case 'pending': return 'VM Pending Start';
-      default: return 'VM Status Unknown';
+      case 'running': return 'Running';
+      case 'starting': return 'Starting';
+      case 'stopping': return 'Stopping';
+      case 'failed': return 'Failed';
+      case 'stopped': return 'Stopped';
+      case 'pending': return 'Pending';
+      default: return 'Checking...';
     }
   }
 

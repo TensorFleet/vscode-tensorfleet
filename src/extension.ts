@@ -1475,52 +1475,23 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   // Authenticated and connected - show VM-specific menu
   const vmState = state.vmState;
   const ipAddress = state.ipAddress;
-  const provider = state.provider;
-  const region = state.region;
   const uptime = formatUptime(state.uptimeSeconds);
 
-  // Header based on VM state
-  let headerLabel = '';
-  let headerDetail = '';
-  
-  switch (vmState) {
-    case 'running':
-      headerLabel = '$(circle-filled) VM is Running';
-      headerDetail = ipAddress ? `IP: ${ipAddress}` : '';
-      if (provider) headerDetail += ` · Provider: ${provider}`;
-      if (region) headerDetail += ` · Region: ${region}`;
-      if (uptime) headerDetail += ` · Uptime: ${uptime}`;
-      break;
-    case 'stopped':
-      headerLabel = '$(circle-outline) VM is Stopped';
-      headerDetail = '';
-      break;
-    case 'starting':
-      headerLabel = '$(loading~spin) VM is Starting...';
-      headerDetail = 'Usually takes 30-60 seconds';
-      break;
-    case 'stopping':
-      headerLabel = '$(loading~spin) VM is Stopping...';
-      headerDetail = 'Usually takes 10-20 seconds';
-      break;
-    case 'failed':
-      headerLabel = '$(error) VM Failed';
-      headerDetail = state.error || 'Check logs for details';
-      break;
-    case 'pending':
-      headerLabel = '$(sync~spin) VM Pending';
-      headerDetail = 'VM exists but has not started yet';
-      break;
-    default:
-      headerLabel = '$(sync~spin) Checking VM...';
-      headerDetail = 'Determining VM status';
-      break;
-  }
+  // Format header using helper function
+  const { label: headerLabel, detail: headerDetail } = formatHeader(vmState, {
+    ipAddress: state.ipAddress,
+    provider: state.provider,
+    region: state.region,
+    uptime,
+    error: state.error,
+    timestamp: state.timestamp
+  });
 
+  // Header as regular item (separators don't render icons)
   items.push({
     label: headerLabel,
     detail: headerDetail,
-    kind: vscode.QuickPickItemKind.Separator
+    kind: vscode.QuickPickItemKind.Default
   });
 
   // Actions based on VM state
@@ -1588,6 +1559,20 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     return;
   }
 
+  // Ignore header selection (it's just for display)
+  const headerPatterns = [
+    '$(circle-filled) Running',
+    '$(circle-outline) Stopped',
+    '$(loading~spin) Starting',
+    '$(loading~spin) Stopping',
+    '$(error) Failed',
+    '$(sync~spin) Pending',
+    '$(sync~spin) Checking...'
+  ];
+  if (headerPatterns.some(pattern => selection.label.startsWith(pattern))) {
+    return;
+  }
+
   try {
     if (selection.label.includes('Stop VM') && vmManagerIntegration) {
       await vmManagerIntegration.stopVm();
@@ -1631,6 +1616,74 @@ function formatUptime(seconds?: number | null): string | undefined {
   if (m > 0) parts.push(`${m}m`);
   if (parts.length === 0 || s > 0) parts.push(`${s}s`);
   return parts.join(' ');
+}
+
+/**
+ * Format header label and detail for VM state
+ */
+function formatHeader(
+  vmState: string,
+  meta: {
+    ipAddress?: string;
+    provider?: string;
+    region?: string;
+    uptime?: string | undefined;
+    error?: string;
+    timestamp?: number;
+  }
+): { label: string; detail: string } {
+  const parts: string[] = [];
+  let detail = '';
+
+  switch (vmState) {
+    case 'running':
+      // Concise format: "IP · provider · uptime"
+      if (meta.ipAddress) parts.push(meta.ipAddress);
+      if (meta.provider) parts.push(meta.provider);
+      if (meta.uptime) parts.push(meta.uptime);
+      detail = parts.length > 0 ? parts.join(' · ') : '';
+      return {
+        label: '$(circle-filled) Running',
+        detail
+      };
+
+    case 'stopped':
+      // Skip detail line if no meaningful info (we don't track "last stopped" time)
+      return {
+        label: '$(circle-outline) Stopped',
+        detail: ''
+      };
+
+    case 'starting':
+      return {
+        label: '$(loading~spin) Starting',
+        detail: 'Usually takes 30-60 seconds'
+      };
+
+    case 'stopping':
+      return {
+        label: '$(loading~spin) Stopping',
+        detail: 'Usually takes 10-20 seconds'
+      };
+
+    case 'failed':
+      return {
+        label: '$(error) Failed',
+        detail: meta.error || 'Check logs for details'
+      };
+
+    case 'pending':
+      return {
+        label: '$(sync~spin) Pending',
+        detail: 'VM exists but has not started yet'
+      };
+
+    default:
+      return {
+        label: '$(sync~spin) Checking...',
+        detail: 'Determining VM status'
+      };
+  }
 }
 
 // ============================================================================
