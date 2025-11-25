@@ -4,7 +4,7 @@ import * as https from 'https';
 import * as auth from './auth';
 
 // Core state types
-type ConnectionState = 'connected' | 'disconnected';
+type ConnectionState = 'connected' | 'disconnected' | 'not_authenticated';
 type VmState =
   | 'unknown'
   | 'stopped'
@@ -118,6 +118,14 @@ export class VMManagerIntegration implements vscode.Disposable {
     }
   }
 
+  /**
+   * Public method to trigger a refresh of VM status
+   * Useful for external triggers like auth state changes
+   */
+  refreshStatus(silent = true) {
+    void this.refresh(silent);
+  }
+
   // ========== Polling ==========
 
   private startPolling() {
@@ -153,6 +161,20 @@ export class VMManagerIntegration implements vscode.Disposable {
       const message = this.formatError(error);
       this.outputChannel.appendLine(`[VM Manager] Refresh failed: ${message}`);
       
+      // Check if it's an auth error
+      if (this.isAuthError(error)) {
+        // Token is invalid - clear it
+        await auth.clearToken(this.context);
+        this.applySnapshot(
+          this.createSnapshot({
+            connection: 'not_authenticated',
+            vmState: 'unknown',
+            error: 'Authentication expired - please login again'
+          })
+        );
+        return;
+      }
+      
       // Mark as disconnected but preserve last known VM state
       this.applySnapshot(
         this.createSnapshot({
@@ -169,46 +191,81 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private async fetchSnapshot(): Promise<VmSnapshot> {
-    await this.ensureApiHealthy();
-
-    let status: VmStatusResponse | undefined;
-    let vmState: VmState = 'unknown';
-    let sawVmMissing = false;
-
-    try {
-      status = await this.apiRequest<VmStatusResponse>('GET', '/vms/self/status');
-      if (status) {
-        vmState = this.parseVmState(status.status);
-      }
-    } catch (statusError) {
-      if (this.isNotFoundError(statusError)) {
-        sawVmMissing = true;
-      } else {
-        this.outputChannel.appendLine(`[VM Manager] Status fetch failed: ${this.formatError(statusError)}`);
-      }
+    // Check auth first
+    const token = await this.getAuthToken();
+    if (!token) {
+      return this.createSnapshot({
+        connection: 'not_authenticated',
+        vmState: 'unknown',
+        error: 'Please login to access VM Manager'
+      });
     }
 
-    let info: VmInfoResponse | undefined;
     try {
-      info = await this.apiRequest<VmInfoResponse>('GET', '/vms/self/info');
-    } catch (infoError) {
-      if (this.isNotFoundError(infoError)) {
-        sawVmMissing = true;
-      } else {
-        this.outputChannel.appendLine(`[VM Manager] Info fetch failed: ${this.formatError(infoError)}`);
+      await this.ensureApiHealthy();
+
+      let status: VmStatusResponse | undefined;
+      let vmState: VmState = 'unknown';
+      let sawVmMissing = false;
+
+      try {
+        status = await this.apiRequest<VmStatusResponse>('GET', '/vms/self/status');
+        if (status) {
+          vmState = this.parseVmState(status.status);
+        }
+      } catch (statusError) {
+        if (this.isAuthError(statusError)) {
+          // Token is invalid - clear it and return not_authenticated
+          await auth.clearToken(this.context);
+          throw statusError;
+        }
+        if (this.isNotFoundError(statusError)) {
+          sawVmMissing = true;
+        } else {
+          this.outputChannel.appendLine(`[VM Manager] Status fetch failed: ${this.formatError(statusError)}`);
+        }
       }
+
+      let info: VmInfoResponse | undefined;
+      try {
+        info = await this.apiRequest<VmInfoResponse>('GET', '/vms/self/info');
+      } catch (infoError) {
+        if (this.isAuthError(infoError)) {
+          // Token is invalid - clear it and return not_authenticated
+          await auth.clearToken(this.context);
+          throw infoError;
+        }
+        if (this.isNotFoundError(infoError)) {
+          sawVmMissing = true;
+        } else {
+          this.outputChannel.appendLine(`[VM Manager] Info fetch failed: ${this.formatError(infoError)}`);
+        }
+      }
+
+      const resolvedState = vmState === 'unknown' && sawVmMissing ? 'pending' : vmState;
+
+      return this.createSnapshot({
+        connection: 'connected',
+        vmState: resolvedState,
+        ipAddress: info?.ip_address || status?.ip_address,
+        provider: info?.provider,
+        region: info?.region,
+        uptimeSeconds: info?.uptime_seconds
+      });
+    } catch (error) {
+      // Check if it's auth error
+      if (this.isAuthError(error)) {
+        // Token is invalid - clear it
+        await auth.clearToken(this.context);
+        return this.createSnapshot({
+          connection: 'not_authenticated',
+          vmState: 'unknown',
+          error: 'Authentication expired - please login again'
+        });
+      }
+      // Re-throw other errors to be handled by refresh()
+      throw error;
     }
-
-    const resolvedState = vmState === 'unknown' && sawVmMissing ? 'pending' : vmState;
-
-    return this.createSnapshot({
-      connection: 'connected',
-      vmState: resolvedState,
-      ipAddress: info?.ip_address || status?.ip_address,
-      provider: info?.provider,
-      region: info?.region,
-      uptimeSeconds: info?.uptime_seconds
-    });
   }
 
   private async ensureApiHealthy(): Promise<ApiHealthResponse> {
@@ -241,8 +298,8 @@ export class VMManagerIntegration implements vscode.Disposable {
 
     this.outputChannel.appendLine(`[VM Manager] State change: ${previousState} → ${vmState} (userAction: ${this.userInitiatedAction})`);
 
-    // Don't notify for disconnected, unknown, or pending states
-    if (connection === 'disconnected' || vmState === 'unknown' || vmState === 'pending') return;
+    // Don't notify for disconnected, not_authenticated, unknown, or pending states
+    if (connection === 'disconnected' || connection === 'not_authenticated' || vmState === 'unknown' || vmState === 'pending') return;
 
     // Don't notify during transitions
     if (vmState === 'starting' || vmState === 'stopping') {
@@ -328,13 +385,18 @@ export class VMManagerIntegration implements vscode.Disposable {
     const { connection, vmState, ipAddress } = this.currentSnapshot;
     const ip = ipAddress ? ` (${ipAddress})` : '';
 
-    if (connection === 'disconnected') {
+    if (connection === 'not_authenticated') {
+      this.statusBarItem.text = '🔒 Not Logged In';
+      this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    } else if (connection === 'disconnected') {
       const lastState = this.getVmStateLabel(vmState);
       this.statusBarItem.text = lastState 
         ? `⚠️ API Disconnected · Last: ${lastState}${ip}` 
         : '⚠️ API Disconnected';
+      this.statusBarItem.backgroundColor = undefined;
     } else {
       this.statusBarItem.text = this.getVmStateIcon(vmState) + ' ' + this.getVmStateLabel(vmState) + ip;
+      this.statusBarItem.backgroundColor = undefined;
     }
 
     this.statusBarItem.tooltip = this.buildTooltip();
@@ -344,7 +406,11 @@ export class VMManagerIntegration implements vscode.Disposable {
     const { connection, vmState, ipAddress, provider, region, uptimeSeconds, error, timestamp } = this.currentSnapshot;
     const lines: string[] = [];
 
-    if (connection === 'disconnected') {
+    if (connection === 'not_authenticated') {
+      lines.push('🔒 Not authenticated');
+      lines.push('Please login to access VM Manager');
+      if (error) lines.push(`Error: ${error}`);
+    } else if (connection === 'disconnected') {
       lines.push('⚠️ Cannot reach VM Manager API');
       lines.push(`Last known state: ${vmState}`);
       if (ipAddress) lines.push(`Last known IP: ${ipAddress}`);
@@ -374,7 +440,19 @@ export class VMManagerIntegration implements vscode.Disposable {
     const { connection, vmState, error } = this.currentSnapshot;
     const items: VmQuickPickItem[] = [];
 
-    if (connection === 'disconnected') {
+    if (connection === 'not_authenticated') {
+      items.push(
+        { 
+          label: '🔒 Not Logged In', 
+          detail: 'Please login to access VM Manager' 
+        },
+        { 
+          label: '🔑 Login', 
+          detail: 'Authenticate with TensorFleet', 
+          action: () => vscode.commands.executeCommand('tensorfleet.login').then(() => this.refresh(false))
+        }
+      );
+    } else if (connection === 'disconnected') {
       items.push(
         { label: '⚠️ Cannot reach VM Manager API', detail: error || 'Check network and API configuration' },
         { label: '🔄 Retry Connection', detail: 'Attempt to reconnect', action: () => this.refresh(false) }
@@ -434,6 +512,7 @@ export class VMManagerIntegration implements vscode.Disposable {
 
   private getMenuPlaceholder(): string {
     const { connection, vmState } = this.currentSnapshot;
+    if (connection === 'not_authenticated') return 'Not Logged In';
     if (connection === 'disconnected') return 'API Disconnected';
     
     switch (vmState) {
@@ -693,5 +772,14 @@ export class VMManagerIntegration implements vscode.Disposable {
 
   private isNotFoundError(error: unknown): boolean {
     return !!(error && typeof error === 'object' && 'status' in error && (error as HttpError).status === 404);
+  }
+
+  private isAuthError(error: unknown): boolean {
+    return !!(
+      error && 
+      typeof error === 'object' && 
+      'status' in error && 
+      ((error as HttpError).status === 401 || (error as HttpError).status === 403)
+    );
   }
 }

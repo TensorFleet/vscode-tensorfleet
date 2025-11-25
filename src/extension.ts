@@ -1427,10 +1427,10 @@ async function handleLogin(context: vscode.ExtensionContext) {
     await auth.authenticate(context);
     await updateAuthStatusBar(context);
     
-    // Notify VM Manager that auth state changed (if it needs to refresh)
+    // Refresh VM Manager immediately after login
     if (vmManagerIntegration) {
-      // VM Manager will pick up the token from config on next API call
-      // But we could trigger a refresh here if needed
+      // Trigger immediate refresh to pick up new auth token
+      vmManagerIntegration.refreshStatus(true);
     }
   } catch (error) {
     vscode.window.showErrorMessage(
@@ -1447,9 +1447,10 @@ async function handleLogout(context: vscode.ExtensionContext) {
   await updateAuthStatusBar(context);
   vscode.window.showInformationMessage('Logged out successfully');
   
-  // Notify VM Manager that auth state changed
+  // Refresh VM Manager immediately after logout to show not_authenticated state
   if (vmManagerIntegration) {
-    // VM Manager will handle 401 errors gracefully
+    // Trigger immediate refresh to detect missing auth token
+    vmManagerIntegration.refreshStatus(true);
   }
 }
 
