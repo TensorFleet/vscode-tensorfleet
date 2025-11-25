@@ -1425,12 +1425,11 @@ async function updateAuthStatusBar(context: vscode.ExtensionContext) {
 async function handleLogin(context: vscode.ExtensionContext) {
   try {
     await auth.authenticate(context);
-    await updateAuthStatusBar(context);
+    await updateAuthStatusBar(context); // ← Immediate update!
     
-    // Refresh VM Manager immediately after login
+    // NEW: Trigger VM Manager refresh after login
     if (vmManagerIntegration) {
-      // Trigger immediate refresh to pick up new auth token
-      vmManagerIntegration.refreshStatus(true);
+      vmManagerIntegration.refreshStatus(false); // Show success message
     }
   } catch (error) {
     vscode.window.showErrorMessage(
@@ -1444,13 +1443,12 @@ async function handleLogin(context: vscode.ExtensionContext) {
  */
 async function handleLogout(context: vscode.ExtensionContext) {
   await auth.clearToken(context);
-  await updateAuthStatusBar(context);
+  await updateAuthStatusBar(context); // ← Immediate update!
   vscode.window.showInformationMessage('Logged out successfully');
   
-  // Refresh VM Manager immediately after logout to show not_authenticated state
+  // NEW: Reset VM Manager state after logout
   if (vmManagerIntegration) {
-    // Trigger immediate refresh to detect missing auth token
-    vmManagerIntegration.refreshStatus(true);
+    vmManagerIntegration.refreshStatus(true); // Silent refresh
   }
 }
 
