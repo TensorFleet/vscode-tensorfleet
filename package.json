@@ -8,6 +8,7 @@
     "type": "git",
     "url": "https://github.com/TensorFleet/vscode-tensorfleet.git"
   },
+  "icon": "media/store-icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
