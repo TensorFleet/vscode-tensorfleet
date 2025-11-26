@@ -15,7 +15,7 @@
 //   You may not use this file except in compliance with the License.
 
 import * as _ from "lodash-es";
-import Tree from "react-json-tree";
+import { JSONTree as Tree } from "react-json-tree";
 
 import Stack from "@lichtblick/suite-base/components/Stack";
 import { RosValue } from "@lichtblick/suite-base/players/types";

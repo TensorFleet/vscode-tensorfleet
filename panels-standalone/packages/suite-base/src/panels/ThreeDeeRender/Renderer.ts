@@ -155,6 +155,34 @@ Object.defineProperty(LabelMaterial.prototype, "fragmentShaderKey", {
   configurable: true,
 });
 
+
+// Work around LabelMaterial shader incompatibility:
+// some builds of three / three-text don't provide LinearTosRGB in GLSL, or with
+// a compatible signature. We strip the call to avoid a fragment shader compile error.
+const originalLabelOnBeforeCompile = (LabelMaterial as any).prototype.onBeforeCompile;
+
+(LabelMaterial as any).prototype.onBeforeCompile = function (
+  shader: THREE.Shader,
+  ...args: any[]
+) {
+  if (originalLabelOnBeforeCompile) {
+    originalLabelOnBeforeCompile.call(this, shader, ...args);
+  }
+
+  if (typeof shader.fragmentShader === "string") {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "  outColor = LinearTosRGB(outColor); // assumes output encoding is srgb",
+      [
+        "  // LinearTosRGB disabled for standalone build (no GLSL helper available)",
+        "  // outColor is assumed to already be in the correct color space.",
+        "  // outColor = LinearTosRGB(outColor);",
+      ].join("\n"),
+    );
+  }
+};
+
+
+
 /**
  * An extensible 3D renderer attached to a `HTMLCanvasElement`,
  * `WebGLRenderingContext`, and `SettingsTree`.

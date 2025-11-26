@@ -13,6 +13,14 @@ export default defineConfig({
 
   worker: {
     plugins: () => [],
+    format: "es"
+  },
+
+  define: {
+    // Make bare `global` in dependencies resolve to `globalThis`
+    global: "globalThis",
+    __filename: JSON.stringify("browser"),
+    __dirname: JSON.stringify("/"),
   },
 
   // stop Vite from trying to resolve tsconfig "extends" in workspace packages

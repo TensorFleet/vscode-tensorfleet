@@ -1,489 +1,401 @@
 // Sensor3DViewPanel.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ros2Bridge } from "@/ros2-bridge";
+// Standalone 3D view that uses the global ros2Bridge and Lichtblick's 3D renderer.
+
+/*
+SPDX-FileCopyrightText: Copyright (C) 2023-2025
+SPDX-License-Identifier: MPL-2.0
+*/
+
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
+import { fromNanoSec } from "@lichtblick/rostime";
+import type { MessageEvent, Topic } from "@lichtblick/suite";
+
+import ThemeProvider from "@lichtblick/suite-base/theme/ThemeProvider";
+import { PANEL_STYLE } from "@lichtblick/suite-base/panels/ThreeDeeRender/constants";
 import { Renderer } from "@lichtblick/suite-base/panels/ThreeDeeRender/Renderer";
+import { RendererOverlay } from "@lichtblick/suite-base/panels/ThreeDeeRender/RendererOverlay";
+import { RendererContext } from "@lichtblick/suite-base/panels/ThreeDeeRender/RendererContext";
+import type {
+  RendererConfig,
+  ImageModeConfig,
+  RendererSubscription,
+} from "@lichtblick/suite-base/panels/ThreeDeeRender/IRenderer";
+import { DEFAULT_CAMERA_STATE } from "@lichtblick/suite-base/panels/ThreeDeeRender/camera";
+import { DEFAULT_PUBLISH_SETTINGS } from "@lichtblick/suite-base/panels/ThreeDeeRender/renderables/PublishSettings";
 import { DEFAULT_SCENE_EXTENSION_CONFIG } from "@lichtblick/suite-base/panels/ThreeDeeRender/SceneExtensionConfig";
+import type { InterfaceMode } from "@lichtblick/suite-base/panels/ThreeDeeRender/types";
+import type { Asset } from "@lichtblick/suite-base/components/PanelExtensionAdapter";
 
-// Uses the real Lichtblick Renderer. No external UI libs. Owns its <canvas>.
-// Feeds TF + point-like topics via renderer.addMessageEvent(...).
+import { ros2Bridge } from "@/ros2-bridge";
+import type { Subscription as Ros2BridgeSubscription } from "@/ros2-bridge";
 
-const POINTLIKE_TYPES = new Set<string>([
-  "sensor_msgs/msg/PointCloud2",
-  "sensor_msgs/msg/LaserScan",
-  "sensor_msgs/msg/PointCloud",
-]);
-
-// Minimal default config; scene extensions provide the rest.
-const DEFAULT_RENDERER_CONFIG: any = {
-  cameraState: {},
-  imageMode: { calibrationTopic: undefined },
-  scene: {
-    transforms: { enablePreloading: false },
-    ignoreColladaUpAxis: false,
-    meshUpAxis: undefined,
-  },
-  layers: {},
+export type Sensor3DViewPanelProps = {
+  className?: string;
+  style?: React.CSSProperties;
 };
 
-export default function Sensor3DViewPanel() {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const rendererRef = useRef<Renderer | null>(null);
-  const unsubMapRef = useRef<Map<string, () => void>>(new Map());
+export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
+  const interfaceMode: InterfaceMode = "3d";
 
-  const [availableFrames, setAvailableFrames] = useState<string[]>([]);
-  const [baseFrame, setBaseFrame] = useState<string>("");
+  const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [renderer, setRenderer] = useState<Renderer | undefined>(undefined);
 
-  const [availablePointTopics, setAvailablePointTopics] = useState<Array<{ topic: string; type: string }>>([]);
-  const [enabledPointTopics, setEnabledPointTopics] = useState<Record<string, boolean>>({});
-
-  // Global point settings (apply via updateConfig once exact keys are provided)
-  const [settings, setSettings] = useState({
-    decayTimeSec: 5.0,
-    pointSize: 2.0,
-    gradientStart: "#3fb3ff",
-    gradientEnd: "#ff3f6f",
-    falloff: 0.25,
+  // Simple, fixed config – no external panel state
+  const initialConfigRef = useRef<RendererConfig>({
+    cameraState: { ...DEFAULT_CAMERA_STATE },
+    followMode: "follow-pose",
+    followTf: undefined,
+    scene: {},
+    transforms: {},
+    topics: {},
+    layers: {},
+    publish: { ...DEFAULT_PUBLISH_SETTINGS },
+    // imageMode isn't used in 3d mode, but must satisfy type
+    imageMode: {} as Partial<ImageModeConfig> as ImageModeConfig,
   });
 
-  // ---------- Bootstrap renderer ----------
-  useEffect(() => {
-    if (!canvasRef.current) return;
+  const [measureActive, setMeasureActive] = useState(false);
+  const [perspective, setPerspective] = useState(
+    initialConfigRef.current.cameraState.perspective,
+  );
 
-    const fetchAsset = async (uri: string, _opts?: any) => {
+  // Active ROS topic subscriptions created via ros2Bridge.subscribe
+  const liveSubsRef = useRef<Map<string, () => void>>(new Map());
+
+  // ---- Create / dispose Renderer --------------------------------------------------
+
+  useEffect(() => {
+    if (!canvas) {
+      setRenderer(undefined);
+      return;
+    }
+
+    const fetchAsset = async (
+      uri: string,
+      _options?: { signal?: AbortSignal; baseUrl?: string },
+    ): Promise<Asset> => {
       const res = await fetch(uri);
-      const arrayBuffer = await res.arrayBuffer();
-      return { uri, arrayBuffer } as any;
+      if (!res.ok) {
+        throw new Error(`Failed to fetch asset ${uri}: ${res.status} ${res.statusText}`);
+      }
+      const buffer = await res.arrayBuffer();
+      return { uri, data: new Uint8Array(buffer) } as Asset;
     };
 
     const r = new Renderer({
-      canvas: canvasRef.current,
-      config: DEFAULT_RENDERER_CONFIG,
-      interfaceMode: "3d",
-      sceneExtensionConfig: DEFAULT_SCENE_EXTENSION_CONFIG,
-      customCameraModels: new Map(),
+      canvas,
+      config: initialConfigRef.current,
+      interfaceMode,
       fetchAsset,
-      testOptions: { debugPicking: false },
-      displayTemporaryError: (m: string) => console.warn("[Renderer]", m),
+      sceneExtensionConfig: DEFAULT_SCENE_EXTENSION_CONFIG,
+      displayTemporaryError: (msg: string) => {
+        // You can hook this into your snackbar/toast system if you want
+        // eslint-disable-next-line no-console
+        console.error("[Sensor3DViewPanel] temporary error:", msg);
+      },
+      testOptions: {},
+      customCameraModels: new Map(),
     });
 
-    // Normalize ROS frame ids (strip leading "/")
-    (r as any).ros = true;
+    // Tell renderer we're on a ROS data source so frame IDs get normalized
+    r.ros = true;
+    // Default to light theme
+    r.setColorScheme("light", undefined);
 
-    rendererRef.current = r;
-
-    // Seed topic list once
-    try {
-      const topics = ros2Bridge.getAvailableTopics?.() || [];
-      r.setTopics?.(topics.map((t: any) => ({ name: t.topic, datatype: t.type })));
-    } catch {}
+    setRenderer(r);
 
     return () => {
-      try { r.dispose(); } catch {}
-      rendererRef.current = null;
+      r.dispose();
+      setRenderer(undefined);
     };
-  }, []);
+  }, [canvas, interfaceMode]);
 
-  // ---------- TF wiring ----------
+  // ---- Measurement tool wiring ----------------------------------------------------
+
   useEffect(() => {
-    const r = rendererRef.current; if (!r) return;
-    const tfTopics = ["/tf", "/tf_static"];
+    if (!renderer) return;
 
-    tfTopics.forEach((topic) => {
-      if (unsubMapRef.current.has(topic)) return;
-      const unsub = ros2Bridge.subscribe({ topic, type: "tf2_msgs/msg/TFMessage" }, (msg: any) => {
-        feedMessage(r, topic, "tf2_msgs/msg/TFMessage", msg);
-        try {
-          const frames = ros2Bridge.getKnownFrames?.() ?? [];
-          setAvailableFrames(frames);
-          if (!baseFrame && frames.length > 0) setBaseFrame((p) => p || frames[0]);
-        } catch {}
-      });
-      unsubMapRef.current.set(topic, unsub);
-    });
+    const onStart = () => setMeasureActive(true);
+    const onEnd = () => setMeasureActive(false);
+
+    renderer.measurementTool.addEventListener("foxglove.measure-start", onStart);
+    renderer.measurementTool.addEventListener("foxglove.measure-end", onEnd);
 
     return () => {
-      tfTopics.forEach((t) => {
-        const u = unsubMapRef.current.get(t);
-        if (u) { try { u(); } catch {} ; unsubMapRef.current.delete(t); }
-      });
+      renderer.measurementTool.removeEventListener("foxglove.measure-start", onStart);
+      renderer.measurementTool.removeEventListener("foxglove.measure-end", onEnd);
     };
-  }, [baseFrame]);
+  }, [renderer]);
 
-  // ---------- Base frame selection ----------
-  useEffect(() => {
-    const r = rendererRef.current; if (!r) return;
-    if (baseFrame) r.setFollowFrameId(baseFrame);
-  }, [baseFrame]);
-
-  // ---------- Topics discovery ----------
-  const refreshPointTopics = () => {
-    try {
-      const all = ros2Bridge.getAvailableTopics();
-      const clouds = (all || []).filter((t: any) => POINTLIKE_TYPES.has(t.type));
-      setAvailablePointTopics(clouds);
-      setEnabledPointTopics((prev) => {
-        const next = { ...prev } as Record<string, boolean>;
-        clouds.forEach(({ topic }: any) => { if (next[topic] === undefined) next[topic] = false; });
-        return next;
-      });
-      const r = rendererRef.current; if (r) r.setTopics?.(all.map((t: any) => ({ name: t.topic, datatype: t.type })));
-    } catch (e) { console.warn("refreshPointTopics() failed:", e); }
-  };
-
-  // Optional: auto-update when bridge announces changes (we'll add this in the bridge later)
-  useEffect(() => {
-    const off = (ros2Bridge as any).onAvailableTopicsChanged?.((topics: Array<{ topic: string; type: string }>) => {
-      const clouds = (topics || []).filter((t) => POINTLIKE_TYPES.has(t.type));
-      setAvailablePointTopics(clouds);
-      setEnabledPointTopics((prev) => {
-        const next: Record<string, boolean> = { ...prev };
-        const names = new Set(clouds.map((c) => c.topic));
-        Object.keys(next).forEach((name) => {
-          if (!names.has(name)) {
-            const u = unsubMapRef.current.get(name);
-            if (u) { try { u(); } catch {} ; unsubMapRef.current.delete(name); }
-            delete next[name];
-          }
-        });
-        clouds.forEach(({ topic }) => { if (next[topic] === undefined) next[topic] = false; });
-        return next;
-      });
-      rendererRef.current?.setTopics?.(topics.map((t) => ({ name: t.topic, datatype: t.type })));
-    });
-    return () => { try { off?.(); } catch {} };
-  }, []);
-
-  // ---------- Enable/disable point topics ----------
-  const togglePointTopic = (topic: string, type: string, enabled: boolean) => {
-    setEnabledPointTopics((prev) => ({ ...prev, [topic]: enabled }));
-    const r = rendererRef.current; if (!r) return;
-
-    if (enabled) {
-      const unsub = ros2Bridge.subscribe({ topic, type }, (msg: any) => {
-        const schema = ros2Bridge.getTopicType?.(topic) || type;
-        feedMessage(r, topic, schema, msg);
-      });
-      unsubMapRef.current.set(topic, unsub);
+  const onClickMeasure = useCallback(() => {
+    if (!renderer) return;
+    if (measureActive) {
+      renderer.measurementTool.stopMeasuring();
     } else {
-      const u = unsubMapRef.current.get(topic);
-      if (u) { try { u(); } catch {} ; unsubMapRef.current.delete(topic); }
+      renderer.measurementTool.startMeasuring();
+      renderer.publishClickTool.stop();
     }
-  };
+  }, [measureActive, renderer]);
 
-  // ---------- Apply global point settings (stub until exact keys are provided) ----------
-  const applySettings = () => {
-    const r = rendererRef.current; if (!r) return;
-    // Provide exact config keys from your PointClouds extension and replace this block:
-    // r.updateConfig((draft: any) => {
-    //   draft.layers.pointClouds = draft.layers.pointClouds ?? {};
-    //   draft.layers.pointClouds.global = {
-    //     decayTimeSec: settings.decayTimeSec,
-    //     pointSize: settings.pointSize,
-    //     gradient: { start: settings.gradientStart, end: settings.gradientEnd },
-    //     falloff: settings.falloff,
-    //   };
-    // });
-  };
+  // ---- Perspective toggle (2D/3D camera) -----------------------------------------
 
-  // ---------- Reset availability ----------
-  const canReset = useMemo(() => {
-    const r = rendererRef.current as any;
-    try { return !!r?.canResetView?.(); } catch { return false; }
-  }, [baseFrame]);
+  const onTogglePerspective = useCallback(() => {
+    if (!renderer) return;
+    const current = renderer.getCameraState() ?? DEFAULT_CAMERA_STATE;
+    const next = { ...current, perspective: !current.perspective };
+    renderer.setCameraState(next);
+    setPerspective(next.perspective);
+    renderer.queueAnimationFrame();
+  }, [renderer]);
+
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key === "3" && !(event.metaKey || event.ctrlKey)) {
+        onTogglePerspective();
+        event.stopPropagation();
+        event.preventDefault();
+      }
+    },
+    [onTogglePerspective],
+  );
+
+  // ---- ROS2Bridge wiring: available topics + live messages -----------------------
+
+  useEffect(() => {
+    if (!renderer) return;
+
+    const liveSubs = liveSubsRef.current;
+
+    const computeDesiredSubscriptions = (
+      topics: Ros2BridgeSubscription[],
+      r: Renderer,
+    ): Ros2BridgeSubscription[] => {
+      const desired: Ros2BridgeSubscription[] = [];
+
+      const schemaSubs = r.schemaSubscriptions as Map<string, RendererSubscription[]>;
+      const topicSubs = r.topicSubscriptions as Map<string, RendererSubscription[]>;
+
+      for (const t of topics) {
+        const topicName = t.topic;
+        const schemaName = t.type;
+
+        const subsForTopic = topicSubs.get(topicName) ?? [];
+        const subsForSchema = schemaSubs.get(schemaName) ?? [];
+
+        const allSubs = subsForTopic.concat(subsForSchema);
+        if (allSubs.length === 0) {
+          continue;
+        }
+
+        let shouldSubscribe = false;
+        for (const sub of allSubs) {
+          const res = sub.shouldSubscribe?.(topicName);
+          if (res === undefined || res === true) {
+            shouldSubscribe = true;
+            break;
+          }
+        }
+        if (shouldSubscribe) {
+          desired.push({ topic: topicName, type: schemaName });
+        }
+      }
+
+      // dedupe by topic
+      const seen = new Set<string>();
+      const unique: Ros2BridgeSubscription[] = [];
+      for (const d of desired) {
+        if (!seen.has(d.topic)) {
+          seen.add(d.topic);
+          unique.push(d);
+        }
+      }
+      return unique;
+    };
+
+    const reconcileSubscriptions = (
+      desired: Ros2BridgeSubscription[],
+      r: Renderer,
+    ) => {
+      const current = liveSubs;
+
+      const desiredTopics = new Set(desired.map((d) => d.topic));
+
+      // Unsubscribe from topics no longer needed
+      for (const [topic, unsubscribe] of current.entries()) {
+        if (!desiredTopics.has(topic)) {
+          unsubscribe();
+          current.delete(topic);
+        }
+      }
+
+      // Subscribe to new topics
+      for (const d of desired) {
+        if (current.has(d.topic)) {
+          continue;
+        }
+
+        const unsubscribe = ros2Bridge.subscribe(
+          { topic: d.topic, type: d.type },
+          (raw: any) => {
+            if (!r) return;
+
+            // Normal (non-image) path: { topic, type, msg }
+            // Image path: already-converted image object
+            let msg = raw;
+            if (
+              raw &&
+              typeof raw === "object" &&
+              "msg" in raw &&
+              "topic" in raw &&
+              "type" in raw
+            ) {
+              msg = (raw as { msg: any }).msg;
+            }
+
+            const header = msg?.header as
+              | { stamp?: { sec?: number; nanosec?: number; nsec?: number } }
+              | undefined;
+
+            let publishNs: bigint | undefined;
+            if (header?.stamp) {
+              const sec = header.stamp.sec ?? 0;
+              const nanosec =
+                header.stamp.nanosec ??
+                (header.stamp as any).nsec ??
+                0;
+              publishNs =
+                BigInt(sec) * 1_000_000_000n + BigInt(nanosec);
+            }
+
+            const nowNs = BigInt(Date.now()) * 1_000_000n;
+            const receiveNs = publishNs ?? nowNs;
+
+            const event: MessageEvent<any> = {
+              topic: d.topic,
+              schemaName: d.type,
+              receiveTime: fromNanoSec(receiveNs),
+              publishTime: publishNs ? fromNanoSec(publishNs) : undefined,
+              message: msg,
+              sizeInBytes: estimateSizeInBytes(msg),
+            };
+
+            // Drive renderer time forward and feed the message
+            r.setCurrentTime(receiveNs);
+            r.addMessageEvent(event);
+            r.queueAnimationFrame();
+          },
+        );
+
+        current.set(d.topic, unsubscribe);
+      }
+    };
+
+    const handleTopicsChanged = (topics: Ros2BridgeSubscription[]) => {
+      // Convert ros2Bridge topics to minimal Topic[] for renderer
+      const topicObjects: Topic[] = topics.map(
+        (t) =>
+          ({
+            name: t.topic,
+            schemaName: t.type,
+            // Datatype field is used in some places; set it to the same string
+            datatype: t.type,
+          } as unknown as Topic),
+      );
+
+      renderer.setTopics(topicObjects);
+
+      const desired = computeDesiredSubscriptions(topics, renderer);
+      reconcileSubscriptions(desired, renderer);
+    };
+
+    const unsubscribeTopicsChanged =
+      ros2Bridge.onAvailableTopicsChanged(handleTopicsChanged);
+
+    // Run once with current topics
+    handleTopicsChanged(ros2Bridge.getAvailableTopics());
+
+    return () => {
+      unsubscribeTopicsChanged();
+      for (const unsubscribe of liveSubs.values()) {
+        unsubscribe();
+      }
+      liveSubs.clear();
+    };
+  }, [renderer]);
+
+  // ---- addPanel stub (RendererOverlay expects it) ---------------------------------
+
+  const addPanel = useCallback((_params: any) => {
+    // No-op in standalone mode
+  }, []);
+
+  // ---- Render ---------------------------------------------------------------------
+
+  const { className, style } = props;
 
   return (
-    <div style={{ position: "absolute", inset: 0 }}>
-      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
-
-      {/* Overlay UI */}
+    <ThemeProvider isDark={false}>
       <div
-        style={{
-          position: "absolute",
-          top: 8,
-          right: 8,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-          pointerEvents: "none",
-        }}
+        className={className}
+        style={{ ...PANEL_STYLE, ...(style ?? {}) }}
+        onKeyDown={onKeyDown}
       >
-        {/* Toolbar */}
-        <div style={panel()}>
-          {/* Base frame selector */}
-          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ opacity: 0.85 }}>Base</span>
-            <select
-              value={baseFrame}
-              onChange={(e) => setBaseFrame(e.target.value)}
-              style={selectStyle}
-            >
-              {availableFrames.length === 0 ? (
-                <option value="">{`(no frames)`}</option>
-              ) : (
-                availableFrames.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))
-              )}
-            </select>
-            <button
-              style={btn(true)}
-              title="Refresh frames"
-              onClick={() => setAvailableFrames(ros2Bridge.getKnownFrames?.() ?? [])}
-            >
-              ↻
-            </button>
-          </label>
-
-          <button
-            style={btn(canReset)}
-            disabled={!canReset}
-            title={canReset ? "Reset view" : "Reset unavailable"}
-            onClick={() => rendererRef.current?.resetView?.()}
-          >
-            Reset
-          </button>
-        </div>
-
-        {/* Global point settings */}
-        <div style={card()}>
-          <div style={cardHeader()}>Point Settings</div>
-          <div style={row()}>
-            <label style={label()}>Decay (s)</label>
-            <input
-              type="number"
-              step={0.1}
-              min={0}
-              value={settings.decayTimeSec}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, decayTimeSec: parseFloat(e.target.value || "0") }))
-              }
-              style={inputNumber}
-            />
-          </div>
-          <div style={row()}>
-            <label style={label()}>Point size</label>
-            <input
-              type="number"
-              step={0.1}
-              min={0.1}
-              value={settings.pointSize}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, pointSize: parseFloat(e.target.value || "0.1") }))
-              }
-              style={inputNumber}
-            />
-          </div>
-          <div style={row()}>
-            <label style={label()}>Falloff</label>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={settings.falloff}
-              onChange={(e) => setSettings((s) => ({ ...s, falloff: parseFloat(e.target.value) }))}
-              style={{ width: 160 }}
-            />
-            <span style={{ width: 40, textAlign: "right", opacity: 0.8 }}>
-              {settings.falloff.toFixed(2)}
-            </span>
-          </div>
-          <div style={row()}>
-            <label style={label()}>Gradient</label>
-            <input
-              type="color"
-              value={settings.gradientStart}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, gradientStart: e.target.value }))
-              }
-              style={inputColor}
-              aria-label="Gradient start color"
-            />
-            <div style={{ width: 32, textAlign: "center", opacity: 0.7 }}>→</div>
-            <input
-              type="color"
-              value={settings.gradientEnd}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, gradientEnd: e.target.value }))
-              }
-              style={inputColor}
-              aria-label="Gradient end color"
-            />
-            <div
-              title="Preview"
-              style={{
-                marginLeft: 8,
-                width: 80,
-                height: 18,
-                borderRadius: 6,
-                background: `linear-gradient(90deg, ${settings.gradientStart}, ${settings.gradientEnd})`,
-              }}
-            />
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button style={btn(true)} onClick={applySettings}>
-              Apply
-            </button>
-          </div>
-        </div>
-
-        {/* Point sources */}
-        <div style={card()}>
-          <div style={{ ...cardHeader(), display: "flex", justifyContent: "space-between" }}>
-            <span>Point Sources</span>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button style={btn(true)} title="Refresh topics" onClick={refreshPointTopics}>
-                Refresh
-              </button>
-              <button
-                style={btn(true)}
-                title="Disable all"
-                onClick={() =>
-                  availablePointTopics.forEach(({ topic }) => {
-                    if (enabledPointTopics[topic]) togglePointTopic(topic, "", false);
-                  })
-                }
-              >
-                None
-              </button>
-            </div>
-          </div>
-          {availablePointTopics.length === 0 ? (
-            <div style={emptyMsg}>No point-like topics discovered yet.</div>
-          ) : (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-                maxHeight: 220,
-                overflow: "auto",
-              }}
-            >
-              {availablePointTopics.map(({ topic, type }) => (
-                <label key={topic} style={topicRow}>
-                  <input
-                    type="checkbox"
-                    checked={!!enabledPointTopics[topic]}
-                    onChange={(e) => togglePointTopic(topic, type, e.target.checked)}
-                  />
-                  <div style={{ display: "flex", flexDirection: "column" }}>
-                    <span style={{ fontWeight: 600 }}>{topic}</span>
-                    <span style={{ opacity: 0.7, fontSize: 12 }}>{type}</span>
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
+        <canvas
+          ref={setCanvas}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            ...(measureActive && { cursor: "crosshair" }),
+          }}
+        />
+        <RendererContext.Provider value={renderer}>
+          <RendererOverlay
+            interfaceMode={interfaceMode}
+            canvas={canvas}
+            addPanel={addPanel as any}
+            enableStats={false}
+            perspective={perspective}
+            onTogglePerspective={onTogglePerspective}
+            measureActive={measureActive}
+            onClickMeasure={onClickMeasure}
+            canPublish={false}
+            publishActive={false}
+            onClickPublish={() => {
+              /* publishing disabled in this standalone view */
+            }}
+            onShowTopicSettings={() => {
+              /* no settings sidebar here */
+            }}
+            publishClickType={"point"}
+            onChangePublishClickType={() => {
+              /* publishing disabled */
+            }}
+            timezone={undefined}
+          />
+        </RendererContext.Provider>
       </div>
-    </div>
+    </ThemeProvider>
   );
+};
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+function estimateSizeInBytes(obj: any): number {
+  try {
+    const json = JSON.stringify(obj);
+    return typeof json === "string" ? json.length : 0;
+  } catch {
+    return 0;
+  }
 }
-
-// ---------- helpers ----------
-function toReceiveTime(message: any): { sec: number; nsec: number } {
-  const s = message?.header?.stamp || message?.header?.stamp?.stamp || {};
-  const sec = typeof s.sec === "number" ? s.sec : 0;
-  const nsec =
-    typeof s.nanosec === "number" ? s.nanosec : (typeof s.nsec === "number" ? s.nsec : 0);
-  if (sec || nsec) return { sec, nsec };
-  const now = Date.now();
-  return { sec: Math.floor(now / 1000), nsec: (now % 1000) * 1_000_000 };
-}
-
-function feedMessage(renderer: Renderer, topic: string, schemaName: string, message: any) {
-  const receiveTime = toReceiveTime(message);
-  const ev: any = { topic, schemaName, receiveTime, message };
-  renderer.addMessageEvent(ev);
-}
-
-// ---------- styles ----------
-const panel = (): React.CSSProperties => ({
-  pointerEvents: "auto",
-  background: "rgba(0,0,0,0.55)",
-  color: "#fff",
-  padding: 8,
-  borderRadius: 10,
-  display: "flex",
-  gap: 8,
-  alignItems: "center",
-  backdropFilter: "blur(6px)",
-});
-
-const btn = (active: boolean): React.CSSProperties => ({
-  appearance: "none",
-  border: "1px solid rgba(255,255,255,0.25)",
-  background: active ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)",
-  color: "white",
-  padding: "6px 10px",
-  borderRadius: 8,
-  cursor: "pointer",
-  fontSize: 12,
-});
-
-const selectStyle: React.CSSProperties = {
-  background: "rgba(0,0,0,0.4)",
-  color: "#fff",
-  border: "1px solid rgba(255,255,255,0.25)",
-  borderRadius: 6,
-  padding: "4px 6px",
-};
-
-const card = (): React.CSSProperties => ({
-  pointerEvents: "auto",
-  background: "rgba(0,0,0,0.6)",
-  color: "#fff",
-  padding: 10,
-  borderRadius: 12,
-  minWidth: 320,
-  backdropFilter: "blur(6px)",
-});
-
-const cardHeader = (): React.CSSProperties => ({
-  fontWeight: 700,
-  fontSize: 13,
-  marginBottom: 8,
-  letterSpacing: 0.2,
-});
-
-const row = (): React.CSSProperties => ({
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  marginBottom: 6,
-});
-
-const label = (): React.CSSProperties => ({ width: 90, opacity: 0.9 });
-
-const inputNumber: React.CSSProperties = {
-  width: 120,
-  background: "rgba(0,0,0,0.4)",
-  color: "#fff",
-  border: "1px solid rgba(255,255,255,0.25)",
-  borderRadius: 6,
-  padding: "4px 6px",
-};
-
-const inputColor: React.CSSProperties = {
-  width: 28,
-  height: 24,
-  padding: 0,
-  border: "1px solid rgba(255,255,255,0.25)",
-  borderRadius: 4,
-  background: "transparent",
-};
-
-const emptyMsg: React.CSSProperties = { opacity: 0.8, fontStyle: "italic" };
-
-const topicRow: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "20px 1fr",
-  alignItems: "center",
-  gap: 8,
-  padding: 6,
-  borderRadius: 8,
-  background: "rgba(255,255,255,0.06)",
-};

@@ -3,11 +3,10 @@
  * ROS2 Bridge for Standalone Mode
  * Connects directly to Foxglove Bridge WebSocket (CDR + services).
  *
- * Strict constraints honored:
+ * Constraints:
  *  - No rosbridge usage.
- *  - Controller only interacts with DroneStateModel & this ROS2Bridge for publish/service.
- *  - Subscriptions are forwarded to the Foxglove client; reconnect resubscribes automatically.
- *  - No "workarounds" (no std_msgs/String hacks). Use real MAVROS types & Foxglove services.
+ *  - Subscriptions are forwarded directly to Foxglove.
+ *  - reconnect logic is handled here.
  */
 
 import { FoxgloveWsClient } from "./foxglove-networking";
@@ -19,52 +18,66 @@ export interface Subscription {
   type: string;
 }
 
-/** MAVROS structs */
-export interface CommandLong_Request {
-  command: number;
-  confirmation?: number;
-  param1?: number; param2?: number; param3?: number; param4?: number;
-  param5?: number; param6?: number; param7?: number;
-  broadcast?: boolean;
-}
-export interface CommandLong_Response {
-  success: boolean;
-  result: number;
-}
-
-
 /** ---------- Common message structs ---------- */
-export interface ImageMessage {
-  topic: string;
-  timestamp: string; // ISO string
-  timestampNanos?: number; // nanoseconds since epoch
-  frameId: string;
-  encoding: string;
-  width: number;
-  height: number;
-  data: string; // base64 or data URI
-  messageType: "raw" | "compressed";
+
+export interface BuiltinTime {
+  sec: number;
+  nanosec: number;
 }
 
-export interface TwistMessage {
-  linear: { x: number; y: number; z: number };
-  angular: { x: number; y: number; z: number };
+export interface StdHeader {
+  stamp: BuiltinTime;
+  frame_id: string;
 }
-export interface BuiltinTime { sec: number; nanosec: number }
-export interface StdHeader { stamp: BuiltinTime; frame_id: string }
 
-export interface GeometryVector3 { x: number; y: number; z: number }
-export interface GeometryPoint { x: number; y: number; z: number }
-export interface GeometryQuaternion { x: number; y: number; z: number; w: number }
+export interface GeometryVector3 {
+  x: number;
+  y: number;
+  z: number;
+}
 
-export interface GeometryPose { position: GeometryPoint; orientation: GeometryQuaternion }
-export interface GeometryTwist { linear: GeometryVector3; angular: GeometryVector3 }
+export interface GeometryPoint {
+  x: number;
+  y: number;
+  z: number;
+}
 
-export interface GeometryPoseWithCovariance { pose: GeometryPose; covariance: number[] }
-export interface GeometryTwistWithCovariance { twist: GeometryTwist; covariance: number[] }
+export interface GeometryQuaternion {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}
 
-export interface GeometryPoseStamped { header: StdHeader; pose: GeometryPose }
-export interface GeometryTwistStamped { header: StdHeader; twist: GeometryTwist }
+export interface GeometryPose {
+  position: GeometryPoint;
+  orientation: GeometryQuaternion;
+}
+
+export interface GeometryTwist {
+  linear: GeometryVector3;
+  angular: GeometryVector3;
+}
+
+export interface GeometryPoseWithCovariance {
+  pose: GeometryPose;
+  covariance: number[];
+}
+
+export interface GeometryTwistWithCovariance {
+  twist: GeometryTwist;
+  covariance: number[];
+}
+
+export interface GeometryPoseStamped {
+  header: StdHeader;
+  pose: GeometryPose;
+}
+
+export interface GeometryTwistStamped {
+  header: StdHeader;
+  twist: GeometryTwist;
+}
 
 export interface NavMsgsOdometry {
   header: StdHeader;
@@ -73,21 +86,39 @@ export interface NavMsgsOdometry {
   twist: GeometryTwistWithCovariance;
 }
 
-export interface SensorMsgsNavSatStatus { status: number; service: number }
+export interface SensorMsgsNavSatStatus {
+  status: number;
+  service: number;
+}
+
 export interface SensorMsgsNavSatFix {
   header: StdHeader;
   status: SensorMsgsNavSatStatus;
-  latitude: number; longitude: number; altitude: number;
-  position_covariance: number[]; position_covariance_type: number;
+  latitude: number;
+  longitude: number;
+  altitude: number;
+  position_covariance: number[];
+  position_covariance_type: number;
 }
 
-export interface StdMsgsFloat64 { data: number }
+export interface StdMsgsFloat64 {
+  data: number;
+}
 
-export interface GeographicMsgsGeoPoint { latitude: number; longitude: number; altitude: number }
+export interface GeographicMsgsGeoPoint {
+  latitude: number;
+  longitude: number;
+  altitude: number;
+}
 
 export interface MavrosMsgsAltitude {
   header: StdHeader;
-  monotonic: number; amsl: number; local: number; relative: number; terrain: number; bottom_clearance: number;
+  monotonic: number;
+  amsl: number;
+  local: number;
+  relative: number;
+  terrain: number;
+  bottom_clearance: number;
 }
 
 export interface MavrosMsgsHomePosition {
@@ -101,28 +132,57 @@ export interface MavrosMsgsHomePosition {
 /** MAVROS State & ExtendedState */
 export interface MavrosMsgsState {
   header?: StdHeader;
-  connected: boolean; armed: boolean; guided: boolean; manual_input: boolean;
-  mode: string; system_status: number;
+  connected: boolean;
+  armed: boolean;
+  guided: boolean;
+  manual_input: boolean;
+  mode: string;
+  system_status: number;
 }
-export interface MavrosMsgsExtendedState { header?: StdHeader; landed_state: number; vtol_state: number }
+
+export interface MavrosMsgsExtendedState {
+  header?: StdHeader;
+  landed_state: number;
+  vtol_state: number;
+}
 
 /** Battery & IMU */
 export interface SensorMsgsBatteryState {
   header: StdHeader;
-  voltage: number; temperature?: number | null; current?: number; charge?: number;
-  capacity?: number; design_capacity?: number; percentage?: number;
-  power_supply_status?: number; power_supply_health?: number; power_supply_technology?: number;
-  present?: boolean; cell_voltage?: number[]; cell_temperature?: number[];
-  location?: string; serial_number?: string;
+  voltage: number;
+  temperature?: number | null;
+  current?: number;
+  charge?: number;
+  capacity?: number;
+  design_capacity?: number;
+  percentage?: number;
+  power_supply_status?: number;
+  power_supply_health?: number;
+  power_supply_technology?: number;
+  present?: boolean;
+  cell_voltage?: number[];
+  cell_temperature?: number[];
+  location?: string;
+  serial_number?: string;
 }
+
 export interface MavrosMsgsVFRHUD {
-  airspeed?: number; groundspeed?: number; heading?: number; throttle?: number; altitude?: number; climb?: number;
+  airspeed?: number;
+  groundspeed?: number;
+  heading?: number;
+  throttle?: number;
+  altitude?: number;
+  climb?: number;
 }
+
 export interface SensorMsgsImu {
   header: StdHeader;
-  orientation: GeometryQuaternion; orientation_covariance?: number[];
-  angular_velocity: GeometryVector3; angular_velocity_covariance?: number[];
-  linear_acceleration: GeometryVector3; linear_acceleration_covariance?: number[];
+  orientation: GeometryQuaternion;
+  orientation_covariance?: number[];
+  angular_velocity: GeometryVector3;
+  angular_velocity_covariance?: number[];
+  linear_acceleration: GeometryVector3;
+  linear_acceleration_covariance?: number[];
 }
 
 /** Aliases for geometry_msgs names used elsewhere */
@@ -132,13 +192,13 @@ export type GeometryMsgsTwistStamped = GeometryTwistStamped;
 /** Convenience for consumers that expect decoded images */
 export interface ImageMessage {
   topic: string;
-  timestamp: string;
-  timestampNanos?: number;
+  timestamp: string;          // ISO string
+  timestampNanos?: number;    // nanoseconds since epoch
   frameId: string;
   encoding: string;
   width: number;
   height: number;
-  data: string; // data URI
+  data: string;               // data URI
   messageType: "raw" | "compressed";
 }
 
@@ -149,25 +209,70 @@ export interface TwistMessage {
 
 /** ---------- MAVROS service request/response types ---------- */
 /** mavros_msgs/srv/CommandBool */
-export interface CommandBool_Request { value: boolean }
-export interface CommandBool_Response { success: boolean; result: number }
+export interface CommandBool_Request {
+  value: boolean;
+}
+export interface CommandBool_Response {
+  success: boolean;
+  result: number;
+}
 
 /** mavros_msgs/srv/SetMode */
-export interface SetMode_Request { base_mode: number; custom_mode: string }
-export interface SetMode_Response { mode_sent: boolean }
+export interface SetMode_Request {
+  base_mode: number;
+  custom_mode: string;
+}
+export interface SetMode_Response {
+  mode_sent: boolean;
+}
 
 /** mavros_msgs/srv/CommandTOL */
 export interface CommandTOL_Request {
-  min_pitch: number; yaw: number; latitude: number; longitude: number; altitude: number;
+  min_pitch: number;
+  yaw: number;
+  latitude: number;
+  longitude: number;
+  altitude: number;
 }
-export interface CommandTOL_Response { success: boolean; result: number }
+export interface CommandTOL_Response {
+  success: boolean;
+  result: number;
+}
 
 /** mavros_msgs/srv/ParamSet */
-export interface ParamValue { integer: number; real: number }
-export interface ParamSet_Request { param_id: string; value: ParamValue }
-export interface ParamSet_Response { success: boolean; value: ParamValue }
+export interface ParamValue {
+  integer: number;
+  real: number;
+}
+export interface ParamSet_Request {
+  param_id: string;
+  value: ParamValue;
+}
+export interface ParamSet_Response {
+  success: boolean;
+  value: ParamValue;
+}
+
+/** mavros_msgs/srv/CommandLong */
+export interface CommandLong_Request {
+  command: number;
+  confirmation?: number;
+  param1?: number;
+  param2?: number;
+  param3?: number;
+  param4?: number;
+  param5?: number;
+  param6?: number;
+  param7?: number;
+  broadcast?: boolean;
+}
+export interface CommandLong_Response {
+  success: boolean;
+  result: number;
+}
 
 /** ---------- Bridge Implementation ---------- */
+
 export class ROS2Bridge {
   private client: FoxgloveWsClient | null = null;
 
@@ -176,7 +281,7 @@ export class ROS2Bridge {
 
   private reconnectTimeout: number | null = null;
 
-  // Topics that should be (re)published once on connect (e.g., latched configs if you need them).
+  // Topics that should be (re)published once on connect (e.g., latched configs).
   private setupPublishes: Array<{ topic: string; type: string; message: any }> = [];
 
   // Services that should be (re)called on every connect before normal ops (optional).
@@ -190,7 +295,7 @@ export class ROS2Bridge {
   // frame_id -> topics that have produced that frame
   private frameTopics = new Map<string, Set<string>>();
 
-  // -------- Added: available topics change notifications --------
+  // Available topics change notifications
   private availableTopicsListeners = new Set<(topics: Subscription[]) => void>();
   private topicsWatchTimer: number | null = null;
   private _lastTopicsSig: string | null = null;
@@ -203,10 +308,14 @@ export class ROS2Bridge {
     const url = "ws://172.16.0.10:8765";
 
     if (this.client) {
-      try { this.client.close(); } catch {}
+      try {
+        this.client.close();
+      } catch {
+        // ignore
+      }
     }
     this.client = new FoxgloveWsClient({ url });
-    
+
     // Needed to compute 3D transforms.
     this.client.subscribe("/tf");
     this.client.subscribe("/tf_static");
@@ -216,20 +325,25 @@ export class ROS2Bridge {
       this.client.publishSetup(cmd.topic, cmd.type, cmd.message);
     }
 
-    // Startup service calls will only be sent one all of them are available.
-    console.log("[ROS2Bridge] Forwarding setup service calls :", this.setupServiceCalls);
-    this.setupServiceCalls.forEach(({name, request}) => this.client?.registerSetupServiceCall(
-      {
+    // Startup service calls will only be sent once all of them are available.
+    // (Actual availability is handled inside FoxgloveWsClient.)
+    // eslint-disable-next-line no-console
+    console.log("[ROS2Bridge] Forwarding setup service calls:", this.setupServiceCalls);
+    this.setupServiceCalls.forEach(({ name, request }) =>
+      this.client?.registerSetupServiceCall({
         serviceName: name,
-        request: request
-      }
-    ));
+        request,
+      }),
+    );
 
-    console.log("[ROS2Bridge] Forwarding setup ros params :", this.setupROSParams);
-    this.setupROSParams.forEach(({name, value}) => this.client?.registerSetupParameterSet(name, value));
+    // eslint-disable-next-line no-console
+    console.log("[ROS2Bridge] Forwarding setup ros params:", this.setupROSParams);
+    this.setupROSParams.forEach(({ name, value }) =>
+      this.client?.registerSetupParameterSet(name, value),
+    );
 
     this.client.onOpen = async () => {
-      // forward queued subscriptions. If the topics are not available they will just go into pending till they are.
+      // forward queued subscriptions. If topics are not available they go pending.
       this.subscriptions.forEach((sub) => this._forwardSubscription(sub));
 
       // start topics watcher
@@ -237,31 +351,42 @@ export class ROS2Bridge {
     };
 
     this.client.onClose = () => {
-      console.log("Foxglove connection closed");
+      // eslint-disable-next-line no-console
+      console.log("[ROS2Bridge] Foxglove connection closed");
       this._stopTopicsWatcher();
       this.reconnectTimeout = window.setTimeout(() => {
-        console.log("Attempting to reconnect...");
+        // eslint-disable-next-line no-console
+        console.log("[ROS2Bridge] Attempting to reconnect...");
         this.connect();
       }, 3000);
     };
 
     this.client.onError = (err) => {
-      console.error("Foxglove client error", err);
+      // eslint-disable-next-line no-console
+      console.error("[ROS2Bridge] Foxglove client error", err);
     };
 
     this.client.onMessage = (msg) => {
-      const ref = { topic: msg.topic, type: msg.schemaName, msg: msg.payload };
+      const ref = {
+        topic: msg.topic,
+        type: msg.schemaName,
+        msg: msg.payload,
+      };
       this.handleFoxgloveMessage(ref);
     };
   }
 
   disconnect() {
-    if (this.reconnectTimeout) {
+    if (this.reconnectTimeout != null) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
     this._stopTopicsWatcher();
-    try { this.client?.close(); } catch {}
+    try {
+      this.client?.close();
+    } catch {
+      // ignore
+    }
     this.client = null;
   }
 
@@ -279,7 +404,8 @@ export class ROS2Bridge {
     set.add(handler);
 
     if (!this.client || !this.client.isConnected()) {
-      console.warn("Not connected, queueing subscription:", { topic, type });
+      // eslint-disable-next-line no-console
+      console.warn("[ROS2Bridge] Not connected, queueing subscription:", { topic, type });
       return () => {
         this.unsubscribe(topic, handler);
       };
@@ -311,7 +437,8 @@ export class ROS2Bridge {
   /** Generic topic publish. Uses exact ROS 2 schemaName for serialization. */
   publish(topic: string, messageType: string, message: any) {
     if (!this.client) {
-      console.warn("publish() ignored: Foxglove client not ready");
+      // eslint-disable-next-line no-console
+      console.warn("[ROS2Bridge] publish() ignored: Foxglove client not ready");
       return;
     }
     this.client.publish(topic, messageType, message);
@@ -327,48 +454,26 @@ export class ROS2Bridge {
 
   /** Arrange for a service call to run once on every (re)connect before normal ops. */
   registerSetupServiceCall(name: string, request: any) {
-    this.setupServiceCalls.push({ 
+    this.setupServiceCalls.push({
       name,
-      request
-     });
+      request,
+    });
   }
 
   /**
    * Set default configs to this.client for the drone.
-   * Will use publishSetup to set configurations.
+   * Will use publishSetup and setup ROS params.
    */
-  _configureDefault() {
-    // (Also registers setup service calls to run on connect.)
-
-    // Ensure PX4 does not require RC for arming in SITL:
-    // const setRcNotRequired = {
-    //   "param_id": "COM_RC_IN_MODE",
-    //   "value": { "integer": 1, "real": 0.0 }
-    // };
-    // this.registerSetupServiceCall("/mavros/param/set", setRcNotRequired);
-
-    // const heartbeatConfigPayload = {
-    //   parameters: [
-    //     {
-    //       name: "conn/heartbeat_rate",
-    //       value: { type: 3, double_value: 2.0 } // 2.0 Hz; use 0.0 to disable
-    //     }
-    //   ]
-    // }
-
-    // this.registerSetupServiceCall("/mavros/set_parameters", heartbeatConfigPayload);
-
-    // Configure heartbeat :
+  private _configureDefault() {
     this.registerSetupROSParameterSet("/mavros/sys.heartbeat_mav_type", "GCS");
     this.registerSetupROSParameterSet("/mavros/sys.heartbeat_rate", 2.0);
   }
 
   registerSetupROSParameterSet(name: string, value: any): void {
-    this.setupROSParams.push({ name, value});
+    this.setupROSParams.push({ name, value });
   }
 
   isConnected(): boolean {
-    return !!this.client && this.client.isConnected();
     return this.client?.isConnected() ?? false;
   }
 
@@ -381,8 +486,9 @@ export class ROS2Bridge {
   }
 
   getAvailableImageTopics(): Subscription[] {
+    // A few common image topic guesses for convenience
     return [
-      { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image"},
+      { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
       { topic: "/camera/color/image_raw", type: "sensor_msgs/msg/Image" },
@@ -406,33 +512,35 @@ export class ROS2Bridge {
     }
     return await (this.client as any).callService<T>({
       serviceName: name,
-      request: request
+      request,
     });
   }
 
-  // ---------- MAVROS service helpers (exact names and request fields) ----------
+  // ---------- MAVROS service helpers ----------
 
   async mavrosCommandLong(req: CommandLong_Request): Promise<CommandLong_Response> {
-    // MAVROS2 service: /mavros/cmd/command  (mavros_msgs/srv/CommandLong)
     return await this.callService<CommandLong_Response>("/mavros/cmd/command", req);
   }
 
-  /** /mavros/cmd/arming (mavros_msgs/srv/CommandBool) */
   async mavrosArmDisarm(value: boolean): Promise<CommandBool_Response> {
-    console.log("[ROS2Bridge] calling mavrosArmDisarm with ", value);
-
+    // eslint-disable-next-line no-console
+    console.log("[ROS2Bridge] calling mavrosArmDisarm with", value);
     const req: CommandBool_Request = { value };
     return await this.callService<CommandBool_Response>("/mavros/cmd/arming", req);
   }
 
-  /** /mavros/set_mode (mavros_msgs/srv/SetMode) */
   async mavrosSetMode(custom_mode: string, base_mode = 0): Promise<SetMode_Response> {
     const req: SetMode_Request = { base_mode, custom_mode };
     return await this.callService<SetMode_Response>("/mavros/set_mode", req);
   }
 
-  /** /mavros/cmd/takeoff (mavros_msgs/srv/CommandTOL) */
-  async mavrosTakeoff(args: { altitude: number; min_pitch?: number; yaw?: number; latitude?: number; longitude?: number }): Promise<CommandTOL_Response> {
+  async mavrosTakeoff(args: {
+    altitude: number;
+    min_pitch?: number;
+    yaw?: number;
+    latitude?: number;
+    longitude?: number;
+  }): Promise<CommandTOL_Response> {
     const req: CommandTOL_Request = {
       altitude: args.altitude,
       min_pitch: args.min_pitch ?? 0.0,
@@ -443,8 +551,12 @@ export class ROS2Bridge {
     return await this.callService<CommandTOL_Response>("/mavros/cmd/takeoff", req);
   }
 
-  /** /mavros/cmd/land (mavros_msgs/srv/CommandTOL) */
-  async mavrosLand(args: { altitude?: number; yaw?: number; latitude?: number; longitude?: number } = {}): Promise<CommandTOL_Response> {
+  async mavrosLand(args: {
+    altitude?: number;
+    yaw?: number;
+    latitude?: number;
+    longitude?: number;
+  } = {}): Promise<CommandTOL_Response> {
     const req: CommandTOL_Request = {
       altitude: args.altitude ?? 0.0,
       yaw: args.yaw ?? 0.0,
@@ -454,22 +566,103 @@ export class ROS2Bridge {
     return await this.callService<CommandTOL_Response>("/mavros/cmd/land", req);
   }
 
-  /** /mavros/param/set (mavros_msgs/srv/ParamSet) */
   async mavrosParamSet(param_id: string, value: ParamValue): Promise<ParamSet_Response> {
     const req: ParamSet_Request = { param_id, value };
     return await this.callService<ParamSet_Response>("/mavros/param/set", req);
   }
 
-  // ---------- Image conversions (used by consumers that want a Data URI) ----------
+  // ---------- RawImage normalization helper ----------
+
+  /**
+   * Some producers send foxglove.RawImage with step/row_stride = 0.
+   * That blows up Foxglove's decodeRGB8 ("row step (0) must be at least 3*width").
+   * Fix it up here by inferring a sane step based on encoding and width.
+   */
+  private normalizeRawImage(raw: any): any {
+    if (!raw || typeof raw !== "object") {
+      return raw;
+    }
+
+    const width = raw.width;
+    const height = raw.height;
+    if (typeof width !== "number" || typeof height !== "number") {
+      return raw;
+    }
+
+    const enc = String(raw.encoding ?? "").toLowerCase();
+
+    let bytesPerPixel = 1;
+    if (enc === "rgb8" || enc === "bgr8") {
+      bytesPerPixel = 3;
+    } else if (enc === "rgba8" || enc === "bgra8") {
+      bytesPerPixel = 4;
+    } else if (enc === "mono16") {
+      bytesPerPixel = 2;
+    } else {
+      // mono8 or unknown – treat as 1 byte per pixel
+      bytesPerPixel = 1;
+    }
+
+    const minStep = width * bytesPerPixel;
+
+    let step = raw.step ?? raw.row_stride ?? 0;
+    if (typeof step !== "number" || step < minStep) {
+      const oldStep = step;
+      step = minStep;
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[ROS2Bridge] Normalizing RawImage step",
+        { encoding: enc, width, height, oldStep, newStep: step },
+      );
+    }
+
+    return {
+      ...raw,
+      step,
+      row_stride: raw.row_stride ?? step,
+    };
+  }
+
+  // ---------- Image conversions ----------
 
   private handleFoxgloveMessage(data: any) {
     // Expecting something like: { topic, type, msg }
     const topic: string = data.topic;
-    const type = data.type;
-    const msg: any = data.msg;
+    const type: string = data.type;
+    let msg: any = data.msg;
+
+    // --- fix RawImage-like messages regardless of schemaName ---
+    if (msg && typeof msg === "object") {
+      const looksLikeRawImage =
+        typeof msg.width === "number" &&
+        typeof msg.height === "number" &&
+        "data" in msg &&
+        "encoding" in msg;
+
+      if (looksLikeRawImage) {
+        const stepVal = msg.step ?? msg.row_stride ?? 0;
+        const enc = String(msg.encoding ?? "").toLowerCase();
+        const bytesPerPixel =
+          enc === "rgb8" || enc === "bgr8"
+            ? 3
+            : enc === "rgba8" || enc === "bgra8"
+            ? 4
+            : enc === "mono16"
+            ? 2
+            : 1;
+
+        const minStep = msg.width * bytesPerPixel;
+
+        if (typeof stepVal !== "number" || stepVal < minStep) {
+          msg = this.normalizeRawImage(msg);
+          data = { ...data, msg };
+        }
+      }
+    }
 
     const header = msg?.header || {};
-    const frameId = header.frame_id || msg?.frame_id || msg?.child_frame_id || "";
+    const frameId =
+      header.frame_id || msg?.frame_id || msg?.child_frame_id || "";
 
     let timestamp = new Date().toISOString();
     let timestampNanos: number | undefined;
@@ -513,7 +706,8 @@ export class ROS2Bridge {
         };
         this.messageHandlers.get(topic)?.forEach((handler) => handler(imageMsg));
       } catch (error) {
-        console.error("[FoxgloveBridge] Failed to convert image:", error);
+        // eslint-disable-next-line no-console
+        console.error("[ROS2Bridge] Failed to convert raw image:", error);
       }
     } else if (type === "sensor_msgs/msg/CompressedImage") {
       try {
@@ -532,9 +726,11 @@ export class ROS2Bridge {
           this.messageHandlers.get(topic)?.forEach((handler) => handler(imageMsg));
         });
       } catch (error) {
+        // eslint-disable-next-line no-console
         console.error("[ROS2Bridge] Failed to load compressed image:", error);
       }
     } else {
+      // Non-image (or RawImage) topics: forward patched { topic, type, msg } as-is
       this.messageHandlers.get(topic)?.forEach((handler) => handler(data));
     }
   }
@@ -555,7 +751,7 @@ export class ROS2Bridge {
     } else if (data instanceof Uint8Array) {
       imageData = data;
     } else {
-      throw new Error("Unknown data type");
+      throw new Error("Unknown data type for sensor_msgs/Image.data");
     }
 
     // Convert to RGBA
@@ -590,10 +786,10 @@ export class ROS2Bridge {
     switch ((encoding || "").toLowerCase()) {
       case "rgb8":
         for (let i = 0; i < pixelCount; i++) {
-          rgba[i * 4] = data[i * 3]; // R
+          rgba[i * 4] = data[i * 3];     // R
           rgba[i * 4 + 1] = data[i * 3 + 1]; // G
           rgba[i * 4 + 2] = data[i * 3 + 2]; // B
-          rgba[i * 4 + 3] = 255; // A
+          rgba[i * 4 + 3] = 255;         // A
         }
         break;
 
@@ -603,18 +799,18 @@ export class ROS2Bridge {
 
       case "bgr8":
         for (let i = 0; i < pixelCount; i++) {
-          rgba[i * 4] = data[i * 3 + 2]; // R (from B)
+          rgba[i * 4] = data[i * 3 + 2];     // R (from B)
           rgba[i * 4 + 1] = data[i * 3 + 1]; // G
-          rgba[i * 4 + 2] = data[i * 3]; // B (from R)
-          rgba[i * 4 + 3] = 255; // A
+          rgba[i * 4 + 2] = data[i * 3];     // B (from R)
+          rgba[i * 4 + 3] = 255;             // A
         }
         break;
 
       case "bgra8":
         for (let i = 0; i < pixelCount; i++) {
-          rgba[i * 4] = data[i * 4 + 2]; // R (from B)
+          rgba[i * 4] = data[i * 4 + 2];     // R (from B)
           rgba[i * 4 + 1] = data[i * 4 + 1]; // G
-          rgba[i * 4 + 2] = data[i * 4]; // B (from R)
+          rgba[i * 4 + 2] = data[i * 4];     // B (from R)
           rgba[i * 4 + 3] = data[i * 4 + 3]; // A
         }
         break;
@@ -622,10 +818,10 @@ export class ROS2Bridge {
       case "mono8":
         for (let i = 0; i < pixelCount; i++) {
           const gray = data[i];
-          rgba[i * 4] = gray; // R
-          rgba[i * 4 + 1] = gray; // G
-          rgba[i * 4 + 2] = gray; // B
-          rgba[i * 4 + 3] = 255; // A
+          rgba[i * 4] = gray;
+          rgba[i * 4 + 1] = gray;
+          rgba[i * 4 + 2] = gray;
+          rgba[i * 4 + 3] = 255;
         }
         break;
 
@@ -633,14 +829,15 @@ export class ROS2Bridge {
         for (let i = 0; i < pixelCount; i++) {
           // Convert 16-bit to 8-bit by taking high byte
           const gray = data[i * 2 + 1];
-          rgba[i * 4] = gray; // R
-          rgba[i * 4 + 1] = gray; // G
-          rgba[i * 4 + 2] = gray; // B
-          rgba[i * 4 + 3] = 255; // A
+          rgba[i * 4] = gray;
+          rgba[i * 4 + 1] = gray;
+          rgba[i * 4 + 2] = gray;
+          rgba[i * 4 + 3] = 255;
         }
         break;
 
       default:
+        // eslint-disable-next-line no-console
         console.warn(`[ROS2Bridge] Unsupported encoding: ${encoding}`);
         // Fill with gray as fallback
         rgba.fill(128);
@@ -667,8 +864,7 @@ export class ROS2Bridge {
       mimeType = "image/webp";
     }
 
-    // Create data URI from base64 data
-    // rosbridge sends the data already base64 encoded
+    // rosbridge/Foxglove usually send the data base64-encoded
     const dataURI = `data:${mimeType};base64,${data}`;
 
     // Load image to get dimensions
@@ -677,6 +873,7 @@ export class ROS2Bridge {
       callback(dataURI, img.width, img.height);
     };
     img.onerror = (error) => {
+      // eslint-disable-next-line no-console
       console.error("[ROS2Bridge] Failed to load compressed image:", error);
     };
     img.src = dataURI;
@@ -711,7 +908,12 @@ export class ROS2Bridge {
   onAvailableTopicsChanged(cb: (topics: Subscription[]) => void): () => void {
     this.availableTopicsListeners.add(cb);
     // fire immediately with current list
-    try { cb(this.getAvailableTopics()); } catch {}
+    try {
+      cb(this.getAvailableTopics());
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[ROS2Bridge] topicsChanged initial callback error:", e);
+    }
     return () => {
       this.availableTopicsListeners.delete(cb);
     };
@@ -719,7 +921,10 @@ export class ROS2Bridge {
 
   private _notifyAvailableTopicsChanged(topics: Subscription[]) {
     for (const fn of this.availableTopicsListeners) {
-      try { fn(topics); } catch (e) {
+      try {
+        fn(topics);
+      } catch (e) {
+        // eslint-disable-next-line no-console
         console.error("[ROS2Bridge] topicsChanged listener error:", e);
       }
     }
@@ -728,7 +933,11 @@ export class ROS2Bridge {
   private _startTopicsWatcher(intervalMs = 1000) {
     const tick = () => {
       const topics = this.getAvailableTopics() || [];
-      const sig = JSON.stringify(topics.map(t => `${t.topic}:${t.type}`).sort());
+      const sig = JSON.stringify(
+        topics
+          .map((t) => `${t.topic}:${t.type}`)
+          .sort(),
+      );
       if (sig !== this._lastTopicsSig) {
         this._lastTopicsSig = sig;
         this._notifyAvailableTopicsChanged(topics);
@@ -748,8 +957,7 @@ export class ROS2Bridge {
   }
 }
 
-
 export const ros2Bridge = new ROS2Bridge();
 
-// Auto-connect on load (using rosbridge by default)
+// Auto-connect on load
 ros2Bridge.connect();
