@@ -4,6 +4,10 @@
   "description": "Flexible drone operations workspace for TensorFleet with multi-view dashboards and tooling management.",
   "version": "0.0.1",
   "publisher": "tensorfleet",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TensorFleet/vscode-tensorfleet.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

@@ -227,3 +227,4 @@ jobs:
           VSIX_FILE=$(ls dist/tensorfleet-drone-openvsx-*.vsix | head -n 1)
           echo "📤 Publishing $VSIX_FILE to OpenVSX..."
           bunx --yes @vscode/ovsx@latest publish "$VSIX_FILE" --pat "$OVSX_PAT"
+
