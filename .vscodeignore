@@ -13,6 +13,7 @@ build.sh
 # Documentation
 *.md
 !README.md
+!LICENSE.md
 
 # Development files
 .git/
