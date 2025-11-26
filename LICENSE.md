@@ -37,23 +37,22 @@ If you need to use TensorFleet Drone Suite in a proprietary application or canno
 
 For commercial licensing inquiries, please contact:
 
-- **Email**: [commercial@tensorfleet.com](mailto:commercial@tensorfleet.com)
-- **Website**: [https://tensorfleet.com/licensing](https://tensorfleet.com/licensing)
+- **Email**: [info@tensorfleet.net](mailto:info@tensorfleet.net)
+- **Website**: [https://tensorfleet.net/](https://tensorfleet.net/)
 
 ## Which License Should I Choose?
 
 - **Choose GPL-3.0** if:
+
   - You are developing open source software
   - You can comply with GPL requirements (including source code disclosure)
   - You want to contribute back to the open source community
   - You are using this for personal or educational purposes
 
 - **Choose Commercial License** if:
-  - You are developing proprietary software
-  - You cannot or do not want to disclose your source code
-  - You need to integrate this into a closed-source product
-  - You require custom licensing terms for your organization
-  - You need priority support and maintenance
+  - You need to modify this extension and don't want to give back to community
+  - You indeed on reselling it or reskinning it or repackaging the extension
+  - If you need Enterprise support or custom features
 
 ## Copyright
 
@@ -62,4 +61,3 @@ Copyright (c) 2024 TensorFleet. All rights reserved.
 ## Third-Party Licenses
 
 This software includes third-party components that are subject to their own licenses. Please refer to the individual component licenses for details.
-
