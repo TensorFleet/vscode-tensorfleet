@@ -37,10 +37,19 @@ export class TelemetryService implements vscode.Disposable {
 
     this.unhandledRejectionHandler = (reason: unknown) => {
       this.captureError(reason, { source: 'unhandledRejection' });
+      // Re-throw to maintain default behavior and prevent silent failures
+      throw reason;
     };
 
     this.uncaughtExceptionHandler = (error: Error) => {
       this.captureError(error, { source: 'uncaughtException' });
+      // Exit process to maintain default behavior for uncaught exceptions
+      // Attempt to flush telemetry before exiting
+      if (this.sentryEnabled) {
+        void Sentry.close(0.1).finally(() => process.exit(1));
+      } else {
+        process.exit(1);
+      }
     };
 
     process.on('unhandledRejection', this.unhandledRejectionHandler);
