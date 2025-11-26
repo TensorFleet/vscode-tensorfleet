@@ -1,4 +1,4 @@
-# Source files (compiled code is in out/)
+# Source files (compiled/bundled code is in dist/)
 src/**/*.ts
 src/**/*.tsx
 !src/**/*.d.ts
@@ -23,12 +23,15 @@ build.sh
 
 # Dependencies (should be bundled or listed in dependencies)
 node_modules/
+#TODO make this suck less
 package-lock.json
 bun.lock
 bun.lockb
 
 # Build artifacts (keep only necessary compiled files)
-out/**/*.map
+# Vite bundles extension + MCP server into dist/
+out/
+dist/**/*.map
 panels-standalone/node_modules/
 panels-standalone/bun.lock
 panels-standalone/bun.lockb
@@ -61,4 +64,3 @@ scripts/
 
 # MCP config example
 mcp-config-example.json
-
