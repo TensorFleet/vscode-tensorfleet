@@ -261,7 +261,11 @@ async function pollAuthStatus(
  * Store token securely in VSCode secret storage
  */
 export async function storeToken(context: vscode.ExtensionContext, token: string): Promise<void> {
+    console.log('[Auth] Storing token...');
     await context.secrets.store('tensorfleet-auth-token', token);
+    // Clear verification cache so next isAuthenticated() call will verify with backend
+    verificationCache = null;
+    console.log('[Auth] Token stored successfully');
 }
 
 /**
@@ -288,19 +292,26 @@ const VERIFICATION_CACHE_TTL = 30000; // 30 seconds
  * Verifies token with backend and caches result
  */
 export async function isAuthenticated(context: vscode.ExtensionContext): Promise<boolean> {
+    console.log('[Auth] Checking authentication status...');
     const token = await getToken(context);
     if (!token) {
+        console.log('[Auth] No token found');
         return false;
     }
 
+    console.log('[Auth] Token found, length:', token.length);
+
     // Check cache first
     if (verificationCache && Date.now() - verificationCache.timestamp < VERIFICATION_CACHE_TTL) {
+        console.log('[Auth] Using cached verification result:', verificationCache.valid);
         return verificationCache.valid;
     }
 
     // Verify token with backend
     try {
         const BACKEND_URL = getBackendUrl();
+        console.log('[Auth] Verifying token with backend:', BACKEND_URL);
+        
         const response = await fetch(`${BACKEND_URL}/api/auth/verify`, {
             method: 'POST',
             headers: {
@@ -309,8 +320,12 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
             body: JSON.stringify({ token }),
         });
 
+        console.log('[Auth] Backend response status:', response.status);
+
         const data = await response.json() as VerifyTokenResponse;
         const valid = data.valid === true;
+
+        console.log('[Auth] Token verification result:', valid);
 
         // Update cache
         verificationCache = {
@@ -324,23 +339,29 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
 
         return valid;
     } catch (error) {
-        console.error('Token verification error:', error);
+        console.error('[Auth] Token verification error:', error);
         
         // Fallback to basic JWT validation if backend is unreachable
         try {
+            console.log('[Auth] Attempting fallback JWT validation...');
             const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
             const now = Math.floor(Date.now() / 1000);
 
+            console.log('[Auth] JWT payload exp:', payload.exp, 'now:', now);
+
             if (payload.exp && payload.exp < now) {
+                console.log('[Auth] Token expired');
                 await clearToken(context);
                 return false;
             }
 
             // Token format is valid but couldn't verify with backend
             // Return true but don't cache (so we retry next time)
+            console.log('[Auth] Token appears valid (fallback validation)');
             return true;
         } catch (parseError) {
             // Invalid token format
+            console.error('[Auth] Invalid token format:', parseError);
             await clearToken(context);
             return false;
         }

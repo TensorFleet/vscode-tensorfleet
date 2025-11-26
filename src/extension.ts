@@ -1395,11 +1395,14 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
  * Update unified auth status
  */
 async function updateUnifiedAuthStatus(context: vscode.ExtensionContext) {
+  console.log('[TensorFleet] updateUnifiedAuthStatus called');
   if (!unifiedStatusCoordinator) {
+    console.log('[TensorFleet] No unified status coordinator');
     return;
   }
 
   const isAuth = await auth.isAuthenticated(context);
+  console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
   unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
 }
 
@@ -1725,6 +1728,7 @@ function formatHeader(
  */
 async function handleLogin(context: vscode.ExtensionContext) {
   try {
+    console.log('[TensorFleet] Starting login process...');
     if (unifiedStatusCoordinator) {
       unifiedStatusCoordinator.updateAuth('checking');
     }
@@ -1732,6 +1736,8 @@ async function handleLogin(context: vscode.ExtensionContext) {
     // Check if user wants to use polling or callback method
     const config = vscode.workspace.getConfiguration('tensorfleet.auth');
     const usePolling = config.get<boolean>('usePolling', false);
+    
+    console.log('[TensorFleet] Using polling method:', usePolling);
     
     if (usePolling) {
       await auth.authenticateWithPolling(context);
@@ -1752,13 +1758,26 @@ async function handleLogin(context: vscode.ExtensionContext) {
       }
     }
     
+    console.log('[TensorFleet] Authentication completed, updating status...');
     await updateUnifiedAuthStatus(context);
+    
+    // Force immediate status update
+    const isAuth = await auth.isAuthenticated(context);
+    console.log('[TensorFleet] Auth status after login:', isAuth);
+    
+    if (unifiedStatusCoordinator) {
+      unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
+    }
     
     // Trigger VM Manager refresh after login
     if (vmManagerIntegration) {
+      console.log('[TensorFleet] Refreshing VM Manager status...');
       vmManagerIntegration.refreshStatus(false);
     }
+    
+    console.log('[TensorFleet] Login process completed');
   } catch (error) {
+    console.error('[TensorFleet] Login error:', error);
     await updateUnifiedAuthStatus(context);
     void vscode.window.showErrorMessage(
       `Login failed: ${error instanceof Error ? error.message : String(error)}`
