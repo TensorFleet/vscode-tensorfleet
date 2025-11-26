@@ -1,15 +1,23 @@
+// vite.config.ts
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 import url from '@rollup/plugin-url'
 
+const rootDir = __dirname
+const packagesDir = resolve(rootDir, './packages')
+const typesDir = resolve(rootDir, './packages/@types')
+
 export default defineConfig({
   plugins: [react()],
 
-  // (Optional; you can omit this whole worker block if you don't use workers)
   worker: {
-    // Vite 5 requires this to be a function if provided
     plugins: () => [],
+  },
+
+  // stop Vite from trying to resolve tsconfig "extends" in workspace packages
+  esbuild: {
+    tsconfigRaw: '{}',
   },
 
   build: {
@@ -18,13 +26,12 @@ export default defineConfig({
     target: 'esnext',
     rollupOptions: {
       input: {
-        main: resolve(__dirname, 'index.html'),
-        image: resolve(__dirname, 'image.html'),
-        teleops: resolve(__dirname, 'teleops.html'),
-        map: resolve(__dirname, 'mission_control.html'),
-        raw_messages: resolve(__dirname, 'raw_messages.html'),
+        main: resolve(rootDir, 'index.html'),
+        image: resolve(rootDir, 'image.html'),
+        teleops: resolve(rootDir, 'teleops.html'),
+        map: resolve(rootDir, 'mission_control.html'),
+        raw_messages: resolve(rootDir, 'raw_messages.html'),
       },
-      // Treat *.wasm in deps as assets (URLs), not ESM modules
       plugins: [
         url({
           include: ['**/*.wasm'],
@@ -37,35 +44,29 @@ export default defineConfig({
 
   resolve: {
     alias: [
-      { find: '@', replacement: resolve(__dirname, './src') },
+      { find: '@', replacement: resolve(rootDir, './src') },
 
-      // Use local source for these vendored packages
+      // @lichtblick/* packages that live in packages/<name>/src/*
       {
-        find: /^@lichtblick\/suite-base\/(.*)$/,
-        replacement: resolve(__dirname, './src/lichtblick/suite-base/$1'),
-      },
-      {
-        find: '@lichtblick/suite-base',
-        replacement: resolve(__dirname, './src/lichtblick/suite-base'),
-      },
-      {
-        find: /^@lichtblick\/mcap-support\/(.*)$/,
-        replacement: resolve(__dirname, './src/lichtblick/mcap-support/$1'),
-      },
-      {
-        find: '@lichtblick/mcap-support',
-        replacement: resolve(__dirname, './src/lichtblick/mcap-support'),
+        find:
+          /^@lichtblick\/(suite-base|log|suite|hooks|mcap-support|theme|message-path|typescript-transformers|comlink-transfer-handlers)(\/.*)?$/,
+        replacement: `${packagesDir}/$1/src$2`,
       },
 
-      // Point @lichtblick/den to the workspace source
+      // @lichtblick/den/* lives directly under packages/den/*
       {
-        find: '@lichtblick/den',
-        replacement: resolve(__dirname, './packages/den/src'),
+        find: /^@lichtblick\/den(\/.*)?$/,
+        replacement: `${packagesDir}/den$1`,
+      },
+
+      // Local @types/* packages under packages/@types/*
+      {
+        find: /^@types\/([^/]+)/,
+        replacement: `${typesDir}/$1`,
       },
     ],
   },
 
-  // Avoid prebundling these so their CJS + require('./*.wasm') pattern survives
   optimizeDeps: {
     exclude: [
       '@lichtblick/wasm-bz2',
@@ -77,6 +78,5 @@ export default defineConfig({
     ],
   },
 
-  // Helps Vite treat wasm as an asset type too (harmless redundancy)
   assetsInclude: ['**/*.wasm'],
 })

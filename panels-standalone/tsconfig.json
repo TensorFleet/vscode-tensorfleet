@@ -1,4 +1,3 @@
-// tsconfig.json
 {
   "compilerOptions": {
     "target": "ES2020",
@@ -16,21 +15,31 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+
     "baseUrl": ".",
+
     "paths": {
       "@/*": ["./src/*"],
 
-      // Use local source for these vendored packages
-      "@lichtblick/suite-base": ["./src/lichtblick/suite-base"],
-      "@lichtblick/suite-base/*": ["./src/lichtblick/suite-base/*"],
-      "@lichtblick/mcap-support": ["./src/lichtblick/mcap-support"],
-      "@lichtblick/mcap-support/*": ["./src/lichtblick/mcap-support/*"],
+      // Generic mapping for ALL @lichtblick/* packages
+      // @lichtblick/log            -> packages/log/src
+      // @lichtblick/suite-base     -> packages/suite-base/src
+      // @lichtblick/mcap-support   -> packages/mcap-support/src
+      // etc.
+      "@lichtblick/*": ["./packages/*/src"],
 
-      // Point @lichtblick/den to the workspace source
-      "@lichtblick/den": ["packages/den/src"],
-      "@lichtblick/den/*": ["packages/den/src/*"]
+      // Local @types/*
+      "@types/*": ["./packages/@types/*"]
     }
   },
-  "include": ["src"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+
+  "include": [
+    "src",
+    "packages/**/*.ts",
+    "packages/**/*.tsx"
+  ],
+
+  "references": [
+    { "path": "./tsconfig.node.json" }
+  ]
 }
