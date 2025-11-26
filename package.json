@@ -10,6 +10,9 @@
     "url": "https://github.com/TensorFleet/vscode-tensorfleet.git"
   },
   "icon": "media/store-icon.png",
+  "vsce": {
+    "readmePath": "MARKETPLACE_README.md"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
