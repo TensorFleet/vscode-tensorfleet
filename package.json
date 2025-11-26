@@ -1,9 +1,15 @@
 {
   "name": "tensorfleet-drone",
-  "displayName": "TensorFleet Drone Suite",
+  "displayName": "TensorFleet Robots and Drone Environment",
   "description": "Flexible drone operations workspace for TensorFleet with multi-view dashboards and tooling management.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "tensorfleet",
+  "homepage": "https://tensorfleet.net/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TensorFleet/vscode-tensorfleet.git"
+  },
+  "icon": "media/store-icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -295,7 +301,8 @@
     "watch": "bun run prepare:telemetry && bunx tsc -watch -p ./",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
-    "mcp": "node out/mcp-server.js"
+    "mcp": "node out/mcp-server.js",
+    "version:get": "bun scripts/get-version.ts"
   },
   "bin": {
     "tensorfleet-mcp": "./out/mcp-server.js"

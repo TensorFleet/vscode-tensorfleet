@@ -1,8 +1,8 @@
 out/
-bun.lockb
 package-lock.json
 node_modules/
 panels-standalone/dist/
 notes
 panels-standalone/docs/lichtblick-integration/
 src/generated/telemetry-config.ts
+dist/
