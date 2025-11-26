@@ -85,9 +85,9 @@ jobs:
         id: package_vscode
         run: |
           echo "📦 Packaging VSIX for VS Code Marketplace..."
-          mkdir -p dist
-          bunx --yes @vscode/vsce package --out dist/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix
-          VSIX_FILE="dist/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix"
+          mkdir -p dist/marketplace
+          bunx --yes @vscode/vsce package --out dist/marketplace/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix
+          VSIX_FILE="dist/marketplace/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix"
           if [ ! -f "$VSIX_FILE" ]; then
             echo "❌ VSIX file not found at expected path: $VSIX_FILE"
             echo "📁 Looking for VSIX files in current directory..."
@@ -106,10 +106,10 @@ jobs:
         id: package_openvsx
         run: |
           echo "📦 Packaging VSIX for OpenVSX/Windsurf..."
-          mkdir -p dist
+          mkdir -p dist/openvsx
           # OpenVSX requires --no-dependencies flag to avoid marketplace-specific packaging
-          bunx --yes @vscode/vsce package --out dist/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix --no-dependencies
-          VSIX_FILE="dist/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix"
+          bunx --yes @vscode/vsce package --out dist/openvsx/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix --no-dependencies
+          VSIX_FILE="dist/openvsx/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix"
           if [ ! -f "$VSIX_FILE" ]; then
             echo "❌ VSIX file not found at expected path: $VSIX_FILE"
             echo "📁 Looking for VSIX files in current directory..."
@@ -169,7 +169,7 @@ jobs:
         with:
           name: vsix-packages
           path: |
-            dist/*.vsix
+            dist/**/*.vsix
             dist/RELEASE_NOTES.md
           retention-days: 90
           compression-level: 9
