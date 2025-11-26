@@ -89,12 +89,19 @@ jobs:
           bunx --yes @vscode/vsce package --out dist/marketplace/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix
           VSIX_FILE="dist/marketplace/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix"
           if [ ! -f "$VSIX_FILE" ]; then
-            echo "❌ VSIX file not found at expected path: $VSIX_FILE"
-            echo "📁 Looking for VSIX files in current directory..."
-            ls -la *.vsix 2>/dev/null || echo "No .vsix files found in root"
-            echo "📁 Looking in dist directory..."
-            ls -la dist/*.vsix 2>/dev/null || echo "No .vsix files found in dist"
-            exit 1
+            echo "⚠️ VSIX not found at $VSIX_FILE; trying to locate and move it..."
+            FOUND=$(ls -1 tensorfleet-drone-*.vsix dist/tensorfleet-drone-*.vsix 2>/dev/null | head -n1 || true)
+            if [ -n "$FOUND" ]; then
+              echo "➡️ Moving $FOUND to $VSIX_FILE"
+              mv "$FOUND" "$VSIX_FILE"
+            else
+              echo "❌ VSIX file not found at expected path and no fallback found."
+              echo "📁 Looking for VSIX files in current directory..."
+              ls -la *.vsix 2>/dev/null || echo "No .vsix files found in root"
+              echo "📁 Looking in dist directory..."
+              ls -la dist/*.vsix 2>/dev/null || echo "No .vsix files found in dist"
+              exit 1
+            fi
           fi
           VSIX_NAME=$(basename "$VSIX_FILE")
           echo "vsix_file=$VSIX_FILE" >> $GITHUB_OUTPUT
@@ -111,12 +118,19 @@ jobs:
           bunx --yes @vscode/vsce package --out dist/openvsx/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix --no-dependencies
           VSIX_FILE="dist/openvsx/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix"
           if [ ! -f "$VSIX_FILE" ]; then
-            echo "❌ VSIX file not found at expected path: $VSIX_FILE"
-            echo "📁 Looking for VSIX files in current directory..."
-            ls -la *.vsix 2>/dev/null || echo "No .vsix files found in root"
-            echo "📁 Looking in dist directory..."
-            ls -la dist/*.vsix 2>/dev/null || echo "No .vsix files found in dist"
-            exit 1
+            echo "⚠️ VSIX not found at $VSIX_FILE; trying to locate and move it..."
+            FOUND=$(ls -1 tensorfleet-drone-openvsx-*.vsix dist/tensorfleet-drone-openvsx-*.vsix 2>/dev/null | head -n1 || true)
+            if [ -n "$FOUND" ]; then
+              echo "➡️ Moving $FOUND to $VSIX_FILE"
+              mv "$FOUND" "$VSIX_FILE"
+            else
+              echo "❌ VSIX file not found at expected path and no fallback found."
+              echo "📁 Looking for VSIX files in current directory..."
+              ls -la *.vsix 2>/dev/null || echo "No .vsix files found in root"
+              echo "📁 Looking in dist directory..."
+              ls -la dist/*.vsix 2>/dev/null || echo "No .vsix files found in dist"
+              exit 1
+            fi
           fi
           VSIX_NAME=$(basename "$VSIX_FILE")
           echo "vsix_file=$VSIX_FILE" >> $GITHUB_OUTPUT
