@@ -8,7 +8,6 @@ const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 const TARGET_FILE = resolve(CURRENT_DIR, '../src/generated/telemetry-config.ts');
 
 const telemetryConfig = {
-  azureMonitorKey: process.env.TENSORFLEET_AZURE_MONITOR_KEY ?? '',
   sentryDsn: process.env.TENSORFLEET_SENTRY_DSN ?? '',
   sentryEnvironment: process.env.TENSORFLEET_RUNTIME_ENV ?? process.env.NODE_ENV ?? 'development'
 };

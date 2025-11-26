@@ -120,6 +120,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     } catch (error) {
       const message = this.formatError(error);
       this.outputChannel.appendLine(`[VM Manager] Action failed: ${message}`);
+      this.captureVmError(error, { source: 'vm.action' });
       void vscode.window.showErrorMessage(`Action failed: ${message}`);
     }
   }
@@ -158,6 +159,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     } catch (error) {
       const message = this.formatError(error);
       this.outputChannel.appendLine(`[VM Manager] Refresh failed: ${message}`);
+      this.captureVmError(error, { source: 'vm.refresh' });
       
       // Mark as disconnected but preserve last known VM state
       this.applySnapshot(
@@ -191,6 +193,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         sawVmMissing = true;
       } else {
         this.outputChannel.appendLine(`[VM Manager] Status fetch failed: ${this.formatError(statusError)}`);
+        this.captureVmError(statusError, { source: 'vm.status_fetch' });
       }
     }
 
@@ -202,6 +205,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         sawVmMissing = true;
       } else {
         this.outputChannel.appendLine(`[VM Manager] Info fetch failed: ${this.formatError(infoError)}`);
+        this.captureVmError(infoError, { source: 'vm.info_fetch' });
       }
     }
 
@@ -218,7 +222,12 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private async ensureApiHealthy(): Promise<ApiHealthResponse> {
-    return this.apiRequest<ApiHealthResponse>('GET', '/vms/health', undefined, { includeAuth: false });
+    try {
+      return await this.apiRequest<ApiHealthResponse>('GET', '/vms/health', undefined, { includeAuth: false });
+    } catch (error) {
+      this.captureVmError(error, { source: 'vm.health_check' });
+      throw error;
+    }
   }
 
   private applySnapshot(snapshot: VmSnapshot) {

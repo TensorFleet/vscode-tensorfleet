@@ -372,12 +372,10 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@protobufjs/base64": "^1.1.2",
     "@sentry/node": "^10.26.0",
-    "@vscode/extension-telemetry": "^1.2.0",
     "flatbuffers": "^25.9.23",
     "flatbuffers_reflection": "^1.2.0",
     "protobufjs": "^7.5.4"
   },
-  "optionalDependencies": {},
   "devDependencies": {
     "@types/node": "^18.17.0",
     "@types/vscode": "^1.85.0",
