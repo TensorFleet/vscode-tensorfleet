@@ -141,32 +141,25 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     let backgroundColor: vscode.ThemeColor | undefined;
     let color: vscode.ThemeColor | undefined;
 
-    // Priority 1: User not logged in (auth not authenticated)
-    if (auth === 'not_authenticated') {
-      console.log('[UnifiedStatus] Branch: Not authenticated (user)');
+    // Priority 1: Explicit auth check in progress
+    if (auth === 'checking') {
+      console.log('[UnifiedStatus] Branch: Checking auth');
+      icon = '$(sync~spin)';
+      text = 'TensorFleet · Checking...';
+      backgroundColor = undefined;
+    }
+    // Priority 2: User not logged in (either layer reports not authenticated)
+    else if (auth === 'not_authenticated' || connection === 'not_authenticated') {
+      console.log('[UnifiedStatus] Branch: Not authenticated (user or VM Manager)');
       icon = '$(sign-in)';
       text = 'TensorFleet · Not Logged In';
       backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    }
-    // Priority 2: User logged in but VM Manager API not authenticated
-    else if (connection === 'not_authenticated') {
-      console.log('[UnifiedStatus] Branch: VM Manager not authenticated');
-      icon = '$(sync~spin)';
-      text = 'TensorFleet · Checking VM...';
-      backgroundColor = undefined;
     }
     // Priority 3: API disconnected (after successful auth)
     else if (connection === 'disconnected') {
       console.log('[UnifiedStatus] Branch: Disconnected');
       icon = '$(vm-connect)';
       text = 'TensorFleet · Disconnected';
-      backgroundColor = undefined;
-    }
-    // Priority 4: Checking/Authenticating
-    else if (auth === 'checking') {
-      console.log('[UnifiedStatus] Branch: Checking auth');
-      icon = '$(sync~spin)';
-      text = 'TensorFleet · Checking...';
       backgroundColor = undefined;
     }
     // Priority 4: VM states (when authenticated and connected)

@@ -168,7 +168,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       // Check if it's an auth error
       if (this.isAuthError(error)) {
         // Token is invalid - clear it
-        await auth.clearToken(this.context);
+        await this.clearTokenAndUpdateAuth();
         this.applySnapshot(
           this.createSnapshot({
             connection: 'not_authenticated',
@@ -220,7 +220,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       } catch (statusError) {
         if (this.isAuthError(statusError)) {
           // Token is invalid - clear it and return not_authenticated
-          await auth.clearToken(this.context);
+          await this.clearTokenAndUpdateAuth();
           return this.createSnapshot({
             connection: 'not_authenticated',
             vmState: 'unknown',
@@ -240,7 +240,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       } catch (infoError) {
         if (this.isAuthError(infoError)) {
           // Token is invalid - clear it and return not_authenticated
-          await auth.clearToken(this.context);
+          await this.clearTokenAndUpdateAuth();
           return this.createSnapshot({
             connection: 'not_authenticated',
             vmState: 'unknown',
@@ -268,7 +268,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       // Check if it's auth error
       if (this.isAuthError(error)) {
         // Token is invalid - clear it
-        await auth.clearToken(this.context);
+        await this.clearTokenAndUpdateAuth();
         return this.createSnapshot({
           connection: 'not_authenticated',
           vmState: 'unknown',
@@ -682,8 +682,10 @@ export class VMManagerIntegration implements vscode.Disposable {
 
             // Handle auth errors (401/403) - clear token and throw special error
             if (res.statusCode === 401 || res.statusCode === 403) {
-              auth.clearToken(this.context).catch((err) => {
-                this.outputChannel.appendLine(`[VM Manager] Failed to clear expired token: ${this.formatError(err)}`);
+              this.clearTokenAndUpdateAuth().catch((err) => {
+                this.outputChannel.appendLine(
+                  `[VM Manager] Failed to clear expired token: ${this.formatError(err)}`
+                );
               });
               const httpError: HttpError = new Error('Authentication expired - please login again');
               httpError.status = res.statusCode;
@@ -790,5 +792,12 @@ export class VMManagerIntegration implements vscode.Disposable {
       'status' in error && 
       ((error as HttpError).status === 401 || (error as HttpError).status === 403)
     );
+  }
+
+  private async clearTokenAndUpdateAuth(): Promise<void> {
+    await auth.clearToken(this.context);
+    if (this.unifiedCoordinator) {
+      this.unifiedCoordinator.updateAuth('not_authenticated');
+    }
   }
 }
