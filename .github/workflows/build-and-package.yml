@@ -85,17 +85,11 @@ jobs:
         id: package_vscode
         run: |
           echo "📦 Packaging VSIX for VS Code Marketplace..."
-          mkdir -p dist
-          bunx --yes @vscode/vsce package --out dist/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix
-          VSIX_FILE="dist/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix"
-          if [ ! -f "$VSIX_FILE" ]; then
-            echo "❌ VSIX file not found at expected path: $VSIX_FILE"
-            echo "📁 Looking for VSIX files in current directory..."
-            ls -la *.vsix 2>/dev/null || echo "No .vsix files found in root"
-            echo "📁 Looking in dist directory..."
-            ls -la dist/*.vsix 2>/dev/null || echo "No .vsix files found in dist"
-            exit 1
-          fi
+          mkdir -p artifacts/marketplace
+          bunx --yes @vscode/vsce package --out tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix
+          VSIX_SRC="tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix"
+          VSIX_FILE="artifacts/marketplace/${VSIX_SRC}"
+          mv "$VSIX_SRC" "$VSIX_FILE"
           VSIX_NAME=$(basename "$VSIX_FILE")
           echo "vsix_file=$VSIX_FILE" >> $GITHUB_OUTPUT
           echo "vsix_name=$VSIX_NAME" >> $GITHUB_OUTPUT
@@ -106,18 +100,12 @@ jobs:
         id: package_openvsx
         run: |
           echo "📦 Packaging VSIX for OpenVSX/Windsurf..."
-          mkdir -p dist
+          mkdir -p artifacts/openvsx
           # OpenVSX requires --no-dependencies flag to avoid marketplace-specific packaging
-          bunx --yes @vscode/vsce package --out dist/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix --no-dependencies
-          VSIX_FILE="dist/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix"
-          if [ ! -f "$VSIX_FILE" ]; then
-            echo "❌ VSIX file not found at expected path: $VSIX_FILE"
-            echo "📁 Looking for VSIX files in current directory..."
-            ls -la *.vsix 2>/dev/null || echo "No .vsix files found in root"
-            echo "📁 Looking in dist directory..."
-            ls -la dist/*.vsix 2>/dev/null || echo "No .vsix files found in dist"
-            exit 1
-          fi
+          bunx --yes @vscode/vsce package --out tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix --no-dependencies
+          VSIX_SRC="tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix"
+          VSIX_FILE="artifacts/openvsx/${VSIX_SRC}"
+          mv "$VSIX_SRC" "$VSIX_FILE"
           VSIX_NAME=$(basename "$VSIX_FILE")
           echo "vsix_file=$VSIX_FILE" >> $GITHUB_OUTPUT
           echo "vsix_name=$VSIX_NAME" >> $GITHUB_OUTPUT
@@ -169,7 +157,7 @@ jobs:
         with:
           name: vsix-packages
           path: |
-            dist/*.vsix
+            artifacts/**/*.vsix
             dist/RELEASE_NOTES.md
           retention-days: 90
           compression-level: 9
