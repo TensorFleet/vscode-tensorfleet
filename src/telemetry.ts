@@ -7,8 +7,7 @@ export type TelemetryMeasurements = Record<string, number>;
 
 export class TelemetryService implements vscode.Disposable {
   private sentryEnabled = false;
-  private unhandledRejectionHandler: (reason: unknown) => void;
-  private uncaughtExceptionHandler: (error: Error) => void;
+  private unhandledRejectionHandler: ((reason: unknown) => void) | null = null;
 
   constructor(context: vscode.ExtensionContext) {
     const pkg = context.extension.packageJSON as { name?: string; version?: string };
@@ -35,25 +34,22 @@ export class TelemetryService implements vscode.Disposable {
       Sentry.metrics.count('app_started', 1);
     }
 
+    // Note: We do NOT register uncaughtException handler because:
+    // 1. It affects the entire VS Code process, not just this extension
+    // 2. VS Code has its own error handling mechanisms
+    // 3. Calling process.exit(1) would kill the entire VS Code process
+    // Instead, we rely on explicit error handling in our code paths.
+
+    // For unhandledRejection, we log but don't interfere with VS Code's handling
+    // This is less intrusive but still allows us to track errors
     this.unhandledRejectionHandler = (reason: unknown) => {
       this.captureError(reason, { source: 'unhandledRejection' });
-      // Re-throw to maintain default behavior and prevent silent failures
-      throw reason;
+      // Don't re-throw - let VS Code handle it
     };
 
-    this.uncaughtExceptionHandler = (error: Error) => {
-      this.captureError(error, { source: 'uncaughtException' });
-      // Exit process to maintain default behavior for uncaught exceptions
-      // Attempt to flush telemetry before exiting
-      if (this.sentryEnabled) {
-        void Sentry.close(0.1).finally(() => process.exit(1));
-      } else {
-        process.exit(1);
-      }
-    };
-
-    process.on('unhandledRejection', this.unhandledRejectionHandler);
-    process.on('uncaughtException', this.uncaughtExceptionHandler);
+    if (this.unhandledRejectionHandler) {
+      process.on('unhandledRejection', this.unhandledRejectionHandler);
+    }
   }
 
   trackEvent(eventName: string, properties?: TelemetryProperties, measurements?: TelemetryMeasurements) {
@@ -102,8 +98,10 @@ export class TelemetryService implements vscode.Disposable {
   }
 
   dispose() {
-    process.off('unhandledRejection', this.unhandledRejectionHandler);
-    process.off('uncaughtException', this.uncaughtExceptionHandler);
+    if (this.unhandledRejectionHandler) {
+      process.off('unhandledRejection', this.unhandledRejectionHandler);
+      this.unhandledRejectionHandler = null;
+    }
 
     if (this.sentryEnabled) {
       void Sentry.close(2);
