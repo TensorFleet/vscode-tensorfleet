@@ -302,7 +302,7 @@
     "typecheck": "bunx tsc -p ./ --noEmit",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
-    "mcp": "node out/mcp-server.js",
+    "mcp": "node dist/mcp-server.js",
     "version:get": "bun scripts/get-version.ts"
   },
   "bin": {
