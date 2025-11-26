@@ -22,7 +22,8 @@ build.sh
 .vscode/
 
 # Dependencies (should be bundled or listed in dependencies)
-node_modules/
+#node_modules/
+#TODO make this suck less
 package-lock.json
 bun.lock
 bun.lockb
