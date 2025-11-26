@@ -293,6 +293,17 @@
           "type": "string",
           "default": "http://localhost:8080",
           "description": "Base URL for the vm-manager HTTP API used by the VM status bar."
+        },
+        "tensorfleet.backendUrl": {
+          "type": "string",
+          "default": "https://app.tensorfleet.net",
+          "description": "Backend URL for TensorFleet authentication and API services. Use http://localhost:3000 for local development.",
+          "pattern": "^https?://.*$"
+        },
+        "tensorfleet.auth.usePolling": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use polling-based authentication instead of local callback server. Enable this if the callback server has issues on your system."
         }
       }
     },

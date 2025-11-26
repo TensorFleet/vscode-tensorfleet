@@ -1729,7 +1729,29 @@ async function handleLogin(context: vscode.ExtensionContext) {
       unifiedStatusCoordinator.updateAuth('checking');
     }
     
-    await auth.authenticate(context);
+    // Check if user wants to use polling or callback method
+    const config = vscode.workspace.getConfiguration('tensorfleet.auth');
+    const usePolling = config.get<boolean>('usePolling', false);
+    
+    if (usePolling) {
+      await auth.authenticateWithPolling(context);
+    } else {
+      // Try callback method first, fallback to polling if it fails
+      try {
+        await auth.authenticate(context);
+      } catch (error) {
+        // If callback server fails (e.g., port already in use), try polling
+        if (error instanceof Error && error.message.includes('EADDRINUSE')) {
+          vscode.window.showWarningMessage(
+            'Callback server port in use, switching to polling method...'
+          );
+          await auth.authenticateWithPolling(context);
+        } else {
+          throw error;
+        }
+      }
+    }
+    
     await updateUnifiedAuthStatus(context);
     
     // Trigger VM Manager refresh after login

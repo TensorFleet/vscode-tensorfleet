@@ -1,10 +1,8 @@
 /**
- * VSCode Plugin Authentication Module (Mock Version)
+ * VSCode Plugin Authentication Module
  * 
- * This module handles authentication for TensorFleet VSCode extension.
- * Currently using a mock flow with simple token input.
- * 
- * TODO: Replace with real Clerk OAuth flow when backend is ready.
+ * This module handles OAuth authentication for TensorFleet VSCode extension.
+ * Integrates with backend OAuth flow via browser-based login.
  * 
  * Based on vscode-plugin-auth/auth.js
  */
@@ -14,31 +12,57 @@ import * as http from 'http';
 import { URL } from 'url';
 
 // Configuration
-const CALLBACK_PORT = 3456; // Local server port for token callback
+const CALLBACK_PORT = 3456; // Local server port for OAuth callback
 
-// MOCK AUTH: Simple token input flow
-// TODO: Replace with real OAuth flow when backend is ready
-// Real flow will use: BACKEND_URL = 'http://localhost:3000' or 'https://app.tensorfleet.net'
+// Type definitions for API responses
+interface InitiateAuthResponse {
+    state: string;
+    authUrl: string;
+}
+
+interface PollAuthResponse {
+    authenticated: boolean;
+    token?: string;
+}
+
+interface VerifyTokenResponse {
+    valid: boolean;
+}
 
 /**
- * Main authentication function (Mock Version)
- * Opens a simple HTML page for token input and waits for callback
+ * Get backend URL from configuration or environment
+ */
+function getBackendUrl(): string {
+    const config = vscode.workspace.getConfiguration('tensorfleet');
+    const configuredUrl = config.get<string>('backendUrl');
+    
+    if (configuredUrl) {
+        return configuredUrl;
+    }
+    
+    // Default to production URL
+    return 'https://app.tensorfleet.net';
+}
+
+/**
+ * Main authentication function
+ * Opens browser for login and waits for callback
  */
 export async function authenticate(context: vscode.ExtensionContext): Promise<string> {
     try {
+        // Step 1: Initiate OAuth flow
+        const { state, authUrl } = await initiateAuth();
+        
         vscode.window.showInformationMessage(
-            'Opening browser for token input...'
+            'Opening browser for authentication...'
         );
 
-        // Step 1: Start local server to receive token callback
+        // Step 2: Start local server to receive callback
         const token = await new Promise<string>((resolve, reject) => {
-            const server = createCallbackServer(resolve, reject);
-            
-            // Step 2: Open browser to token input page
-            // MOCK: Simple HTML page with token input
-            // TODO: Replace with real OAuth URL: vscode.env.openExternal(vscode.Uri.parse(authUrl));
-            const tokenInputUrl = `http://localhost:${CALLBACK_PORT}/token-input`;
-            vscode.env.openExternal(vscode.Uri.parse(tokenInputUrl));
+            const server = createCallbackServer(state, resolve, reject);
+
+            // Step 3: Open browser
+            vscode.env.openExternal(vscode.Uri.parse(authUrl));
 
             // Timeout after 5 minutes
             setTimeout(() => {
@@ -47,11 +71,11 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
             }, 5 * 60 * 1000);
         });
 
-        // Step 3: Store token securely
+        // Step 4: Store token securely
         await storeToken(context, token);
 
         vscode.window.showInformationMessage('Successfully authenticated!');
-        
+
         return token;
     } catch (error) {
         console.error('Authentication error:', error);
@@ -61,24 +85,75 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
 }
 
 /**
- * Create local HTTP server to receive token callback
- * MOCK: Serves a simple HTML page for token input
- * TODO: Replace with real OAuth callback handler when backend is ready
+ * Alternative: Poll-based authentication
+ * Use this if callback server has issues
  */
-function createCallbackServer(resolve: (token: string) => void, reject: (error: Error) => void): http.Server {
+export async function authenticateWithPolling(context: vscode.ExtensionContext): Promise<string> {
+    try {
+        // Step 1: Initiate OAuth flow
+        const { state, authUrl } = await initiateAuth();
+        
+        vscode.window.showInformationMessage(
+            'Opening browser for authentication...'
+        );
+
+        // Step 2: Open browser
+        vscode.env.openExternal(vscode.Uri.parse(authUrl));
+
+        // Step 3: Poll for authentication status
+        const token = await pollAuthStatus(state);
+
+        // Step 4: Store token
+        await storeToken(context, token);
+
+        vscode.window.showInformationMessage('Successfully authenticated!');
+
+        return token;
+    } catch (error) {
+        console.error('Authentication error:', error);
+        vscode.window.showErrorMessage(`Authentication failed: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+    }
+}
+
+/**
+ * Initiate OAuth flow with backend
+ */
+async function initiateAuth(): Promise<{ state: string; authUrl: string }> {
+    const BACKEND_URL = getBackendUrl();
+    
+    const response = await fetch(`${BACKEND_URL}/api/auth/vscode/initiate`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error('Failed to initiate authentication');
+    }
+
+    const data = await response.json() as InitiateAuthResponse;
+    return {
+        state: data.state,
+        authUrl: data.authUrl,
+    };
+}
+
+/**
+ * Create local HTTP server to receive OAuth callback
+ */
+function createCallbackServer(
+    expectedState: string,
+    resolve: (token: string) => void,
+    reject: (error: Error) => void
+): http.Server {
     const server = http.createServer((req, res) => {
         const url = new URL(req.url || '/', `http://localhost:${CALLBACK_PORT}`);
-        
-        // Serve token input page
-        if (url.pathname === '/token-input') {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(getTokenInputHtml());
-            return;
-        }
-        
-        // Handle token submission callback
+
         if (url.pathname === '/callback') {
             const token = url.searchParams.get('token');
+            const state = url.searchParams.get('state');
             const error = url.searchParams.get('error');
 
             if (error) {
@@ -97,19 +172,18 @@ function createCallbackServer(resolve: (token: string) => void, reject: (error: 
                 return;
             }
 
-            if (!token) {
+            if (!token || state !== expectedState) {
                 res.writeHead(400, { 'Content-Type': 'text/html' });
                 res.end(`
                     <html>
                         <body style="font-family: Arial; text-align: center; padding: 50px;">
                             <h1>❌ Invalid Callback</h1>
-                            <p>No token provided</p>
                             <p>You can close this window.</p>
                         </body>
                     </html>
                 `);
                 server.close();
-                reject(new Error('Invalid callback - no token'));
+                reject(new Error('Invalid callback'));
                 return;
             }
 
@@ -118,8 +192,8 @@ function createCallbackServer(resolve: (token: string) => void, reject: (error: 
             res.end(`
                 <html>
                     <body style="font-family: Arial; text-align: center; padding: 50px;">
-                        <h1>Authentication Successful</h1>
-                        <p>Token received. You can close this window and return to VSCode.</p>
+                        <h1>✅ Authentication Successful!</h1>
+                        <p>You can close this window and return to VSCode.</p>
                         <script>setTimeout(() => window.close(), 2000);</script>
                     </body>
                 </html>
@@ -134,195 +208,23 @@ function createCallbackServer(resolve: (token: string) => void, reject: (error: 
     });
 
     server.listen(CALLBACK_PORT, () => {
-        console.log(`[Auth] Token input server listening on port ${CALLBACK_PORT}`);
+        console.log(`[Auth] Callback server listening on port ${CALLBACK_PORT}`);
     });
-    
+
     return server;
 }
 
 /**
- * Get HTML for token input page
- * MOCK: Simple form for token input
- * TODO: Remove when real OAuth flow is implemented
- */
-function getTokenInputHtml(): string {
-    return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TensorFleet Authentication</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 20px;
-        }
-        .container {
-            background: white;
-            border-radius: 12px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 500px;
-            width: 100%;
-        }
-        h1 {
-            margin: 0 0 10px 0;
-            color: #333;
-            font-size: 24px;
-        }
-        .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 14px;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        label {
-            display: block;
-            margin-bottom: 8px;
-            color: #333;
-            font-weight: 500;
-            font-size: 14px;
-        }
-        textarea {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 6px;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-            resize: vertical;
-            min-height: 100px;
-            box-sizing: border-box;
-        }
-        textarea:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        button {
-            width: 100%;
-            padding: 12px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        button:hover {
-            background: #5568d3;
-        }
-        button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-        .info {
-            background: #f5f5f5;
-            padding: 15px;
-            border-radius: 6px;
-            margin-top: 20px;
-            font-size: 12px;
-            color: #666;
-        }
-        .info strong {
-            color: #333;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>TensorFleet Authentication</h1>
-        <p class="subtitle">Enter your authentication token</p>
-        
-        <form id="tokenForm">
-            <div class="form-group">
-                <label for="token">Authentication Token:</label>
-                <textarea id="token" name="token" placeholder="Paste your JWT token here..." required></textarea>
-            </div>
-            <button type="submit" id="submitBtn">Authenticate</button>
-        </form>
-        
-        <div class="info">
-            <strong>Note:</strong> This is a mock authentication flow for development.
-            The token will be stored securely in VSCode and used for VM Manager API calls.
-        </div>
-    </div>
-    
-    <script>
-        const form = document.getElementById('tokenForm');
-        const tokenInput = document.getElementById('token');
-        const submitBtn = document.getElementById('submitBtn');
-        
-        form.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const token = tokenInput.value.trim();
-            
-            if (!token) {
-                alert('Please enter a token');
-                return;
-            }
-            
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Authenticating...';
-            
-            // Redirect to callback with token
-            const callbackUrl = 'http://localhost:' + '${CALLBACK_PORT}' + '/callback?token=' + encodeURIComponent(token);
-            window.location.href = callbackUrl;
-        });
-    </script>
-</body>
-</html>
-    `.replace(/\$\{CALLBACK_PORT\}/g, String(CALLBACK_PORT));
-}
-
-// ============================================================================
-// Real OAuth flow functions (commented out - will be used when backend is ready)
-// ============================================================================
-
-/**
- * Initiate OAuth flow with backend
- * TODO: Uncomment when backend is ready
- */
-/*
-async function initiateAuth() {
-    const BACKEND_URL = 'http://localhost:3000'; // or 'https://app.tensorfleet.net'
-    const response = await fetch(`${BACKEND_URL}/api/auth/vscode/initiate`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-    });
-
-    if (!response.ok) {
-        throw new Error('Failed to initiate authentication');
-    }
-
-    const data = await response.json();
-    return {
-        state: data.state,
-        authUrl: data.authUrl,
-    };
-}
-*/
-
-/**
  * Poll backend for authentication status
  * Alternative to callback server approach
- * TODO: Uncomment when backend is ready
  */
-/*
-async function pollAuthStatus(state: string, maxAttempts = 60, interval = 2000): Promise<string> {
-    const BACKEND_URL = 'http://localhost:3000';
+async function pollAuthStatus(
+    state: string,
+    maxAttempts: number = 60,
+    interval: number = 2000
+): Promise<string> {
+    const BACKEND_URL = getBackendUrl();
+    
     for (let i = 0; i < maxAttempts; i++) {
         try {
             const response = await fetch(
@@ -333,9 +235,9 @@ async function pollAuthStatus(state: string, maxAttempts = 60, interval = 2000):
                 throw new Error('Failed to poll authentication status');
             }
 
-            const data = await response.json();
+            const data = await response.json() as PollAuthResponse;
 
-            if (data.authenticated) {
+            if (data.authenticated && data.token) {
                 return data.token;
             }
 
@@ -349,7 +251,7 @@ async function pollAuthStatus(state: string, maxAttempts = 60, interval = 2000):
 
     throw new Error('Authentication timeout - please try again');
 }
-*/
+
 
 // ============================================================================
 // Token Storage Functions
@@ -374,13 +276,16 @@ export async function getToken(context: vscode.ExtensionContext): Promise<string
  */
 export async function clearToken(context: vscode.ExtensionContext): Promise<void> {
     await context.secrets.delete('tensorfleet-auth-token');
+    verificationCache = null; // Clear cache on logout
 }
+
+// Cache for token verification to avoid excessive API calls
+let verificationCache: { valid: boolean; timestamp: number } | null = null;
+const VERIFICATION_CACHE_TTL = 30000; // 30 seconds
 
 /**
  * Check if user is authenticated
- * Performs basic JWT validation (check expiration without calling backend)
- * TODO: Add actual token verification endpoint call when backend is ready
- * TODO: Cache result for 30 seconds to avoid excessive API calls
+ * Verifies token with backend and caches result
  */
 export async function isAuthenticated(context: vscode.ExtensionContext): Promise<boolean> {
     const token = await getToken(context);
@@ -388,29 +293,14 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
         return false;
     }
 
-    // Basic JWT validation (check expiration without calling backend)
-    try {
-        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-        const now = Math.floor(Date.now() / 1000);
-        
-        if (payload.exp && payload.exp < now) {
-            await clearToken(context); // Auto-clear expired token
-            return false;
-        }
-        
-        return true;
-    } catch (error) {
-        // Invalid token format
-        await clearToken(context);
-        return false;
+    // Check cache first
+    if (verificationCache && Date.now() - verificationCache.timestamp < VERIFICATION_CACHE_TTL) {
+        return verificationCache.valid;
     }
 
-    // TODO: Better fix (when backend ready):
-    // Add actual token verification endpoint call
-    // Cache result for 30 seconds to avoid excessive API calls
-    /*
+    // Verify token with backend
     try {
-        const BACKEND_URL = 'http://localhost:3000';
+        const BACKEND_URL = getBackendUrl();
         const response = await fetch(`${BACKEND_URL}/api/auth/verify`, {
             method: 'POST',
             headers: {
@@ -419,13 +309,42 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
             body: JSON.stringify({ token }),
         });
 
-        const data = await response.json();
-        return data.valid === true;
+        const data = await response.json() as VerifyTokenResponse;
+        const valid = data.valid === true;
+
+        // Update cache
+        verificationCache = {
+            valid,
+            timestamp: Date.now()
+        };
+
+        if (!valid) {
+            await clearToken(context);
+        }
+
+        return valid;
     } catch (error) {
         console.error('Token verification error:', error);
-        return false;
+        
+        // Fallback to basic JWT validation if backend is unreachable
+        try {
+            const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+            const now = Math.floor(Date.now() / 1000);
+
+            if (payload.exp && payload.exp < now) {
+                await clearToken(context);
+                return false;
+            }
+
+            // Token format is valid but couldn't verify with backend
+            // Return true but don't cache (so we retry next time)
+            return true;
+        } catch (parseError) {
+            // Invalid token format
+            await clearToken(context);
+            return false;
+        }
     }
-    */
 }
 
 /**
@@ -437,7 +356,7 @@ export async function authenticatedFetch(
     options: RequestInit = {}
 ): Promise<Response> {
     const token = await getToken(context);
-    
+
     if (!token) {
         throw new Error('Not authenticated');
     }
