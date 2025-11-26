@@ -1,0 +1,229 @@
+name: Build and Package Extension
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - build-github
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches:
+      - main
+      - master
+      - build-github
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to marketplace (requires secrets)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  build:
+    name: Build VSIX
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Get version from package.json
+        id: get_version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extension version: $VERSION"
+
+      - name: Build React panels
+        run: |
+          echo "📦 Building React panels..."
+          cd panels-standalone
+          bun install --frozen-lockfile
+          bun run build
+          cd ..
+
+      - name: Install extension dependencies
+        run: |
+          echo "📦 Installing extension dependencies..."
+          bun install --frozen-lockfile
+
+      - name: Compile extension
+        run: |
+          echo "🔧 Compiling extension..."
+          bun run compile
+
+      - name: Install VS Code Extension Manager (vsce)
+        run: |
+          echo "📦 Installing vsce..."
+          bunx --yes @vscode/vsce@latest
+
+      - name: Package extension (VS Code Marketplace)
+        id: package_vscode
+        run: |
+          echo "📦 Packaging VSIX for VS Code Marketplace..."
+          bunx vsce package --out dist/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix
+          VSIX_FILE=$(ls dist/*.vsix | head -n 1)
+          VSIX_NAME=$(basename "$VSIX_FILE")
+          echo "vsix_file=$VSIX_FILE" >> $GITHUB_OUTPUT
+          echo "vsix_name=$VSIX_NAME" >> $GITHUB_OUTPUT
+          echo "📦 Created: $VSIX_NAME"
+          ls -lh "$VSIX_FILE"
+
+      - name: Package extension (OpenVSX/Windsurf compatible)
+        id: package_openvsx
+        run: |
+          echo "📦 Packaging VSIX for OpenVSX/Windsurf..."
+          # OpenVSX requires --no-dependencies flag to avoid marketplace-specific packaging
+          bunx vsce package --out dist/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix --no-dependencies
+          VSIX_FILE=$(ls dist/tensorfleet-drone-openvsx-*.vsix | head -n 1)
+          VSIX_NAME=$(basename "$VSIX_FILE")
+          echo "vsix_file=$VSIX_FILE" >> $GITHUB_OUTPUT
+          echo "vsix_name=$VSIX_NAME" >> $GITHUB_OUTPUT
+          echo "📦 Created: $VSIX_NAME"
+          ls -lh "$VSIX_FILE"
+
+      - name: Create release info
+        run: |
+          mkdir -p dist
+          cat > dist/RELEASE_NOTES.md << EOF
+          # TensorFleet Drone Suite Extension
+
+          ## Version ${{ steps.get_version.outputs.version }}
+
+          Built on: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Commit: ${{ github.sha }}
+          Branch: ${{ github.ref_name }}
+
+          ## Installation Instructions
+
+          ### VS Code Marketplace
+          1. Open VS Code
+          2. Go to Extensions view (Ctrl+Shift+X / Cmd+Shift+X)
+          3. Search for "TensorFleet Drone Suite"
+          4. Click Install
+
+          ### Manual Installation (VSIX)
+          1. Download the VSIX file from the artifacts below
+          2. Open VS Code
+          3. Go to Extensions view
+          4. Click the "..." menu → "Install from VSIX..."
+          5. Select the downloaded VSIX file
+
+          ### OpenVSX / Windsurf
+          1. Download the OpenVSX-compatible VSIX from artifacts
+          2. Install via your marketplace's "Install from VSIX" option
+          3. Or publish to OpenVSX registry for direct installation
+
+          ## Files
+
+          - \`tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix\` - VS Code Marketplace version
+          - \`tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix\` - OpenVSX/Windsurf compatible version
+
+          EOF
+          cat dist/RELEASE_NOTES.md
+
+      - name: Upload VSIX artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-packages
+          path: |
+            dist/*.vsix
+            dist/RELEASE_NOTES.md
+          retention-days: 90
+          compression-level: 9
+
+      - name: Upload build summary
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          echo "## 📦 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Successfully built VSIX packages:" >> $GITHUB_STEP_SUMMARY
+          echo "- **VS Code Marketplace**: \`${{ steps.package_vscode.outputs.vsix_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **OpenVSX/Windsurf**: \`${{ steps.package_openvsx.outputs.vsix_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📥 Download from the **Artifacts** section below." >> $GITHUB_STEP_SUMMARY
+
+  # Optional: Publish to VS Code Marketplace (requires VSCE_PAT secret)
+  publish-vscode:
+    name: Publish to VS Code Marketplace
+    needs: build
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      inputs.publish == 'true' &&
+      (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix-packages
+          path: dist/
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "❌ VSCE_PAT secret is not set. Skipping publish."
+            exit 0
+          fi
+          VSIX_FILE=$(ls dist/tensorfleet-drone-*.vsix | grep -v openvsx | head -n 1)
+          echo "📤 Publishing $VSIX_FILE to VS Code Marketplace..."
+          bunx vsce publish --packagePath "$VSIX_FILE"
+
+  # Optional: Publish to OpenVSX (requires OVSX_PAT secret)
+  publish-openvsx:
+    name: Publish to OpenVSX
+    needs: build
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      inputs.publish == 'true' &&
+      (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix-packages
+          path: dist/
+
+      - name: Publish to OpenVSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "❌ OVSX_PAT secret is not set. Skipping publish."
+            exit 0
+          fi
+          VSIX_FILE=$(ls dist/tensorfleet-drone-openvsx-*.vsix | head -n 1)
+          echo "📤 Publishing $VSIX_FILE to OpenVSX..."
+          bunx --yes @vscode/ovsx@latest publish "$VSIX_FILE" --pat "$OVSX_PAT"
