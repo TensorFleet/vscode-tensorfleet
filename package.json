@@ -37,16 +37,7 @@
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
     "onCommand:tensorfleet.showDroneStatus",
-    "onCommand:tensorfleet.showVMManagerMenu",
-    "onCommand:tensorfleet.connectROS2",
-    "onCommand:tensorfleet.disconnectROS2",
-    "onCommand:tensorfleet.startPX4Telemetry",
-    "onCommand:tensorfleet.connectROS2WebSocket",
-    "onCommand:tensorfleet.disconnectROS2WebSocket",
-    "onCommand:tensorfleet.configureROS2WebSocket",
-    "onCommand:tensorfleet.connectFoxgloveBridge",
-    "onCommand:tensorfleet.disconnectFoxgloveBridge",
-    "onCommand:tensorfleet.configureFoxgloveBridge"
+    "onCommand:tensorfleet.showVMManagerMenu"
   ],
   "main": "./out/extension.js",
   "packageManager": "bun@1.0.0",
@@ -121,132 +112,87 @@
     "commands": [
       {
         "command": "tensorfleet.openQGroundControlPanel",
-        "title": "TensorFleet: Open QGroundControl Workspace",
+        "title": "Open QGroundControl Workspace",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openGazeboPanel",
-        "title": "TensorFleet: Open Gazebo Workspace",
+        "title": "Open Gazebo Workspace",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openAIPanel",
-        "title": "TensorFleet: Open AI Ops Workspace",
+        "title": "Open AI Ops Workspace",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openROS2Panel",
-        "title": "TensorFleet: Open ROS 2 & Stable Baselines Lab",
+        "title": "Open ROS 2 & Stable Baselines Lab",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openImagePanel",
-        "title": "TensorFleet: Open Image Panel",
+        "title": "Open Image Panel",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openTeleopsPanel",
-        "title": "TensorFleet: Open Teleops Panel",
+        "title": "Open Teleops Panel",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openMapPanel",
-        "title": "TensorFleet: Open Map Panel",
+        "title": "Open Map Panel",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openRawMessagesPanel",
-        "title": "TensorFleet: Open Raw Messages Panel",
+        "title": "Open Raw Messages Panel",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.createNewProject",
-        "title": "TensorFleet: Create New Project",
+        "title": "Create New Project",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.installTools",
-        "title": "TensorFleet: Install Bundled Tools",
+        "title": "Install Bundled Tools",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openAllPanels",
-        "title": "TensorFleet: Open All Dashboards in Main Area",
+        "title": "Open All Dashboards in Main Area",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.startMCPServer",
-        "title": "TensorFleet: Start MCP Server (for Cursor/Claude)",
+        "title": "Start MCP Server (for Cursor/Claude)",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.stopMCPServer",
-        "title": "TensorFleet: Stop MCP Server",
+        "title": "Stop MCP Server",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.getMCPConfig",
-        "title": "TensorFleet: Show MCP Configuration",
+        "title": "Show MCP Configuration",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.selectRosVersion",
-        "title": "TensorFleet: Select ROS Version",
+        "title": "Select ROS Version",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.showDroneStatus",
-        "title": "TensorFleet: Show Drone Status",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.connectROS2",
-        "title": "TensorFleet: Connect to ROS2",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.disconnectROS2",
-        "title": "TensorFleet: Disconnect from ROS2",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.startPX4Telemetry",
-        "title": "TensorFleet: Start PX4 Telemetry Monitor",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.connectROS2WebSocket",
-        "title": "TensorFleet: Connect to ROS2 (WebSocket)",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.disconnectROS2WebSocket",
-        "title": "TensorFleet: Disconnect from ROS2 (WebSocket)",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.configureROS2WebSocket",
-        "title": "TensorFleet: Configure ROS2 WebSocket URL",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.connectFoxgloveBridge",
-        "title": "TensorFleet: Connect to Foxglove Bridge",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.disconnectFoxgloveBridge",
-        "title": "TensorFleet: Disconnect from Foxglove Bridge",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.configureFoxgloveBridge",
-        "title": "TensorFleet: Configure Foxglove Bridge URL",
+        "title": "Show Drone Status",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.showVMManagerMenu",
-        "title": "TensorFleet: Show VM Actions",
+        "title": "Show VM Actions",
         "category": "TensorFleet"
       }
     ],
