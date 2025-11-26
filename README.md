@@ -1,3 +1,16 @@
+# TensorFleet Robotics & Drone Suite for VS Code
+
+![tensorfleet-preview](media/tensorfleet-preview.png)
+
+### Build, simulate, and operate PX4-powered drones and robots - all inside VS Code.
+TensorFleet brings a full robotics and drone- development environment directly into Visual Studio Code. Create new PX4-based drone and robotics projects in seconds, visualize simulations in 3D, inspect ROS topics with powerful diff tools, teleoperate robots, and deploy missions **without ever leaving the editor.**
+
+Whether you're building drone autonomy, ROS 2 pipelines, or perception demos, TensorFleet gives you a production-grade cockpit for robotics development.
+
+Support for PX4 is built in today, with ArduPilot support coming soon!
+
+---
+
 ### 📦 Getting Started
 # For Extension Development
 
