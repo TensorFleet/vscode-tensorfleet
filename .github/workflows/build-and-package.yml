@@ -69,6 +69,13 @@ jobs:
           echo "🔧 Compiling extension..."
           bun run compile
 
+      - name: Update package.json with full version
+        run: |
+          # Temporarily update package.json with full version for vsce
+          VERSION="${{ steps.get_version.outputs.version }}"
+          node -e "const pkg = require('./package.json'); pkg.version = '${VERSION}'; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
+          echo "📝 Updated package.json version to ${VERSION}"
+
       - name: Package extension (VS Code Marketplace)
         id: package_vscode
         run: |

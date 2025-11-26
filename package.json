@@ -2,7 +2,7 @@
   "name": "tensorfleet-drone",
   "displayName": "TensorFleet Drone Suite",
   "description": "Flexible drone operations workspace for TensorFleet with multi-view dashboards and tooling management.",
-  "version": "0.1.undefined",
+  "version": "0.1.0",
   "publisher": "tensorfleet",
   "repository": {
     "type": "git",
