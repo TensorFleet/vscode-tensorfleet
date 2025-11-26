@@ -3,7 +3,7 @@
   "displayName": "TensorFleet Robots and Drone Environment",
   "description": "Flexible drone operations workspace for TensorFleet with multi-view dashboards and tooling management.",
   "version": "0.1.0",
-  "publisher": "TensorFleet Inc.",
+  "publisher": "tensorfleet",
   "homepage": "https://tensorfleet.net/",
   "repository": {
     "type": "git",
