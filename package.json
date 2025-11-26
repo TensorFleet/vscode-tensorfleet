@@ -2,7 +2,7 @@
   "name": "tensorfleet-drone",
   "displayName": "TensorFleet Drone Suite",
   "description": "Flexible drone operations workspace for TensorFleet with multi-view dashboards and tooling management.",
-  "version": "0.0.1",
+  "version": "0.1.undefined",
   "publisher": "tensorfleet",
   "repository": {
     "type": "git",
@@ -354,7 +354,8 @@
     "watch": "bun run prepare:telemetry && bunx tsc -watch -p ./",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
-    "mcp": "node out/mcp-server.js"
+    "mcp": "node out/mcp-server.js",
+    "version:get": "bun scripts/get-version.ts"
   },
   "bin": {
     "tensorfleet-mcp": "./out/mcp-server.js"
