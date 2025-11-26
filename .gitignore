@@ -1,5 +1,4 @@
 out/
-bun.lockb
 package-lock.json
 node_modules/
 panels-standalone/dist/
