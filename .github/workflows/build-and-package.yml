@@ -63,16 +63,11 @@ jobs:
           echo "🔧 Compiling extension..."
           bun run compile
 
-      - name: Install VS Code Extension Manager (vsce)
-        run: |
-          echo "📦 Installing vsce..."
-          bunx --yes @vscode/vsce@latest
-
       - name: Package extension (VS Code Marketplace)
         id: package_vscode
         run: |
           echo "📦 Packaging VSIX for VS Code Marketplace..."
-          bunx vsce package --out dist/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix
+          bunx --yes @vscode/vsce package --out dist/tensorfleet-drone-${{ steps.get_version.outputs.version }}.vsix
           VSIX_FILE=$(ls dist/*.vsix | head -n 1)
           VSIX_NAME=$(basename "$VSIX_FILE")
           echo "vsix_file=$VSIX_FILE" >> $GITHUB_OUTPUT
@@ -85,7 +80,7 @@ jobs:
         run: |
           echo "📦 Packaging VSIX for OpenVSX/Windsurf..."
           # OpenVSX requires --no-dependencies flag to avoid marketplace-specific packaging
-          bunx vsce package --out dist/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix --no-dependencies
+          bunx --yes @vscode/vsce package --out dist/tensorfleet-drone-openvsx-${{ steps.get_version.outputs.version }}.vsix --no-dependencies
           VSIX_FILE=$(ls dist/tensorfleet-drone-openvsx-*.vsix | head -n 1)
           VSIX_NAME=$(basename "$VSIX_FILE")
           echo "vsix_file=$VSIX_FILE" >> $GITHUB_OUTPUT
