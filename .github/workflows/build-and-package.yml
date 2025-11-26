@@ -45,7 +45,7 @@ jobs:
         run: |
           # Install dependencies if needed
           bun install --frozen-lockfile 2>/dev/null || true
-          
+
           # Get version with auto-incremented patch (uses GITHUB_RUN_NUMBER)
           VERSION=$(bun scripts/get-version.ts)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -73,8 +73,13 @@ jobs:
         run: |
           # Temporarily update package.json with full version for vsce
           VERSION="${{ steps.get_version.outputs.version }}"
-          node -e "const pkg = require('./package.json'); pkg.version = '${VERSION}'; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
-          echo "📝 Updated package.json version to ${VERSION}"
+          echo "📝 Setting package.json version to: ${VERSION}"
+          if [ -z "$VERSION" ]; then
+            echo "❌ Error: VERSION is empty! Check get_version step output."
+            exit 1
+          fi
+          node -e "const pkg = require('./package.json'); console.log('Current version:', pkg.version); pkg.version = '${VERSION}'; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n'); console.log('Updated to:', pkg.version);"
+          echo "✅ Updated package.json version to ${VERSION}"
 
       - name: Package extension (VS Code Marketplace)
         id: package_vscode
@@ -253,4 +258,3 @@ jobs:
           VSIX_FILE=$(ls dist/tensorfleet-drone-openvsx-*.vsix | head -n 1)
           echo "📤 Publishing $VSIX_FILE to OpenVSX..."
           bunx --yes @vscode/ovsx@latest publish "$VSIX_FILE" --pat "$OVSX_PAT"
-

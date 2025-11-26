@@ -76,8 +76,9 @@ try {
   const baseVersion = getBaseVersion();
   const [major, minor, existingPatch] = parseVersion(baseVersion);
   
-  // If patch is already specified, use it
-  if (existingPatch !== undefined) {
+  // If patch is already specified AND it's not 0, use it (treat 0 as "auto-generate")
+  // This allows "0.1.0" to be treated the same as "0.1" - both will auto-generate patch
+  if (existingPatch !== undefined && existingPatch !== 0) {
     console.log(formatVersion([major, minor, existingPatch]));
     process.exit(0);
   }
