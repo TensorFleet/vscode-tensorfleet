@@ -3,7 +3,8 @@
   "displayName": "TensorFleet Drone Suite",
   "description": "Flexible drone operations workspace for TensorFleet with multi-view dashboards and tooling management.",
   "version": "0.1.0",
-  "publisher": "tensorfleet",
+  "publisher": "TensorFleet Inc.",
+  "homepage": "https://tensorfleet.net/",
   "repository": {
     "type": "git",
     "url": "https://github.com/TensorFleet/vscode-tensorfleet.git"
