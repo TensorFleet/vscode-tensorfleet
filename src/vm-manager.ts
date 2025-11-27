@@ -409,27 +409,10 @@ export class VMManagerIntegration implements vscode.Disposable {
     const items: VmQuickPickItem[] = [];
 
     if (connection === 'not_authenticated') {
-      // Primary action
-      items.push(
-        { 
-          label: '$(key) Login', 
-          action: () => vscode.commands.executeCommand('tensorfleet.login').then(() => this.refresh(false))
-        }
-      );
-      
-      // Separator
       items.push({
-        label: '',
-        kind: vscode.QuickPickItemKind.Separator
+        label: '$(key) Login',
+        action: () => vscode.commands.executeCommand('tensorfleet.login').then(() => this.refresh(false))
       });
-      
-      // Secondary actions (only actionable items)
-      items.push(
-        { 
-          label: '$(gear) Configure API', 
-          action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
-        }
-      );
       return items;
     } else if (connection === 'disconnected') {
       // Primary action
@@ -448,13 +431,10 @@ export class VMManagerIntegration implements vscode.Disposable {
       });
       
       // Secondary actions (only actionable items)
-      items.push(
-        { 
-          label: '$(gear) Configure API', 
-          action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
-        },
-        { label: '$(refresh) Refresh Status', action: () => this.refresh(false) }
-      );
+      items.push({
+        label: '$(refresh) Refresh Status',
+        action: () => this.refresh(false)
+      });
     } else {
       const primaryActions: VmQuickPickItem[] = [];
       
@@ -511,13 +491,10 @@ export class VMManagerIntegration implements vscode.Disposable {
       }
 
       // Add secondary actions (always shown)
-      items.push(
-        { 
-          label: '$(gear) Configure API', 
-          action: () => vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager')
-        },
-        { label: '$(refresh) Refresh Status', action: () => this.refresh(false) }
-      );
+      items.push({
+        label: '$(refresh) Refresh Status',
+        action: () => this.refresh(false)
+      });
     }
     
     return items;
@@ -595,11 +572,9 @@ export class VMManagerIntegration implements vscode.Disposable {
 
     if (isConnectionIssue) {
       void vscode.window
-        .showErrorMessage(`Cannot reach VM Manager: ${message}`, 'Configure', 'Logs')
+        .showErrorMessage(`Cannot reach VM Manager: ${message}`, 'Logs')
         .then((choice) => {
-          if (choice === 'Configure') {
-            void vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager');
-          } else if (choice === 'Logs') {
+          if (choice === 'Logs') {
             this.outputChannel.show();
           }
         });
@@ -695,7 +670,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         if (error && typeof error === 'object' && 'code' in error) {
           const code = String((error as NodeJS.ErrnoException).code);
           if (code === 'ECONNREFUSED') {
-            reject(new Error(`VM Manager API not responding at ${url.origin}`));
+            reject(new Error(`VM Manager API not responding`));
             return;
           }
           if (code === 'ETIMEDOUT') {
@@ -753,8 +728,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private getApiBaseUrl(): string {
-    const config = vscode.workspace.getConfiguration('tensorfleet');
-    return config.get<string>('vmManager.apiBaseUrl', 'http://localhost:8080').trim() || 'http://localhost:8080';
+    return 'http://localhost:8080';
   }
 
   private async getAuthToken(): Promise<string | undefined> {

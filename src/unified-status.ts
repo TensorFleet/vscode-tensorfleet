@@ -257,11 +257,11 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     } else if (connection === 'not_authenticated') {
       lines.push('');
       lines.push('VM Manager rejected the current token.');
-      lines.push('Click to review VM Manager settings or login again.');
+      lines.push('Click to retry VM status or logout.');
       if (error) lines.push(`Error: ${error}`);
     } else if (connection === 'disconnected') {
       lines.push('');
-      lines.push('$(vm-connect) Cannot reach VM Manager API.');
+      lines.push('Cannot reach VM Manager API.');
       lines.push(`Last known state: ${vmState}`);
       if (ipAddress) lines.push(`Last known IP: ${ipAddress}`);
       if (error) lines.push(`Error: ${error}`);
@@ -270,7 +270,7 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
       lines.push('Connected to VM Manager API.');
       lines.push(`VM State: ${vmState}`);
       if (vmState === 'pending') {
-        lines.push('$(vm-pending) VM exists but has not started yet.');
+        lines.push('VM exists but has not started yet.');
       }
     }
 

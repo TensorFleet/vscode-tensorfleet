@@ -289,17 +289,6 @@
           "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
           "pattern": "^(ws|wss)://.*$"
         },
-        "tensorfleet.vmManager.apiBaseUrl": {
-          "type": "string",
-          "default": "http://localhost:8080",
-          "description": "Base URL for the vm-manager HTTP API used by the VM status bar."
-        },
-        "tensorfleet.backendUrl": {
-          "type": "string",
-          "default": "https://app.tensorfleet.net",
-          "description": "Backend URL for TensorFleet authentication and API services. Use http://localhost:3000 for local development.",
-          "pattern": "^https?://.*$"
-        },
         "tensorfleet.auth.usePolling": {
           "type": "boolean",
           "default": false,

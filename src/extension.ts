@@ -1466,9 +1466,6 @@ function buildMenuForState(
       label: '$(refresh) Refresh Status'
     },
     {
-      label: '$(gear) Settings'
-    },
-    {
       label: '$(sign-out) Logout'
     }
   );
@@ -1524,19 +1521,6 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       kind: vscode.QuickPickItemKind.Default
     });
     
-    // Separator
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
-    
-    // Secondary actions (only actionable items)
-    items.push({
-      label: '$(gear) Configure API URL',
-      detail: 'Set VM Manager endpoint',
-      kind: vscode.QuickPickItemKind.Default
-    });
-
     const selection = await vscode.window.showQuickPick(items, {
       placeHolder: 'Not Logged In',
       ignoreFocusOut: true
@@ -1544,8 +1528,6 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
     if (selection?.label.includes('Login')) {
       await handleLogin(context);
-    } else if (selection?.label.includes('Configure')) {
-      await vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager');
     }
     return;
   }
@@ -1571,11 +1553,6 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     }
 
     items.push({
-      label: '$(gear) Configure API URL',
-      detail: 'Set or adjust VM Manager endpoint'
-    });
-
-    items.push({
       label: '$(sign-out) Logout',
       detail: 'Logout from TensorFleet'
     });
@@ -1587,8 +1564,6 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
     if (selection?.label.includes('Retry') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
-    } else if (selection?.label.includes('Configure')) {
-      await vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager');
     } else if (selection?.label.includes('Logout')) {
       await handleLogout(context);
     }
@@ -1610,16 +1585,10 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     });
 
     // Secondary actions (always available while authenticated)
-    items.push(
-      {
-        label: '$(gear) Settings',
-        detail: 'Configure API endpoint'
-      },
-      {
-        label: '$(sign-out) Logout',
-        detail: 'Logout from TensorFleet'
-      }
-    );
+    items.push({
+      label: '$(sign-out) Logout',
+      detail: 'Logout from TensorFleet'
+    });
 
     const selection = await vscode.window.showQuickPick(items, {
       placeHolder: 'API Disconnected',
@@ -1628,8 +1597,6 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
     if (selection?.label.includes('Retry') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
-    } else if (selection?.label.includes('Settings')) {
-      await vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager');
     } else if (selection?.label.includes('Logout')) {
       await handleLogout(context);
     }
@@ -1702,8 +1669,6 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       terminal.show();
     } else if (selection.label.includes('Refresh Status') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
-    } else if (selection.label.includes('Settings')) {
-      await vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet');
     } else if (selection.label.includes('Logout')) {
       await handleLogout(context);
     }
