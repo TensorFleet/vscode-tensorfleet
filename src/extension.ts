@@ -1487,8 +1487,36 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   const state = unifiedStatusCoordinator.getState();
   const items: vscode.QuickPickItem[] = [];
 
-  // Not authenticated state
-  if (state.auth === 'not_authenticated' || state.connection === 'not_authenticated') {
+  // Auth check in progress
+  if (state.auth === 'checking') {
+    items.push({
+      label: '$(sync~spin) Checking authentication...',
+      detail: 'Verifying your TensorFleet login',
+      kind: vscode.QuickPickItemKind.Default
+    });
+
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+
+    items.push({
+      label: '$(sign-out) Cancel and Logout'
+    });
+
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Checking authentication…',
+      ignoreFocusOut: true
+    });
+
+    if (selection?.label.includes('Logout')) {
+      await handleLogout(context);
+    }
+    return;
+  }
+
+  // User not authenticated at all
+  if (state.auth === 'not_authenticated') {
     // Primary action
     items.push({
       label: '$(key) Login',
@@ -1518,6 +1546,51 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       await handleLogin(context);
     } else if (selection?.label.includes('Configure')) {
       await vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager');
+    }
+    return;
+  }
+
+  // VM Manager auth error (user is logged in but VM Manager rejected token)
+  if (state.connection === 'not_authenticated') {
+    items.push({
+      label: '$(warning) VM Manager auth error',
+      detail: state.error || 'Current token was rejected by VM Manager',
+      kind: vscode.QuickPickItemKind.Default
+    });
+
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+
+    if (vmManagerIntegration) {
+      items.push({
+        label: '$(refresh) Retry VM Status',
+        detail: 'Retry with current authentication'
+      });
+    }
+
+    items.push({
+      label: '$(gear) Configure API URL',
+      detail: 'Set or adjust VM Manager endpoint'
+    });
+
+    items.push({
+      label: '$(sign-out) Logout',
+      detail: 'Logout from TensorFleet'
+    });
+
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: 'VM Manager auth error',
+      ignoreFocusOut: true
+    });
+
+    if (selection?.label.includes('Retry') && vmManagerIntegration) {
+      vmManagerIntegration.refreshStatus(false);
+    } else if (selection?.label.includes('Configure')) {
+      await vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager');
+    } else if (selection?.label.includes('Logout')) {
+      await handleLogout(context);
     }
     return;
   }

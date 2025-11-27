@@ -145,24 +145,31 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     if (auth === 'checking') {
       console.log('[UnifiedStatus] Branch: Checking auth');
       icon = '$(sync~spin)';
-      text = 'TensorFleet · Checking...';
+      text = 'TensorFleet · Checking login...';
       backgroundColor = undefined;
     }
-    // Priority 2: User not logged in (either layer reports not authenticated)
-    else if (auth === 'not_authenticated' || connection === 'not_authenticated') {
-      console.log('[UnifiedStatus] Branch: Not authenticated (user or VM Manager)');
+    // Priority 2: User not logged in
+    else if (auth === 'not_authenticated') {
+      console.log('[UnifiedStatus] Branch: User not authenticated');
       icon = '$(sign-in)';
-      text = 'TensorFleet · Not Logged In';
+      text = 'TensorFleet · Login required';
       backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     }
-    // Priority 3: API disconnected (after successful auth)
+    // Priority 3: VM Manager auth problem (user is logged in but VM Manager rejected token)
+    else if (connection === 'not_authenticated') {
+      console.log('[UnifiedStatus] Branch: VM Manager auth error');
+      icon = '$(key)';
+      text = 'TensorFleet · VM auth error';
+      backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    }
+    // Priority 4: API disconnected (after successful auth)
     else if (connection === 'disconnected') {
       console.log('[UnifiedStatus] Branch: Disconnected');
       icon = '$(vm-connect)';
-      text = 'TensorFleet · Disconnected';
+      text = 'TensorFleet · VM disconnected';
       backgroundColor = undefined;
     }
-    // Priority 4: VM states (when authenticated and connected)
+    // Priority 5: VM states (when authenticated and connected)
     else {
       switch (vmState) {
         case 'starting':
@@ -213,22 +220,57 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
    * Build tooltip text
    */
   private buildTooltip(): string {
-    const { auth, connection, vmState, ipAddress, provider, region, uptimeSeconds, error, timestamp } = this.currentState;
+    const { auth, connection, vmState, ipAddress, provider, region, uptimeSeconds, error, timestamp } =
+      this.currentState;
     const lines: string[] = [];
 
-    if (auth === 'not_authenticated' || connection === 'not_authenticated') {
-      lines.push('Not authenticated');
-      lines.push('Click to login to TensorFleet');
+    // Always show high-level auth and connection summary first
+    const authLabel =
+      auth === 'authenticated'
+        ? 'Logged in'
+        : auth === 'checking'
+        ? 'Checking...'
+        : 'Not logged in';
+    lines.push(`Auth: ${authLabel}`);
+
+    let connectionLabel: string;
+    switch (connection) {
+      case 'connected':
+        connectionLabel = 'Connected';
+        break;
+      case 'disconnected':
+        connectionLabel = 'Disconnected';
+        break;
+      case 'not_authenticated':
+      default:
+        connectionLabel = 'Auth error';
+        break;
+    }
+    lines.push(`VM API: ${connectionLabel}`);
+
+    // Detailed guidance based on state combination
+    if (auth === 'not_authenticated') {
+      lines.push('');
+      lines.push('You are not logged in to TensorFleet.');
+      lines.push('Click to login and unlock VM controls.');
+      if (error) lines.push(`Error: ${error}`);
+    } else if (connection === 'not_authenticated') {
+      lines.push('');
+      lines.push('VM Manager rejected the current token.');
+      lines.push('Click to review VM Manager settings or login again.');
       if (error) lines.push(`Error: ${error}`);
     } else if (connection === 'disconnected') {
-      lines.push('$(vm-connect) Cannot reach VM Manager API');
+      lines.push('');
+      lines.push('$(vm-connect) Cannot reach VM Manager API.');
       lines.push(`Last known state: ${vmState}`);
       if (ipAddress) lines.push(`Last known IP: ${ipAddress}`);
+      if (error) lines.push(`Error: ${error}`);
     } else {
-      lines.push('Connected to VM Manager API');
+      lines.push('');
+      lines.push('Connected to VM Manager API.');
       lines.push(`VM State: ${vmState}`);
       if (vmState === 'pending') {
-        lines.push('$(vm-pending) VM exists but has not started yet');
+        lines.push('$(vm-pending) VM exists but has not started yet.');
       }
     }
 
@@ -239,10 +281,6 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     const uptime = this.formatUptime(uptimeSeconds);
     if (uptime) lines.push(`Uptime: ${uptime}`);
     
-    // Only show error if not already shown in not_authenticated section
-    if (error && auth !== 'not_authenticated' && connection !== 'not_authenticated') {
-      lines.push(`Error: ${error}`);
-    }
     lines.push(`Updated: ${new Date(timestamp).toLocaleTimeString()}`);
 
     return lines.join('\n');
