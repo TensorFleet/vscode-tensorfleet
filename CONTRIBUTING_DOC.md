@@ -1,0 +1,177 @@
+# 📦 Getting Started
+### For Extension Development
+
+1. Install dependencies with Bun:
+
+   ```bash
+   bun install
+   ```
+
+2. Compile the extension:
+
+   ```bash
+   bun run compile
+   ```
+
+   or just continually build the code
+
+   ```bash
+      bun watch
+   ```
+
+3. Launch a VS Code Extension Development Host:
+
+   ```bash
+   code --extensionDevelopmentPath="$(pwd)"
+   ```
+
+4. In the development host, open the **TensorFleet** activity bar item to access
+   the dashboards, or search for `TensorFleet` commands in the command palette
+   (`Cmd/Ctrl + Shift + P`).
+
+   - Use `TensorFleet: Open QGroundControl Workspace`, `TensorFleet: Open Gazebo
+Workspace`, or `TensorFleet: Open AI Ops Workspace` to open each dashboard
+     as a full-sized webview panel in the main editor area.
+   - Run `TensorFleet: Open All Dashboards in Main Area` (or press the **Open
+     All Dashboards** button in any TensorFleet view) to arrange all four
+     dashboards—including the ROS 2 & Stable Baselines lab—in a quad layout.
+
+### For Drone Development (Using the Extension)
+
+1. **Create a New Project**:
+
+   - Open the TensorFleet Tools panel (bottom panel)
+   - Click the **🚀 New Project** button
+   - Enter a project name and select a location
+   - Get a complete project with templates, examples, and configuration!
+
+   📚 **[Project Scaffolding Guide →](./PROJECT_SCAFFOLDING.md)** - Learn about project templates
+
+2. **Configure Your Environment**: Edit `config/drone_config.yaml` in your new project
+
+3. **Launch Tools**: Use TensorFleet panels to start Gazebo, ROS 2, and AI operations
+
+4. **Start Coding**: Modify `src/main.py` to implement your drone control logic
+
+## Bundled Tool Installer
+
+The command `TensorFleet: Install Bundled Tools` prompts for a destination
+folder and copies all files from `resources/tools` into a `tensorfleet-tools`
+directory at the chosen location. Replace the placeholder files in
+`resources/tools/` with your actual ROS 2 archives and supporting binaries
+before packaging the extension.
+
+## VM Manager Integration
+
+TensorFleet now surfaces VM health through a lightweight status bar item—no extra panels to open or processes to manage.
+
+1. **Configure the endpoint**  
+   - `tensorfleet.vmManager.apiBaseUrl`: default HTTP endpoint (defaults to `http://localhost:8080`).  
+   - `tensorfleet.vmManager.authToken`: optional bearer token sent to `/vms/self/*` APIs when your server enforces JWT auth.
+
+2. **Watch the status bar**  
+   The indicator auto-polls every 30 seconds and rotates through intuitive states:  
+   - `🟡 VM Starting…`  
+   - `🟢 VM Ready (ip)`  
+   - `⚫ VM Stopped`  
+   - `🔴 VM Failed`  
+   - `$(debug-disconnect) VM Unreachable`
+
+3. **Click for quick actions**  
+   `TensorFleet: Show VM Actions` (or simply click the status bar item) opens a Quick Pick menu tuned to the current state:
+   - Running → Connect via Remote SSH, Restart VM, Stop VM, Copy SSH command, Details, Support.
+   - Stopped → Start VM, Details, Support.
+   - Starting/Stopping → Busy indicator plus Details/Support.
+   - Failed → Retry Start, Details, Support.
+   - Disconnected → Retry Status, Support.
+
+4. **Smart notifications**  
+   When the backend reports major state changes (running, stopped, failed) you get a subtle toast so you know exactly when it’s safe to connect again.
+
+Graceful degradation is built in—if the API can’t be reached you’ll see a “VM Unreachable” badge plus a Retry option in the quick menu. No local Go binary or sudo terminals required anymore.
+
+## Packaging
+
+To produce a `.vsix` package (requires `vsce`):
+
+```bash
+bunx vsce package
+```
+
+The resulting package can be installed in VS Code via the Extensions view
+("Install from VSIX...").
+
+## MCP Server Integration
+
+TensorFleet includes a **Model Context Protocol (MCP) server** that exposes drone operations, ROS2, Gazebo simulation, and AI ops tools to AI assistants.
+
+> **✨ NEW:** MCP tools automatically open VS Code panels! Ask Cursor "Start a Gazebo simulation" and watch the panel open automatically.
+
+📚 **[Quick Start Guide →](./QUICK_START.md)** - Get set up in 5 minutes!
+
+### Quick Setup
+
+1. **Compile the extension** (if not already done):
+
+   ```bash
+   bun run compile
+   ```
+
+2. **Get MCP configuration** - Run command:
+
+   ```
+   TensorFleet: Show MCP Configuration
+   ```
+
+   This displays the JSON config to add to Cursor or Claude Desktop.
+
+3. **Configure your AI assistant**:
+
+   - **Cursor**: Add config to `~/.cursor/mcp.json`
+   - **Claude Desktop**: Add config to `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+4. **Restart** Cursor or Claude Desktop to load the TensorFleet MCP server.
+
+### Available MCP Tools
+
+The MCP server provides these tools to AI assistants:
+
+- `get_drone_status` - Get drone battery, GPS, mode, and readiness
+- `launch_ros2_environment` - Launch ROS2 packages for drone operations
+- `start_gazebo_simulation` - Start Gazebo with world and model
+- `run_ai_inference` - Run AI models on drone video feeds
+- `configure_qgc_mission` - Configure QGroundControl missions
+- `install_tensorfleet_tools` - Install bundled tools
+- `get_telemetry_data` - Get real-time telemetry data
+
+### MCP Resources
+
+Contextual resources available to AI assistants:
+
+- `tensorfleet://drone/config` - Drone configuration
+- `tensorfleet://ros2/topics` - Active ROS2 topics
+- `tensorfleet://gazebo/models` - Available models and worlds
+- `tensorfleet://ai/models` - Available AI models
+- `tensorfleet://qgc/missions` - Saved missions
+
+### VS Code Integration
+
+When the TensorFleet extension is running in VS Code, MCP tools will **automatically open the corresponding panels**!
+
+For example, when an AI assistant calls `start_gazebo_simulation`, the Gazebo panel opens in VS Code automatically. This creates a seamless experience where your AI assistant controls your workspace.
+
+### Full Documentation
+
+- [QUICK_START.md](./QUICK_START.md) - Get started with TensorFleet in 5 minutes
+- [PROJECT_SCAFFOLDING.md](./PROJECT_SCAFFOLDING.md) - Create new drone projects with templates
+- [STATUS_BAR_FEATURE.md](./STATUS_BAR_FEATURE.md) - ROS version and drone status in the status bar
+- [MCP_SETUP.md](./MCP_SETUP.md) - Basic MCP setup for Cursor and Claude
+- [VSCODE_MCP_INTEGRATION.md](./VSCODE_MCP_INTEGRATION.md) - How MCP tools open VS Code panels automatically
+
+---
+
+## 🌐 Learn More
+
+Documentation, examples, and guides are available at
+https://tensorfleet.net
+
