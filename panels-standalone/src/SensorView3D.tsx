@@ -1,4 +1,6 @@
 import "./global.css";
+import React from 'react';
+import ReactDOM from 'react-dom/client';
 
 // ---- Browser polyfills for Node/Lichtblick globals ----
 const g = globalThis as any;
@@ -9,26 +11,18 @@ if (g.__dirname === undefined) g.__dirname = "/";
 if (g.ReactNull === undefined) g.ReactNull = null;
 // -------------------------------------------------------
 
-// Defer imports until after polyfills exist
-(async () => {
-  const React = await import("react");
-  const ReactDOM = await import("react-dom/client");
+import { Sensor3DViewPanel } from "./components/SensorView3D/SensorView3DPanel";
 
-  // ✅ IMPORTANT: expose React globally for Lichtblick internals
-  (globalThis as any).React = React;
 
-  const { Sensor3DViewPanel } = await import("./components/SensorView3D/SensorView3DPanel");
-
-  const rootEl = document.getElementById("root");
-  if (!rootEl) {
-    throw new Error("#root element not found");
-  }
-
-  const root = ReactDOM.createRoot(rootEl);
-
-  root.render(
-    <React.StrictMode>
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    {/* <div
+        style={{
+          width: "100vw",
+          height: "100vh",
+          backgroundColor: "blue",
+        }}
+      /> */}
       <Sensor3DViewPanel />
-    </React.StrictMode>
-  );
-})();
+  </React.StrictMode>
+);

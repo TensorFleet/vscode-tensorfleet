@@ -91,6 +91,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     htmlTemplate: 'map-standalone'
   },
   {
+    id: "tensorfleet-sensor-3d-panel",
+    title: "3D sensor view",
+    description: "3D view of the collected data from drone sensors",
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openSensor3DPanel',
+    actionLabel: 'Open 3D Sensor view',
+    panelKind: 'standard',
+    htmlTemplate: 'sensor-3d-standalone'
+  },
+  {
     id: "tensorfleet-raw-messages-panel",
     title: 'Raw Messages',
     description: 'Display raw ROS2 messages in real-time - monitor and debug message traffic.',
@@ -356,6 +366,11 @@ async function openDedicatedPanel(
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
     }
 
+    if (view.htmlTemplate == 'sensor-3d-standalone') {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    }
+
     if (view.htmlTemplate == 'raw-messages-standalone') {
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
       localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
@@ -440,6 +455,10 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
     return getStandalonePanelHtml('mission_control', webview, context, cspSource);
   }
 
+  if (view.htmlTemplate === 'sensor-3d-standalone') {
+    return getStandalonePanelHtml('sensor_view_3d', webview, context, cspSource);
+  }
+
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
@@ -481,7 +500,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 }
 
 function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string

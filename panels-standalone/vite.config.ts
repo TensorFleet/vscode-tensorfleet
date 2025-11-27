@@ -1,73 +1,89 @@
-// vite.config.ts
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import { resolve } from 'path'
-import url from '@rollup/plugin-url'
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { resolve } from "path";
+import url from "@rollup/plugin-url";
 
-const rootDir = __dirname
-const packagesDir = resolve(rootDir, './packages')
-const typesDir = resolve(rootDir, './packages/@types')
+const rootDir = __dirname;
+const packagesDir = resolve(rootDir, "./packages");
+const typesDir = resolve(rootDir, "./packages/@types");
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "inject-react-import",
+      enforce: "pre",
+      transform(code, id) {
+        if (!id.endsWith(".tsx") && !id.endsWith(".jsx")) return null;
+        if (id.includes("node_modules")) return null;
+        if (!code.includes("React.")) return null;
+
+        if (
+          /\bimport\s+React\s+from\s+["']react["']/.test(code) ||
+          /\bimport\s+\*\s+as\s+React\s+from\s+["']react["']/.test(code) ||
+          /\b(var|let|const)\s+React\b/.test(code) ||
+          /\bfunction\s+React\b/.test(code) ||
+          /\bclass\s+React\b/.test(code) ||
+          /\bReact\s*=/.test(code)
+        ) {
+          return null;
+        }
+
+        return {
+          code: `import * as React from "react";\n${code}`,
+          map: null,
+        };
+      },
+    },
+  ],
 
   worker: {
     plugins: () => [],
-    format: "es"
+    format: "es",
   },
 
   define: {
-    // Make bare `global` in dependencies resolve to `globalThis`
     global: "globalThis",
     __filename: JSON.stringify("browser"),
     __dirname: JSON.stringify("/"),
+    ReactNull: "null",
   },
 
-  // stop Vite from trying to resolve tsconfig "extends" in workspace packages
   esbuild: {
-    tsconfigRaw: '{}',
+    tsconfigRaw: "{}",
   },
 
   build: {
-    outDir: 'dist',
+    outDir: "dist",
     emptyOutDir: true,
-    target: 'esnext',
+    target: "esnext",
     rollupOptions: {
       input: {
-        main: resolve(rootDir, 'index.html'),
-        image: resolve(rootDir, 'image.html'),
-        teleops: resolve(rootDir, 'teleops.html'),
-        map: resolve(rootDir, 'mission_control.html'),
-        raw_messages: resolve(rootDir, 'raw_messages.html'),
+        main: resolve(rootDir, "index.html"),
+        image: resolve(rootDir, "image.html"),
+        teleops: resolve(rootDir, "teleops.html"),
+        map: resolve(rootDir, "mission_control.html"),
+        raw_messages: resolve(rootDir, "raw_messages.html"),
+        sensor_3d: resolve(rootDir, "sensor_view_3d.html"),
       },
-      plugins: [
-        url({
-          include: ['**/*.wasm'],
-          limit: 0,
-          fileName: 'assets/[name]-[hash][extname]',
-        }),
-      ],
+      output: {
+        assetFileNames: "assets/[name]-[hash][extname]",
+      },
     },
   },
 
   resolve: {
     alias: [
-      { find: '@', replacement: resolve(rootDir, './src') },
-
-      // @lichtblick/* packages that live in packages/<name>/src/*
+      { find: "@", replacement: resolve(rootDir, "./src") },
       {
         find:
           /^@lichtblick\/(suite-base|log|suite|hooks|mcap-support|theme|message-path|typescript-transformers|comlink-transfer-handlers)(\/.*)?$/,
         replacement: `${packagesDir}/$1/src$2`,
       },
-
-      // @lichtblick/den/* lives directly under packages/den/*
       {
         find: /^@lichtblick\/den(\/.*)?$/,
         replacement: `${packagesDir}/den$1`,
       },
-
-      // Local @types/* packages under packages/@types/*
       {
         find: /^@types\/([^/]+)/,
         replacement: `${typesDir}/$1`,
@@ -77,14 +93,14 @@ export default defineConfig({
 
   optimizeDeps: {
     exclude: [
-      '@lichtblick/wasm-bz2',
-      '@lichtblick/wasm-zstd',
-      '@lichtblick/wasm-lz4',
-      '@foxglove/wasm-bz2',
-      '@foxglove/wasm-zstd',
-      '@foxglove/wasm-lz4',
+      "@lichtblick/wasm-bz2",
+      "@lichtblick/wasm-zstd",
+      "@lichtblick/wasm-lz4",
+      "@foxglove/wasm-bz2",
+      "@foxglove/wasm-zstd",
+      "@foxglove/wasm-lz4",
     ],
   },
 
-  assetsInclude: ['**/*.wasm'],
-})
+  assetsInclude: ["**/*.wasm"],
+});
