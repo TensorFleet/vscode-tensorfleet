@@ -231,13 +231,69 @@ function createCallbackServer(
             console.log('[Auth] Authentication callback successful, resolving token');
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(`
-                <html>
-                    <body style="font-family: Arial; text-align: center; padding: 50px;">
-                        <h1>✅ Authentication Successful!</h1>
-                        <p>You can close this window and return to VSCode.</p>
-                        <script>setTimeout(() => window.close(), 2000);</script>
-                    </body>
-                </html>
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>TensorFleet Authentication</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      }
+      .container {
+        background: white;
+        padding: 2rem;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        text-align: center;
+        max-width: 420px;
+        width: 100%;
+      }
+      .success-icon {
+        width: 64px;
+        height: 64px;
+        background: #10b981;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 1rem;
+      }
+      h1 {
+        color: #1f2937;
+        margin: 0 0 0.5rem;
+      }
+      p {
+        color: #6b7280;
+        margin: 0.25rem 0;
+      }
+      .hint {
+        margin-top: 1rem;
+        font-size: 0.9rem;
+        color: #4b5563;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="success-icon">
+        <svg width="32" height="32" fill="white" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+        </svg>
+      </div>
+      <h1>Authentication Successful</h1>
+      <p>You're now signed in to TensorFleet.</p>
+      <p class="hint">You can close this window and return to VS Code.</p>
+    </div>
+  </body>
+</html>
             `);
 
             server.close();
