@@ -1608,12 +1608,16 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       label: '',
       kind: vscode.QuickPickItemKind.Separator
     });
-    
-    // Secondary actions (only actionable items)
+
+    // Secondary actions (always available while authenticated)
     items.push(
       {
         label: '$(gear) Settings',
         detail: 'Configure API endpoint'
+      },
+      {
+        label: '$(sign-out) Logout',
+        detail: 'Logout from TensorFleet'
       }
     );
 
@@ -1626,6 +1630,8 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       vmManagerIntegration.refreshStatus(false);
     } else if (selection?.label.includes('Settings')) {
       await vscode.commands.executeCommand('workbench.action.openSettings', 'tensorfleet.vmManager');
+    } else if (selection?.label.includes('Logout')) {
+      await handleLogout(context);
     }
     return;
   }
