@@ -71,7 +71,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   private static readonly NORMAL_POLL_MS = 30_000;
   private static readonly FAST_POLL_MS = 5_000;
 
-  constructor(context: vscode.ExtensionContext, unifiedCoordinator?: UnifiedStatusCoordinator | null) {
+  constructor(context: vscode.ExtensionContext, unifiedCoordinator?: UnifiedStatusCoordinator | null, private readonly telemetry?: TelemetryService | null) {
     this.context = context;
     this.unifiedCoordinator = unifiedCoordinator || null;
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
@@ -97,6 +97,14 @@ export class VMManagerIntegration implements vscode.Disposable {
     );
   }
 
+  private trackVmEvent(eventName: string, properties?: Record<string, string>) {
+    this.telemetry?.trackEvent(eventName, properties);
+  }
+
+  private captureVmError(error: unknown, properties?: Record<string, string>) {
+    this.telemetry?.captureError(error, properties);
+  }
+
   initialize() {
     void this.refresh(true);
     this.startPolling();
@@ -118,6 +126,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     } catch (error) {
       const message = this.formatError(error);
       this.outputChannel.appendLine(`[VM Manager] Action failed: ${message}`);
+      this.captureVmError(error, { source: 'vm.action' });
       void vscode.window.showErrorMessage(`Action failed: ${message}`);
     }
   }
@@ -176,6 +185,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         );
         return;
       }
+      this.captureVmError(error, { source: 'vm.refresh' });
       
       // Mark as disconnected but preserve last known VM state
       this.applySnapshot(
@@ -227,7 +237,8 @@ export class VMManagerIntegration implements vscode.Disposable {
           sawVmMissing = true;
         } else {
           this.outputChannel.appendLine(`[VM Manager] Status fetch failed: ${this.formatError(statusError)}`);
-        }
+          this.captureVmError(statusError, { source: 'vm.status_fetch' });
+      }
       }
 
       let info: VmInfoResponse | undefined;
@@ -245,7 +256,8 @@ export class VMManagerIntegration implements vscode.Disposable {
           sawVmMissing = true;
         } else {
           this.outputChannel.appendLine(`[VM Manager] Info fetch failed: ${this.formatError(infoError)}`);
-        }
+          this.captureVmError(infoError, { source: 'vm.info_fetch' });
+      }
       }
 
       const resolvedState = vmState === 'unknown' && sawVmMissing ? 'pending' : vmState;
@@ -273,7 +285,12 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private async ensureApiHealthy(): Promise<ApiHealthResponse> {
-    return this.apiRequest<ApiHealthResponse>('GET', '/vms/health', undefined, { includeAuth: false });
+    try {
+      return await this.apiRequest<ApiHealthResponse>('GET', '/vms/health', undefined, { includeAuth: false });
+    } catch (error) {
+      this.captureVmError(error, { source: 'vm.health_check' });
+      throw error;
+    }
   }
 
   private applySnapshot(snapshot: VmSnapshot) {
@@ -524,13 +541,17 @@ export class VMManagerIntegration implements vscode.Disposable {
   async startVm() {
     try {
       this.userInitiatedAction = 'start';
+      this.trackVmEvent('vm.start', { phase: 'start' });
       this.setOptimisticState('starting');
       await this.apiRequest<{ status: string }>('POST', '/vms/self/start');
       await this.refresh(true);
       this.outputChannel.appendLine('[VM Manager] VM start initiated');
+      this.trackVmEvent('vm.start', { phase: 'success' });
     } catch (error) {
       this.userInitiatedAction = null;
       await this.refresh(true);
+      this.captureVmError(error, { source: 'vm.start' });
+      this.trackVmEvent('vm.start', { phase: 'error' });
       this.handleCommandError('start', error);
     }
   }
@@ -541,13 +562,17 @@ export class VMManagerIntegration implements vscode.Disposable {
   async stopVm() {
     try {
       this.userInitiatedAction = 'stop';
+      this.trackVmEvent('vm.stop', { phase: 'start' });
       this.setOptimisticState('stopping');
       await this.apiRequest<{ status: string }>('POST', '/vms/self/stop');
       await this.refresh(true);
       this.outputChannel.appendLine('[VM Manager] VM stop initiated');
+      this.trackVmEvent('vm.stop', { phase: 'success' });
     } catch (error) {
       this.userInitiatedAction = null;
       await this.refresh(true);
+      this.captureVmError(error, { source: 'vm.stop' });
+      this.trackVmEvent('vm.stop', { phase: 'error' });
       this.handleCommandError('stop', error);
     }
   }
