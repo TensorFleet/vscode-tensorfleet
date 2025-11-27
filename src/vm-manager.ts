@@ -3,6 +3,7 @@ import * as http from 'http';
 import * as https from 'https';
 import * as auth from './auth';
 import { UnifiedStatusCoordinator } from './unified-status';
+import type { TelemetryService } from './telemetry';
 
 // Core state types (imported from unified-status, keeping local types for backward compatibility)
 // Note: These types are now imported from unified-status.ts, but keeping local definitions
