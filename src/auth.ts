@@ -109,7 +109,7 @@ function createCallbackServer(
     reject: (error: Error) => void
 ): http.Server {
     const server = http.createServer((req, res) => {
-        const url = new URL(req.url || '/', `http://localhost:${CALLBACK_PORT}`);
+        const url = new URL(req.url || '/', `http://localhost:${CALLBACK_PORT}`); //TODO: implement dynamic port finder in the future
 
         if (url.pathname === '/callback') {
             const token = url.searchParams.get('token');
@@ -151,7 +151,7 @@ function createCallbackServer(
                 reject(new Error('Invalid callback'));
                 return;
             }
-
+            //TODO: move this HTML to a separate file for better maintainability
             // Success!
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(`
