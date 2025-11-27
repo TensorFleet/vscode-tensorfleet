@@ -20,11 +20,6 @@ interface InitiateAuthResponse {
     authUrl: string;
 }
 
-interface PollAuthResponse {
-    authenticated: boolean;
-    token?: string;
-}
-
 interface VerifyTokenResponse {
     valid: boolean;
 }
@@ -75,38 +70,6 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
         return token;
     } catch (error) {
         console.error('[Auth] authenticate() error:', error);
-        vscode.window.showErrorMessage(`Authentication failed: ${error instanceof Error ? error.message : String(error)}`);
-        throw error;
-    }
-}
-
-/**
- * Alternative: Poll-based authentication
- * Use this if callback server has issues
- */
-export async function authenticateWithPolling(context: vscode.ExtensionContext): Promise<string> {
-    try {
-        // Step 1: Initiate OAuth flow
-        const { state, authUrl } = await initiateAuth();
-        
-        vscode.window.showInformationMessage(
-            'Opening browser for authentication...'
-        );
-
-        // Step 2: Open browser
-        vscode.env.openExternal(vscode.Uri.parse(authUrl));
-
-        // Step 3: Poll for authentication status
-        const token = await pollAuthStatus(state);
-
-        // Step 4: Store token
-        await storeToken(context, token);
-
-        vscode.window.showInformationMessage('Successfully authenticated!');
-
-        return token;
-    } catch (error) {
-        console.error('[Auth] authenticateWithPolling() error:', error);
         vscode.window.showErrorMessage(`Authentication failed: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
     }
@@ -269,46 +232,6 @@ function createCallbackServer(
 
     return server;
 }
-
-/**
- * Poll backend for authentication status
- * Alternative to callback server approach
- */
-async function pollAuthStatus(
-    state: string,
-    maxAttempts: number = 60,
-    interval: number = 2000
-): Promise<string> {
-    const BACKEND_URL = getBackendUrl();
-    
-    for (let i = 0; i < maxAttempts; i++) {
-        try {
-            const response = await fetch(
-                `${BACKEND_URL}/api/auth/vscode/poll/${state}`
-            );
-
-            if (!response.ok) {
-                console.error('[Auth] pollAuthStatus() non-OK status:', response.status);
-                throw new Error('Failed to poll authentication status');
-            }
-
-            const data = await response.json() as PollAuthResponse;
-
-            if (data.authenticated && data.token) {
-                return data.token;
-            }
-
-            // Wait before next poll
-            await new Promise(resolve => setTimeout(resolve, interval));
-        } catch (error) {
-            console.error('Poll error:', error);
-            // Continue polling even on errors
-        }
-    }
-
-    throw new Error('Authentication timeout - please try again');
-}
-
 
 // ============================================================================
 // Token Storage Functions

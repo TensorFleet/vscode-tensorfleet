@@ -2010,31 +2010,7 @@ async function handleLogin(context: vscode.ExtensionContext) {
     if (unifiedStatusCoordinator) {
       unifiedStatusCoordinator.updateAuth('checking');
     }
-    
-    // Check if user wants to use polling or callback method
-    const config = vscode.workspace.getConfiguration('tensorfleet.auth');
-    const usePolling = config.get<boolean>('usePolling', false);
-    
-    console.log('[TensorFleet] Using polling method:', usePolling);
-    
-    if (usePolling) {
-      await auth.authenticateWithPolling(context);
-    } else {
-      // Try callback method first, fallback to polling if it fails
-      try {
-        await auth.authenticate(context);
-      } catch (error) {
-        // If callback server fails (e.g., port already in use), try polling
-        if (error instanceof Error && error.message.includes('EADDRINUSE')) {
-          vscode.window.showWarningMessage(
-            'Callback server port in use, switching to polling method...'
-          );
-          await auth.authenticateWithPolling(context);
-        } else {
-          throw error;
-        }
-      }
-    }
+    await auth.authenticate(context);
     
     console.log('[TensorFleet] Authentication completed, updating status...');
     await updateUnifiedAuthStatus(context);

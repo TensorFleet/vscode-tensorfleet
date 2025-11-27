@@ -242,11 +242,6 @@
           "default": "https://app.tensorfleet.net",
           "description": "Base URL for TensorFleet backend API (used for auth and data). Trailing slashes are removed.",
           "pattern": "^(http|https)://.*$"
-        },
-        "tensorfleet.auth.usePolling": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use polling-based authentication instead of local callback server. Enable this if the callback server has issues on your system."
         }
       }
     },

@@ -16,22 +16,13 @@ The mock authentication flow has been **completely removed** and replaced with a
 
 ### 2. OAuth Flow Implementation
 
-The extension now supports **two authentication methods**:
+The extension uses a browser-based callback server flow:
 
-#### Method 1: Callback Server (Default)
+#### Callback Server Flow
 - Starts a local HTTP server on port 3456
 - Opens browser to backend OAuth URL
 - Backend redirects back to `http://localhost:3456/callback` with token
 - Server validates state parameter and stores token
-- **Pros**: More secure, immediate response
-- **Cons**: Requires available port
-
-#### Method 2: Polling (Fallback)
-- Opens browser to backend OAuth URL
-- Polls backend every 2 seconds for authentication status
-- Stores token when authentication is complete
-- **Pros**: No local server needed
-- **Cons**: Slightly slower, more backend requests
 
 ### 3. Backend Integration
 
@@ -41,10 +32,6 @@ The extension now calls these backend endpoints:
 // Initiate OAuth flow
 POST /api/auth/vscode/initiate
 Response: { state: string, authUrl: string }
-
-// Poll for authentication status (polling method only)
-GET /api/auth/vscode/poll/:state
-Response: { authenticated: boolean, token?: string }
 
 // Verify token
 POST /api/auth/verify
@@ -62,25 +49,11 @@ Two new settings have been added to `package.json`:
     "type": "string",
     "default": "https://app.tensorfleet.net",
     "description": "Backend URL for TensorFleet authentication and API services"
-  },
-  "tensorfleet.auth.usePolling": {
-    "type": "boolean",
-    "default": false,
-    "description": "Use polling-based authentication instead of callback server"
   }
 }
 ```
 
-### 5. Smart Fallback Mechanism
-
-The `handleLogin()` function in `extension.ts` now includes smart fallback:
-
-1. If `usePolling` is `false` (default), tries callback method first
-2. If callback fails with `EADDRINUSE` (port in use), automatically falls back to polling
-3. Shows user a warning message when falling back
-4. If `usePolling` is `true`, uses polling method directly
-
-### 6. Token Verification with Caching
+### 5. Token Verification with Caching
 
 The `isAuthenticated()` function now:
 - Verifies tokens with the backend `/api/auth/verify` endpoint
@@ -99,17 +72,6 @@ Command Palette > TensorFleet: Login
 1. Browser opens to TensorFleet login page
 2. Complete authentication in browser
 3. Browser redirects back to VSCode
-4. Token is stored securely
-5. Success message appears
-
-#### Login (Polling Method)
-Set `tensorfleet.auth.usePolling` to `true` in settings, then:
-```bash
-Command Palette > TensorFleet: Login
-```
-1. Browser opens to TensorFleet login page
-2. Complete authentication in browser
-3. VSCode polls backend for completion
 4. Token is stored securely
 5. Success message appears
 
@@ -138,16 +100,11 @@ To test with local backend:
 
 2. Ensure your local backend implements these endpoints:
    - `POST /api/auth/vscode/initiate`
-   - `GET /api/auth/vscode/poll/:state` (for polling method)
    - `POST /api/auth/verify`
 
-3. Test both authentication methods:
+3. Test the authentication flow:
    ```typescript
-   // Callback method
    await auth.authenticate(context);
-   
-   // Polling method
-   await auth.authenticateWithPolling(context);
    ```
 
 #### Backend Requirements
@@ -170,18 +127,7 @@ Your backend must implement the OAuth flow:
    http://localhost:3456/callback?token=JWT_TOKEN&state=STATE_FROM_STEP_1
    ```
 
-3. **Poll endpoint** (optional, for polling method):
-   ```typescript
-   GET /api/auth/vscode/poll/:state
-   
-   // Response (not yet authenticated)
-   { "authenticated": false }
-   
-   // Response (authenticated)
-   { "authenticated": true, "token": "JWT_TOKEN" }
-   ```
-
-4. **Verify endpoint** validates tokens:
+3. **Verify endpoint** validates tokens:
    ```typescript
    POST /api/auth/verify
    Body: { "token": "JWT_TOKEN" }
@@ -202,8 +148,7 @@ Your backend must implement the OAuth flow:
 ## Troubleshooting
 
 ### Port 3456 already in use
-- The extension will automatically fall back to polling method
-- Or manually enable polling: `"tensorfleet.auth.usePolling": true`
+- Free the port or adjust your local setup; the callback server must bind to this port.
 
 ### Backend unreachable
 - Check `tensorfleet.backendUrl` setting
@@ -224,15 +169,13 @@ No migration is needed for users. The extension will:
 ## Files Changed
 
 - `src/auth.ts` - Complete rewrite with real OAuth flow
-- `src/extension.ts` - Updated `handleLogin()` with smart fallback
-- `package.json` - Added configuration options
+- `src/extension.ts` - Updated `handleLogin()` to use callback flow
+- `package.json` - Added backend configuration option
 - `AUTH_INTEGRATION.md` - This documentation
 
 ## Testing Checklist
 
 - [x] Callback method works with real backend
-- [x] Polling method works with real backend
-- [x] Fallback from callback to polling on port conflict
 - [x] Token verification with backend
 - [x] Token caching (30 second TTL)
 - [x] Fallback to local JWT validation when backend unreachable
@@ -249,4 +192,3 @@ No migration is needed for users. The extension will:
 3. Test error cases (network failures, timeouts, etc.)
 4. Update user documentation with screenshots
 5. Add telemetry for authentication success/failure rates
-
