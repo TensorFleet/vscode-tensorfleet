@@ -237,6 +237,12 @@
           "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
           "pattern": "^(ws|wss)://.*$"
         },
+        "tensorfleet.backendUrl": {
+          "type": "string",
+          "default": "https://app.tensorfleet.net",
+          "description": "Base URL for TensorFleet backend API (used for auth and data). Trailing slashes are removed.",
+          "pattern": "^(http|https)://.*$"
+        },
         "tensorfleet.auth.usePolling": {
           "type": "boolean",
           "default": false,

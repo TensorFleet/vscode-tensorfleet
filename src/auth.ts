@@ -34,7 +34,10 @@ interface VerifyTokenResponse {
  */
 function getBackendUrl(): string {
     const defaultUrl = 'https://app.tensorfleet.net';
-    return defaultUrl;
+    const configuredUrl = vscode.workspace.getConfiguration('tensorfleet').get<string>('backendUrl');
+    
+    // Trim trailing slashes to keep request paths consistent
+    return (configuredUrl?.trim() || defaultUrl).replace(/\/+$/, '');
 }
 
 /**
