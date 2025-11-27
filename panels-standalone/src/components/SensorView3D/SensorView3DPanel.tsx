@@ -1,4 +1,4 @@
-// Sensor3DViewPanel.tsx
+// SensorView3DPanel.tsx
 // Standalone 3D view that uses the global ros2Bridge and Lichtblick's 3D renderer.
 
 /*
@@ -40,6 +40,9 @@ export type Sensor3DViewPanelProps = {
   style?: React.CSSProperties;
 };
 
+const LS_POINT_SIZE_KEY = "sensor3d.pointSize";
+const LS_DECAY_TIME_KEY = "sensor3d.decayTime";
+
 export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
   const interfaceMode: InterfaceMode = "3d";
 
@@ -56,7 +59,6 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     topics: {},
     layers: {},
     publish: { ...DEFAULT_PUBLISH_SETTINGS },
-    // imageMode isn't used in 3d mode, but must satisfy type
     imageMode: {} as Partial<ImageModeConfig> as ImageModeConfig,
   });
 
@@ -64,6 +66,29 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
   const [perspective, setPerspective] = useState(
     initialConfigRef.current.cameraState.perspective,
   );
+
+  // Global point size & decay (cached in localStorage)
+  const [pointSize, setPointSize] = useState<number>(() => {
+    if (typeof window === "undefined") return 3;
+    const stored = window.localStorage.getItem(LS_POINT_SIZE_KEY);
+    const n = stored != null ? Number(stored) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : 3;
+  });
+
+  const [decayTime, setDecayTime] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    const stored = window.localStorage.getItem(LS_DECAY_TIME_KEY);
+    const n = stored != null ? Number(stored) : NaN;
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  });
+
+  // Available topics (for topic visibility UI)
+  const [topics, setTopics] = useState<Topic[]>([]);
+
+  // Frames discovered from TF messages
+  const framesSetRef = useRef<Set<string>>(new Set());
+  const [frames, setFrames] = useState<string[]>([]);
+  const [displayFrame, setDisplayFrame] = useState<string | undefined>(undefined);
 
   // Active ROS topic subscriptions created via ros2Bridge.subscribe
   const liveSubsRef = useRef<Map<string, () => void>>(new Map());
@@ -95,7 +120,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       fetchAsset,
       sceneExtensionConfig: DEFAULT_SCENE_EXTENSION_CONFIG,
       displayTemporaryError: (msg: string) => {
-        // You can hook this into your snackbar/toast system if you want
+        // Hook into your snackbar/toast here if you want
         // eslint-disable-next-line no-console
         console.error("[Sensor3DViewPanel] temporary error:", msg);
       },
@@ -103,7 +128,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       customCameraModels: new Map(),
     });
 
-    // Tell renderer we're on a ROS data source so frame IDs get normalized
+    // Tell renderer we're on a ROS data source
     r.ros = true;
     // Default to light theme
     r.setColorScheme("light", undefined);
@@ -165,6 +190,35 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     [onTogglePerspective],
   );
 
+  // ---- TF frame collection helper -------------------------------------------------
+
+  const updateFramesFromTfMessage = useCallback((msg: any) => {
+    if (!msg || !Array.isArray(msg.transforms)) {
+      return;
+    }
+    const set = framesSetRef.current;
+    let changed = false;
+
+    for (const t of msg.transforms) {
+      const parent = t?.header?.frame_id as string | undefined;
+      const child = t?.child_frame_id as string | undefined;
+      if (parent && !set.has(parent)) {
+        set.add(parent);
+        changed = true;
+      }
+      if (child && !set.has(child)) {
+        set.add(child);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      const arr = Array.from(set).sort();
+      setFrames(arr);
+      setDisplayFrame((prev) => prev ?? arr[0]);
+    }
+  }, []);
+
   // ---- ROS2Bridge wiring: available topics + live messages -----------------------
 
   useEffect(() => {
@@ -173,7 +227,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     const liveSubs = liveSubsRef.current;
 
     const computeDesiredSubscriptions = (
-      topics: Ros2BridgeSubscription[],
+      topicsList: Ros2BridgeSubscription[],
       r: Renderer,
     ): Ros2BridgeSubscription[] => {
       const desired: Ros2BridgeSubscription[] = [];
@@ -181,7 +235,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       const schemaSubs = r.schemaSubscriptions as Map<string, RendererSubscription[]>;
       const topicSubs = r.topicSubscriptions as Map<string, RendererSubscription[]>;
 
-      for (const t of topics) {
+      for (const t of topicsList) {
         const topicName = t.topic;
         const schemaName = t.type;
 
@@ -258,6 +312,15 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
               msg = (raw as { msg: any }).msg;
             }
 
+            // If this is a TF message, harvest frames
+            if (
+              d.topic === "/tf" ||
+              d.topic === "/tf_static" ||
+              (typeof d.type === "string" && d.type.includes("tf2_msgs/msg/TFMessage"))
+            ) {
+              updateFramesFromTfMessage(msg);
+            }
+
             const header = msg?.header as
               | { stamp?: { sec?: number; nanosec?: number; nsec?: number } }
               | undefined;
@@ -296,21 +359,20 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       }
     };
 
-    const handleTopicsChanged = (topics: Ros2BridgeSubscription[]) => {
-      // Convert ros2Bridge topics to minimal Topic[] for renderer
-      const topicObjects: Topic[] = topics.map(
+    const handleTopicsChanged = (topicsList: Ros2BridgeSubscription[]) => {
+      const topicObjects: Topic[] = topicsList.map(
         (t) =>
           ({
             name: t.topic,
             schemaName: t.type,
-            // Datatype field is used in some places; set it to the same string
             datatype: t.type,
           } as unknown as Topic),
       );
 
+      setTopics(topicObjects);
       renderer.setTopics(topicObjects);
 
-      const desired = computeDesiredSubscriptions(topics, renderer);
+      const desired = computeDesiredSubscriptions(topicsList, renderer);
       reconcileSubscriptions(desired, renderer);
     };
 
@@ -327,7 +389,80 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       }
       liveSubs.clear();
     };
-  }, [renderer]);
+  }, [renderer, updateFramesFromTfMessage]);
+
+  // ---- Global point size & decay: persist + push into renderer config -----------
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(LS_POINT_SIZE_KEY, String(pointSize));
+      } catch {
+        // ignore
+      }
+    }
+    if (!renderer) return;
+    const cfg = renderer.config as any;
+    cfg.topics ??= {};
+    for (const name of Object.keys(cfg.topics)) {
+      cfg.topics[name] ??= {};
+      cfg.topics[name].pointSize = pointSize;
+    }
+    renderer.queueAnimationFrame();
+  }, [pointSize, renderer]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(LS_DECAY_TIME_KEY, String(decayTime));
+      } catch {
+        // ignore
+      }
+    }
+    if (!renderer) return;
+    const cfg = renderer.config as any;
+    cfg.topics ??= {};
+    for (const name of Object.keys(cfg.topics)) {
+      cfg.topics[name] ??= {};
+      cfg.topics[name].decayTime = decayTime;
+    }
+    renderer.queueAnimationFrame();
+  }, [decayTime, renderer]);
+
+  // ---- Apply selected display frame into renderer config ------------------------
+
+  useEffect(() => {
+    if (!renderer || !displayFrame) return;
+    renderer.config = {
+      ...renderer.config,
+      followTf: displayFrame,
+    };
+    renderer.queueAnimationFrame();
+  }, [renderer, displayFrame]);
+
+  // ---- Topic visibility helpers ---------------------------------------------------
+
+  const isTopicVisible = useCallback(
+    (topicName: string): boolean => {
+      const cfg: any = (renderer as any)?.config?.topics?.[topicName];
+      if (!cfg || cfg.visible === undefined) return true;
+      return !!cfg.visible;
+    },
+    [renderer],
+  );
+
+  const toggleTopicVisibility = useCallback(
+    (topicName: string) => {
+      if (!renderer) return;
+      const cfg: any = (renderer as any).config;
+      cfg.topics ??= {};
+      cfg.topics[topicName] ??= {};
+      const current = cfg.topics[topicName].visible ?? true;
+      cfg.topics[topicName].visible = !current;
+      renderer.queueAnimationFrame();
+    },
+    [renderer],
+  );
 
   // ---- addPanel stub (RendererOverlay expects it) ---------------------------------
 
@@ -357,6 +492,112 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
             ...(measureActive && { cursor: "crosshair" }),
           }}
         />
+
+        {/* Small control panel in top-left */}
+        <div
+          style={{
+            position: "absolute",
+            top: 8,
+            left: 8,
+            zIndex: 10,
+            pointerEvents: "auto",
+            background: "rgba(0,0,0,0.7)",
+            color: "#fff",
+            padding: 8,
+            borderRadius: 6,
+            fontSize: 12,
+            maxWidth: 360,
+            maxHeight: "60%",
+            overflow: "auto",
+          }}
+        >
+          <div style={{ marginBottom: 8, fontWeight: 600 }}>3D Controls</div>
+
+          {frames.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <label>
+                Frame:{" "}
+                <select
+                  value={displayFrame ?? ""}
+                  onChange={(e) =>
+                    setDisplayFrame(e.target.value || undefined)
+                  }
+                  style={{ marginLeft: 4, maxWidth: 260 }}
+                >
+                  {frames.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
+
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ display: "block", marginBottom: 4 }}>
+              Point size: <strong>{pointSize}</strong>
+            </label>
+            <input
+              type="range"
+              min={1}
+              max={10}
+              step={1}
+              value={pointSize}
+              onChange={(e) => setPointSize(Number(e.target.value))}
+              style={{ width: "100%" }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
+            <label>
+              Decay (s):{" "}
+              <input
+                type="number"
+                min={0}
+                step={0.1}
+                value={decayTime}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setDecayTime(Number.isFinite(v) && v >= 0 ? v : 0);
+                }}
+                style={{ width: 70, marginLeft: 4 }}
+              />
+            </label>
+          </div>
+
+          <div>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>Topics</div>
+            {topics.length === 0 && (
+              <div style={{ fontStyle: "italic", opacity: 0.7 }}>
+                No topics yet…
+              </div>
+            )}
+            {topics.map((t) => (
+              <label
+                key={t.name}
+                style={{ display: "flex", alignItems: "center", marginBottom: 2 }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isTopicVisible(t.name)}
+                  onChange={() => toggleTopicVisibility(t.name)}
+                  style={{ marginRight: 6 }}
+                />
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {t.name}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
         <RendererContext.Provider value={renderer}>
           <RendererOverlay
             interfaceMode={interfaceMode}
