@@ -68,15 +68,12 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
    * Update auth state
    */
   updateAuth(auth: AuthState) {
-    console.log('[UnifiedStatus] updateAuth called with:', auth);
-    console.log('[UnifiedStatus] Current state before update:', JSON.stringify(this.currentState));
     const previousState = { ...this.currentState };
     this.currentState = {
       ...this.currentState,
       auth,
       timestamp: Date.now()
     };
-    console.log('[UnifiedStatus] New state after update:', JSON.stringify(this.currentState));
     this.notifyStateChange(previousState);
     this.updateStatusBar();
   }
@@ -132,9 +129,6 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
   private updateStatusBar() {
     const { auth, connection, vmState, ipAddress } = this.currentState;
 
-    console.log('[UnifiedStatus] updateStatusBar called');
-    console.log('[UnifiedStatus] State:', { auth, connection, vmState, ipAddress });
-
     // Determine icon and text based on unified state
     let icon: string;
     let text: string;
@@ -143,28 +137,24 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
 
     // Priority 1: Explicit auth check in progress
     if (auth === 'checking') {
-      console.log('[UnifiedStatus] Branch: Checking auth');
       icon = '$(sync~spin)';
       text = 'TensorFleet · Checking login...';
       backgroundColor = undefined;
     }
     // Priority 2: User not logged in
     else if (auth === 'not_authenticated') {
-      console.log('[UnifiedStatus] Branch: User not authenticated');
       icon = '$(sign-in)';
       text = 'TensorFleet · Login required';
       backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     }
     // Priority 3: VM Manager auth problem (user is logged in but VM Manager rejected token)
     else if (connection === 'not_authenticated') {
-      console.log('[UnifiedStatus] Branch: VM Manager auth error');
       icon = '$(key)';
       text = 'TensorFleet · VM auth error';
       backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     }
     // Priority 4: API disconnected (after successful auth)
     else if (connection === 'disconnected') {
-      console.log('[UnifiedStatus] Branch: Disconnected');
       icon = '$(vm-connect)';
       text = 'TensorFleet · VM disconnected';
       backgroundColor = undefined;
@@ -208,7 +198,6 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     }
 
     const finalText = `${icon} ${text}`;
-    console.log('[UnifiedStatus] Setting status bar text to:', finalText);
     
     this.statusBarItem.text = finalText;
     this.statusBarItem.backgroundColor = backgroundColor;

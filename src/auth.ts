@@ -33,9 +33,7 @@ interface VerifyTokenResponse {
  * Get backend URL from configuration or environment
  */
 function getBackendUrl(): string {
-    console.log('[Auth] getBackendUrl() called');
     const defaultUrl = 'https://app.tensorfleet.net';
-    console.log('[Auth] Using fixed backend URL:', defaultUrl);
     return defaultUrl;
 }
 
@@ -44,15 +42,9 @@ function getBackendUrl(): string {
  * Opens browser for login and waits for callback
  */
 export async function authenticate(context: vscode.ExtensionContext): Promise<string> {
-    console.log('[Auth] authenticate() called (callback method)');
     try {
         // Step 1: Initiate OAuth flow
-        console.log('[Auth] authenticate() initiating OAuth flow via initiateAuth()');
         const { state, authUrl } = await initiateAuth();
-        console.log('[Auth] authenticate() got initiateAuth response:', {
-            stateLength: state?.length ?? 0,
-            hasAuthUrl: !!authUrl,
-        });
         
         vscode.window.showInformationMessage(
             'Opening browser for authentication...'
@@ -60,16 +52,13 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
 
         // Step 2: Start local server to receive callback
         const token = await new Promise<string>((resolve, reject) => {
-            console.log('[Auth] authenticate() creating callback server...');
             const server = createCallbackServer(state, resolve, reject);
 
             // Step 3: Open browser
-            console.log('[Auth] authenticate() opening external browser with auth URL');
             vscode.env.openExternal(vscode.Uri.parse(authUrl));
 
             // Timeout after 5 minutes
             setTimeout(() => {
-                console.log('[Auth] authenticate() timeout reached, closing callback server');
                 server.close();
                 reject(new Error('Authentication timeout'));
             }, 5 * 60 * 1000);  
@@ -80,7 +69,6 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
 
         vscode.window.showInformationMessage('Successfully authenticated!');
 
-        console.log('[Auth] authenticate() completed successfully, token stored');
         return token;
     } catch (error) {
         console.error('[Auth] authenticate() error:', error);
@@ -94,26 +82,18 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
  * Use this if callback server has issues
  */
 export async function authenticateWithPolling(context: vscode.ExtensionContext): Promise<string> {
-    console.log('[Auth] authenticateWithPolling() called (polling method)');
     try {
         // Step 1: Initiate OAuth flow
-        console.log('[Auth] authenticateWithPolling() initiating OAuth flow via initiateAuth()');
         const { state, authUrl } = await initiateAuth();
-        console.log('[Auth] authenticateWithPolling() got initiateAuth response:', {
-            stateLength: state?.length ?? 0,
-            hasAuthUrl: !!authUrl,
-        });
         
         vscode.window.showInformationMessage(
             'Opening browser for authentication...'
         );
 
         // Step 2: Open browser
-        console.log('[Auth] authenticateWithPolling() opening external browser with auth URL');
         vscode.env.openExternal(vscode.Uri.parse(authUrl));
 
         // Step 3: Poll for authentication status
-        console.log('[Auth] authenticateWithPolling() starting pollAuthStatus()');
         const token = await pollAuthStatus(state);
 
         // Step 4: Store token
@@ -121,7 +101,6 @@ export async function authenticateWithPolling(context: vscode.ExtensionContext):
 
         vscode.window.showInformationMessage('Successfully authenticated!');
 
-        console.log('[Auth] authenticateWithPolling() completed successfully, token stored');
         return token;
     } catch (error) {
         console.error('[Auth] authenticateWithPolling() error:', error);
@@ -135,7 +114,6 @@ export async function authenticateWithPolling(context: vscode.ExtensionContext):
  */
 async function initiateAuth(): Promise<{ state: string; authUrl: string }> {
     const BACKEND_URL = getBackendUrl();
-    console.log('[Auth] initiateAuth() called - POST to', `${BACKEND_URL}/api/auth/vscode/initiate`);
     
     const response = await fetch(`${BACKEND_URL}/api/auth/vscode/initiate`, {
         method: 'POST',
@@ -144,19 +122,12 @@ async function initiateAuth(): Promise<{ state: string; authUrl: string }> {
         },
     });
 
-    console.log('[Auth] initiateAuth() response status:', response.status);
-
     if (!response.ok) {
         console.error('[Auth] initiateAuth() failed, non-OK status:', response.status);
         throw new Error('Failed to initiate authentication');
     }
 
     const data = await response.json() as InitiateAuthResponse;
-    console.log('[Auth] initiateAuth() parsed response:', {
-        hasState: !!data.state,
-        stateLength: data.state?.length ?? 0,
-        hasAuthUrl: !!data.authUrl,
-    });
     return {
         state: data.state,
         authUrl: data.authUrl,
@@ -171,25 +142,13 @@ function createCallbackServer(
     resolve: (token: string) => void,
     reject: (error: Error) => void
 ): http.Server {
-    console.log('[Auth] createCallbackServer() called, expectedState length:', expectedState?.length ?? 0);
     const server = http.createServer((req, res) => {
-        console.log('[Auth] Callback server received request:', {
-            method: req.method,
-            url: req.url,
-        });
         const url = new URL(req.url || '/', `http://localhost:${CALLBACK_PORT}`);
 
         if (url.pathname === '/callback') {
             const token = url.searchParams.get('token');
             const state = url.searchParams.get('state');
             const error = url.searchParams.get('error');
-
-            console.log('[Auth] /callback hit with params:', {
-                hasToken: !!token,
-                tokenLength: token?.length ?? 0,
-                stateLength: state?.length ?? 0,
-                error,
-            });
 
             if (error) {
                 res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -228,7 +187,6 @@ function createCallbackServer(
             }
 
             // Success!
-            console.log('[Auth] Authentication callback successful, resolving token');
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(`
 <!DOCTYPE html>
@@ -304,9 +262,7 @@ function createCallbackServer(
         }
     });
 
-    server.listen(CALLBACK_PORT, () => {
-        console.log(`[Auth] Callback server listening on port ${CALLBACK_PORT}`);
-    });
+    server.listen(CALLBACK_PORT);
 
     return server;
 }
@@ -321,21 +277,12 @@ async function pollAuthStatus(
     interval: number = 2000
 ): Promise<string> {
     const BACKEND_URL = getBackendUrl();
-    console.log('[Auth] pollAuthStatus() called with:', {
-        stateLength: state?.length ?? 0,
-        maxAttempts,
-        interval,
-        endpoint: `${BACKEND_URL}/api/auth/vscode/poll/${state}`,
-    });
     
     for (let i = 0; i < maxAttempts; i++) {
         try {
-            console.log('[Auth] pollAuthStatus() attempt', i + 1, 'of', maxAttempts);
             const response = await fetch(
                 `${BACKEND_URL}/api/auth/vscode/poll/${state}`
             );
-
-            console.log('[Auth] pollAuthStatus() response status:', response.status);
 
             if (!response.ok) {
                 console.error('[Auth] pollAuthStatus() non-OK status:', response.status);
@@ -343,15 +290,12 @@ async function pollAuthStatus(
             }
 
             const data = await response.json() as PollAuthResponse;
-            console.log('[Auth] pollAuthStatus() parsed response:', data);
 
             if (data.authenticated && data.token) {
-                console.log('[Auth] pollAuthStatus() authenticated, token length:', data.token.length);
                 return data.token;
             }
 
             // Wait before next poll
-            console.log('[Auth] pollAuthStatus() not yet authenticated, waiting', interval, 'ms before next attempt');
             await new Promise(resolve => setTimeout(resolve, interval));
         } catch (error) {
             console.error('Poll error:', error);
@@ -371,24 +315,16 @@ async function pollAuthStatus(
  * Store token securely in VSCode secret storage
  */
 export async function storeToken(context: vscode.ExtensionContext, token: string): Promise<void> {
-    console.log('[Auth] storeToken() called, token length:', token?.length ?? 0);
-    console.log('[Auth] Storing token...');
     await context.secrets.store('tensorfleet-auth-token', token);
     // Clear verification cache so next isAuthenticated() call will verify with backend
     verificationCache = null;
-    console.log('[Auth] Token stored successfully');
 }
 
 /**
  * Get stored token
  */
 export async function getToken(context: vscode.ExtensionContext): Promise<string | undefined> {
-    console.log('[Auth] getToken() called');
     const token = await context.secrets.get('tensorfleet-auth-token');
-    console.log('[Auth] getToken() result:', {
-        hasToken: !!token,
-        tokenLength: token?.length ?? 0,
-    });
     return token;
 }
 
@@ -396,7 +332,6 @@ export async function getToken(context: vscode.ExtensionContext): Promise<string
  * Clear stored token (logout)
  */
 export async function clearToken(context: vscode.ExtensionContext): Promise<void> {
-    console.log('[Auth] clearToken() called - deleting stored token and clearing cache');
     await context.secrets.delete('tensorfleet-auth-token');
     verificationCache = null; // Clear cache on logout
 }
@@ -410,25 +345,19 @@ const VERIFICATION_CACHE_TTL = 30000; // 30 seconds
  * Verifies token with backend and caches result
  */
 export async function isAuthenticated(context: vscode.ExtensionContext): Promise<boolean> {
-    console.log('[Auth] isAuthenticated() called - checking authentication status...');
     const token = await getToken(context);
     if (!token) {
-        console.log('[Auth] No token found');
         return false;
     }
 
-    console.log('[Auth] Token found, length:', token.length);
-
     // Check cache first
     if (verificationCache && Date.now() - verificationCache.timestamp < VERIFICATION_CACHE_TTL) {
-        console.log('[Auth] Using cached verification result:', verificationCache.valid);
         return verificationCache.valid;
     }
 
     // Verify token with backend
     try {
         const BACKEND_URL = getBackendUrl();
-        console.log('[Auth] Verifying token with backend:', BACKEND_URL);
         
         const response = await fetch(`${BACKEND_URL}/api/auth/verify`, {
             method: 'POST',
@@ -438,12 +367,8 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
             body: JSON.stringify({ token }),
         });
 
-        console.log('[Auth] Backend response status:', response.status);
-
         const data = await response.json() as VerifyTokenResponse;
         const valid = data.valid === true;
-
-        console.log('[Auth] Token verification result:', valid);
 
         // Update cache
         verificationCache = {
@@ -461,21 +386,16 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
         
         // Fallback to basic JWT validation if backend is unreachable
         try {
-            console.log('[Auth] Attempting fallback JWT validation...');
             const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
             const now = Math.floor(Date.now() / 1000);
 
-            console.log('[Auth] JWT payload exp:', payload.exp, 'now:', now);
-
             if (payload.exp && payload.exp < now) {
-                console.log('[Auth] Token expired');
                 await clearToken(context);
                 return false;
             }
 
             // Token format is valid but couldn't verify with backend
             // Return true but don't cache (so we retry next time)
-            console.log('[Auth] Token appears valid (fallback validation)');
             return true;
         } catch (parseError) {
             // Invalid token format
@@ -494,7 +414,6 @@ export async function authenticatedFetch(
     url: string,
     options: RequestInit = {}
 ): Promise<Response> {
-    console.log('[Auth] authenticatedFetch() called for URL:', url);
     const token = await getToken(context);
 
     if (!token) {
@@ -512,11 +431,8 @@ export async function authenticatedFetch(
         headers,
     });
 
-    console.log('[Auth] authenticatedFetch() response status:', response.status);
-
     // If unauthorized, token might be expired
     if (response.status === 401) {
-        console.warn('[Auth] authenticatedFetch() received 401, clearing token and prompting re-login');
         await clearToken(context);
         throw new Error('Token expired - please login again');
     }
