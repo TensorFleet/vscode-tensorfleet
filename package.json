@@ -200,6 +200,26 @@
         "command": "tensorfleet.showVMManagerMenu",
         "title": "Show VM Actions",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.showUnifiedMenu",
+        "title": "TensorFleet: Show Status Menu",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.login",
+        "title": "TensorFleet: Login",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.logout",
+        "title": "TensorFleet: Logout",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.authStatus",
+        "title": "TensorFleet: Show Auth Status",
+        "category": "TensorFleet"
       }
     ],
     "configuration": {
@@ -217,15 +237,11 @@
           "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
           "pattern": "^(ws|wss)://.*$"
         },
-        "tensorfleet.vmManager.apiBaseUrl": {
+        "tensorfleet.backendUrl": {
           "type": "string",
-          "default": "http://localhost:8080",
-          "description": "Base URL for the vm-manager HTTP API used by the VM status bar."
-        },
-        "tensorfleet.vmManager.authToken": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Optional bearer token that will be sent as `Authorization: Bearer <token>` with every `/vms/self/*` request. Leave blank when developing against a server that skips auth."
+          "default": "https://app.tensorfleet.net",
+          "description": "Base URL for TensorFleet backend API (used for auth and data). Trailing slashes are removed.",
+          "pattern": "^(http|https)://.*$"
         }
       }
     },

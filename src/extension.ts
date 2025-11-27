@@ -4,6 +4,8 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
 import { VMManagerIntegration } from './vm-manager';
+import * as auth from './auth';
+import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
 
 type PanelKind = 'standard' | 'terminalTabs';
@@ -128,6 +130,9 @@ let rosVersionStatusBar: vscode.StatusBarItem | null = null;
 let droneStatusBar: vscode.StatusBarItem | null = null;
 let projectWatcher: vscode.FileSystemWatcher | null = null;
 
+// Unified status coordinator
+let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
+
 export function activate(context: vscode.ExtensionContext) {
   telemetryService = new TelemetryService(context);
   context.subscriptions.push(telemetryService);
@@ -165,7 +170,19 @@ export function activate(context: vscode.ExtensionContext) {
       console.error('[TensorFleet] Failed to initialize status bars:', error);
     });
 
-  vmManagerIntegration = new VMManagerIntegration(context, telemetryService);
+  // Initialize unified status coordinator (replaces separate auth and VM status bars)
+  unifiedStatusCoordinator = new UnifiedStatusCoordinator(context);
+
+  // Initialize auth state
+  updateUnifiedAuthStatus(context);
+
+  // Update auth status periodically (every 30 seconds)
+  const authInterval = setInterval(() => {
+    updateUnifiedAuthStatus(context);
+  }, 30000);
+  context.subscriptions.push(new vscode.Disposable(() => clearInterval(authInterval)));
+
+  vmManagerIntegration = new VMManagerIntegration(context, unifiedStatusCoordinator, telemetryService);
   try {
     vmManagerIntegration.initialize();
     telemetryService?.trackEvent('vmManager.initialize', { status: 'success' });
@@ -245,15 +262,32 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Unified menu command (replaces separate auth and VM menu commands)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.showUnifiedMenu', () => showUnifiedMenu(context))
+  );
+
+  // Keep VM manager menu for backward compatibility (but it will use unified coordinator)
   if (vmManagerIntegration) {
     context.subscriptions.push(
-      registerTensorFleetCommand(
-        'tensorfleet.showVMManagerMenu',
-        () => vmManagerIntegration?.showVmActions(),
-        { feature: 'vmManager' }
-      )
+      vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => showUnifiedMenu(context))
     );
   }
+
+  // Auth commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.login', () => handleLogin(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.logout', () => handleLogout(context))
+  );
+
+  // Keep auth status command for backward compatibility
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.authStatus', () => showUnifiedMenu(context))
+  );
+
   // ROS bridge commands removed; panels use embedded Foxglove networking.
 
   context.subscriptions.push(
@@ -306,6 +340,11 @@ export function deactivate() {
   if (projectWatcher) {
     projectWatcher.dispose();
     projectWatcher = null;
+  }
+
+  if (unifiedStatusCoordinator) {
+    unifiedStatusCoordinator.dispose();
+    unifiedStatusCoordinator = null;
   }
 
   if (vmManagerIntegration) {
@@ -1248,7 +1287,7 @@ async function detectRosVersion() {
 
   // Update status bar
   if (rosVersionStatusBar) {
-    rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
+    rosVersionStatusBar.text = `$(layers) ${currentRosVersion.name}`;
     console.log('[TensorFleet] ROS version set to:', currentRosVersion.name);
   }
 }
@@ -1431,17 +1470,16 @@ async function showDroneStatus() {
   }
 
   const items = drones.map((drone) => {
-    const statusIcon =
-      drone.status === 'flying' ? '$(rocket)' :
-      drone.status === 'armed' ? '$(zap)' :
-      drone.status === 'idle' ? '$(circle-outline)' :
-      '$(circle-slash)';
+      const statusIcon =
+        drone.status === 'flying' ? '$(rocket)' :
+        drone.status === 'armed' ? '$(target)' :
+        drone.status === 'idle' ? '$(circle-outline)' :
+        '$(circle-slash)';
 
-    const batteryIcon =
-      drone.battery > 75 ? '$(battery-full)' :
-      drone.battery > 50 ? '$(battery)' :
-      drone.battery > 25 ? '$(battery-charging)' :
-      '$(battery-empty)';
+      const batteryIcon =
+        drone.battery > 50 ? '$(pulse)' :
+        drone.battery > 25 ? '$(warning)' :
+        '$(alert)';
 
     return {
       label: `${statusIcon} ${drone.name}`,
@@ -1581,4 +1619,444 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
       `Failed to show MCP configuration: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+}
+
+// ============================================================================
+// Unified Status Functions
+// ============================================================================
+
+/**
+ * Update unified auth status
+ */
+async function updateUnifiedAuthStatus(context: vscode.ExtensionContext) {
+  console.log('[TensorFleet] updateUnifiedAuthStatus called');
+  if (!unifiedStatusCoordinator) {
+    console.log('[TensorFleet] No unified status coordinator');
+    return;
+  }
+
+  const isAuth = await auth.isAuthenticated(context);
+  console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
+  unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
+}
+
+/**
+ * Build menu items with visual grouping (primary actions, separator, secondary actions)
+ */
+function buildMenuForState(
+  vmState: 'unknown' | 'stopped' | 'starting' | 'running' | 'stopping' | 'failed' | 'pending',
+  ipAddress?: string
+): vscode.QuickPickItem[] {
+  const items: vscode.QuickPickItem[] = [];
+  const primaryActions: vscode.QuickPickItem[] = [];
+
+  // Build primary actions based on VM state
+  switch (vmState) {
+    case 'running':
+      primaryActions.push({
+        label: '$(debug-stop) Stop VM'
+      });
+      if (ipAddress) {
+        primaryActions.push({
+          label: '$(terminal) Connect via SSH'
+        });
+      }
+      break;
+
+    case 'stopped':
+    case 'pending':
+    case 'unknown':
+      primaryActions.push({
+        label: '$(play) Start VM'
+      });
+      break;
+
+    case 'failed':
+      primaryActions.push({
+        label: '$(refresh) Retry Start'
+      });
+      break;
+
+    case 'starting':
+    case 'stopping':
+      // No primary actions during transitions
+      break;
+  }
+
+  // Add primary actions if any exist
+  if (primaryActions.length > 0) {
+    items.push(...primaryActions);
+    
+    // Add separator after primary actions
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+  }
+
+  // Add secondary actions (always shown)
+  items.push(
+    {
+      label: '$(refresh) Refresh Status'
+    },
+    {
+      label: '$(sign-out) Logout'
+    }
+  );
+
+  return items;
+}
+
+/**
+ * Show unified menu (adaptive based on state)
+ */
+async function showUnifiedMenu(context: vscode.ExtensionContext) {
+  if (!unifiedStatusCoordinator) {
+    return;
+  }
+
+  const state = unifiedStatusCoordinator.getState();
+  const items: vscode.QuickPickItem[] = [];
+
+  // Auth check in progress
+  if (state.auth === 'checking') {
+    items.push({
+      label: '$(sync~spin) Checking authentication...',
+      detail: 'Verifying your TensorFleet login',
+      kind: vscode.QuickPickItemKind.Default
+    });
+
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+
+    items.push({
+      label: '$(sign-out) Cancel and Logout'
+    });
+
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Checking authentication…',
+      ignoreFocusOut: true
+    });
+
+    if (selection?.label.includes('Logout')) {
+      await handleLogout(context);
+    }
+    return;
+  }
+
+  // User not authenticated at all
+  if (state.auth === 'not_authenticated') {
+    // Primary action
+    items.push({
+      label: '$(key) Login',
+      detail: 'Authenticate with TensorFleet',
+      kind: vscode.QuickPickItemKind.Default
+    });
+    
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Not Logged In',
+      ignoreFocusOut: true
+    });
+
+    if (selection?.label.includes('Login')) {
+      await handleLogin(context);
+    }
+    return;
+  }
+
+  // VM Manager auth error (user is logged in but VM Manager rejected token)
+  if (state.connection === 'not_authenticated') {
+    items.push({
+      label: '$(warning) VM Manager auth error',
+      detail: state.error || 'Current token was rejected by VM Manager',
+      kind: vscode.QuickPickItemKind.Default
+    });
+
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+
+    if (vmManagerIntegration) {
+      items.push({
+        label: '$(refresh) Retry VM Status',
+        detail: 'Retry with current authentication'
+      });
+    }
+
+    items.push({
+      label: '$(sign-out) Logout',
+      detail: 'Logout from TensorFleet'
+    });
+
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: 'VM Manager auth error',
+      ignoreFocusOut: true
+    });
+
+    if (selection?.label.includes('Retry') && vmManagerIntegration) {
+      vmManagerIntegration.refreshStatus(false);
+    } else if (selection?.label.includes('Logout')) {
+      await handleLogout(context);
+    }
+    return;
+  }
+
+  // API disconnected state
+  if (state.connection === 'disconnected') {
+    // Primary action
+    items.push({
+      label: '$(refresh) Retry Connection',
+      detail: state.error || 'Attempt to reconnect'
+    });
+    
+    // Separator
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+
+    // Secondary actions (always available while authenticated)
+    items.push({
+      label: '$(sign-out) Logout',
+      detail: 'Logout from TensorFleet'
+    });
+
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: 'API Disconnected',
+      ignoreFocusOut: true
+    });
+
+    if (selection?.label.includes('Retry') && vmManagerIntegration) {
+      vmManagerIntegration.refreshStatus(false);
+    } else if (selection?.label.includes('Logout')) {
+      await handleLogout(context);
+    }
+    return;
+  }
+
+  // Authenticated and connected - show VM-specific menu
+  const vmState = state.vmState;
+  const ipAddress = state.ipAddress;
+  const uptime = formatUptime(state.uptimeSeconds);
+
+  // Format header using helper function
+  const { label: headerLabel, detail: headerDetail } = formatHeader(vmState, {
+    ipAddress: state.ipAddress,
+    provider: state.provider,
+    region: state.region,
+    uptime,
+    error: state.error,
+    timestamp: state.timestamp
+  });
+
+  // Header as regular item (separators don't render icons)
+  items.push({
+    label: headerLabel,
+    detail: headerDetail,
+    kind: vscode.QuickPickItemKind.Default
+  });
+
+  // Build menu with visual grouping (primary actions, separator, secondary actions)
+  const menuItems = buildMenuForState(vmState, ipAddress);
+  items.push(...menuItems);
+
+  const selection = await vscode.window.showQuickPick(items, {
+    placeHolder: headerLabel.replace(/\$\([^)]+\)\s*/, ''),
+    ignoreFocusOut: true
+  });
+
+  if (!selection) {
+    return;
+  }
+
+  // Ignore header selection (it's just for display)
+  const headerPatterns = [
+    '$(circle-filled) Running',
+    '$(circle-outline) Stopped',
+    '$(loading~spin) Starting',
+    '$(loading~spin) Stopping',
+    '$(error) Failed',
+    '$(sync~spin) Pending',
+    '$(sync~spin) Checking...'
+  ];
+  if (headerPatterns.some(pattern => selection.label.startsWith(pattern))) {
+    return;
+  }
+
+  try {
+    if (selection.label.includes('Stop VM') && vmManagerIntegration) {
+      await vmManagerIntegration.stopVm();
+    } else if (selection.label.includes('Start VM') && vmManagerIntegration) {
+      await vmManagerIntegration.startVm();
+    } else if (selection.label.includes('Retry Start') && vmManagerIntegration) {
+      await vmManagerIntegration.startVm();
+    } else if (selection.label.includes('Connect via SSH') && ipAddress) {
+      // Open terminal with SSH command
+      const terminal = vscode.window.createTerminal({
+        name: `SSH to ${ipAddress}`,
+        shellPath: 'ssh',
+        shellArgs: [`root@${ipAddress}`]
+      });
+      terminal.show();
+    } else if (selection.label.includes('Refresh Status') && vmManagerIntegration) {
+      vmManagerIntegration.refreshStatus(false);
+    } else if (selection.label.includes('Logout')) {
+      await handleLogout(context);
+    }
+  } catch (error) {
+    void vscode.window.showErrorMessage(
+      `Action failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Format uptime
+ */
+function formatUptime(seconds?: number | null): string | undefined {
+  if (seconds == null) return undefined;
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  if (parts.length === 0 || s > 0) parts.push(`${s}s`);
+  return parts.join(' ');
+}
+
+/**
+ * Format header label and detail for VM state
+ */
+function formatHeader(
+  vmState: string,
+  meta: {
+    ipAddress?: string;
+    provider?: string;
+    region?: string;
+    uptime?: string | undefined;
+    error?: string;
+    timestamp?: number;
+  }
+): { label: string; detail: string } {
+  const parts: string[] = [];
+  let detail = '';
+
+  switch (vmState) {
+    case 'running':
+      // Concise format: "IP · provider · uptime"
+      if (meta.ipAddress) parts.push(meta.ipAddress);
+      if (meta.provider) parts.push(meta.provider);
+      if (meta.uptime) parts.push(meta.uptime);
+      detail = parts.length > 0 ? parts.join(' · ') : '';
+      return {
+        label: '$(circle-filled) Running',
+        detail
+      };
+
+    case 'stopped':
+      // Skip detail line if no meaningful info (we don't track "last stopped" time)
+      return {
+        label: '$(circle-outline) Stopped',
+        detail: ''
+      };
+
+    case 'starting':
+      return {
+        label: '$(loading~spin) Starting',
+        detail: 'Usually takes 30-60 seconds'
+      };
+
+    case 'stopping':
+      return {
+        label: '$(loading~spin) Stopping',
+        detail: 'Usually takes 10-20 seconds'
+      };
+
+    case 'failed':
+      return {
+        label: '$(error) Failed',
+        detail: meta.error || 'Check logs for details'
+      };
+
+    case 'pending':
+      return {
+        label: '$(sync~spin) Pending',
+        detail: 'VM exists but has not started yet'
+      };
+
+    default:
+      return {
+        label: '$(sync~spin) Checking...',
+        detail: 'Determining VM status'
+      };
+  }
+}
+
+// ============================================================================
+// Authentication Functions
+// ============================================================================
+
+/**
+ * Handle login command
+ */
+async function handleLogin(context: vscode.ExtensionContext) {
+  try {
+    console.log('[TensorFleet] Starting login process...');
+    if (unifiedStatusCoordinator) {
+      unifiedStatusCoordinator.updateAuth('checking');
+    }
+    await auth.authenticate(context);
+    
+    console.log('[TensorFleet] Authentication completed, updating status...');
+    await updateUnifiedAuthStatus(context);
+    
+    // Force immediate status update
+    const isAuth = await auth.isAuthenticated(context);
+    console.log('[TensorFleet] Auth status after login:', isAuth);
+    
+    if (unifiedStatusCoordinator) {
+      unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
+    }
+    
+    // Trigger VM Manager refresh after login
+    if (vmManagerIntegration) {
+      console.log('[TensorFleet] Refreshing VM Manager status...');
+      vmManagerIntegration.refreshStatus(false);
+    }
+    
+    console.log('[TensorFleet] Login process completed');
+  } catch (error) {
+    console.error('[TensorFleet] Login error:', error);
+    await updateUnifiedAuthStatus(context);
+    void vscode.window.showErrorMessage(
+      `Login failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Handle logout command
+ */
+async function handleLogout(context: vscode.ExtensionContext) {
+  await auth.clearToken(context);
+  await updateUnifiedAuthStatus(context);
+  void vscode.window.showInformationMessage('Logged out successfully');
+  
+  // Reset VM Manager state after logout
+  if (vmManagerIntegration) {
+    vmManagerIntegration.refreshStatus(true);
+  }
+}
+
+/**
+ * Show authentication status (redirects to unified menu)
+ * @internal - Used by command registration
+ */
+export async function showAuthStatus(context: vscode.ExtensionContext) {
+  await showUnifiedMenu(context);
 }
