@@ -10,6 +10,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import { URL } from 'url';
+import { getBackendUrl as getRegionBackendUrl } from './regions';
 
 // Configuration
 const CALLBACK_PORT = 3456; // Local server port for OAuth callback
@@ -25,14 +26,12 @@ interface VerifyTokenResponse {
 }
 
 /**
- * Get backend URL from configuration or environment
+ * Get backend URL from the selected region configuration
+ * URLs are derived from region selection - users cannot set explicit domains
  */
 function getBackendUrl(): string {
-    const defaultUrl = 'https://app.tensorfleet.net';
-    const configuredUrl = vscode.workspace.getConfiguration('tensorfleet').get<string>('backendUrl');
-    
-    // Trim trailing slashes to keep request paths consistent
-    return (configuredUrl?.trim() || defaultUrl).replace(/\/+$/, '');
+    // Get URL from region configuration (single source of truth)
+    return getRegionBackendUrl().replace(/\/+$/, '');
 }
 
 /**

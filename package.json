@@ -43,7 +43,8 @@
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
     "onCommand:tensorfleet.showDroneStatus",
-    "onCommand:tensorfleet.showVMManagerMenu"
+    "onCommand:tensorfleet.showVMManagerMenu",
+    "onCommand:tensorfleet.selectRegion"
   ],
   "main": "./dist/extension.js",
   "packageManager": "bun@1.0.0",
@@ -220,34 +221,29 @@
         "command": "tensorfleet.authStatus",
         "title": "TensorFleet: Show Auth Status",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.selectRegion",
+        "title": "Select Region",
+        "category": "TensorFleet"
       }
     ],
     "configuration": {
       "title": "TensorFleet",
       "properties": {
-        "tensorfleet.ros2.websocketUrl": {
+        "tensorfleet.region": {
           "type": "string",
-          "default": "ws://172.16.0.10:9091",
-          "description": "ROS2 WebSocket URL (rosbridge_suite) for remote connections (e.g., Firecracker VM)",
-          "pattern": "^(ws|wss)://.*$"
-        },
-        "tensorfleet.ros2.foxgloveUrl": {
-          "type": "string",
-          "default": "ws://172.16.0.10:8765",
-          "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
-          "pattern": "^(ws|wss)://.*$"
-        },
-        "tensorfleet.backendUrl": {
-          "type": "string",
-          "default": "https://app.tensorfleet.net",
-          "description": "Base URL for TensorFleet backend API (used for auth and data). Trailing slashes are removed.",
-          "pattern": "^(http|https)://.*$"
-        },
-        "tensorfleet.vmManagerUrl": {
-          "type": "string",
-          "default": "http://localhost:8080",
-          "description": "Base URL for TensorFleet VM Manager API. Trailing slashes are removed.",
-          "pattern": "^(http|https)://.*$"
+          "default": "us-west",
+          "enum": [
+            "us-west",
+            "local"
+          ],
+          "enumDescriptions": [
+            "US West - Production environment",
+            "Local - Development environment"
+          ],
+          "description": "Select your TensorFleet region.",
+          "order": 1
         }
       }
     },

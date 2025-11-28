@@ -7,6 +7,7 @@ import { VMManagerIntegration } from './vm-manager';
 import * as auth from './auth';
 import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
+import * as regions from './regions';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -253,6 +254,13 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     registerTensorFleetCommand('tensorfleet.selectRosVersion', () => selectRosVersion(), {
       feature: 'ros'
+    })
+  );
+
+  // Region selection command (accessible via unified menu)
+  context.subscriptions.push(
+    registerTensorFleetCommand('tensorfleet.selectRegion', () => selectRegion(context), {
+      feature: 'region'
     })
   );
 
@@ -1695,9 +1703,14 @@ function buildMenuForState(
   }
 
   // Add secondary actions (always shown)
+  const currentRegion = regions.getSelectedRegion();
   items.push(
     {
       label: '$(refresh) Refresh Status'
+    },
+    {
+      label: `$(globe) Change Region`,
+      detail: `Current: ${currentRegion.name}`
     },
     {
       label: '$(sign-out) Logout'
@@ -1748,7 +1761,7 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
   // User not authenticated at all
   if (state.auth === 'not_authenticated') {
-    // Primary action
+    // Primary action - only login available before authentication
     items.push({
       label: '$(key) Login',
       detail: 'Authenticate with TensorFleet',
@@ -1766,11 +1779,13 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     return;
   }
 
-  // VM Manager auth error (user is logged in but VM Manager rejected token)
+  // VM Manager unavailable (user is logged in but VM Manager can't be reached)
   if (state.connection === 'not_authenticated') {
+    const currentRegion = regions.getSelectedRegion();
+    
     items.push({
-      label: '$(warning) VM Manager auth error',
-      detail: state.error || 'Current token was rejected by VM Manager',
+      label: '$(warning) VM Manager unavailable',
+      detail: state.error || 'Service may not be deployed in this region',
       kind: vscode.QuickPickItemKind.Default
     });
 
@@ -1786,18 +1801,26 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       });
     }
 
-    items.push({
-      label: '$(sign-out) Logout',
-      detail: 'Logout from TensorFleet'
-    });
+    items.push(
+      {
+        label: `$(globe) Change Region`,
+        detail: `Current: ${currentRegion.name}`
+      },
+      {
+        label: '$(sign-out) Logout',
+        detail: 'Logout from TensorFleet'
+      }
+    );
 
     const selection = await vscode.window.showQuickPick(items, {
-      placeHolder: 'VM Manager auth error',
+      placeHolder: 'VM Manager unavailable',
       ignoreFocusOut: true
     });
 
     if (selection?.label.includes('Retry') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
+    } else if (selection?.label.includes('Change Region')) {
+      await selectRegion(context);
     } else if (selection?.label.includes('Logout')) {
       await handleLogout(context);
     }
@@ -1806,6 +1829,8 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
   // API disconnected state
   if (state.connection === 'disconnected') {
+    const currentRegion = regions.getSelectedRegion();
+    
     // Primary action
     items.push({
       label: '$(refresh) Retry Connection',
@@ -1819,10 +1844,16 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     });
 
     // Secondary actions (always available while authenticated)
-    items.push({
-      label: '$(sign-out) Logout',
-      detail: 'Logout from TensorFleet'
-    });
+    items.push(
+      {
+        label: `$(globe) Change Region`,
+        detail: `Current: ${currentRegion.name}`
+      },
+      {
+        label: '$(sign-out) Logout',
+        detail: 'Logout from TensorFleet'
+      }
+    );
 
     const selection = await vscode.window.showQuickPick(items, {
       placeHolder: 'API Disconnected',
@@ -1831,6 +1862,8 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
     if (selection?.label.includes('Retry') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
+    } else if (selection?.label.includes('Change Region')) {
+      await selectRegion(context);
     } else if (selection?.label.includes('Logout')) {
       await handleLogout(context);
     }
@@ -1903,6 +1936,8 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       terminal.show();
     } else if (selection.label.includes('Refresh Status') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
+    } else if (selection.label.includes('Change Region')) {
+      await selectRegion(context);
     } else if (selection.label.includes('Logout')) {
       await handleLogout(context);
     }
@@ -1994,6 +2029,61 @@ function formatHeader(
         label: '$(sync~spin) Checking...',
         detail: 'Determining VM status'
       };
+  }
+}
+
+// ============================================================================
+// Region Selection
+// ============================================================================
+
+/**
+ * Show region selection quick pick
+ */
+async function selectRegion(_context: vscode.ExtensionContext) {
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('region.select', { phase: 'start' });
+
+  const items = regions.getRegionQuickPickItems();
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select TensorFleet region',
+    title: 'TensorFleet: Select Region',
+    matchOnDescription: true,
+    matchOnDetail: true
+  });
+
+  if (!selected) {
+    telemetry?.trackEvent('region.select', { phase: 'cancelled' });
+    return;
+  }
+
+  const regionId = regions.getRegionIdFromQuickPick(selected.label);
+  if (!regionId) {
+    telemetry?.trackEvent('region.select', { phase: 'error', reason: 'invalid_selection' });
+    return;
+  }
+
+  try {
+    await regions.setSelectedRegion(regionId);
+    
+    const newRegion = regions.getSelectedRegion();
+    telemetry?.trackEvent('region.select', { phase: 'success', region: regionId });
+
+    // Refresh VM Manager status automatically
+    if (vmManagerIntegration) {
+      vmManagerIntegration.refreshStatus(false);
+    }
+
+    vscode.window.showInformationMessage(
+      `Region changed to ${newRegion.name}. API endpoints updated.`
+    );
+
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'selectRegion' });
+    telemetry?.trackEvent('region.select', { phase: 'error' });
+    vscode.window.showErrorMessage(
+      `Failed to change region: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
