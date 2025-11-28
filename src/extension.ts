@@ -231,8 +231,8 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
     registerTensorFleetCommand('tensorfleet.openAllPanels', () => openAllPanels(context), {
+    
       feature: 'panel'
     })
   );
