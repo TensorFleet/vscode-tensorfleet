@@ -134,8 +134,9 @@ async function waitForTelemetry(ros) {
 
 /**
  * Arm the drone
+ * Note: telemetry parameter should be the container object that holds the state
  */
-async function armDrone(ros, state, armWaitSec = 3.0) {
+async function armDrone(ros, telemetry, armWaitSec = 3.0) {
     console.log(`[ARM] Waiting ${armWaitSec.toFixed(1)}s before arming...`);
     await sleep(armWaitSec * 1000);
 
@@ -151,9 +152,10 @@ async function armDrone(ros, state, armWaitSec = 3.0) {
         throw new Error("Arming command rejected");
     }
 
+    // Wait for the state to update
     const start = Date.now();
     while (Date.now() - start < 7000) {
-        if (state.armed) {
+        if (telemetry.state?.armed) {
             console.log("[ARM] Vehicle armed");
             return;
         }
@@ -163,9 +165,108 @@ async function armDrone(ros, state, armWaitSec = 3.0) {
 }
 
 /**
- * Takeoff to specified altitude
+ * Disarm the drone
+ * Note: telemetry parameter should be the container object that holds the state
  */
-async function takeoffToAlt(ros, state, fix, altitude, targetAlt, timeoutSec = 60) {
+async function disarmDrone(ros, telemetry, disarmWaitSec = 3.0) {
+    console.log(`[DISARM] Waiting ${disarmWaitSec.toFixed(1)}s before disarming...`);
+    await sleep(disarmWaitSec * 1000);
+
+    const armSrv = new ROSLIB.Service({
+        ros,
+        name: "/mavros/cmd/arming",
+        serviceType: "mavros_msgs/CommandBool"
+    });
+
+    console.log("[DISARM] Sending disarm command...");
+    const resp = await makeServiceCall(armSrv, { value: false });
+    if (!resp?.success) {
+        throw new Error("Disarm command rejected");
+    }
+
+    // Wait for the state to update
+    const start = Date.now();
+    while (Date.now() - start < 7000) {
+        if (!telemetry.state?.armed) {
+            console.log("[DISARM] Vehicle disarmed");
+            return;
+        }
+        await sleep(100);
+    }
+    throw new Error("Vehicle did not disarm in time");
+}
+
+/**
+ * Set flight mode
+ * Note: telemetry should be the container object so we can read live updates
+ */
+async function setMode(ros, telemetry, targetMode, timeoutSec = 10) {
+    const modeSrv = new ROSLIB.Service({
+        ros,
+        name: "/mavros/set_mode",
+        serviceType: "mavros_msgs/SetMode"
+    });
+
+    const currentMode = (telemetry.state?.mode || "").toUpperCase();
+    if (currentMode === targetMode.toUpperCase()) {
+        console.log(`[MODE] Already in ${targetMode} mode`);
+        return;
+    }
+
+    console.log(`[MODE] Switching from ${currentMode} to ${targetMode}...`);
+    const resp = await makeServiceCall(modeSrv, {
+        base_mode: 0,
+        custom_mode: targetMode
+    });
+
+    if (!resp?.mode_sent) {
+        throw new Error(`Failed to set mode to ${targetMode}`);
+    }
+
+    // Wait for mode to actually change
+    const start = Date.now();
+    while (Date.now() - start < timeoutSec * 1000) {
+        // Read live value from telemetry container (updated by subscriptions)
+        const mode = (telemetry.state?.mode || "").toUpperCase();
+        if (mode === targetMode.toUpperCase()) {
+            console.log(`[MODE] Successfully switched to ${targetMode}`);
+            return;
+        }
+        await sleep(100);
+    }
+    throw new Error(`Timeout waiting for mode ${targetMode} (current: ${telemetry.state?.mode})`);
+}
+
+/**
+ * Takeoff to specified altitude
+ * Note: telemetry should be the container object so we can read live updates
+ */
+async function takeoffToAlt(ros, telemetry, targetAlt, timeoutSec = 60) {
+    // Try to switch to GUIDED mode if not already in a compatible mode
+    // Note: NAV_TAKEOFF can work in GUIDED, AUTO, or AUTO.LOITER modes
+    const currentMode = (telemetry.state?.mode || "").toUpperCase();
+    const compatibleModes = ["GUIDED", "AUTO", "AUTO.LOITER"];
+    
+    if (!compatibleModes.includes(currentMode)) {
+        console.log(`[TAKEOFF] Current mode ${currentMode} may not support takeoff, attempting to switch to GUIDED...`);
+        try {
+            await setMode(ros, telemetry, "GUIDED", 10);
+            await sleep(500); // Wait for mode to stabilize
+        } catch (err) {
+            // If GUIDED mode switch fails, try AUTO mode as fallback
+            console.log(`[TAKEOFF] GUIDED mode switch failed, trying AUTO mode...`);
+            try {
+                await setMode(ros, telemetry, "AUTO", 10);
+                await sleep(500);
+            } catch (err2) {
+                // If both fail, log warning but proceed - AUTO.LOITER might still work
+                console.warn(`[TAKEOFF] Mode switch failed, proceeding anyway (current: ${currentMode})`);
+            }
+        }
+    } else {
+        console.log(`[TAKEOFF] Already in compatible mode: ${currentMode}`);
+    }
+
     const cmdLongSrv = new ROSLIB.Service({
         ros,
         name: "/mavros/cmd/command",
@@ -173,8 +274,8 @@ async function takeoffToAlt(ros, state, fix, altitude, targetAlt, timeoutSec = 6
     });
 
     console.log(`[TAKEOFF] Sending MAV_CMD_NAV_TAKEOFF to ${targetAlt.toFixed(2)}m AGL`);
-    const lat = Number(fix.latitude);
-    const lon = Number(fix.longitude);
+    const lat = Number(telemetry.fix.latitude);
+    const lon = Number(telemetry.fix.longitude);
     const request = {
         command: 22,
         confirmation: 0,
@@ -192,22 +293,52 @@ async function takeoffToAlt(ros, state, fix, altitude, targetAlt, timeoutSec = 6
         throw new Error(`NAV_TAKEOFF rejected (result=${resp?.result})`);
     }
 
-    console.log("[TAKEOFF] Command accepted, waiting for AUTO.LOITER @ altitude...");
+    console.log("[TAKEOFF] Command accepted, waiting for altitude...");
 
     const start = Date.now();
+    let lastAlt = telemetry.altitude?.relative || 0;
+    let stableCount = 0;
+    let hasStartedClimbing = false;
+    
     while (true) {
-        const mode = (state?.mode || "").toUpperCase();
-        const relAlt = altitude?.relative || 0;
+        // Read live values from telemetry container (updated by subscriptions)
+        const mode = (telemetry.state?.mode || "").toUpperCase();
+        const relAlt = telemetry.altitude?.relative || 0;
         console.log(`[TAKEOFF] mode=${mode} rel_alt=${relAlt.toFixed(2)}`);
 
-        if (mode === "AUTO.LOITER" && Math.abs(relAlt - targetAlt) < 0.4) {
-            console.log("[TAKEOFF] Takeoff complete");
-            return;
+        // Check if altitude has started increasing (detect takeoff initiation)
+        if (relAlt > lastAlt + 0.1) {
+            hasStartedClimbing = true;
         }
+
+        // If we've been in AUTO.LOITER for a while without climbing, something is wrong
+        if (mode === "AUTO.LOITER" && !hasStartedClimbing && Date.now() - start > 5000) {
+            throw new Error(`Takeoff failed: drone in AUTO.LOITER but not climbing (rel_alt=${relAlt.toFixed(2)}m). Ensure GUIDED mode is available and drone is ready.`);
+        }
+
+        // Check if altitude is reached (within 0.4m tolerance)
+        if (relAlt >= targetAlt - 0.4) {
+            // Check if altitude is stable (not climbing anymore)
+            if (Math.abs(relAlt - lastAlt) < 0.1) {
+                stableCount++;
+                // Require 3 consecutive stable readings (600ms) to confirm
+                if (stableCount >= 3) {
+                    console.log("[TAKEOFF] Takeoff complete");
+                    return;
+                }
+            } else {
+                stableCount = 0; // Reset if still moving
+            }
+        } else {
+            stableCount = 0; // Reset if not at target yet
+        }
+        
+        lastAlt = relAlt;
+        
         if (Date.now() - start > timeoutSec * 1000) {
-            throw new Error("Timeout waiting for AUTO.LOITER at altitude");
+            throw new Error(`Timeout waiting for altitude ${targetAlt.toFixed(2)}m (current: ${relAlt.toFixed(2)}m)`);
         }
-        if (!state?.armed) {
+        if (!telemetry.state?.armed) {
             throw new Error("Vehicle disarmed during takeoff");
         }
         await sleep(200);
@@ -256,8 +387,9 @@ async function enterOffboard(ros, velPub, setpointHz = 20) {
 
 /**
  * Land the drone
+ * Note: telemetry should be the container object so we can read live updates
  */
-async function landDrone(ros, state, setpointHz = 20, timeoutSec = 300) {
+async function landDrone(ros, telemetry, setpointHz = 20, timeoutSec = 300) {
     const modeSrv = new ROSLIB.Service({
         ros,
         name: "/mavros/set_mode",
@@ -273,8 +405,9 @@ async function landDrone(ros, state, setpointHz = 20, timeoutSec = 300) {
     console.log("[LAND] Waiting for disarm...");
     const start = Date.now();
     while (Date.now() - start < timeoutSec * 1000) {
-        const armed = !!state?.armed;
-        const mode = state?.mode;
+        // Read live values from telemetry container (updated by subscriptions)
+        const armed = !!telemetry.state?.armed;
+        const mode = telemetry.state?.mode;
         console.log(`[LAND] mode=${mode} armed=${armed}`);
         if (!armed) {
             console.log("[LAND] Vehicle disarmed, landing complete");
@@ -292,6 +425,8 @@ module.exports = {
     connectToDrone,
     waitForTelemetry,
     armDrone,
+    disarmDrone,
+    setMode,
     takeoffToAlt,
     enterOffboard,
     landDrone

@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 /**
- * Tutorial 06: OFFBOARD Hover
+ * Tutorial 05: OFFBOARD Hover
  * 
  * Learn: OFFBOARD mode basics and velocity streaming
  * 
  * This script demonstrates:
+ * - Standalone operation: automatically arms and takes off if needed
  * - Entering OFFBOARD mode
  * - Streaming velocity setpoints (zero = hover)
  * - Maintaining OFFBOARD with continuous updates
  * - Returning to land
  * 
- * Run: bun src/tutorials/06_offboard_hover.js
+ * Run: bun src/tutorials/05_offboard_hover.js
  */
 
 require("dotenv").config();
@@ -38,17 +39,11 @@ async function main() {
 
     // Arm and takeoff
     if (!telemetry.state.armed) {
-        await armDrone(ros, telemetry.state);
+        await armDrone(ros, telemetry);
     }
 
     console.log("");
-    await takeoffToAlt(
-        ros,
-        telemetry.state,
-        telemetry.fix,
-        telemetry.altitude,
-        TARGET_ALTITUDE
-    );
+    await takeoffToAlt(ros, telemetry, TARGET_ALTITUDE);
 
     // Create velocity publisher
     const velPub = new ROSLIB.Topic({
@@ -84,7 +79,7 @@ async function main() {
     console.log("[HOVER] Hover complete\n");
 
     // Land
-    await landDrone(ros, telemetry.state, SETPOINT_HZ);
+    await landDrone(ros, telemetry, SETPOINT_HZ);
 
     console.log("\n[SUCCESS] Mission complete!");
     console.log("[EXIT] Closing connection...");
@@ -98,3 +93,4 @@ if (require.main === module) {
         process.exit(1);
     });
 }
+

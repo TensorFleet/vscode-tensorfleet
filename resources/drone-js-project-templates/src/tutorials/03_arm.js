@@ -1,19 +1,24 @@
 #!/usr/bin/env node
 /**
- * Tutorial 03: Arm the Drone
+ * Tutorial 03: Arm / Disarm the Drone
  * 
- * Learn: Service calls and arming requirements
+ * Learn: Service calls and arm/disarm requirements
  * 
  * This script demonstrates:
- * - Calling /mavros/cmd/arming service
+ * - Calling /mavros/cmd/arming service (arm + disarm)
  * - Waiting for state changes
- * - Checking arm success
+ * - Checking arm/disarm success
  * 
  * Run: bun src/tutorials/03_arm.js
  */
 
 require("dotenv").config();
-const { connectToDrone, waitForTelemetry, armDrone } = require("../lib/drone_utils");
+const {
+    connectToDrone,
+    waitForTelemetry,
+    armDrone,
+    disarmDrone
+} = require("../lib/drone_utils");
 
 const R2B_HOST = process.env.R2B_HOST || process.env.ROS_HOST || "172.16.0.10";
 const R2B_PORT = process.env.R2B_PORT || process.env.ROS_PORT || "9091";
@@ -26,12 +31,14 @@ async function main() {
 
     console.log(`\n[INFO] Current state: armed=${telemetry.state.armed}\n`);
 
-    if (telemetry.state.armed) {
-        console.log("[INFO] Drone is already armed!");
-    } else {
-        console.log("[INFO] Arming drone...\n");
-        await armDrone(ros, telemetry.state);
+    if (!telemetry.state.armed) {
+        console.log("[INFO] Drone is currently disarmed. Arming...\n");
+        await armDrone(ros, telemetry);
         console.log("\n[SUCCESS] Drone is now armed!");
+    } else {
+        console.log("[INFO] Drone is currently armed. Disarming...\n");
+        await disarmDrone(ros, telemetry);
+        console.log("\n[SUCCESS] Drone is now disarmed!");
     }
 
     console.log("\n[EXIT] Closing connection...");

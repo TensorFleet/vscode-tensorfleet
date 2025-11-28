@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 /**
- * Tutorial 08: Go to Waypoint
+ * Tutorial 07: Go to Waypoint
  * 
  * Learn: Position-based navigation and closed-loop control
  * 
  * This script demonstrates:
+ * - Standalone operation: automatically arms and takes off if needed
  * - Reading current position
  * - Calculating velocity to target
  * - Closed-loop control (feedback)
  * - Waypoint arrival detection
  * 
- * Run: bun src/tutorials/08_goto_waypoint.js
+ * Run: bun src/tutorials/07_goto_waypoint.js
  */
 
 require("dotenv").config();
@@ -43,17 +44,11 @@ async function main() {
 
     // Arm and takeoff
     if (!telemetry.state.armed) {
-        await armDrone(ros, telemetry.state);
+        await armDrone(ros, telemetry);
     }
 
     console.log("");
-    await takeoffToAlt(
-        ros,
-        telemetry.state,
-        telemetry.fix,
-        telemetry.altitude,
-        TARGET_ALTITUDE
-    );
+    await takeoffToAlt(ros, telemetry, TARGET_ALTITUDE);
 
     // Record home position
     const home = {
@@ -132,7 +127,7 @@ async function main() {
     }
 
     // Land
-    await landDrone(ros, telemetry.state, SETPOINT_HZ);
+    await landDrone(ros, telemetry, SETPOINT_HZ);
 
     console.log("\n[SUCCESS] Mission complete!");
     console.log("[EXIT] Closing connection...");
@@ -146,3 +141,4 @@ if (require.main === module) {
         process.exit(1);
     });
 }
+
