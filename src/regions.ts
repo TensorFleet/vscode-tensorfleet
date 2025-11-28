@@ -3,9 +3,33 @@
  * 
  * Maps regions to their respective API domains.
  * Users select a region, and all URLs are derived automatically.
+ * 
+ * Note: The "local" region is only available in development builds.
+ * In production (marketplace) builds, only official regions are shown.
  */
 
 import * as vscode from 'vscode';
+
+/**
+ * Check if we're running in development mode
+ * This is set by the extension context during activation
+ */
+let isDevelopmentMode = false;
+
+/**
+ * Initialize the regions module with extension context
+ * Must be called during extension activation
+ */
+export function initializeRegions(context: vscode.ExtensionContext): void {
+  isDevelopmentMode = context.extensionMode !== vscode.ExtensionMode.Production;
+}
+
+/**
+ * Check if development-only features should be available
+ */
+export function isDevMode(): boolean {
+  return isDevelopmentMode;
+}
 
 export interface RegionConfig {
   /** Display name for the region */
@@ -24,6 +48,8 @@ export interface RegionConfig {
   description: string;
   /** Icon for display */
   icon: string;
+  /** If true, this region is only available in development builds */
+  devOnly?: boolean;
 }
 
 /**
@@ -37,20 +63,45 @@ export const REGIONS: Record<string, RegionConfig> = {
     vmManagerUrl: 'https://vm.tensorfleet.net',
     foxglovePort: 8765,
     ros2Port: 9091,
-    description: 'Production environment',
+    description: 'United States - West Coast',
     icon: '🇺🇸'
+  },
+  'eu-west': {
+    id: 'eu-west',
+    name: 'EU West',
+    backendUrl: 'https://eu.app.tensorfleet.net',
+    vmManagerUrl: 'https://eu.vm.tensorfleet.net',
+    foxglovePort: 8765,
+    ros2Port: 9091,
+    description: 'Europe - Western Region',
+    icon: '🇪🇺'
   },
   'local': {
     id: 'local',
-    name: 'Local',
+    name: 'Local Development',
     backendUrl: 'http://localhost:3000',
     vmManagerUrl: 'http://localhost:8080',
     foxglovePort: 8765,
     ros2Port: 9091,
-    description: 'Local development',
-    icon: '💻'
+    description: 'Local development server',
+    icon: '💻',
+    devOnly: true  // Only visible in development builds
   }
 };
+
+/**
+ * Get regions available for the current build mode
+ * Filters out dev-only regions in production builds
+ */
+export function getAvailableRegions(): Record<string, RegionConfig> {
+  if (isDevelopmentMode) {
+    return REGIONS;
+  }
+  // Filter out dev-only regions in production
+  return Object.fromEntries(
+    Object.entries(REGIONS).filter(([_, config]) => !config.devOnly)
+  );
+}
 
 /**
  * Default region if none is configured
@@ -59,10 +110,21 @@ export const DEFAULT_REGION = 'us-west';
 
 /**
  * Get the currently selected region ID from configuration
+ * Falls back to default if the configured region is not available (e.g., local in production)
  */
 export function getSelectedRegionId(): string {
   const config = vscode.workspace.getConfiguration('tensorfleet');
-  return config.get<string>('region') || DEFAULT_REGION;
+  const configuredRegion = config.get<string>('region') || DEFAULT_REGION;
+  
+  // If the configured region is available, use it
+  const availableRegions = getAvailableRegions();
+  if (availableRegions[configuredRegion]) {
+    return configuredRegion;
+  }
+  
+  // Fall back to default if configured region is not available
+  // (e.g., "local" was configured but we're in production mode)
+  return DEFAULT_REGION;
 }
 
 /**
@@ -70,7 +132,8 @@ export function getSelectedRegionId(): string {
  */
 export function getSelectedRegion(): RegionConfig {
   const regionId = getSelectedRegionId();
-  return REGIONS[regionId] || REGIONS[DEFAULT_REGION];
+  const availableRegions = getAvailableRegions();
+  return availableRegions[regionId] || REGIONS[DEFAULT_REGION];
 }
 
 /**
@@ -105,22 +168,26 @@ export function getRos2WebsocketUrl(ipAddress: string): string {
 
 /**
  * Set the selected region
+ * Only allows setting regions that are available in the current build mode
  */
 export async function setSelectedRegion(regionId: string): Promise<void> {
-  if (!REGIONS[regionId]) {
-    throw new Error(`Unknown region: ${regionId}`);
+  const availableRegions = getAvailableRegions();
+  if (!availableRegions[regionId]) {
+    throw new Error(`Region not available: ${regionId}`);
   }
   const config = vscode.workspace.getConfiguration('tensorfleet');
   await config.update('region', regionId, vscode.ConfigurationTarget.Global);
 }
 
 /**
- * Get all available regions as quick pick items
+ * Get available regions as quick pick items
+ * Only shows regions available in the current build mode
  */
 export function getRegionQuickPickItems(): vscode.QuickPickItem[] {
   const currentRegionId = getSelectedRegionId();
+  const availableRegions = getAvailableRegions();
   
-  return Object.values(REGIONS).map(region => ({
+  return Object.values(availableRegions).map(region => ({
     label: `${region.icon} ${region.name}`,
     description: region.id === currentRegionId ? '$(check) Current' : '',
     detail: region.description,
@@ -131,9 +198,11 @@ export function getRegionQuickPickItems(): vscode.QuickPickItem[] {
 
 /**
  * Extract region ID from a quick pick selection
+ * Only matches regions available in the current build mode
  */
 export function getRegionIdFromQuickPick(label: string): string | undefined {
-  for (const [id, region] of Object.entries(REGIONS)) {
+  const availableRegions = getAvailableRegions();
+  for (const [id, region] of Object.entries(availableRegions)) {
     if (label.includes(region.name)) {
       return id;
     }

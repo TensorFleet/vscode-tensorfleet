@@ -135,6 +135,9 @@ let projectWatcher: vscode.FileSystemWatcher | null = null;
 let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
 
 export function activate(context: vscode.ExtensionContext) {
+  // Initialize regions first (determines available regions based on build mode)
+  regions.initializeRegions(context);
+  
   telemetryService = new TelemetryService(context);
   context.subscriptions.push(telemetryService);
   telemetryService.trackEvent('extension.activate', {

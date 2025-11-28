@@ -236,13 +236,15 @@
           "default": "us-west",
           "enum": [
             "us-west",
+            "eu-west",
             "local"
           ],
           "enumDescriptions": [
-            "US West - Production environment",
-            "Local - Development environment"
+            "US West - United States West Coast (vm.tensorfleet.net)",
+            "EU West - Europe Western Region (eu.vm.tensorfleet.net)",
+            "Local - Development only (hidden in production builds)"
           ],
-          "description": "Select your TensorFleet region.",
+          "description": "Select your TensorFleet region. Note: 'local' is only available when running the extension in development mode.",
           "order": 1
         }
       }
