@@ -204,7 +204,11 @@ jobs:
             echo "❌ VSCE_PAT secret is not set. Skipping publish."
             exit 0
           fi
-          VSIX_FILE=$(ls dist/tensorfleet-drone-*.vsix | grep -v openvsx | head -n 1)
+          VSIX_FILE=$(find dist -name 'tensorfleet-drone-*.vsix' ! -name '*openvsx*' | head -n 1)
+          if [ -z "$VSIX_FILE" ]; then
+            echo "❌ No VSIX file found for publishing!"
+            exit 1
+          fi
           echo "📤 Publishing $VSIX_FILE to VS Code Marketplace..."
           bunx vsce publish --packagePath "$VSIX_FILE"
 
@@ -238,6 +242,10 @@ jobs:
             echo "❌ OVSX_PAT secret is not set. Skipping publish."
             exit 0
           fi
-          VSIX_FILE=$(ls dist/tensorfleet-drone-openvsx-*.vsix | head -n 1)
+          VSIX_FILE=$(find dist -name 'tensorfleet-drone-openvsx-*.vsix' | head -n 1)
+          if [ -z "$VSIX_FILE" ]; then
+            echo "❌ No OpenVSX VSIX file found for publishing!"
+            exit 1
+          fi
           echo "📤 Publishing $VSIX_FILE to OpenVSX..."
           bunx --yes @vscode/ovsx@latest publish "$VSIX_FILE" --pat "$OVSX_PAT"
