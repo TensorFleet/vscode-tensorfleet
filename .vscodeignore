@@ -1,0 +1,66 @@
+# Source files (compiled/bundled code is in dist/)
+src/**/*.ts
+src/**/*.tsx
+!src/**/*.d.ts
+
+# TypeScript config
+tsconfig.json
+
+# Development and build files
+build.sh
+*.sh
+
+# Documentation
+*.md
+!README.md
+!LICENSE.md
+
+# Development files
+.git/
+.gitignore
+.github/
+.vscode/
+
+# Dependencies (should be bundled or listed in dependencies)
+node_modules/
+#TODO make this suck less
+package-lock.json
+bun.lock
+bun.lockb
+
+# Build artifacts (keep only necessary compiled files)
+# Vite bundles extension + MCP server into dist/
+out/
+dist/**/*.map
+panels-standalone/node_modules/
+panels-standalone/bun.lock
+panels-standalone/bun.lockb
+
+# Development configs
+panels-standalone/tsconfig*.json
+panels-standalone/vite.config.ts
+panels-standalone/.vscode/
+panels-standalone/package.json
+panels-standalone/README.md
+panels-standalone/webview.md
+
+# Test files
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+test-bridge.js
+
+# Source TypeScript in panels-standalone (only built output in dist/ should be included)
+panels-standalone/src/
+# Note: panels-standalone/dist/ MUST be included (built output)
+# Note: panels-standalone/*.html are templates and should be included if referenced
+
+# Development/demo directories
+vite-demo/
+
+# Scripts (unless needed at runtime)
+scripts/
+
+# MCP config example
+mcp-config-example.json

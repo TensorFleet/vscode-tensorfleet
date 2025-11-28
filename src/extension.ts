@@ -4,6 +4,9 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
 import { VMManagerIntegration } from './vm-manager';
+import * as auth from './auth';
+import { UnifiedStatusCoordinator } from './unified-status';
+import { TelemetryService } from './telemetry';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -119,6 +122,7 @@ const terminalRegistry = new Map<string, vscode.Terminal>();
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 let vmManagerIntegration: VMManagerIntegration | null = null;
+let telemetryService: TelemetryService | null = null;
 
 
 // Status bar items for TensorFleet projects
@@ -126,24 +130,66 @@ let rosVersionStatusBar: vscode.StatusBarItem | null = null;
 let droneStatusBar: vscode.StatusBarItem | null = null;
 let projectWatcher: vscode.FileSystemWatcher | null = null;
 
+// Unified status coordinator
+let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
+
 export function activate(context: vscode.ExtensionContext) {
+  telemetryService = new TelemetryService(context);
+  context.subscriptions.push(telemetryService);
+  telemetryService.trackEvent('extension.activate', {
+    mode:
+      context.extensionMode === vscode.ExtensionMode.Production
+        ? 'production'
+        : context.extensionMode === vscode.ExtensionMode.Development
+          ? 'development'
+          : 'test'
+  });
+
   // Start MCP bridge for communication between MCP server and VS Code
   mcpBridge = new MCPBridge(context);
-  mcpBridge.start().then(() => {
-    console.log('TensorFleet MCP Bridge started');
-  }).catch((error) => {
-    console.error('Failed to start MCP Bridge:', error);
-  });
+  mcpBridge
+    .start()
+    .then(() => {
+      telemetryService?.trackEvent('mcpBridge.start', { status: 'success' });
+      console.log('TensorFleet MCP Bridge started');
+    })
+    .catch((error) => {
+      telemetryService?.captureError(error, { source: 'mcpBridge.start' });
+      console.error('Failed to start MCP Bridge:', error);
+    });
 
   // Panels handle ROS2 networking internally via panels-standalone Foxglove client.
 
   // Initialize status bar items for TensorFleet projects
-  initializeStatusBarItems(context).catch((error) => {
-    console.error('[TensorFleet] Failed to initialize status bars:', error);
-  });
+  initializeStatusBarItems(context)
+    .then(() => {
+      telemetryService?.trackEvent('statusBar.initialize', { status: 'success' });
+    })
+    .catch((error) => {
+      telemetryService?.captureError(error, { source: 'initializeStatusBarItems' });
+      console.error('[TensorFleet] Failed to initialize status bars:', error);
+    });
 
-  vmManagerIntegration = new VMManagerIntegration(context);
-  vmManagerIntegration.initialize();
+  // Initialize unified status coordinator (replaces separate auth and VM status bars)
+  unifiedStatusCoordinator = new UnifiedStatusCoordinator(context);
+
+  // Initialize auth state
+  updateUnifiedAuthStatus(context);
+
+  // Update auth status periodically (every 30 seconds)
+  const authInterval = setInterval(() => {
+    updateUnifiedAuthStatus(context);
+  }, 30000);
+  context.subscriptions.push(new vscode.Disposable(() => clearInterval(authInterval)));
+
+  vmManagerIntegration = new VMManagerIntegration(context, unifiedStatusCoordinator, telemetryService);
+  try {
+    vmManagerIntegration.initialize();
+    telemetryService?.trackEvent('vmManager.initialize', { status: 'success' });
+  } catch (error) {
+    telemetryService?.captureError(error, { source: 'vmManager.initialize' });
+  }
+
   DRONE_VIEWS.forEach((view) => {
     const provider = new DashboardViewProvider(view, context);
     context.subscriptions.push(
@@ -153,7 +199,11 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
-      vscode.commands.registerCommand(view.command, () => openDedicatedPanel(view, context))
+      registerTensorFleetCommand(
+        view.command,
+        () => openDedicatedPanel(view, context),
+        { feature: 'panel' }
+      )
     );
   });
 
@@ -165,11 +215,15 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.installTools', () => installBundledTools(context))
+    registerTensorFleetCommand('tensorfleet.installTools', () => installBundledTools(context), {
+      feature: 'tooling'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.createNewProject', () => createNewProject(context))
+    registerTensorFleetCommand('tensorfleet.createNewProject', () => createNewProject(context), {
+      feature: 'projects'
+    })
   );
 
   context.subscriptions.push(
@@ -178,33 +232,67 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
+    registerTensorFleetCommand('tensorfleet.openAllPanels', () => openAllPanels(context), {
+      feature: 'panel'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.startMCPServer', () => startMCPServer(context))
+    registerTensorFleetCommand('tensorfleet.startMCPServer', () => startMCPServer(context), {
+      feature: 'mcp'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.stopMCPServer', () => stopMCPServer())
+    registerTensorFleetCommand('tensorfleet.stopMCPServer', () => stopMCPServer(), {
+      feature: 'mcp'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context))
+    registerTensorFleetCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context), {
+      feature: 'mcp'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.selectRosVersion', () => selectRosVersion())
+    registerTensorFleetCommand('tensorfleet.selectRosVersion', () => selectRosVersion(), {
+      feature: 'ros'
+    })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
+    registerTensorFleetCommand('tensorfleet.showDroneStatus', () => showDroneStatus(), {
+      feature: 'status'
+    })
   );
 
+  // Unified menu command (replaces separate auth and VM menu commands)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.showUnifiedMenu', () => showUnifiedMenu(context))
+  );
+
+  // Keep VM manager menu for backward compatibility (but it will use unified coordinator)
   if (vmManagerIntegration) {
     context.subscriptions.push(
-      vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => vmManagerIntegration?.showVmActions())
+      vscode.commands.registerCommand('tensorfleet.showVMManagerMenu', () => showUnifiedMenu(context))
     );
   }
+
+  // Auth commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.login', () => handleLogin(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.logout', () => handleLogout(context))
+  );
+
+  // Keep auth status command for backward compatibility
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.authStatus', () => showUnifiedMenu(context))
+  );
+
   // ROS bridge commands removed; panels use embedded Foxglove networking.
 
   context.subscriptions.push(
@@ -212,6 +300,7 @@ export function activate(context: vscode.ExtensionContext) {
       for (const [key, terminal] of terminalRegistry.entries()) {
         if (terminal === closedTerminal) {
           terminalRegistry.delete(key);
+          telemetryService?.trackEvent('terminal.closed', { target: key });
           break;
         }
       }
@@ -220,15 +309,27 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  telemetryService?.trackEvent('extension.deactivate');
+
   // Clean up MCP bridge
   if (mcpBridge) {
-    mcpBridge.stop().catch(console.error);
+    mcpBridge
+      .stop()
+      .catch((error) => {
+        telemetryService?.captureError(error, { source: 'mcpBridge.stop' });
+        console.error(error);
+      });
     mcpBridge = null;
   }
   
   // Clean up MCP server if running
   if (mcpServerProcess) {
-    mcpServerProcess.kill();
+    try {
+      mcpServerProcess.kill();
+      telemetryService?.trackEvent('mcpServer.stop', { reason: 'deactivate' });
+    } catch (error) {
+      telemetryService?.captureError(error, { source: 'mcpServer.stop' });
+    }
     mcpServerProcess = null;
   }
 
@@ -246,10 +347,43 @@ export function deactivate() {
     projectWatcher = null;
   }
 
+  if (unifiedStatusCoordinator) {
+    unifiedStatusCoordinator.dispose();
+    unifiedStatusCoordinator = null;
+  }
+
   if (vmManagerIntegration) {
     vmManagerIntegration.dispose();
     vmManagerIntegration = null;
   }
+
+  telemetryService?.dispose();
+  telemetryService = null;
+}
+
+function getTelemetry() {
+  return telemetryService;
+}
+
+function registerTensorFleetCommand(
+  commandId: string,
+  handler: (...args: any[]) => unknown,
+  options?: { feature?: string }
+) {
+  return vscode.commands.registerCommand(commandId, async (...args: unknown[]) => {
+    const telemetry = getTelemetry();
+    const feature = options?.feature ?? 'core';
+    telemetry?.trackEvent('command.execute', { commandId, feature, phase: 'start' });
+    try {
+      const result = await Promise.resolve(handler(...args));
+      telemetry?.trackEvent('command.execute', { commandId, feature, phase: 'success' });
+      return result;
+    } catch (error) {
+      telemetry?.captureError(error, { commandId, feature });
+      telemetry?.trackEvent('command.execute', { commandId, feature, phase: 'error' });
+      throw error;
+    }
+  });
 }
 
 class DashboardViewProvider implements vscode.WebviewViewProvider {
@@ -265,10 +399,12 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.onDidReceiveMessage((message) => {
       if (message?.command === 'openPanel') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: this.config.id, action: 'openPanel' });
         vscode.commands.executeCommand(this.config.command).then(undefined, (error) => {
           vscode.window.showErrorMessage(`Failed to open panel: ${error instanceof Error ? error.message : error}`);
         });
       } else if (message?.command === 'openAllPanels') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: this.config.id, action: 'openAllPanels' });
         vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
           vscode.window.showErrorMessage(
             `Failed to open all dashboards: ${error instanceof Error ? error.message : error}`
@@ -308,12 +444,15 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.renderHtml(webviewView.webview);
     webviewView.webview.onDidReceiveMessage((message) => {
       if (message?.command === 'newProject') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'newProject' });
         vscode.commands.executeCommand('tensorfleet.createNewProject');
       } else if (message?.command === 'newRoboticProject') {
         vscode.commands.executeCommand('tensorfleet.createNewRoboticProject');
       } else if (message?.command === 'installTools') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'installTools' });
         vscode.commands.executeCommand('tensorfleet.installTools');
       } else if (message?.command === 'openAllPanels') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'openAllPanels' });
         vscode.commands.executeCommand('tensorfleet.openAllPanels');
       }
     });
@@ -336,71 +475,112 @@ async function openDedicatedPanel(
   viewColumn: vscode.ViewColumn = vscode.ViewColumn.Active,
   preserveFocus = false
 ) {
-  const viewType = `tensorfleetPanel.${view.id.replace(/[^A-Za-z0-9.-]/g, '-')}`;
-  // Set up local resource roots based on panel type
-  const localResourceRoots = [vscode.Uri.joinPath(context.extensionUri, 'media')];
-  if (view.htmlTemplate) {
-    localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'src', 'templates'));
-    if (view.htmlTemplate === 'teleops-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-
-    if (view.htmlTemplate === 'image-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-
-    if (view.htmlTemplate == 'map-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-
-    if (view.htmlTemplate == 'raw-messages-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-  }
-
-  const panel = vscode.window.createWebviewPanel(
-    viewType,
-    view.title,
-    { viewColumn, preserveFocus },
-    {
-      enableScripts: true,
-      retainContextWhenHidden: true,
-      localResourceRoots
-    }
-  );
-
-  const webview = panel.webview;
-  const imageUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', view.image)).toString();
-  const cspSource = webview.cspSource;
-
-  panel.webview.onDidReceiveMessage((message) => {
-    if (message?.command === 'launchTerminal' && typeof message.target === 'string') {
-      launchTerminalSession(message.target);
-    } else if (message?.command === 'openAllPanels') {
-      void vscode.commands.executeCommand('tensorfleet.openAllPanels');
-    } else {
-      // Handle Option 3 panel messages
-      handleOption3Message(panel, message, context);
-    }
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('panel.open', {
+    panelId: view.id,
+    kind: view.panelKind ?? 'standard',
+    template: view.htmlTemplate ?? 'standard',
+    phase: 'start'
   });
 
-  if (view.panelKind === 'terminalTabs') {
-    panel.webview.html = getTerminalPanelHtml(view, imageUri, cspSource);
-    return panel;
-  }
+  try {
+    const viewType = `tensorfleetPanel.${view.id.replace(/[^A-Za-z0-9.-]/g, '-')}`;
+    // Set up local resource roots based on panel type
+    const localResourceRoots = [vscode.Uri.joinPath(context.extensionUri, 'media')];
+    if (view.htmlTemplate) {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'src', 'templates'));
+      if (view.htmlTemplate === 'teleops-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
 
-  // Check if view has a custom HTML template
-  if (view.htmlTemplate) {
-    panel.webview.html = getCustomPanelHtml(view, panel.webview, context, cspSource);
-    return panel;
-  }
+      if (view.htmlTemplate === 'image-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
 
-  panel.webview.html = getStandardPanelHtml(view, imageUri, cspSource);
-  return panel;
+      if (view.htmlTemplate == 'map-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+
+      if (view.htmlTemplate == 'raw-messages-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+    }
+
+    const panel = vscode.window.createWebviewPanel(
+      viewType,
+      view.title,
+      { viewColumn, preserveFocus },
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots
+      }
+    );
+
+    const webview = panel.webview;
+    const imageUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', view.image)).toString();
+    const cspSource = webview.cspSource;
+
+    panel.webview.onDidReceiveMessage((message) => {
+      telemetry?.trackEvent('panel.message', {
+        panelId: view.id,
+        command: message?.command ?? 'unknown'
+      });
+      if (message?.command === 'launchTerminal' && typeof message.target === 'string') {
+        launchTerminalSession(message.target);
+      } else if (message?.command === 'openAllPanels') {
+        void vscode.commands.executeCommand('tensorfleet.openAllPanels');
+      } else {
+        // Handle Option 3 panel messages
+        handleOption3Message(panel, message, context);
+      }
+    });
+
+    if (view.panelKind === 'terminalTabs') {
+      panel.webview.html = getTerminalPanelHtml(view, imageUri, cspSource);
+      telemetry?.trackEvent('panel.open', {
+        panelId: view.id,
+        kind: view.panelKind,
+        template: view.htmlTemplate ?? 'standard',
+        phase: 'success'
+      });
+      return panel;
+    }
+
+    // Check if view has a custom HTML template
+    if (view.htmlTemplate) {
+      panel.webview.html = getCustomPanelHtml(view, panel.webview, context, cspSource);
+      telemetry?.trackEvent('panel.open', {
+        panelId: view.id,
+        kind: view.panelKind ?? 'standard',
+        template: view.htmlTemplate,
+        phase: 'success'
+      });
+      return panel;
+    }
+
+    panel.webview.html = getStandardPanelHtml(view, imageUri, cspSource);
+    telemetry?.trackEvent('panel.open', {
+      panelId: view.id,
+      kind: view.panelKind ?? 'standard',
+      template: 'standard',
+      phase: 'success'
+    });
+    return panel;
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'openDedicatedPanel', panelId: view.id });
+    telemetry?.trackEvent('panel.open', {
+      panelId: view.id,
+      kind: view.panelKind ?? 'standard',
+      template: view.htmlTemplate ?? 'standard',
+      phase: 'error'
+    });
+    throw error;
+  }
 }
 
 function getStandardPanelHtml(view: DroneViewport, imageUri: string, cspSource: string): string {
@@ -519,6 +699,7 @@ async function handleOption3Message(_panel: vscode.WebviewPanel, message: any, _
     console.warn('[TensorFleet] Invalid message received from webview');
     return;
   }
+  getTelemetry()?.trackEvent('panel.option3Message', { command: message.command });
   // Standalone panels manage ROS2 via embedded Foxglove. No extension-side action.
   console.log('[TensorFleet] Webview message (handled in panel):', message.command);
 }
@@ -529,52 +710,71 @@ async function handleOption3Message(_panel: vscode.WebviewPanel, message: any, _
 // (Removed extension-side ROS helpers; panels handle ROS entirely.)
 
 async function openAllPanels(context: vscode.ExtensionContext) {
-  await vscode.commands.executeCommand('vscode.setEditorLayout', {
-    orientation: 0,
-    groups: [
-      {
-        orientation: 1,
-        groups: [{}, {}]
-      },
-      {
-        orientation: 1,
-        groups: [{}, {}]
-      }
-    ]
-  });
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('panels.openAll', { phase: 'start' }, { totalPanels: DRONE_VIEWS.length });
+  try {
+    await vscode.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [
+        {
+          orientation: 1,
+          groups: [{}, {}]
+        },
+        {
+          orientation: 1,
+          groups: [{}, {}]
+        }
+      ]
+    });
 
-  const columns: vscode.ViewColumn[] = [
-    vscode.ViewColumn.One,
-    vscode.ViewColumn.Two,
-    vscode.ViewColumn.Three,
-    vscode.ViewColumn.Four
-  ];
+    const columns: vscode.ViewColumn[] = [
+      vscode.ViewColumn.One,
+      vscode.ViewColumn.Two,
+      vscode.ViewColumn.Three,
+      vscode.ViewColumn.Four
+    ];
 
-  for (let index = 0; index < DRONE_VIEWS.length; index += 1) {
-    const view = DRONE_VIEWS[index];
-    const column = columns[index] ?? vscode.ViewColumn.Active;
-    const preserveFocus = index !== 0;
-    await openDedicatedPanel(view, context, column, preserveFocus);
+    for (let index = 0; index < DRONE_VIEWS.length; index += 1) {
+      const view = DRONE_VIEWS[index];
+      const column = columns[index] ?? vscode.ViewColumn.Active;
+      const preserveFocus = index !== 0;
+      await openDedicatedPanel(view, context, column, preserveFocus);
+    }
+
+    telemetry?.trackEvent('panels.openAll', { phase: 'success' }, { totalPanels: DRONE_VIEWS.length });
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'openAllPanels' });
+    telemetry?.trackEvent('panels.openAll', { phase: 'error' });
+    throw error;
   }
 }
 
 function launchTerminalSession(target: string) {
+  const telemetry = getTelemetry();
   const config = TERMINAL_CONFIGS[target as keyof typeof TERMINAL_CONFIGS];
   if (!config) {
     vscode.window.showErrorMessage(`Unknown terminal target: ${target}`);
+    telemetry?.trackEvent('terminal.launch', { target, phase: 'invalid' });
     return;
   }
+  telemetry?.trackEvent('terminal.launch', { target: config.id, phase: 'start' });
 
   let terminal = terminalRegistry.get(config.id);
+  let created = false;
   if (!terminal) {
     terminal = vscode.window.createTerminal({ name: config.name });
     terminalRegistry.set(config.id, terminal);
     config.startupCommands?.forEach((command) => {
       terminal?.sendText(command);
     });
+    created = true;
   }
 
   terminal.show();
+  telemetry?.trackEvent('terminal.launch', {
+    target: config.id,
+    phase: created ? 'created' : 'reused'
+  });
 }
 
 async function createNewProject(context: vscode.ExtensionContext) {
@@ -605,6 +805,8 @@ async function createNewProjectInternal(
   context: vscode.ExtensionContext,
   options: NewProjectOptions
 ) {
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('project.create', { phase: 'start' });
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
     prompt: `Enter a name for your new ${options.kindLabel} project`,
@@ -621,6 +823,7 @@ async function createNewProjectInternal(
   });
 
   if (!projectName) {
+    telemetry?.trackEvent('project.create', { phase: 'cancelled', reason: 'name' });
     return;
   }
 
@@ -633,6 +836,7 @@ async function createNewProjectInternal(
   });
 
   if (!targetFolders || targetFolders.length === 0) {
+    telemetry?.trackEvent('project.create', { phase: 'cancelled', reason: 'location' });
     return;
   }
 
@@ -655,6 +859,7 @@ async function createNewProjectInternal(
         'Cancel'
       );
       if (overwrite !== 'Overwrite') {
+        telemetry?.trackEvent('project.create', { phase: 'cancelled', reason: 'overwriteRejected' });
         return;
       }
     } catch {
@@ -681,12 +886,15 @@ async function createNewProjectInternal(
       'Close'
     );
 
+    telemetry?.trackEvent('project.create', { phase: 'success' });
     if (openProject === 'Open Project') {
       await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
     } else if (openProject === 'Open in New Window') {
       await vscode.commands.executeCommand('vscode.openFolder', projectFolder, true);
     }
   } catch (error) {
+    telemetry?.captureError(error, { source: 'createNewProject' });
+    telemetry?.trackEvent('project.create', { phase: 'error' });
     vscode.window.showErrorMessage(
       `Failed to create project: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -694,6 +902,8 @@ async function createNewProjectInternal(
 }
 
 async function installBundledTools(context: vscode.ExtensionContext) {
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('tools.install', { phase: 'start' });
   const targetFolders = await vscode.window.showOpenDialog({
     canSelectFiles: false,
     canSelectFolders: true,
@@ -702,6 +912,7 @@ async function installBundledTools(context: vscode.ExtensionContext) {
   });
 
   if (!targetFolders || targetFolders.length === 0) {
+    telemetry?.trackEvent('tools.install', { phase: 'cancelled', reason: 'location' });
     return;
   }
 
@@ -723,8 +934,11 @@ async function installBundledTools(context: vscode.ExtensionContext) {
       }
     );
 
+    telemetry?.trackEvent('tools.install', { phase: 'success' });
     vscode.window.showInformationMessage(`TensorFleet tools installed to ${installFolder.fsPath}`);
   } catch (error) {
+    telemetry?.captureError(error, { source: 'installBundledTools' });
+    telemetry?.trackEvent('tools.install', { phase: 'error' });
     vscode.window.showErrorMessage(
       `Failed to install TensorFleet tools: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -852,7 +1066,9 @@ function loadTemplate(templateName: string, replacements: Record<string, string>
 }
 
 function startMCPServer(context: vscode.ExtensionContext) {
+  const telemetry = getTelemetry();
   if (mcpServerProcess) {
+    telemetry?.trackEvent('mcpServer.start', { phase: 'skipped', reason: 'alreadyRunning' });
     vscode.window.showInformationMessage('TensorFleet MCP Server is already running');
     return;
   }
@@ -860,6 +1076,7 @@ function startMCPServer(context: vscode.ExtensionContext) {
   const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
   
   if (!fs.existsSync(mcpServerPath)) {
+    telemetry?.trackEvent('mcpServer.start', { phase: 'error', reason: 'missingBinary' });
     vscode.window.showErrorMessage(
       'MCP server not found. Please compile the extension first (run "bun run compile")'
     );
@@ -867,6 +1084,7 @@ function startMCPServer(context: vscode.ExtensionContext) {
   }
 
   try {
+    telemetry?.trackEvent('mcpServer.start', { phase: 'spawn' });
     mcpServerProcess = spawn('node', [mcpServerPath], {
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -877,22 +1095,29 @@ function startMCPServer(context: vscode.ExtensionContext) {
 
     mcpServerProcess.stderr?.on('data', (data) => {
       console.error(`MCP Server Error: ${data}`);
+      telemetry?.trackEvent('mcpServer.stderr', { message: data.toString()?.trim() ?? '' });
     });
 
     mcpServerProcess.on('exit', (code) => {
       console.log(`MCP Server exited with code ${code}`);
+      telemetry?.trackEvent('mcpServer.exit', { code: String(code ?? 0) });
       mcpServerProcess = null;
     });
 
-    vscode.window.showInformationMessage(
-      'TensorFleet MCP Server started! Configure it in Cursor or Claude Desktop.',
-      'Show Config'
-    ).then((selection) => {
-      if (selection === 'Show Config') {
-        showMCPConfiguration(context);
-      }
-    });
+    vscode.window
+      .showInformationMessage(
+        'TensorFleet MCP Server started! Configure it in Cursor or Claude Desktop.',
+        'Show Config'
+      )
+      .then((selection) => {
+        if (selection === 'Show Config') {
+          showMCPConfiguration(context);
+        }
+      });
+    telemetry?.trackEvent('mcpServer.start', { phase: 'success' });
   } catch (error) {
+    telemetry?.captureError(error, { source: 'startMCPServer' });
+    telemetry?.trackEvent('mcpServer.start', { phase: 'error' });
     vscode.window.showErrorMessage(
       `Failed to start MCP server: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -900,13 +1125,22 @@ function startMCPServer(context: vscode.ExtensionContext) {
 }
 
 function stopMCPServer() {
+  const telemetry = getTelemetry();
   if (!mcpServerProcess) {
+    telemetry?.trackEvent('mcpServer.stop', { phase: 'skipped', reason: 'notRunning' });
     vscode.window.showInformationMessage('TensorFleet MCP Server is not running');
     return;
   }
 
-  mcpServerProcess.kill();
-  mcpServerProcess = null;
+  try {
+    mcpServerProcess.kill();
+    telemetry?.trackEvent('mcpServer.stop', { phase: 'success' });
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'stopMCPServer' });
+    telemetry?.trackEvent('mcpServer.stop', { phase: 'error' });
+  } finally {
+    mcpServerProcess = null;
+  }
   vscode.window.showInformationMessage('TensorFleet MCP Server stopped');
 }
 
@@ -1084,13 +1318,14 @@ async function detectRosVersion() {
         currentRosVersion = found;
       }
     }
-  } catch {
+  } catch (error) {
+    getTelemetry()?.captureError(error, { source: 'detectRosVersion' });
     // Config not found or parse error, use default
   }
 
   // Update status bar
   if (rosVersionStatusBar) {
-    rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
+    rosVersionStatusBar.text = `$(layers) ${currentRosVersion.name}`;
     console.log('[TensorFleet] ROS version set to:', currentRosVersion.name);
   }
 }
@@ -1147,7 +1382,8 @@ async function updateDroneStatus() {
       droneStatusBar.text = statusText;
       console.log('[TensorFleet] Drone status set to:', statusText);
     }
-  } catch {
+  } catch (error) {
+    getTelemetry()?.captureError(error, { source: 'updateDroneStatus' });
     // Config not found, show default
     drones = [
       {
@@ -1166,6 +1402,8 @@ async function updateDroneStatus() {
 }
 
 async function selectRosVersion() {
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('ros.version.select', { phase: 'start' });
   const items = AVAILABLE_ROS_VERSIONS.map((version) => ({
     label: version.name,
     description: version.path,
@@ -1178,28 +1416,40 @@ async function selectRosVersion() {
     title: 'TensorFleet: ROS Version'
   });
 
-  if (selected) {
-    currentRosVersion = selected.version;
-    
-    if (rosVersionStatusBar) {
-      rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
-    }
-
-    // Optionally update the config file
-    const shouldUpdateConfig = await vscode.window.showInformationMessage(
-      `Switched to ${currentRosVersion.name}. Update drone_config.yaml?`,
-      'Yes',
-      'No'
-    );
-
-    if (shouldUpdateConfig === 'Yes') {
-      await updateConfigWithRosVersion(currentRosVersion);
-    }
-
-    vscode.window.showInformationMessage(
-      `ROS version set to ${currentRosVersion.name}. Run: source ${currentRosVersion.path}/setup.bash`
-    );
+  if (!selected) {
+    telemetry?.trackEvent('ros.version.select', { phase: 'cancelled' });
+    return;
   }
+
+  currentRosVersion = selected.version;
+  telemetry?.trackEvent('ros.version.select', {
+    phase: 'selected',
+    distro: currentRosVersion.distro
+  });
+  
+  if (rosVersionStatusBar) {
+    rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
+  }
+
+  // Optionally update the config file
+  const shouldUpdateConfig = await vscode.window.showInformationMessage(
+    `Switched to ${currentRosVersion.name}. Update drone_config.yaml?`,
+    'Yes',
+    'No'
+  );
+
+  if (shouldUpdateConfig === 'Yes') {
+    telemetry?.trackEvent('ros.version.select', {
+      phase: 'updateConfig',
+      distro: currentRosVersion.distro
+    });
+    await updateConfigWithRosVersion(currentRosVersion);
+  }
+
+  vscode.window.showInformationMessage(
+    `ROS version set to ${currentRosVersion.name}. Run: source ${currentRosVersion.path}/setup.bash`
+  );
+  telemetry?.trackEvent('ros.version.select', { phase: 'success', distro: currentRosVersion.distro });
 }
 
 async function updateConfigWithRosVersion(version: RosVersion) {
@@ -1237,8 +1487,11 @@ async function updateConfigWithRosVersion(version: RosVersion) {
     }
 
     await vscode.workspace.fs.writeFile(configPath, Buffer.from(configText, 'utf8'));
+    getTelemetry()?.trackEvent('ros.version.configUpdate', { status: 'success', distro: version.distro });
     vscode.window.showInformationMessage('Updated drone_config.yaml with ROS version');
   } catch (error) {
+    getTelemetry()?.captureError(error, { source: 'updateConfigWithRosVersion', distro: version.distro });
+    getTelemetry()?.trackEvent('ros.version.configUpdate', { status: 'error', distro: version.distro });
     vscode.window.showErrorMessage(
       `Failed to update config: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -1246,23 +1499,25 @@ async function updateConfigWithRosVersion(version: RosVersion) {
 }
 
 async function showDroneStatus() {
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('droneStatus.show', { phase: 'start', droneCount: drones.length.toString() });
   if (drones.length === 0) {
+    telemetry?.trackEvent('droneStatus.show', { phase: 'empty' });
     vscode.window.showInformationMessage('No drones detected. Start a simulation to see drone status.');
     return;
   }
 
   const items = drones.map((drone) => {
-    const statusIcon =
-      drone.status === 'flying' ? '$(rocket)' :
-      drone.status === 'armed' ? '$(zap)' :
-      drone.status === 'idle' ? '$(circle-outline)' :
-      '$(circle-slash)';
+      const statusIcon =
+        drone.status === 'flying' ? '$(rocket)' :
+        drone.status === 'armed' ? '$(target)' :
+        drone.status === 'idle' ? '$(circle-outline)' :
+        '$(circle-slash)';
 
-    const batteryIcon =
-      drone.battery > 75 ? '$(battery-full)' :
-      drone.battery > 50 ? '$(battery)' :
-      drone.battery > 25 ? '$(battery-charging)' :
-      '$(battery-empty)';
+      const batteryIcon =
+        drone.battery > 50 ? '$(pulse)' :
+        drone.battery > 25 ? '$(warning)' :
+        '$(alert)';
 
     return {
       label: `${statusIcon} ${drone.name}`,
@@ -1293,16 +1548,22 @@ async function showDroneStatus() {
     title: 'TensorFleet: Connected Drones'
   });
 
-  if (selected) {
-    if (selected.label.includes('Refresh')) {
-      await updateDroneStatus();
-      vscode.window.showInformationMessage('Drone status refreshed');
-    } else if (selected.label.includes('Start Simulation')) {
-      vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
-    } else if (selected.drone) {
-      // Show detailed drone info
-      showDetailedDroneInfo(selected.drone);
-    }
+  if (!selected) {
+    telemetry?.trackEvent('droneStatus.show', { phase: 'dismissed' });
+    return;
+  }
+
+  if (selected.label.includes('Refresh')) {
+    telemetry?.trackEvent('droneStatus.action', { action: 'refresh' });
+    await updateDroneStatus();
+    vscode.window.showInformationMessage('Drone status refreshed');
+  } else if (selected.label.includes('Start Simulation')) {
+    telemetry?.trackEvent('droneStatus.action', { action: 'openSimulation' });
+    vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
+  } else if (selected.drone) {
+    telemetry?.trackEvent('droneStatus.action', { action: 'details', droneId: selected.drone.id });
+    // Show detailed drone info
+    showDetailedDroneInfo(selected.drone);
   }
 }
 
@@ -1321,6 +1582,7 @@ Click "Open Gazebo Workspace" to view in simulation.
 
   vscode.window.showInformationMessage(info, 'Open Gazebo Workspace', 'Close').then((choice) => {
     if (choice === 'Open Gazebo Workspace') {
+      getTelemetry()?.trackEvent('droneStatus.action', { action: 'openGazebo', droneId: drone.id });
       vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
     }
   });
@@ -1349,34 +1611,490 @@ Click "Open Gazebo Workspace" to view in simulation.
 // ============================================================================
 
 async function showMCPConfiguration(context: vscode.ExtensionContext) {
-  const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
-  
-  const config = {
-    mcpServers: {
-      'tensorfleet-drone': {
-        command: 'node',
-        args: [mcpServerPath],
-        env: {}
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('mcp.config', { phase: 'start' });
+  try {
+    const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
+    
+    const config = {
+      mcpServers: {
+        'tensorfleet-drone': {
+          command: 'node',
+          args: [mcpServerPath],
+          env: {}
+        }
       }
-    }
-  };
+    };
 
-  const configText = JSON.stringify(config, null, 2);
-  
-  const document = await vscode.workspace.openTextDocument({
-    content: configText,
-    language: 'json'
-  });
-  
-  await vscode.window.showTextDocument(document);
-  
-  vscode.window.showInformationMessage(
-    'MCP Configuration copied! Add this to your Cursor or Claude Desktop config.',
-    'Open Setup Guide'
-  ).then((selection) => {
-    if (selection === 'Open Setup Guide') {
-      const setupPath = vscode.Uri.file(path.join(context.extensionPath, 'MCP_SETUP.md'));
-      vscode.commands.executeCommand('markdown.showPreview', setupPath);
+    const configText = JSON.stringify(config, null, 2);
+    
+    const document = await vscode.workspace.openTextDocument({
+      content: configText,
+      language: 'json'
+    });
+    
+    await vscode.window.showTextDocument(document);
+    
+    vscode.window
+      .showInformationMessage(
+        'MCP Configuration copied! Add this to your Cursor or Claude Desktop config.',
+        'Open Setup Guide'
+      )
+      .then((selection) => {
+        telemetry?.trackEvent('mcp.config.guide', {
+          action: selection === 'Open Setup Guide' ? 'openGuide' : 'dismiss'
+        });
+        if (selection === 'Open Setup Guide') {
+          const setupPath = vscode.Uri.file(path.join(context.extensionPath, 'MCP_SETUP.md'));
+          vscode.commands.executeCommand('markdown.showPreview', setupPath);
+        }
+      });
+    telemetry?.trackEvent('mcp.config', { phase: 'success' });
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'showMCPConfiguration' });
+    telemetry?.trackEvent('mcp.config', { phase: 'error' });
+    vscode.window.showErrorMessage(
+      `Failed to show MCP configuration: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+// ============================================================================
+// Unified Status Functions
+// ============================================================================
+
+/**
+ * Update unified auth status
+ */
+async function updateUnifiedAuthStatus(context: vscode.ExtensionContext) {
+  console.log('[TensorFleet] updateUnifiedAuthStatus called');
+  if (!unifiedStatusCoordinator) {
+    console.log('[TensorFleet] No unified status coordinator');
+    return;
+  }
+
+  const isAuth = await auth.isAuthenticated(context);
+  console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
+  unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
+}
+
+/**
+ * Build menu items with visual grouping (primary actions, separator, secondary actions)
+ */
+function buildMenuForState(
+  vmState: 'unknown' | 'stopped' | 'starting' | 'running' | 'stopping' | 'failed' | 'pending',
+  ipAddress?: string
+): vscode.QuickPickItem[] {
+  const items: vscode.QuickPickItem[] = [];
+  const primaryActions: vscode.QuickPickItem[] = [];
+
+  // Build primary actions based on VM state
+  switch (vmState) {
+    case 'running':
+      primaryActions.push({
+        label: '$(debug-stop) Stop VM'
+      });
+      if (ipAddress) {
+        primaryActions.push({
+          label: '$(terminal) Connect via SSH'
+        });
+      }
+      break;
+
+    case 'stopped':
+    case 'pending':
+    case 'unknown':
+      primaryActions.push({
+        label: '$(play) Start VM'
+      });
+      break;
+
+    case 'failed':
+      primaryActions.push({
+        label: '$(refresh) Retry Start'
+      });
+      break;
+
+    case 'starting':
+    case 'stopping':
+      // No primary actions during transitions
+      break;
+  }
+
+  // Add primary actions if any exist
+  if (primaryActions.length > 0) {
+    items.push(...primaryActions);
+    
+    // Add separator after primary actions
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+  }
+
+  // Add secondary actions (always shown)
+  items.push(
+    {
+      label: '$(refresh) Refresh Status'
+    },
+    {
+      label: '$(sign-out) Logout'
     }
+  );
+
+  return items;
+}
+
+/**
+ * Show unified menu (adaptive based on state)
+ */
+async function showUnifiedMenu(context: vscode.ExtensionContext) {
+  if (!unifiedStatusCoordinator) {
+    return;
+  }
+
+  const state = unifiedStatusCoordinator.getState();
+  const items: vscode.QuickPickItem[] = [];
+
+  // Auth check in progress
+  if (state.auth === 'checking') {
+    items.push({
+      label: '$(sync~spin) Checking authentication...',
+      detail: 'Verifying your TensorFleet login',
+      kind: vscode.QuickPickItemKind.Default
+    });
+
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+
+    items.push({
+      label: '$(sign-out) Cancel and Logout'
+    });
+
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Checking authentication…',
+      ignoreFocusOut: true
+    });
+
+    if (selection?.label.includes('Logout')) {
+      await handleLogout(context);
+    }
+    return;
+  }
+
+  // User not authenticated at all
+  if (state.auth === 'not_authenticated') {
+    // Primary action
+    items.push({
+      label: '$(key) Login',
+      detail: 'Authenticate with TensorFleet',
+      kind: vscode.QuickPickItemKind.Default
+    });
+    
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Not Logged In',
+      ignoreFocusOut: true
+    });
+
+    if (selection?.label.includes('Login')) {
+      await handleLogin(context);
+    }
+    return;
+  }
+
+  // VM Manager auth error (user is logged in but VM Manager rejected token)
+  if (state.connection === 'not_authenticated') {
+    items.push({
+      label: '$(warning) VM Manager auth error',
+      detail: state.error || 'Current token was rejected by VM Manager',
+      kind: vscode.QuickPickItemKind.Default
+    });
+
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+
+    if (vmManagerIntegration) {
+      items.push({
+        label: '$(refresh) Retry VM Status',
+        detail: 'Retry with current authentication'
+      });
+    }
+
+    items.push({
+      label: '$(sign-out) Logout',
+      detail: 'Logout from TensorFleet'
+    });
+
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: 'VM Manager auth error',
+      ignoreFocusOut: true
+    });
+
+    if (selection?.label.includes('Retry') && vmManagerIntegration) {
+      vmManagerIntegration.refreshStatus(false);
+    } else if (selection?.label.includes('Logout')) {
+      await handleLogout(context);
+    }
+    return;
+  }
+
+  // API disconnected state
+  if (state.connection === 'disconnected') {
+    // Primary action
+    items.push({
+      label: '$(refresh) Retry Connection',
+      detail: state.error || 'Attempt to reconnect'
+    });
+    
+    // Separator
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+
+    // Secondary actions (always available while authenticated)
+    items.push({
+      label: '$(sign-out) Logout',
+      detail: 'Logout from TensorFleet'
+    });
+
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: 'API Disconnected',
+      ignoreFocusOut: true
+    });
+
+    if (selection?.label.includes('Retry') && vmManagerIntegration) {
+      vmManagerIntegration.refreshStatus(false);
+    } else if (selection?.label.includes('Logout')) {
+      await handleLogout(context);
+    }
+    return;
+  }
+
+  // Authenticated and connected - show VM-specific menu
+  const vmState = state.vmState;
+  const ipAddress = state.ipAddress;
+  const uptime = formatUptime(state.uptimeSeconds);
+
+  // Format header using helper function
+  const { label: headerLabel, detail: headerDetail } = formatHeader(vmState, {
+    ipAddress: state.ipAddress,
+    provider: state.provider,
+    region: state.region,
+    uptime,
+    error: state.error,
+    timestamp: state.timestamp
   });
+
+  // Header as regular item (separators don't render icons)
+  items.push({
+    label: headerLabel,
+    detail: headerDetail,
+    kind: vscode.QuickPickItemKind.Default
+  });
+
+  // Build menu with visual grouping (primary actions, separator, secondary actions)
+  const menuItems = buildMenuForState(vmState, ipAddress);
+  items.push(...menuItems);
+
+  const selection = await vscode.window.showQuickPick(items, {
+    placeHolder: headerLabel.replace(/\$\([^)]+\)\s*/, ''),
+    ignoreFocusOut: true
+  });
+
+  if (!selection) {
+    return;
+  }
+
+  // Ignore header selection (it's just for display)
+  const headerPatterns = [
+    '$(circle-filled) Running',
+    '$(circle-outline) Stopped',
+    '$(loading~spin) Starting',
+    '$(loading~spin) Stopping',
+    '$(error) Failed',
+    '$(sync~spin) Pending',
+    '$(sync~spin) Checking...'
+  ];
+  if (headerPatterns.some(pattern => selection.label.startsWith(pattern))) {
+    return;
+  }
+
+  try {
+    if (selection.label.includes('Stop VM') && vmManagerIntegration) {
+      await vmManagerIntegration.stopVm();
+    } else if (selection.label.includes('Start VM') && vmManagerIntegration) {
+      await vmManagerIntegration.startVm();
+    } else if (selection.label.includes('Retry Start') && vmManagerIntegration) {
+      await vmManagerIntegration.startVm();
+    } else if (selection.label.includes('Connect via SSH') && ipAddress) {
+      // Open terminal with SSH command
+      const terminal = vscode.window.createTerminal({
+        name: `SSH to ${ipAddress}`,
+        shellPath: 'ssh',
+        shellArgs: [`root@${ipAddress}`]
+      });
+      terminal.show();
+    } else if (selection.label.includes('Refresh Status') && vmManagerIntegration) {
+      vmManagerIntegration.refreshStatus(false);
+    } else if (selection.label.includes('Logout')) {
+      await handleLogout(context);
+    }
+  } catch (error) {
+    void vscode.window.showErrorMessage(
+      `Action failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Format uptime
+ */
+function formatUptime(seconds?: number | null): string | undefined {
+  if (seconds == null) return undefined;
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  if (parts.length === 0 || s > 0) parts.push(`${s}s`);
+  return parts.join(' ');
+}
+
+/**
+ * Format header label and detail for VM state
+ */
+function formatHeader(
+  vmState: string,
+  meta: {
+    ipAddress?: string;
+    provider?: string;
+    region?: string;
+    uptime?: string | undefined;
+    error?: string;
+    timestamp?: number;
+  }
+): { label: string; detail: string } {
+  const parts: string[] = [];
+  let detail = '';
+
+  switch (vmState) {
+    case 'running':
+      // Concise format: "IP · provider · uptime"
+      if (meta.ipAddress) parts.push(meta.ipAddress);
+      if (meta.provider) parts.push(meta.provider);
+      if (meta.uptime) parts.push(meta.uptime);
+      detail = parts.length > 0 ? parts.join(' · ') : '';
+      return {
+        label: '$(circle-filled) Running',
+        detail
+      };
+
+    case 'stopped':
+      // Skip detail line if no meaningful info (we don't track "last stopped" time)
+      return {
+        label: '$(circle-outline) Stopped',
+        detail: ''
+      };
+
+    case 'starting':
+      return {
+        label: '$(loading~spin) Starting',
+        detail: 'Usually takes 30-60 seconds'
+      };
+
+    case 'stopping':
+      return {
+        label: '$(loading~spin) Stopping',
+        detail: 'Usually takes 10-20 seconds'
+      };
+
+    case 'failed':
+      return {
+        label: '$(error) Failed',
+        detail: meta.error || 'Check logs for details'
+      };
+
+    case 'pending':
+      return {
+        label: '$(sync~spin) Pending',
+        detail: 'VM exists but has not started yet'
+      };
+
+    default:
+      return {
+        label: '$(sync~spin) Checking...',
+        detail: 'Determining VM status'
+      };
+  }
+}
+
+// ============================================================================
+// Authentication Functions
+// ============================================================================
+
+/**
+ * Handle login command
+ */
+async function handleLogin(context: vscode.ExtensionContext) {
+  try {
+    console.log('[TensorFleet] Starting login process...');
+    if (unifiedStatusCoordinator) {
+      unifiedStatusCoordinator.updateAuth('checking');
+    }
+    await auth.authenticate(context);
+    
+    console.log('[TensorFleet] Authentication completed, updating status...');
+    await updateUnifiedAuthStatus(context);
+    
+    // Force immediate status update
+    const isAuth = await auth.isAuthenticated(context);
+    console.log('[TensorFleet] Auth status after login:', isAuth);
+    
+    if (unifiedStatusCoordinator) {
+      unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
+    }
+    
+    // Trigger VM Manager refresh after login
+    if (vmManagerIntegration) {
+      console.log('[TensorFleet] Refreshing VM Manager status...');
+      vmManagerIntegration.refreshStatus(false);
+    }
+    
+    console.log('[TensorFleet] Login process completed');
+  } catch (error) {
+    console.error('[TensorFleet] Login error:', error);
+    await updateUnifiedAuthStatus(context);
+    void vscode.window.showErrorMessage(
+      `Login failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Handle logout command
+ */
+async function handleLogout(context: vscode.ExtensionContext) {
+  await auth.clearToken(context);
+  await updateUnifiedAuthStatus(context);
+  void vscode.window.showInformationMessage('Logged out successfully');
+  
+  // Reset VM Manager state after logout
+  if (vmManagerIntegration) {
+    vmManagerIntegration.refreshStatus(true);
+  }
+}
+
+/**
+ * Show authentication status (redirects to unified menu)
+ * @internal - Used by command registration
+ */
+export async function showAuthStatus(context: vscode.ExtensionContext) {
+  await showUnifiedMenu(context);
 }

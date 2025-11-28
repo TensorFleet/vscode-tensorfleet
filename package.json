@@ -1,9 +1,15 @@
 {
   "name": "tensorfleet-drone",
-  "displayName": "TensorFleet Drone Suite",
+  "displayName": "TensorFleet Robots and Drone Environment",
   "description": "Flexible drone operations workspace for TensorFleet with multi-view dashboards and tooling management.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "tensorfleet",
+  "homepage": "https://tensorfleet.net/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TensorFleet/vscode-tensorfleet.git"
+  },
+  "icon": "media/store-icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -36,10 +42,10 @@
     "onCommand:tensorfleet.stopMCPServer",
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
-    "onCommand:tensorfleet.showVMManagerMenu",
-    "onCommand:tensorfleet.showDroneStatus"
+    "onCommand:tensorfleet.showDroneStatus",
+    "onCommand:tensorfleet.showVMManagerMenu"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "packageManager": "bun@1.0.0",
   "contributes": {
     "viewsContainers": {
@@ -112,90 +118,133 @@
     "commands": [
       {
         "command": "tensorfleet.openQGroundControlPanel",
-        "title": "TensorFleet: Open QGroundControl Workspace",
+        "title": "Open QGroundControl Workspace",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openGazeboPanel",
-        "title": "TensorFleet: Open Gazebo Workspace",
+        "title": "Open Gazebo Workspace",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openAIPanel",
-        "title": "TensorFleet: Open AI Ops Workspace",
+        "title": "Open AI Ops Workspace",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openROS2Panel",
-        "title": "TensorFleet: Open ROS 2 & Stable Baselines Lab",
+        "title": "Open ROS 2 & Stable Baselines Lab",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openImagePanel",
-        "title": "TensorFleet: Open Image Panel",
+        "title": "Open Image Panel",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openTeleopsPanel",
-        "title": "TensorFleet: Open Teleops Panel",
+        "title": "Open Teleops Panel",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openMapPanel",
-        "title": "TensorFleet: Open Map Panel",
+        "title": "Open Map Panel",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openRawMessagesPanel",
-        "title": "TensorFleet: Open Raw Messages Panel",
+        "title": "Open Raw Messages Panel",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.createNewProject",
-        "title": "TensorFleet: Create New Project",
+        "title": "Create New Project",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.installTools",
-        "title": "TensorFleet: Install Bundled Tools",
+        "title": "Install Bundled Tools",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openAllPanels",
-        "title": "TensorFleet: Open All Dashboards in Main Area",
+        "title": "Open All Dashboards in Main Area",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.startMCPServer",
-        "title": "TensorFleet: Start MCP Server (for Cursor/Claude)",
+        "title": "Start MCP Server (for Cursor/Claude)",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.stopMCPServer",
-        "title": "TensorFleet: Stop MCP Server",
+        "title": "Stop MCP Server",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.getMCPConfig",
-        "title": "TensorFleet: Show MCP Configuration",
+        "title": "Show MCP Configuration",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.selectRosVersion",
-        "title": "TensorFleet: Select ROS Version",
+        "title": "Select ROS Version",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.showDroneStatus",
-        "title": "TensorFleet: Show Drone Status",
+        "title": "Show Drone Status",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.showVMManagerMenu",
-        "title": "TensorFleet: Show VM Actions",
+        "title": "Show VM Actions",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.showUnifiedMenu",
+        "title": "TensorFleet: Show Status Menu",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.login",
+        "title": "TensorFleet: Login",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.logout",
+        "title": "TensorFleet: Logout",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.authStatus",
+        "title": "TensorFleet: Show Auth Status",
         "category": "TensorFleet"
       }
     ],
+    "configuration": {
+      "title": "TensorFleet",
+      "properties": {
+        "tensorfleet.ros2.websocketUrl": {
+          "type": "string",
+          "default": "ws://172.16.0.10:9091",
+          "description": "ROS2 WebSocket URL (rosbridge_suite) for remote connections (e.g., Firecracker VM)",
+          "pattern": "^(ws|wss)://.*$"
+        },
+        "tensorfleet.ros2.foxgloveUrl": {
+          "type": "string",
+          "default": "ws://172.16.0.10:8765",
+          "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
+          "pattern": "^(ws|wss)://.*$"
+        },
+        "tensorfleet.backendUrl": {
+          "type": "string",
+          "default": "https://app.tensorfleet.net",
+          "description": "Base URL for TensorFleet backend API (used for auth and data). Trailing slashes are removed.",
+          "pattern": "^(http|https)://.*$"
+        }
+      }
+    },
     "menus": {
       "view/title": [
         {
@@ -263,14 +312,17 @@
   },
   "scripts": {
     "vscode:prepublish": "bun run compile",
-    "compile": "bunx tsc -p ./",
-    "watch": "bunx tsc -watch -p ./",
+    "prepare:telemetry": "bun scripts/write-telemetry-config.ts",
+    "compile": "bun run prepare:telemetry && bunx vite build",
+    "watch": "bun run prepare:telemetry && bunx vite build --watch",
+    "typecheck": "bunx tsc -p ./ --noEmit",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
-    "mcp": "node out/mcp-server.js"
+    "mcp": "node dist/mcp-server.js",
+    "version:get": "bun scripts/get-version.ts"
   },
   "bin": {
-    "tensorfleet-mcp": "./out/mcp-server.js"
+    "tensorfleet-mcp": "./dist/mcp-server.js"
   },
   "dependencies": {
     "@foxglove/schemas": "^1.8.0",
@@ -289,17 +341,18 @@
     "@mcap/core": "^2.1.7",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@protobufjs/base64": "^1.1.2",
+    "@sentry/node": "^10.26.0",
     "flatbuffers": "^25.9.23",
     "flatbuffers_reflection": "^1.2.0",
     "jpeg-js": "^0.4.4",
     "protobufjs": "^7.5.4"
   },
-  "optionalDependencies": {},
   "devDependencies": {
     "@types/node": "^18.17.0",
     "@types/vscode": "^1.85.0",
     "eslint": "^8.56.0",
     "tslib": "^2.6.2",
-    "typescript": "^5.2.2"
+    "typescript": "^5.2.2",
+    "vite": "^5.4.2"
   }
 }
