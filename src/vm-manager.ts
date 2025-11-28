@@ -754,7 +754,11 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private getApiBaseUrl(): string {
-    return 'http://localhost:8080';
+    const defaultUrl = 'http://localhost:8080';
+    const configuredUrl = vscode.workspace.getConfiguration('tensorfleet').get<string>('vmManagerUrl');
+    
+    // Trim trailing slashes to keep request paths consistent
+    return (configuredUrl?.trim() || defaultUrl).replace(/\/+$/, '');
   }
 
   private async getAuthToken(): Promise<string | undefined> {

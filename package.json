@@ -242,6 +242,12 @@
           "default": "https://app.tensorfleet.net",
           "description": "Base URL for TensorFleet backend API (used for auth and data). Trailing slashes are removed.",
           "pattern": "^(http|https)://.*$"
+        },
+        "tensorfleet.vmManagerUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Base URL for TensorFleet VM Manager API. Trailing slashes are removed.",
+          "pattern": "^(http|https)://.*$"
         }
       }
     },
