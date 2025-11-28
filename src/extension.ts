@@ -8,6 +8,7 @@ import * as auth from './auth';
 import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
 import * as regions from './regions';
+import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
@@ -135,19 +136,14 @@ let projectWatcher: vscode.FileSystemWatcher | null = null;
 let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
 
 export function activate(context: vscode.ExtensionContext) {
-  // Initialize regions first (determines available regions based on build mode)
-  regions.initializeRegions(context);
+  // Initialize environment/mode detection first (must be before any isDev() calls)
+  initializeEnv(context);
+  
+  env.log('Extension activating in', getMode(), 'mode');
   
   telemetryService = new TelemetryService(context);
   context.subscriptions.push(telemetryService);
-  telemetryService.trackEvent('extension.activate', {
-    mode:
-      context.extensionMode === vscode.ExtensionMode.Production
-        ? 'production'
-        : context.extensionMode === vscode.ExtensionMode.Development
-          ? 'development'
-          : 'test'
-  });
+  telemetryService.trackEvent('extension.activate', { mode: getMode() });
 
   // Start MCP bridge for communication between MCP server and VS Code
   mcpBridge = new MCPBridge(context);
@@ -297,6 +293,11 @@ export function activate(context: vscode.ExtensionContext) {
   // Keep auth status command for backward compatibility
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.authStatus', () => showUnifiedMenu(context))
+  );
+
+  // Dev-only debug command (only registered in development mode)
+  context.subscriptions.push(
+    registerDevCommand('tensorfleet.debugInfo', () => showDebugInfo(context))
   );
 
   // ROS bridge commands removed; panels use embedded Foxglove networking.
@@ -2152,4 +2153,40 @@ async function handleLogout(context: vscode.ExtensionContext) {
  */
 export async function showAuthStatus(context: vscode.ExtensionContext) {
   await showUnifiedMenu(context);
+}
+
+// ============================================================================
+// Development-Only Functions
+// ============================================================================
+
+/**
+ * Show debug information (dev mode only)
+ */
+async function showDebugInfo(context: vscode.ExtensionContext) {
+  if (!isDev()) return;
+  
+  const state = unifiedStatusCoordinator?.getState();
+  const currentRegion = regions.getSelectedRegion();
+  
+  const info = {
+    mode: getMode(),
+    region: currentRegion.id,
+    regionName: currentRegion.name,
+    backendUrl: regions.getBackendUrl(),
+    vmManagerUrl: regions.getVmManagerUrl(),
+    authState: state?.auth,
+    vmState: state?.vmState,
+    connectionState: state?.connection,
+    ipAddress: state?.ipAddress,
+    extensionPath: context.extensionPath,
+  };
+  
+  env.log('Debug info:', info);
+  
+  const document = await vscode.workspace.openTextDocument({
+    content: JSON.stringify(info, null, 2),
+    language: 'json'
+  });
+  
+  await vscode.window.showTextDocument(document);
 }

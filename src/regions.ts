@@ -4,32 +4,12 @@
  * Maps regions to their respective API domains.
  * Users select a region, and all URLs are derived automatically.
  * 
- * Note: The "local" region is only available in development builds.
- * In production (marketplace) builds, only official regions are shown.
+ * Note: The "local" region is hidden at RUNTIME in production mode (marketplace install).
+ * The code still exists in the build - it's just not shown to users unless debugging (F5).
  */
 
 import * as vscode from 'vscode';
-
-/**
- * Check if we're running in development mode
- * This is set by the extension context during activation
- */
-let isDevelopmentMode = false;
-
-/**
- * Initialize the regions module with extension context
- * Must be called during extension activation
- */
-export function initializeRegions(context: vscode.ExtensionContext): void {
-  isDevelopmentMode = context.extensionMode !== vscode.ExtensionMode.Production;
-}
-
-/**
- * Check if development-only features should be available
- */
-export function isDevMode(): boolean {
-  return isDevelopmentMode;
-}
+import { isFeatureEnabled } from './env';
 
 export interface RegionConfig {
   /** Display name for the region */
@@ -48,7 +28,7 @@ export interface RegionConfig {
   description: string;
   /** Icon for display */
   icon: string;
-  /** If true, this region is only available in development builds */
+  /** If true, this region is only shown when running in dev mode (F5 debugging) */
   devOnly?: boolean;
 }
 
@@ -85,19 +65,19 @@ export const REGIONS: Record<string, RegionConfig> = {
     ros2Port: 9091,
     description: 'Local development server',
     icon: '💻',
-    devOnly: true  // Only visible in development builds
+    devOnly: true  // Only visible when running in dev mode (F5 debugging)
   }
 };
 
 /**
- * Get regions available for the current build mode
- * Filters out dev-only regions in production builds
+ * Get regions available for the current runtime mode
+ * Filters out dev-only regions when running in production mode
  */
 export function getAvailableRegions(): Record<string, RegionConfig> {
-  if (isDevelopmentMode) {
+  if (isFeatureEnabled('localRegion')) {
     return REGIONS;
   }
-  // Filter out dev-only regions in production
+  // Filter out dev-only regions at runtime (code still exists in prod builds)
   return Object.fromEntries(
     Object.entries(REGIONS).filter(([_, config]) => !config.devOnly)
   );

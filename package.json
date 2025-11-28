@@ -315,13 +315,16 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "bun run compile",
+    "vscode:prepublish": "bun run compile:prod",
     "prepare:telemetry": "bun scripts/write-telemetry-config.ts",
     "compile": "bun run prepare:telemetry && bunx vite build",
-    "watch": "bun run prepare:telemetry && bunx vite build --watch",
+    "compile:dev": "bun run prepare:telemetry && TENSORFLEET_BUILD=development bunx vite build",
+    "compile:prod": "bun run prepare:telemetry && TENSORFLEET_BUILD=production bunx vite build",
+    "watch": "bun run prepare:telemetry && TENSORFLEET_BUILD=development bunx vite build --watch",
     "typecheck": "bunx tsc -p ./ --noEmit",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
+    "package:dev": "TENSORFLEET_BUILD=development bun run compile && bunx vsce package",
     "mcp": "node dist/mcp-server.js",
     "version:get": "bun scripts/get-version.ts"
   },
