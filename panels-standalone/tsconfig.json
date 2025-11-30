@@ -15,12 +15,31 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+
     "baseUrl": ".",
+
     "paths": {
       "@/*": ["./src/*"],
-      "@lichtblick/*": ["./src/lichtblick/*"]
+
+      // Generic mapping for ALL @lichtblick/* packages
+      // @lichtblick/log            -> packages/log/src
+      // @lichtblick/suite-base     -> packages/suite-base/src
+      // @lichtblick/mcap-support   -> packages/mcap-support/src
+      // etc.
+      "@lichtblick/*": ["./packages/*/src"],
+
+      // Local @types/*
+      "@types/*": ["./packages/@types/*"]
     }
   },
-  "include": ["src"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+
+  "include": [
+    "src",
+    "packages/**/*.ts",
+    "packages/**/*.tsx"
+  ],
+
+  "references": [
+    { "path": "./tsconfig.node.json" }
+  ]
 }

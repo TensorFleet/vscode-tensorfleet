@@ -94,6 +94,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     htmlTemplate: 'map-standalone'
   },
   {
+    id: "tensorfleet-sensor-3d-panel",
+    title: "3D sensor view",
+    description: "3D view of the collected data from drone sensors",
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openSensor3DPanel',
+    actionLabel: 'Open 3D Sensor view',
+    panelKind: 'standard',
+    htmlTemplate: 'sensor-3d-standalone'
+  },
+  {
     id: "tensorfleet-raw-messages-panel",
     title: 'Raw Messages',
     description: 'Display raw ROS2 messages in real-time - monitor and debug message traffic.',
@@ -231,40 +241,27 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.openAllPanels', () => openAllPanels(context), {
-    
-      feature: 'panel'
-    })
+    vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.startMCPServer', () => startMCPServer(context), {
-      feature: 'mcp'
-    })
+    vscode.commands.registerCommand('tensorfleet.startMCPServer', () => startMCPServer(context))
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.stopMCPServer', () => stopMCPServer(), {
-      feature: 'mcp'
-    })
+    vscode.commands.registerCommand('tensorfleet.stopMCPServer', () => stopMCPServer())
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context), {
-      feature: 'mcp'
-    })
+    vscode.commands.registerCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context))
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.selectRosVersion', () => selectRosVersion(), {
-      feature: 'ros'
-    })
+    vscode.commands.registerCommand('tensorfleet.selectRosVersion', () => selectRosVersion())
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.showDroneStatus', () => showDroneStatus(), {
-      feature: 'status'
-    })
+    vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
   );
 
   // Unified menu command (replaces separate auth and VM menu commands)
@@ -499,10 +496,15 @@ async function openDedicatedPanel(
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
       }
 
-      if (view.htmlTemplate == 'map-standalone') {
-        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-      }
+    if (view.htmlTemplate == 'map-standalone') {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    }
+
+    if (view.htmlTemplate == 'sensor-3d-standalone') {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    }
 
       if (view.htmlTemplate == 'raw-messages-standalone') {
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
@@ -620,6 +622,10 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
     return getStandalonePanelHtml('mission_control', webview, context, cspSource);
   }
 
+  if (view.htmlTemplate === 'sensor-3d-standalone') {
+    return getStandalonePanelHtml('sensor_view_3d', webview, context, cspSource);
+  }
+
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
@@ -661,7 +667,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 }
 
 function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
@@ -801,12 +807,17 @@ type NewProjectOptions = {
   templateSubdir?: string;
 };
 
+type NewProjectOptions = {
+  kindLabel: string;
+  defaultName: string;
+  commandLabel: string;
+  templateSubdir?: string;
+};
+
 async function createNewProjectInternal(
   context: vscode.ExtensionContext,
   options: NewProjectOptions
 ) {
-  const telemetry = getTelemetry();
-  telemetry?.trackEvent('project.create', { phase: 'start' });
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
     prompt: `Enter a name for your new ${options.kindLabel} project`,
