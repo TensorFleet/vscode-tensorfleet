@@ -173,11 +173,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📥 Download from the **Artifacts** section below." >> $GITHUB_STEP_SUMMARY
 
-  # Publish to VS Code Marketplace on main branch merges
+  # Publish to VS Code Marketplace on main branch merges (requires VSCE_PAT secret)
   publish-vscode:
     name: Publish to VS Code Marketplace
     needs: build
     runs-on: ubuntu-latest
+    environment: MARKETPLACE_PUBLISH # only main branch
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
@@ -203,11 +204,15 @@ jobs:
             echo "❌ VSCE_PAT secret is not set. Skipping publish."
             exit 0
           fi
-          VSIX_FILE=$(ls dist/tensorfleet-drone-*.vsix | grep -v openvsx | head -n 1)
+          VSIX_FILE=$(find dist -name 'tensorfleet-drone-*.vsix' ! -name '*openvsx*' | head -n 1)
+          if [ -z "$VSIX_FILE" ]; then
+            echo "❌ No VSIX file found for publishing!"
+            exit 1
+          fi
           echo "📤 Publishing $VSIX_FILE to VS Code Marketplace..."
           bunx vsce publish --packagePath "$VSIX_FILE"
 
-  # Publish to OpenVSX on main branch merges (requires OVSX_PAT secret)
+  # Publish to OpenVSX on main branch merges
   publish-openvsx:
     name: Publish to OpenVSX
     needs: build
@@ -237,6 +242,10 @@ jobs:
             echo "❌ OVSX_PAT secret is not set. Skipping publish."
             exit 0
           fi
-          VSIX_FILE=$(ls dist/tensorfleet-drone-openvsx-*.vsix | head -n 1)
+          VSIX_FILE=$(find dist -name 'tensorfleet-drone-openvsx-*.vsix' | head -n 1)
+          if [ -z "$VSIX_FILE" ]; then
+            echo "❌ No OpenVSX VSIX file found for publishing!"
+            exit 1
+          fi
           echo "📤 Publishing $VSIX_FILE to OpenVSX..."
           bunx --yes @vscode/ovsx@latest publish "$VSIX_FILE" --pat "$OVSX_PAT"
