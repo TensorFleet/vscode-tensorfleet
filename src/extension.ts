@@ -94,6 +94,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     htmlTemplate: 'map-standalone'
   },
   {
+    id: "tensorfleet-sensor-3d-panel",
+    title: "3D sensor view",
+    description: "3D view of the collected data from drone sensors",
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openSensor3DPanel',
+    actionLabel: 'Open 3D Sensor view',
+    panelKind: 'standard',
+    htmlTemplate: 'sensor-3d-standalone'
+  },
+  {
     id: "tensorfleet-raw-messages-panel",
     title: 'Raw Messages',
     description: 'Display raw ROS2 messages in real-time - monitor and debug message traffic.',
@@ -227,39 +237,31 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.openAllPanels', () => openAllPanels(context), {
-      feature: 'panel'
-    })
+    vscode.commands.registerCommand('tensorfleet.createNewRoboticProject', () => createNewRoboticProject(context))
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.startMCPServer', () => startMCPServer(context), {
-      feature: 'mcp'
-    })
+    vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.stopMCPServer', () => stopMCPServer(), {
-      feature: 'mcp'
-    })
+    vscode.commands.registerCommand('tensorfleet.startMCPServer', () => startMCPServer(context))
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context), {
-      feature: 'mcp'
-    })
+    vscode.commands.registerCommand('tensorfleet.stopMCPServer', () => stopMCPServer())
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.selectRosVersion', () => selectRosVersion(), {
-      feature: 'ros'
-    })
+    vscode.commands.registerCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context))
   );
 
   context.subscriptions.push(
-    registerTensorFleetCommand('tensorfleet.showDroneStatus', () => showDroneStatus(), {
-      feature: 'status'
-    })
+    vscode.commands.registerCommand('tensorfleet.selectRosVersion', () => selectRosVersion())
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
   );
 
   // Unified menu command (replaces separate auth and VM menu commands)
@@ -441,6 +443,8 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
       if (message?.command === 'newProject') {
         getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'newProject' });
         vscode.commands.executeCommand('tensorfleet.createNewProject');
+      } else if (message?.command === 'newRoboticProject') {
+        vscode.commands.executeCommand('tensorfleet.createNewRoboticProject');
       } else if (message?.command === 'installTools') {
         getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'installTools' });
         vscode.commands.executeCommand('tensorfleet.installTools');
@@ -492,10 +496,15 @@ async function openDedicatedPanel(
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
       }
 
-      if (view.htmlTemplate == 'map-standalone') {
-        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-      }
+    if (view.htmlTemplate == 'map-standalone') {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    }
+
+    if (view.htmlTemplate == 'sensor-3d-standalone') {
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+    }
 
       if (view.htmlTemplate == 'raw-messages-standalone') {
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
@@ -613,6 +622,10 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
     return getStandalonePanelHtml('mission_control', webview, context, cspSource);
   }
 
+  if (view.htmlTemplate === 'sensor-3d-standalone') {
+    return getStandalonePanelHtml('sensor_view_3d', webview, context, cspSource);
+  }
+
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
@@ -654,7 +667,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 }
 
 function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
@@ -773,10 +786,37 @@ function launchTerminalSession(target: string) {
 async function createNewProject(context: vscode.ExtensionContext) {
   const telemetry = getTelemetry();
   telemetry?.trackEvent('project.create', { phase: 'start' });
+  await createNewProjectInternal(context, {
+    kindLabel: 'drone',
+    defaultName: 'my-drone-project',
+    commandLabel: 'TensorFleet Project'
+  });
+}
+
+async function createNewRoboticProject(context: vscode.ExtensionContext) {
+  await createNewProjectInternal(context, {
+    kindLabel: 'robotic',
+    defaultName: 'my-robotic-project',
+    commandLabel: 'TensorFleet Robotic Project',
+    templateSubdir: 'robotic-js-project-templates'
+  });
+}
+
+type NewProjectOptions = {
+  kindLabel: string;
+  defaultName: string;
+  commandLabel: string;
+  templateSubdir?: string;
+};
+
+async function createNewProjectInternal(
+  context: vscode.ExtensionContext,
+  options: NewProjectOptions
+) {
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
-    prompt: 'Enter a name for your new drone project',
-    placeHolder: 'my-drone-project',
+    prompt: `Enter a name for your new ${options.kindLabel} project`,
+    placeHolder: options.defaultName,
     validateInput: (value) => {
       if (!value) {
         return 'Project name cannot be empty';
@@ -808,7 +848,11 @@ async function createNewProject(context: vscode.ExtensionContext) {
 
   const targetFolder = targetFolders[0];
   const projectFolder = vscode.Uri.joinPath(targetFolder, projectName);
-  const templateFolder = vscode.Uri.joinPath(context.extensionUri, 'resources', 'project-templates');
+  const templateFolder = vscode.Uri.joinPath(
+    context.extensionUri,
+    'resources',
+    options.templateSubdir ?? 'drone-js-project-templates'
+  );
 
   try {
     // Check if folder already exists
@@ -831,7 +875,7 @@ async function createNewProject(context: vscode.ExtensionContext) {
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: 'Creating TensorFleet Project',
+        title: `Creating ${options.commandLabel}`,
         cancellable: false
       },
       async (progress) => {
@@ -842,7 +886,7 @@ async function createNewProject(context: vscode.ExtensionContext) {
     );
 
     const openProject = await vscode.window.showInformationMessage(
-      `✨ Project "${projectName}" created successfully!`,
+      `✨ ${options.commandLabel} "${projectName}" created successfully!`,
       'Open Project',
       'Open in New Window',
       'Close'

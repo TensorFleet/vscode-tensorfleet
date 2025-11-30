@@ -102,6 +102,11 @@
           "type": "webview"
         },
         {
+          "id": "tensorfleet-sensor-3d-panel",
+          "name": "Sensor 3D view",
+          "type": "webview"
+        },
+        {
           "id": "tensorfleet-raw-messages-panel",
           "name": "Raw Messages Panel",
           "type": "webview"
@@ -344,6 +349,7 @@
     "@sentry/node": "^10.26.0",
     "flatbuffers": "^25.9.23",
     "flatbuffers_reflection": "^1.2.0",
+    "jpeg-js": "^0.4.4",
     "protobufjs": "^7.5.4"
   },
   "devDependencies": {
