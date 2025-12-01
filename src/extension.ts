@@ -131,9 +131,9 @@ const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
 const terminalRegistry = new Map<string, vscode.Terminal>();
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
-
 let vmManagerIntegration: VMManagerIntegration | null = null;
 let telemetryService: TelemetryService | null = null;
+
 
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
@@ -784,8 +784,6 @@ function launchTerminalSession(target: string) {
 }
 
 async function createNewProject(context: vscode.ExtensionContext) {
-  const telemetry = getTelemetry();
-  telemetry?.trackEvent('project.create', { phase: 'start' });
   await createNewProjectInternal(context, {
     kindLabel: 'drone',
     defaultName: 'my-drone-project',
@@ -801,6 +799,13 @@ async function createNewRoboticProject(context: vscode.ExtensionContext) {
     templateSubdir: 'robotic-js-project-templates'
   });
 }
+
+type NewProjectOptions = {
+  kindLabel: string;
+  defaultName: string;
+  commandLabel: string;
+  templateSubdir?: string;
+};
 
 type NewProjectOptions = {
   kindLabel: string;

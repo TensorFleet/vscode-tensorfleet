@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 /**
  * Simple PX4/MAVROS OFFBOARD velocity mission using roslib + rosbridge.
- * Ports the Python guided mission sample into JavaScript.
  *
  * Flow:
  *  - Connect to rosbridge
  *  - Arm + AUTO.TAKEOFF to target altitude
- *  - Switch to OFFBOARD and stream velocity setpoints to two ENU waypoints
+ *  - Switch to OFFBOARD and stream velocity setpoints to waypoints
  *  - Command AUTO.LAND and wait for disarm
  *
  * Run:
@@ -32,24 +31,37 @@ function loadConfig() {
 
 const config = loadConfig();
 
-const ALT_TARGET = numEnv("ALT_TARGET", config?.offboard?.alt_target ?? 3.0);
-const EDGE_M = numEnv("EDGE_M", config?.offboard?.edge_m ?? 200.0);
-const RADIUS = numEnv("WAYPOINT_RADIUS", config?.offboard?.waypoint_radius ?? 2.0);
-const SLOW_RADIUS = numEnv("SLOW_RADIUS", config?.offboard?.slow_radius ?? 10.0);
-const V_FAST = numEnv("V_FAST", config?.offboard?.v_fast ?? 20.0);
-const V_MIN = numEnv("V_MIN", config?.offboard?.v_min ?? 1.0);
-const ARM_WAIT = numEnv("ARM_WAIT", config?.offboard?.arm_wait ?? 3.0);
-const TAKEOFF_TIMEOUT = numEnv("TAKEOFF_TIMEOUT", config?.offboard?.takeoff_timeout ?? 60.0);
-const LAND_TIMEOUT = numEnv("LAND_TIMEOUT", config?.offboard?.land_timeout ?? 300.0);
-const SETPOINT_HZ = numEnv("SETPOINT_HZ", config?.offboard?.setpoint_hz ?? 20.0);
-const FRAME_ID = process.env.SETPOINT_FRAME_ID || config?.network?.setpoint_frame || "map";
+function loadMissionPlan() {
+  const planPath = path.join(process.cwd(), "missions", "example_mission.plan");
+  try {
+    const contents = fs.readFileSync(planPath, "utf8");
+    return JSON.parse(contents);
+  } catch (err) {
+    console.warn(
+      `[CFG] Could not load mission plan at ${planPath}, continuing with defaults. ${err.message}`
+    );
+    return null;
+  }
+}
 
-const R2B_HOST = process.env.R2B_HOST || config?.network?.vm_ip || "172.16.0.10";
-const R2B_PORT = process.env.R2B_PORT || config?.network?.rosbridge_port || "9091";
-const rosbridgeUrl =
-  process.env.ROSBRIDGE_URL ||
-  config?.network?.rosbridge_url ||
-  `ws://${R2B_HOST}:${R2B_PORT}`;
+function buildPlanWaypoints(plan, homeLocal) {
+  if (!plan || !plan.mission || !Array.isArray(plan.mission.waypoints)) return [];
+
+  const hx = Number(homeLocal?.x || 0);
+  const hy = Number(homeLocal?.y || 0);
+  return plan.mission.waypoints
+    .map((item) => {
+      if (!Array.isArray(item.offset) || item.offset.length < 2) return null;
+      const [dx, dy] = item.offset;
+      if (typeof dx !== "number" || typeof dy !== "number") return null;
+      return {
+        x: hx + dx,
+        y: hy + dy,
+        label: item.label || "WP"
+      };
+    })
+    .filter(Boolean);
+}
 
 function numEnv(key, fallback) {
   const raw = process.env[key];
@@ -57,6 +69,54 @@ function numEnv(key, fallback) {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
+
+function buildSettings(configObject) {
+  const offboard = configObject?.offboard || {};
+  const network = configObject?.network || {};
+
+  const altTarget = numEnv("ALT_TARGET", offboard.alt_target ?? 3.0);
+  const edgeMeters = numEnv("EDGE_M", offboard.edge_m ?? 200.0);
+  const waypointRadius = numEnv("WAYPOINT_RADIUS", offboard.waypoint_radius ?? 2.0);
+  const slowRadius = numEnv("SLOW_RADIUS", offboard.slow_radius ?? 10.0);
+  const vFast = numEnv("V_FAST", offboard.v_fast ?? 20.0);
+  const vMin = numEnv("V_MIN", offboard.v_min ?? 1.0);
+  const armWaitSec = numEnv("ARM_WAIT", offboard.arm_wait ?? 3.0);
+  const takeoffTimeoutSec = numEnv(
+    "TAKEOFF_TIMEOUT",
+    offboard.takeoff_timeout ?? 60.0
+  );
+  const landTimeoutSec = numEnv(
+    "LAND_TIMEOUT",
+    offboard.land_timeout ?? 300.0
+  );
+  const setpointHz = numEnv("SETPOINT_HZ", offboard.setpoint_hz ?? 20.0);
+
+  const frameId = process.env.SETPOINT_FRAME_ID || network.setpoint_frame || "map";
+
+  const r2bHost = process.env.R2B_HOST || network.vm_ip || "172.16.0.10";
+  const r2bPort = process.env.R2B_PORT || network.rosbridge_port || "9091";
+  const rosbridgeUrl =
+    process.env.ROSBRIDGE_URL ||
+    network.rosbridge_url ||
+    `ws://${r2bHost}:${r2bPort}`;
+
+  return {
+    altTarget,
+    edgeMeters,
+    waypointRadius,
+    slowRadius,
+    vFast,
+    vMin,
+    armWaitSec,
+    takeoffTimeoutSec,
+    landTimeoutSec,
+    setpointHz,
+    frameId,
+    rosbridgeUrl
+  };
+}
+
+const SETTINGS = buildSettings(config);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -93,8 +153,8 @@ function makeServiceCall(service, request, timeoutMs = 5000) {
 }
 
 class GuidedMissionController {
-  constructor(url) {
-    this.url = url;
+  constructor(settings) {
+    this.settings = settings;
     this.ros = null;
 
     this.state = null;
@@ -106,8 +166,8 @@ class GuidedMissionController {
   }
 
   async connect() {
-    console.log(`[SYS] Connecting to rosbridge at ${this.url} ...`);
-    this.ros = new ROSLIB.Ros({ url: this.url });
+    console.log(`[SYS] Connecting to rosbridge at ${this.settings.rosbridgeUrl} ...`);
+    this.ros = new ROSLIB.Ros({ url: this.settings.rosbridgeUrl });
 
     await new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -127,27 +187,11 @@ class GuidedMissionController {
 
     this._initTopicsAndServices();
 
-    await this._setHeartbeatParams().catch((err) =>
-      console.warn("[SYS][WARN] Heartbeat param set failed:", err.message || err)
-    );
-
     await this._waitState();
     await this._waitPose();
     await this._waitFix();
 
     console.log(`[SYS] Initial FCU mode: ${this.state?.mode}`);
-
-    await this._restartSimIfAvailable();
-
-    // Refresh telemetry after sim restart
-    this.state = null;
-    this.pose = null;
-    this.fix = null;
-    this.altitude = null;
-
-    await this._waitState();
-    await this._waitPose();
-    await this._waitFix();
 
     this.home = { ...this.pose.pose.position };
     this.homeFix = { ...this.fix };
@@ -225,18 +269,6 @@ class GuidedMissionController {
       name: "/mavros/cmd/command",
       serviceType: "mavros_msgs/CommandLong"
     });
-
-    this.paramSrv = new ROSLIB.Service({
-      ros: this.ros,
-      name: "/mavros/sys/set_parameters",
-      serviceType: "rcl_interfaces/srv/SetParameters"
-    });
-
-    this.simSrv = new ROSLIB.Service({
-      ros: this.ros,
-      name: "/simulation_manager/start_simulation",
-      serviceType: "std_srvs/Trigger"
-    });
   }
 
   async _waitState() {
@@ -257,44 +289,6 @@ class GuidedMissionController {
       15000,
       200
     );
-  }
-
-  async _setHeartbeatParams() {
-    console.log("[SYS] Setting MAVROS heartbeat params...");
-    const PARAMETER_DOUBLE = 3;
-    const PARAMETER_STRING = 4;
-    const request = {
-      parameters: [
-        {
-          name: "heartbeat_mav_type",
-          value: { type: PARAMETER_STRING, string_value: "GCS" }
-        },
-        {
-          name: "heartbeat_rate",
-          value: { type: PARAMETER_DOUBLE, double_value: 2.0 }
-        }
-      ]
-    };
-    const resp = await makeServiceCall(this.paramSrv, request, 5000);
-    console.log("[SYS] Heartbeat param response:", resp?.results || []);
-  }
-
-  async _restartSimIfAvailable() {
-    console.log("[SIM] Requesting simulation restart...");
-    try {
-      const resp = await makeServiceCall(
-        this.simSrv,
-        {},
-        20000 /* allow longer */
-      );
-      console.log(
-        `[SIM] success=${resp?.success ? "true" : "false"} msg=${
-          resp?.message || ""
-        }`
-      );
-    } catch (err) {
-      console.warn("[SIM][WARN] restart failed or service missing:", err.message);
-    }
   }
 
   async _setMode(customMode) {
@@ -324,8 +318,9 @@ class GuidedMissionController {
   }
 
   async _arm() {
-    console.log(`[ARM] Waiting ${ARM_WAIT.toFixed(1)}s before arming...`);
-    await sleep(ARM_WAIT * 1000);
+    const armWaitSec = this.settings.armWaitSec;
+    console.log(`[ARM] Waiting ${armWaitSec.toFixed(1)}s before arming...`);
+    await sleep(armWaitSec * 1000);
     console.log("[ARM] Sending arm command...");
     const resp = await makeServiceCall(this.armSrv, { value: true });
     if (!resp?.success) {
@@ -352,6 +347,8 @@ class GuidedMissionController {
   }
 
   async _takeoffToAlt(alt) {
+    const { takeoffTimeoutSec } = this.settings;
+
     console.log(`[TKOFF] Sending MAV_CMD_NAV_TAKEOFF to ${alt.toFixed(2)} m AGL`);
     const lat = Number(this.fix.latitude);
     const lon = Number(this.fix.longitude);
@@ -382,7 +379,7 @@ class GuidedMissionController {
         console.log("[TKOFF] Takeoff complete, in AUTO.LOITER near target alt");
         return;
       }
-      if (Date.now() - start > TAKEOFF_TIMEOUT * 1000) {
+      if (Date.now() - start > takeoffTimeoutSec * 1000) {
         throw new Error("Timeout waiting for AUTO.LOITER at altitude");
       }
       if (!this.state?.armed) {
@@ -394,7 +391,7 @@ class GuidedMissionController {
 
   _publishVelocity(vx, vy, vz = 0.0) {
     const msg = new ROSLIB.Message({
-      header: { frame_id: FRAME_ID },
+      header: { frame_id: this.settings.frameId },
       twist: {
         linear: { x: Number(vx), y: Number(vy), z: Number(vz) },
         angular: { x: 0.0, y: 0.0, z: 0.0 }
@@ -405,7 +402,7 @@ class GuidedMissionController {
 
   async _ensureOffboard() {
     console.log("[OFFB] Pre-streaming zero velocities...");
-    const intervalMs = 1000 / SETPOINT_HZ;
+    const intervalMs = 1000 / this.settings.setpointHz;
     const end = Date.now() + 1500;
     while (Date.now() < end) {
       this._publishVelocity(0.0, 0.0, 0.0);
@@ -420,8 +417,18 @@ class GuidedMissionController {
   }
 
   async _gotoLocalEnu(tx, ty, label = "") {
+    const {
+      landTimeoutSec,
+      waypointRadius,
+      slowRadius,
+      vFast,
+      vMin,
+      altTarget,
+      setpointHz
+    } = this.settings;
+
     console.log(`[LEG] ${label}: target local ENU (${tx.toFixed(1)}, ${ty.toFixed(1)})`);
-    const timeoutAt = Date.now() + LAND_TIMEOUT * 1000;
+    const timeoutAt = Date.now() + landTimeoutSec * 1000;
 
     while (true) {
       const p = this.pose?.pose?.position;
@@ -438,7 +445,7 @@ class GuidedMissionController {
         )},${cy.toFixed(2)}), alt=${relAlt.toFixed(2)}`
       );
 
-      if (dist < RADIUS) {
+      if (dist < waypointRadius) {
         console.log(`[LEG] ${label}: within radius, leg complete`);
         this._publishVelocity(0.0, 0.0, 0.0);
         return;
@@ -448,26 +455,28 @@ class GuidedMissionController {
         throw new Error(`[LEG] ${label}: timeout reaching target`);
       }
 
-      const v = dist > SLOW_RADIUS ? V_FAST : Math.max(V_MIN, (V_FAST * dist) / SLOW_RADIUS);
+      const v = dist > slowRadius ? vFast : Math.max(vMin, (vFast * dist) / slowRadius);
       const vx = (dx / dist) * v;
       const vy = (dy / dist) * v;
 
-      const altErr = ALT_TARGET - relAlt;
+      const altErr = altTarget - relAlt;
       const vz =
         Math.abs(altErr) < 0.2
           ? 0.0
           : Math.max(-1.0, Math.min(1.0, altErr));
 
       this._publishVelocity(vx, vy, vz);
-      await sleep(1000 / SETPOINT_HZ);
+      await sleep(1000 / setpointHz);
     }
   }
 
   async _landAndWaitDisarm() {
+    const { setpointHz, landTimeoutSec } = this.settings;
+
     console.log("[LAND] Stopping OFFBOARD velocities before landing");
-    for (let i = 0; i < 0.5 * SETPOINT_HZ; i += 1) {
+    for (let i = 0; i < 0.5 * setpointHz; i += 1) {
       this._publishVelocity(0.0, 0.0, 0.0);
-      await sleep(1000 / SETPOINT_HZ);
+      await sleep(1000 / setpointHz);
     }
 
     console.log("[LAND] Leaving OFFBOARD to AUTO.LOITER");
@@ -481,7 +490,7 @@ class GuidedMissionController {
     }
 
     const start = Date.now();
-    while (Date.now() - start < LAND_TIMEOUT * 1000) {
+    while (Date.now() - start < landTimeoutSec * 1000) {
       const armed = !!this.state?.armed;
       const mode = this.state?.mode;
       console.log(`[LAND] mode=${mode} armed=${armed}`);
@@ -495,18 +504,38 @@ class GuidedMissionController {
   }
 
   async runMission() {
+    const { altTarget, edgeMeters } = this.settings;
+
     try {
       await this.connect();
 
       await this._arm();
-      await this._takeoffToAlt(ALT_TARGET);
+      await this._takeoffToAlt(altTarget);
       await this._ensureOffboard();
 
       const hx = Number(this.home.x);
       const hy = Number(this.home.y);
-      const waypoint = [hx + EDGE_M, hy + EDGE_M];
 
-      await this._gotoLocalEnu(waypoint[0], waypoint[1], "HOP");
+      const plan = loadMissionPlan();
+      let waypoints = buildPlanWaypoints(plan, this.home);
+
+      if (!waypoints.length) {
+        // Fallback: small circle around home if no mission plan
+        const radius = Math.min(edgeMeters, 5.0);
+        const steps = 8;
+        waypoints = [];
+        for (let i = 0; i < steps; i += 1) {
+          const angle = (2 * Math.PI * i) / steps;
+          const x = hx + radius * Math.cos(angle);
+          const y = hy + radius * Math.sin(angle);
+          waypoints.push({ x, y, label: `CIRCLE_${i + 1}` });
+        }
+      }
+
+      for (const wp of waypoints) {
+        await this._gotoLocalEnu(wp.x, wp.y, wp.label);
+      }
+
       await this._gotoLocalEnu(hx, hy, "HOME");
 
       await this._landAndWaitDisarm();
@@ -533,7 +562,7 @@ class GuidedMissionController {
 }
 
 async function main() {
-  const controller = new GuidedMissionController(rosbridgeUrl);
+  const controller = new GuidedMissionController(SETTINGS);
   await controller.runMission();
 }
 

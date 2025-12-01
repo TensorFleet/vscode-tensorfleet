@@ -279,6 +279,9 @@ export class ROS2Bridge {
   private messageHandlers = new Map<string, Set<(message: any) => void>>();
   private subscriptions = new Map<string, Subscription>();
 
+  // track discovered topics from the bridge
+  private discoveredTopics: Map<string, string> = new Map(); // topic -> type
+
   private reconnectTimeout: number | null = null;
 
   // Topics that should be (re)published once on connect (e.g., latched configs).
@@ -366,6 +369,11 @@ export class ROS2Bridge {
       console.error("[ROS2Bridge] Foxglove client error", err);
     };
 
+    this.client.onNewTopic = (topic, type) => {
+      console.log("new Foxglove topic:", topic, "type:", type);
+      this.discoveredTopics.set(topic, type);
+    };
+
     this.client.onMessage = (msg) => {
       const ref = {
         topic: msg.topic,
@@ -388,6 +396,7 @@ export class ROS2Bridge {
       // ignore
     }
     this.client = null;
+    this.discoveredTopics.clear();
   }
 
   /** Store a subscription and (re)apply it on connect. */
@@ -504,7 +513,7 @@ export class ROS2Bridge {
     ];
   }
 
-  /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
+ /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
   async callService<T = any>(name: string, request: any): Promise<T> {
     if (!this.client) throw new Error("callService() before connect");
     if (typeof (this.client as any).callService !== "function") {

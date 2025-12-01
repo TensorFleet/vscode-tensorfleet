@@ -6,10 +6,34 @@ JavaScript/Node.js template for drone control over rosbridge using `roslib`. Inc
 1) Install deps: `bun install` (or `npm install`)
 2) Point to rosbridge (default `ws://172.16.0.10:9091`): `export ROSBRIDGE_URL=ws://<vm-ip>:9091`
 3) Start PX4 + MAVROS + rosbridge in your VM, then run:
-   - `bun src/drone_mover.js` - AUTO.TAKEOFF -> OFFBOARD velocity legs from `missions/example_mission.plan` (or small hop fallback) -> return home -> AUTO.LAND
+   - `bun run restart` - Restart the simulation (resets drone state)
+   - `bun src/drone_mover.js` - ARM → TAKEOFF → OFFBOARD waypoint mission → LAND
+     - Reads waypoints from `missions/example_mission.plan` (5m square pattern)
+     - Falls back to 8-point circle if mission plan is missing
+
 
 ## Scripts
-- `src/drone_mover.js`: Ports the Python guided mission. Arms, takes off to a low `ALT_TARGET`, enters OFFBOARD, flies waypoints from `missions/example_mission.plan` (lat/lon -> local ENU offsets from home) when present, then returns home and lands. Uses env or `config/drone_config.yaml` (`offboard` section) for tuning; falls back to a tiny hop/return if the plan is missing.
+- `src/restart_sim.js`: Restart the PX4 simulation via `/simulation_manager/start_simulation` service. Useful for resetting drone state between test runs.
+- `src/drone_mover.js`: Complete autonomous mission: ARM → TAKEOFF → OFFBOARD → fly waypoints from `missions/example_mission.plan` → return home → LAND. Falls back to 8-point circle pattern if mission plan is missing. Uses env or `config/drone_config.yaml` (`offboard` section) for tuning.
+
+## Tutorials
+
+Learn drone control step-by-step with focused examples:
+
+**Beginner** (getting started):
+1. `bun run tutorial:01` - Connect to rosbridge and read drone state
+2. `bun run tutorial:02` - Display all telemetry (position, GPS, battery)
+3. `bun run tutorial:03` - Send ARM/DISARM command
+
+**Intermediate** (basic flight):
+4. `bun run tutorial:04` - Takeoff to altitude and land (complete flight cycle)
+5. `bun run tutorial:05` - Enter OFFBOARD mode and hover
+
+**Advanced** (autonomous navigation):
+6. `bun run tutorial:06` - Move forward using velocity control
+7. `bun run tutorial:07` - Navigate to waypoint with position feedback
+
+Each tutorial is ~50-100 lines and demonstrates one concept clearly. See `src/tutorials/` for source code.
 
 ## Configuration
 Edit `config/drone_config.yaml` or override via env vars:
@@ -22,14 +46,20 @@ The `offboard` section in the YAML mirrors the environment overrides for `drone_
 ## Layout
 ```
 .
-|-- src/                    # Drone control scripts
+|-- src/
+|   |-- tutorials/          # Step-by-step learning scripts
+|   |-- lib/                # Shared utilities
+|   |-- drone_mover.js      # Advanced mission example
+|   `-- restart_sim.js      # Simulation restart utility
 |-- config/                 # Network + flight config
-|-- missions/               # Example QGC plans
+|-- missions/               # Example mission plans
 |-- launch/                 # Optional ROS 2 launch files
 |-- package.json
 `-- README.md
 ```
 
 ## Tips
-- rosbridge runs in the VM; no local ROS 2 binaries needed.
-- Verify connectivity with `src/drone_mover.js` for OFFBOARD control.
+- **New to drone control?** Start with the tutorials (`bun run tutorial:01` through `tutorial:07`)
+- rosbridge runs in the VM; no local ROS 2 binaries needed
+- Use `bun run restart` to reset simulation between test runs
+- Verify connectivity with `src/drone_mover.js` for full autonomous mission
