@@ -68,13 +68,13 @@
       "tensorfleet-drone-suite": [
         {
           "id": "tensorfleet-login",
-          "name": "Tensorfleet account",
+          "name": "Account",
           "type": "webview",
           "when": "!tensorfleet.is_authenticated"
         },
         {
           "id": "tensorfleet-account",
-          "name": "Tensorfleet account",
+          "name": "Account",
           "type": "webview",
           "when": "tensorfleet.is_authenticated"
         },
