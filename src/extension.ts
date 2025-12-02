@@ -8,6 +8,10 @@ import * as auth from './auth';
 import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
 
+// -----------------------------------------------------------------------------
+// Types
+// -----------------------------------------------------------------------------
+
 type PanelKind = 'standard' | 'terminalTabs';
 
 type DroneViewport = {
@@ -26,6 +30,47 @@ type TerminalConfig = {
   name: string;
   startupCommands?: string[];
 };
+
+/**
+ * New type: panels with unique functionality.
+ * They do NOT reuse DroneViewport, do NOT have a generic "open" command,
+ * and MUST render via their own function.
+ */
+type UniquePanel = {
+  /** View id to register as WebviewViewProvider */
+  id: string;
+  /** Title (optional; useful for templates) */
+  title?: string;
+  /** Optional description / copy */
+  description?: string;
+  /** Optional media asset to expose to renderer */
+  image?: string;
+  /**
+   * Function that returns the webview HTML (dynamic).
+   * You can share this function across items or make one per item.
+   */
+  render: (ctx: {
+    webview: vscode.Webview;
+    context: vscode.ExtensionContext;
+    panelDef: UniquePanel;
+  }) => string | Promise<string>;
+  /**
+   * Optional message handler override. If omitted, default handler runs.
+   */
+  onMessage?: (message: any, api: {
+    context: vscode.ExtensionContext;
+    webview: vscode.Webview;
+    telemetry?: TelemetryService | null;
+  }) => void | Promise<void>;
+  /**
+   * Optional extra local resource roots
+   */
+  localResourceRoots?: (ctx: { context: vscode.ExtensionContext }) => vscode.Uri[];
+};
+
+// -----------------------------------------------------------------------------
+// Collections
+// -----------------------------------------------------------------------------
 
 const DRONE_VIEWS: DroneViewport[] = [
   {
@@ -115,6 +160,132 @@ const DRONE_VIEWS: DroneViewport[] = [
   }
 ];
 
+/**
+ * Unique panels that will have their own html rendering functions.
+ */
+const UNIQUE_PANELS: UniquePanel[] = [
+  {
+    id: 'tensorfleet-login',
+    title: 'TensorFleet Login',
+    description: 'Authenticate to connect simulations, drones, and AI jobs.',
+    image: 'tensorfleet-icon.svg',
+    render: ({ webview, context, panelDef }) => {
+      const cspSource = webview.cspSource;
+      const styles = getBaseStyles();
+      const img = webview
+        .asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', 'tensorfleet-icon.svg'))
+        .toString();
+      const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
+
+      return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  ${cspMeta}
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${panelDef.title ?? 'Tensorfleet Login'}</title>
+  ${styles}
+</head>
+<body>
+  <div
+    class="viewport viewport--panel"
+    style="align-items: center; text-align: center; max-width: 320px; margin: 12px auto;"
+  >
+    <img
+      alt="Tensorfleet logo"
+      src="${img}"
+      style="border: none; background: transparent; border-radius: 0; max-width: 160px; width: auto;"
+    />
+    <h1 class="viewport__title">Tensorfleet</h1>
+    <div class="viewport__actions">
+      <button class="viewport__action" id="tf-login">Login</button>
+    </div>
+  </div>
+  <script>
+    const vscode = acquireVsCodeApi();
+    document.getElementById('tf-login')?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'login' });
+    });
+  </script>
+</body>
+</html>
+      `;
+    },
+    onMessage: async (message, api) => {
+      if (!message || !message.command) return;
+      if (message.command === 'login') {
+        await vscode.commands.executeCommand('tensorfleet.login');
+      }
+    },
+    localResourceRoots: ({ context }) => [
+      vscode.Uri.joinPath(context.extensionUri, 'media')
+    ]
+  },
+  {
+    id: 'tensorfleet-account',
+    title: 'TensorFleet Account',
+    description: 'Manage your tensorfleet account',
+    image: 'tensorfleet-icon.svg',
+    render: ({ webview, context, panelDef }) => {
+      const cspSource = webview.cspSource;
+      const styles = getBaseStyles();
+      const img = webview
+        .asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', 'tensorfleet-icon.svg'))
+        .toString();
+      const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
+
+      return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  ${cspMeta}
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${panelDef.title ?? 'Tensorfleet Account'}</title>
+  ${styles}
+</head>
+<body>
+  <div
+    class="viewport viewport--panel"
+    style="align-items: center; text-align: center; max-width: 320px; margin: 12px auto;"
+  >
+    <img
+      alt="Tensorfleet logo"
+      src="${img}"
+      style="border: none; background: transparent; border-radius: 0; max-width: 160px; width: auto;"
+    />
+    <h1 class="viewport__title">Tensorfleet</h1>
+    <div class="viewport__actions">
+      <button class="viewport__action" id="tf-logout">Logout</button>
+    </div>
+  </div>
+  <script>
+    const vscode = acquireVsCodeApi();
+    document.getElementById('tf-logout')?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'logout' });
+    });
+  </script>
+</body>
+</html>
+      `;
+    },
+    onMessage: async (message, api) => {
+      if (!message || !message.command) return;
+      if (message.command === 'logout') {
+        await vscode.commands.executeCommand('tensorfleet.logout');
+      }
+    },
+    localResourceRoots: ({ context }) => [
+      vscode.Uri.joinPath(context.extensionUri, 'media')
+    ]
+  },
+];
+
+// -----------------------------------------------------------------------------
+// Globals / services
+// -----------------------------------------------------------------------------
+
 const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
   ros2: {
     id: 'tensorfleet-ros2-terminal',
@@ -142,6 +313,10 @@ let projectWatcher: vscode.FileSystemWatcher | null = null;
 
 // Unified status coordinator
 let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
+
+// -----------------------------------------------------------------------------
+// Activation
+// -----------------------------------------------------------------------------
 
 export function activate(context: vscode.ExtensionContext) {
   telemetryService = new TelemetryService(context);
@@ -185,6 +360,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Initialize auth state
   updateUnifiedAuthStatus(context);
+  updateAuthenticatedContext(context);
 
   // Update auth status periodically (every 30 seconds)
   const authInterval = setInterval(() => {
@@ -217,6 +393,17 @@ export function activate(context: vscode.ExtensionContext) {
     );
   });
 
+  // Register Unique Panels (function-driven, no "open" command)
+  UNIQUE_PANELS.forEach((panelDef) => {
+    const provider = new UniqueViewProvider(panelDef, context);
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider(panelDef.id, provider, {
+        webviewOptions: { retainContextWhenHidden: true }
+      })
+    );
+  });
+
+  // Tooling / misc
   const toolingProvider = new ToolingViewProvider(context);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('tensorfleet-tooling-view', toolingProvider, {
@@ -318,7 +505,7 @@ export function deactivate() {
       });
     mcpBridge = null;
   }
-  
+
   // Clean up MCP server if running
   if (mcpServerProcess) {
     try {
@@ -429,6 +616,86 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
   }
 }
 
+/**
+ * Provider for function-driven unique panels
+ */
+class UniqueViewProvider implements vscode.WebviewViewProvider {
+  constructor(private readonly def: UniquePanel, private readonly context: vscode.ExtensionContext) {}
+
+  resolveWebviewView(webviewView: vscode.WebviewView) {
+    const defaultRoots = [
+      vscode.Uri.joinPath(this.context.extensionUri, 'media'),
+      vscode.Uri.joinPath(this.context.extensionUri, 'src', 'templates'),
+      vscode.Uri.joinPath(this.context.extensionUri, 'panels-standalone', 'dist'),
+      vscode.Uri.joinPath(this.context.extensionUri, 'panels-standalone', 'dist', 'assets')
+    ];
+    const extraRoots = this.def.localResourceRoots?.({ context: this.context }) ?? [];
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [...defaultRoots, ...extraRoots]
+    };
+
+    // render by function
+    Promise.resolve(
+      this.def.render({ webview: webviewView.webview, context: this.context, panelDef: this.def })
+    ).then(
+      (html) => {
+        webviewView.webview.html = html;
+      },
+      (err) => {
+        getTelemetry()?.captureError(err, { source: 'UniqueViewProvider.render', id: this.def.id });
+        webviewView.webview.html = this.renderFallbackHtml(webviewView.webview, String(err ?? 'Failed to render'));
+      }
+    );
+
+    // message piping
+    webviewView.webview.onDidReceiveMessage(async (message) => {
+      try {
+        if (this.def.onMessage) {
+          await this.def.onMessage(message, {
+            context: this.context,
+            webview: webviewView.webview,
+            telemetry: getTelemetry()
+          });
+          return;
+        }
+        // default handling: just log
+        console.log(`[UniquePanel:${this.def.id}] message`, message);
+      } catch (e) {
+        getTelemetry()?.captureError(e, { source: 'UniqueViewProvider.onMessage', id: this.def.id });
+        vscode.window.showErrorMessage(
+          `Panel action failed: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    });
+  }
+
+  private renderFallbackHtml(webview: vscode.Webview, msg: string) {
+    const cspSource = webview.cspSource;
+    const styles = getBaseStyles();
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data:;">`;
+    return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  ${cspMeta}
+  <title>Panel Error</title>
+  ${styles}
+</head>
+<body>
+  <div class="viewport viewport--panel">
+    <h1 class="viewport__title">Panel failed to render</h1>
+    <p class="viewport__description">${msg}</p>
+  </div>
+</body>
+</html>`;
+  }
+}
+
+/**
+ * Tooling side view (unchanged)
+ */
 class ToolingViewProvider implements vscode.WebviewViewProvider {
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -496,15 +763,15 @@ async function openDedicatedPanel(
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
       }
 
-    if (view.htmlTemplate == 'map-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
+      if (view.htmlTemplate == 'map-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
 
-    if (view.htmlTemplate == 'sensor-3d-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
+      if (view.htmlTemplate == 'sensor-3d-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
 
       if (view.htmlTemplate == 'raw-messages-standalone') {
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
@@ -612,7 +879,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 
   if (view.htmlTemplate === 'teleops-standalone') {
     return getStandalonePanelHtml('teleops', webview, context, cspSource);
-  } 
+  }
 
   if (view.htmlTemplate === 'image-standalone') {
     return getStandalonePanelHtml('image', webview, context, cspSource);
@@ -629,11 +896,11 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
-  
+
   // Load the custom HTML template directly
   const templatePath = path.join(__dirname, '..', 'src', 'templates', view.htmlTemplate);
   let template = fs.readFileSync(templatePath, 'utf8');
-  
+
   // Convert asset paths to webview URIs
   template = template.replace(
     /src="\/assets\/([^"]+)"/g,
@@ -644,7 +911,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
       return `src="${assetUri}"`;
     }
   );
-  
+
   template = template.replace(
     /href="\/assets\/([^"]+)"/g,
     (match, assetPath) => {
@@ -654,7 +921,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
       return `href="${assetUri}"`;
     }
   );
-  
+
   // Add CSP meta tag for security
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https:; frame-src ${cspSource};">`;
   
@@ -662,7 +929,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   if (!template.includes('Content-Security-Policy')) {
     template = template.replace('<head>', `<head>\n    ${cspMeta}`);
   }
-  
+
   return template;
 }
 
@@ -1068,11 +1335,11 @@ function getBaseStyles(): string {
 function loadTemplate(templateName: string, replacements: Record<string, string>): string {
   const templatePath = path.join(__dirname, '..', 'src', 'templates', templateName);
   let template = fs.readFileSync(templatePath, 'utf8');
-  
+
   for (const [key, value] of Object.entries(replacements)) {
     template = template.replace(new RegExp(`{{${key}}}`, 'g'), value);
   }
-  
+
   return template;
 }
 
@@ -1219,11 +1486,11 @@ async function initializeStatusBarItems(context: vscode.ExtensionContext) {
   // Watch for config file changes
   const configPattern = '**/config/drone_config.yaml';
   projectWatcher = vscode.workspace.createFileSystemWatcher(configPattern);
-  
+
   projectWatcher.onDidCreate(() => updateStatusBars());
   projectWatcher.onDidChange(() => updateStatusBars());
   projectWatcher.onDidDelete(() => updateStatusBars());
-  
+
   context.subscriptions.push(projectWatcher);
 
   // Update status periodically (every 5 seconds)
@@ -1321,8 +1588,8 @@ async function detectRosVersion() {
     const versionMatch = configText.match(/ros_?version:\s*["']?([^"'\n]+)["']?/i);
     if (versionMatch) {
       const versionName = versionMatch[1].toLowerCase();
-      const found = AVAILABLE_ROS_VERSIONS.find((v) => 
-        v.distro.toLowerCase() === versionName || 
+      const found = AVAILABLE_ROS_VERSIONS.find((v) =>
+        v.distro.toLowerCase() === versionName ||
         v.name.toLowerCase().includes(versionName)
       );
       if (found) {
@@ -1385,7 +1652,7 @@ async function updateDroneStatus() {
       const flyingCount = drones.filter((d) => d.status === 'flying').length;
 
       let statusText = `$(radio-tower) ${activeCount} Drone${activeCount !== 1 ? 's' : ''}`;
-      
+
       if (flyingCount > 0) {
         statusText += ` (${flyingCount} Flying)`;
       }
@@ -1437,12 +1704,11 @@ async function selectRosVersion() {
     phase: 'selected',
     distro: currentRosVersion.distro
   });
-  
+
   if (rosVersionStatusBar) {
     rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
   }
 
-  // Optionally update the config file
   const shouldUpdateConfig = await vscode.window.showInformationMessage(
     `Switched to ${currentRosVersion.name}. Update drone_config.yaml?`,
     'Yes',
@@ -1519,16 +1785,16 @@ async function showDroneStatus() {
   }
 
   const items = drones.map((drone) => {
-      const statusIcon =
-        drone.status === 'flying' ? '$(rocket)' :
-        drone.status === 'armed' ? '$(target)' :
-        drone.status === 'idle' ? '$(circle-outline)' :
-        '$(circle-slash)';
+    const statusIcon =
+      drone.status === 'flying' ? '$(rocket)' :
+      drone.status === 'armed' ? '$(target)' :
+      drone.status === 'idle' ? '$(circle-outline)' :
+      '$(circle-slash)';
 
-      const batteryIcon =
-        drone.battery > 50 ? '$(pulse)' :
-        drone.battery > 25 ? '$(warning)' :
-        '$(alert)';
+    const batteryIcon =
+      drone.battery > 50 ? '$(pulse)' :
+      drone.battery > 25 ? '$(warning)' :
+      '$(alert)';
 
     return {
       label: `${statusIcon} ${drone.name}`,
@@ -1597,7 +1863,7 @@ Click "Open Gazebo Workspace" to view in simulation.
       vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
     }
   });
-}
+  }
 
 // ============================================================================
 // ROS2 Connection Management
@@ -1626,7 +1892,7 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
   telemetry?.trackEvent('mcp.config', { phase: 'start' });
   try {
     const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
-    
+
     const config = {
       mcpServers: {
         'tensorfleet-drone': {
@@ -1638,14 +1904,14 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
     };
 
     const configText = JSON.stringify(config, null, 2);
-    
+
     const document = await vscode.workspace.openTextDocument({
       content: configText,
       language: 'json'
     });
-    
+
     await vscode.window.showTextDocument(document);
-    
+
     vscode.window
       .showInformationMessage(
         'MCP Configuration copied! Add this to your Cursor or Claude Desktop config.',
@@ -1678,14 +1944,14 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
  * Update unified auth status
  */
 async function updateUnifiedAuthStatus(context: vscode.ExtensionContext) {
-  console.log('[TensorFleet] updateUnifiedAuthStatus called');
+console.log('[TensorFleet] updateUnifiedAuthStatus called');
   if (!unifiedStatusCoordinator) {
     console.log('[TensorFleet] No unified status coordinator');
     return;
   }
 
   const isAuth = await auth.isAuthenticated(context);
-  console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
+console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
   unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
 }
 
@@ -1709,7 +1975,7 @@ function buildMenuForState(
         primaryActions.push({
           label: '$(terminal) Connect via SSH'
         });
-      }
+}
       break;
 
     case 'stopped':
@@ -2043,12 +2309,22 @@ function formatHeader(
         label: '$(sync~spin) Checking...',
         detail: 'Determining VM status'
       };
-  }
+}
 }
 
 // ============================================================================
 // Authentication Functions
 // ============================================================================
+
+/**
+ * Update context for auth status
+ */
+async function updateAuthenticatedContext(context: vscode.ExtensionContext) {
+  const isAuth = await auth.isAuthenticated(context);
+
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.is_authenticated', isAuth);
+}
+
 
 /**
  * Handle login command
@@ -2063,11 +2339,12 @@ async function handleLogin(context: vscode.ExtensionContext) {
     
     console.log('[TensorFleet] Authentication completed, updating status...');
     await updateUnifiedAuthStatus(context);
+    await updateAuthenticatedContext(context);
     
     // Force immediate status update
     const isAuth = await auth.isAuthenticated(context);
     console.log('[TensorFleet] Auth status after login:', isAuth);
-    
+
     if (unifiedStatusCoordinator) {
       unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
     }
@@ -2094,8 +2371,9 @@ async function handleLogin(context: vscode.ExtensionContext) {
 async function handleLogout(context: vscode.ExtensionContext) {
   await auth.clearToken(context);
   await updateUnifiedAuthStatus(context);
+  await updateAuthenticatedContext(context);
   void vscode.window.showInformationMessage('Logged out successfully');
-  
+
   // Reset VM Manager state after logout
   if (vmManagerIntegration) {
     vmManagerIntegration.refreshStatus(true);
