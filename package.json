@@ -313,7 +313,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "bun run compile:prod",
+    "vscode:prepublish": "bun run compile",
     "prepare:telemetry": "bun scripts/write-telemetry-config.ts",
     "build:panels": "bun run --cwd panels-standalone build",
     "watch:panels": "bun run --cwd panels-standalone build --watch",
