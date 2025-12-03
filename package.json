@@ -42,7 +42,8 @@
     "onCommand:tensorfleet.selectRosVersion",
     "onCommand:tensorfleet.showDroneStatus",
     "onCommand:tensorfleet.showVMManagerMenu",
-    "onCommand:tensorfleet.selectRegion"
+    "onCommand:tensorfleet.selectRegion",
+    "onCommand:tensorfleet.login"
   ],
   "main": "./dist/extension.js",
   "packageManager": "bun@1.0.0",
@@ -251,7 +252,7 @@
             "Asia - Southeast Region (asia.vm.tensorfleet.net)",
             "Local - Development only (hidden in production builds)"
           ],
-          "description": "Select your TensorFleet region. Note: 'local' is only available when running the extension in development mode.",
+          "description": "Select your TensorFleet region for VM and API access.",
           "order": 1
         }
       }
