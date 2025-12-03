@@ -35,7 +35,8 @@ export interface RegionConfig {
 /**
  * Available regions and their configurations
  */
-export const REGIONS: Record<string, RegionConfig> = {
+
+/*
   'us-west': {
     id: 'us-west',
     name: 'US West',
@@ -46,15 +47,29 @@ export const REGIONS: Record<string, RegionConfig> = {
     description: 'United States - West Coast',
     icon: '🇺🇸'
   },
-  'eu-west': {
-    id: 'eu-west',
-    name: 'EU West',
-    backendUrl: 'https://eu.app.tensorfleet.net',
+
+*/
+
+export const REGIONS: Record<string, RegionConfig> = {
+  'eu': {
+    id: 'eu',
+    name: 'EU Central',
+    backendUrl: 'https://app.tensorfleet.net',
     vmManagerUrl: 'https://eu.vm.tensorfleet.net',
     foxglovePort: 8765,
     ros2Port: 9091,
-    description: 'Europe - Western Region',
+    description: 'Europe - Central',
     icon: '🇪🇺'
+  },
+  'asia': {
+    id: 'asia',
+    name: 'Asia',
+    backendUrl: 'https://app.tensorfleet.net',
+    vmManagerUrl: 'https://vm-manager-asia-1.tail4f6a7.ts.net',
+    foxglovePort: 8765,
+    ros2Port: 9091,
+    description: 'Asia - SouthEast (beta/staging)',
+    icon: '🇹🇭'
   },
   'local': {
     id: 'local',
@@ -86,7 +101,7 @@ export function getAvailableRegions(): Record<string, RegionConfig> {
 /**
  * Default region if none is configured
  */
-export const DEFAULT_REGION = 'us-west';
+export const DEFAULT_REGION = 'eu';
 
 /**
  * Get the currently selected region ID from configuration
