@@ -296,7 +296,7 @@ export function TeleopPanel(): React.JSX.Element {
               </label>
               {availableTopics.length > 0 ? (
                 <select
-                  className="setting-input"
+                  className="setting-input setting-select"
                   value={config.topic ?? ''}
                   onChange={(e) => setConfig({ ...config, topic: e.target.value })}
                 >

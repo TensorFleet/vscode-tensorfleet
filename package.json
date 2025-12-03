@@ -67,44 +67,70 @@
     "views": {
       "tensorfleet-drone-suite": [
         {
+          "id": "tensorfleet-login",
+          "name": "Tensorfleet account",
+          "type": "webview",
+          "when": "!tensorfleet.is_authenticated"
+        },
+        {
+          "id": "tensorfleet-account",
+          "name": "Tensorfleet account",
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
+        },
+        {
           "id": "tensorfleet-qgroundcontrol",
           "name": "QGroundControl",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         },
         {
           "id": "tensorfleet-gazebo",
           "name": "Gazebo World",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         },
         {
           "id": "tensorfleet-aiops",
           "name": "AI Ops",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         },
         {
           "id": "tensorfleet-ros2-baselines",
           "name": "ROS 2 & Stable Baselines",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         },
         {
           "id": "tensorfleet-image-panel",
           "name": "Image Panel",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         },
         {
           "id": "tensorfleet-teleops-panel",
           "name": "Teleops Panel",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         },
         {
           "id": "tensorfleet-map-panel",
           "name": "Map Panel",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
+        },
+        {
+          "id": "tensorfleet-sensor-3d-panel",
+          "name": "Sensor 3D view",
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         },
         {
           "id": "tensorfleet-raw-messages-panel",
           "name": "Raw Messages Panel",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         }
       ],
       "tensorfleet-tooling": [
@@ -344,6 +370,7 @@
     "@sentry/node": "^10.26.0",
     "flatbuffers": "^25.9.23",
     "flatbuffers_reflection": "^1.2.0",
+    "jpeg-js": "^0.4.4",
     "protobufjs": "^7.5.4"
   },
   "devDependencies": {

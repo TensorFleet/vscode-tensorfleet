@@ -1,0 +1,33 @@
+{
+  "fileType": "Plan",
+  "version": 1,
+  "groundStation": "TensorFleet",
+  "notes": "Simple square pattern mission using local ENU offsets from home position.",
+  "mission": {
+    "cruiseSpeed": 5.0,
+    "hoverSpeed": 2.0,
+    "waypoints": [
+      {
+        "offset": [5.0, 0.0],
+        "label": "WP1_EAST"
+      },
+      {
+        "offset": [5.0, 5.0],
+        "label": "WP2_NORTHEAST"
+      },
+      {
+        "offset": [0.0, 5.0],
+        "label": "WP3_NORTH"
+      },
+      {
+        "offset": [0.0, 0.0],
+        "label": "WP4_HOME"
+      }
+    ]
+  },
+  "rally": [],
+  "geoFence": {
+    "circles": [],
+    "polygons": []
+  }
+}
