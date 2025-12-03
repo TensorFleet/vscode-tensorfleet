@@ -18,7 +18,6 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onView:tensorfleet-qgroundcontrol",
     "onView:tensorfleet-gazebo",
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
@@ -27,7 +26,6 @@
     "onView:tensorfleet-map-panel",
     "onView:tensorfleet-raw-messages-panel",
     "onView:tensorfleet-tooling-view",
-    "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
@@ -79,14 +77,20 @@
           "when": "tensorfleet.is_authenticated"
         },
         {
-          "id": "tensorfleet-qgroundcontrol",
-          "name": "QGroundControl",
+          "id": "tensorfleet-map-panel",
+          "name": "Map Panel",
           "type": "webview",
           "when": "tensorfleet.is_authenticated"
         },
         {
-          "id": "tensorfleet-gazebo",
-          "name": "Gazebo World",
+          "id": "tensorfleet-view-3d",
+          "name": "3D Views",
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
+        },
+        {
+          "id": "tensorfleet-image-panel",
+          "name": "Image Panel",
           "type": "webview",
           "when": "tensorfleet.is_authenticated"
         },
@@ -103,26 +107,8 @@
           "when": "tensorfleet.is_authenticated"
         },
         {
-          "id": "tensorfleet-image-panel",
-          "name": "Image Panel",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
           "id": "tensorfleet-teleops-panel",
           "name": "Teleops Panel",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-map-panel",
-          "name": "Map Panel",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-sensor-3d-panel",
-          "name": "Sensor 3D view",
           "type": "webview",
           "when": "tensorfleet.is_authenticated"
         },
@@ -142,11 +128,6 @@
       ]
     },
     "commands": [
-      {
-        "command": "tensorfleet.openQGroundControlPanel",
-        "title": "Open QGroundControl Workspace",
-        "category": "TensorFleet"
-      },
       {
         "command": "tensorfleet.openGazeboPanel",
         "title": "Open Gazebo Workspace",
@@ -274,11 +255,6 @@
     "menus": {
       "view/title": [
         {
-          "command": "tensorfleet.openQGroundControlPanel",
-          "when": "view == tensorfleet-qgroundcontrol",
-          "group": "navigation@1"
-        },
-        {
           "command": "tensorfleet.openGazeboPanel",
           "when": "view == tensorfleet-gazebo",
           "group": "navigation@1"
@@ -307,11 +283,6 @@
           "command": "tensorfleet.openRawMessagesPanel",
           "when": "view == tensorfleet-raw-messages-panel",
           "group": "navigation@1"
-        },
-        {
-          "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-qgroundcontrol",
-          "group": "navigation@9"
         },
         {
           "command": "tensorfleet.openAllPanels",
