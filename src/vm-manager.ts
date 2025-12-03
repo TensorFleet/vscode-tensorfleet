@@ -754,7 +754,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private getApiBaseUrl(): string {
-    return 'http://localhost:8080';
+    return 'https://eu.vm.tensorfleet.net';
   }
 
   private async getAuthToken(): Promise<string | undefined> {
