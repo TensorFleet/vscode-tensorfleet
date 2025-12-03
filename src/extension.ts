@@ -1078,17 +1078,11 @@ type NewProjectOptions = {
   templateSubdir?: string;
 };
 
-type NewProjectOptions = {
-  kindLabel: string;
-  defaultName: string;
-  commandLabel: string;
-  templateSubdir?: string;
-};
-
 async function createNewProjectInternal(
   context: vscode.ExtensionContext,
   options: NewProjectOptions
 ) {
+  const telemetry = getTelemetry();
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
     prompt: `Enter a name for your new ${options.kindLabel} project`,
@@ -1698,12 +1692,6 @@ async function selectRosVersion() {
     title: 'TensorFleet: ROS Version'
   });
 
-  if (selected) {
-    currentRosVersion = selected.version;
-
-    if (rosVersionStatusBar) {
-      rosVersionStatusBar.text = `$(archive) ${currentRosVersion.name}`;
-    }
   if (!selected) {
     telemetry?.trackEvent('ros.version.select', { phase: 'cancelled' });
     return;
