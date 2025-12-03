@@ -68,7 +68,7 @@ export const REGIONS: Record<string, RegionConfig> = {
     vmManagerUrl: 'https://vm-manager-asia-1.tail4f6a7.ts.net',
     foxglovePort: 8765,
     ros2Port: 9091,
-    description: 'Asia - SouthEast (beta/staging)',
+    description: 'Asia - Southeast (beta/staging)',
     icon: '🇹🇭'
   },
   'local': {

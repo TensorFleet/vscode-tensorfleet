@@ -240,15 +240,15 @@
       "properties": {
         "tensorfleet.region": {
           "type": "string",
-          "default": "us-west",
+          "default": "eu",
           "enum": [
-            "us-west",
-            "eu-west",
+            "eu",
+            "asia",
             "local"
           ],
           "enumDescriptions": [
-            "US West - United States West Coast (vm.tensorfleet.net)",
-            "EU West - Europe Western Region (eu.vm.tensorfleet.net)",
+            "EU  - Europe Central Region (eu.vm.tensorfleet.net)",
+            "Asia - Southeast Region (asia.vm.tensorfleet.net)",
             "Local - Development only (hidden in production builds)"
           ],
           "description": "Select your TensorFleet region. Note: 'local' is only available when running the extension in development mode.",
