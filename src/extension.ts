@@ -36,24 +36,22 @@ type TerminalConfig = {
  * They do NOT reuse DroneViewport, do NOT have a generic "open" command,
  * and MUST render via their own function.
  */
+type PanelHtmlRenderer = (args: {
+  webview: vscode.Webview;
+  context: vscode.ExtensionContext;
+  panelDef: UniquePanel;
+}) => string | Promise<string>;
+
 type UniquePanel = {
   /** View id to register as WebviewViewProvider */
   id: string;
   /** Title (optional; useful for templates) */
   title?: string;
-  /** Optional description / copy */
-  description?: string;
-  /** Optional media asset to expose to renderer */
-  image?: string;
   /**
    * Function that returns the webview HTML (dynamic).
    * You can share this function across items or make one per item.
    */
-  render: (ctx: {
-    webview: vscode.Webview;
-    context: vscode.ExtensionContext;
-    panelDef: UniquePanel;
-  }) => string | Promise<string>;
+  render: PanelHtmlRenderer;
   /**
    * Optional message handler override. If omitted, default handler runs.
    */
@@ -73,15 +71,6 @@ type UniquePanel = {
 // -----------------------------------------------------------------------------
 
 const DRONE_VIEWS: DroneViewport[] = [
-  {
-    id: 'tensorfleet-qgroundcontrol',
-    title: 'QGroundControl Command Deck',
-    description:
-      'Monitor manual flight controls, telemetry, and mission scripts aligned with QGroundControl workflows.',
-    image: 'connected_vehicle.tasoHGVc.jpg',
-    command: 'tensorfleet.openQGroundControlPanel',
-    actionLabel: 'Launch QGroundControl Workspace'
-  },
   {
     id: 'tensorfleet-gazebo',
     title: 'Gazebo Simulation',
@@ -132,7 +121,7 @@ const DRONE_VIEWS: DroneViewport[] = [
     id: "tensorfleet-map-panel",
     title: 'Map view',
     description: 'Display world map view with msision control elements.',
-    image: 'tensorfleet-icon.svg',
+    image: 'connected_vehicle.tasoHGVc.jpg',
     command: 'tensorfleet.openMapPanel',
     actionLabel: 'Open Map Panel',
     panelKind: 'standard',
@@ -167,8 +156,6 @@ const UNIQUE_PANELS: UniquePanel[] = [
   {
     id: 'tensorfleet-login',
     title: 'TensorFleet Login',
-    description: 'Authenticate to connect simulations, drones, and AI jobs.',
-    image: 'tensorfleet-icon.svg',
     render: ({ webview, context, panelDef }) => {
       const cspSource = webview.cspSource;
       const styles = getBaseStyles();
@@ -225,8 +212,6 @@ const UNIQUE_PANELS: UniquePanel[] = [
   {
     id: 'tensorfleet-account',
     title: 'TensorFleet Account',
-    description: 'Manage your tensorfleet account',
-    image: 'tensorfleet-icon.svg',
     render: ({ webview, context, panelDef }) => {
       const cspSource = webview.cspSource;
       const styles = getBaseStyles();
@@ -279,6 +264,11 @@ const UNIQUE_PANELS: UniquePanel[] = [
     localResourceRoots: ({ context }) => [
       vscode.Uri.joinPath(context.extensionUri, 'media')
     ]
+  },
+  {
+    id: 'tensorfleet-view-3d',
+    title: '3D View',
+    render: htmlRenderer('visualization-dashboard.html')
   },
 ];
 
@@ -582,20 +572,52 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.renderHtml(webviewView.webview);
 
     webviewView.webview.onDidReceiveMessage((message) => {
-      if (message?.command === 'openPanel') {
-        getTelemetry()?.trackEvent('webview.action', { viewId: this.config.id, action: 'openPanel' });
+      const telemetry = getTelemetry();
+
+      // Basic sanity check
+      if (!message || typeof message.command !== 'string') {
+        console.warn('[TensorFleet] Webview message missing command:', message);
+        return;
+      }
+
+      const command = message.command as string;
+
+      if (command === 'openPanel') {
+        telemetry?.trackEvent('webview.action', { viewId: this.config.id, action: 'openPanel' });
         vscode.commands.executeCommand(this.config.command).then(undefined, (error) => {
-          vscode.window.showErrorMessage(`Failed to open panel: ${error instanceof Error ? error.message : error}`);
-        });
-      } else if (message?.command === 'openAllPanels') {
-        getTelemetry()?.trackEvent('webview.action', { viewId: this.config.id, action: 'openAllPanels' });
-        vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
           vscode.window.showErrorMessage(
-            `Failed to open all dashboards: ${error instanceof Error ? error.message : error}`
+            `Failed to open panel: ${error instanceof Error ? error.message : String(error)}`
           );
         });
+      } else if (command === 'openAllPanels') {
+        telemetry?.trackEvent('webview.action', { viewId: this.config.id, action: 'openAllPanels' });
+        vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
+          vscode.window.showErrorMessage(
+            `Failed to open all dashboards: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
+      } else if (command.startsWith('tensorfleet.')) {
+        // Generic forward for any tensorfleet.* command
+        telemetry?.trackEvent('webview.action', { viewId: this.config.id, action: command });
+
+        // Optional: support args passed from the webview
+        const args: unknown[] =
+          Array.isArray(message.args)
+            ? message.args
+            : message.args !== undefined
+              ? [message.args]
+              : [];
+
+        vscode.commands.executeCommand(command, ...args).then(undefined, (error) => {
+          vscode.window.showErrorMessage(
+            `Failed to execute command "${command}": ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
+      } else {
+        console.log('[TensorFleet] Ignoring webview command:', command, 'payload:', message);
       }
     });
+
   }
 
   private renderHtml(webview: vscode.Webview): string {
@@ -622,6 +644,7 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
 class UniqueViewProvider implements vscode.WebviewViewProvider {
   constructor(private readonly def: UniquePanel, private readonly context: vscode.ExtensionContext) {}
 
+  
   resolveWebviewView(webviewView: vscode.WebviewView) {
     const defaultRoots = [
       vscode.Uri.joinPath(this.context.extensionUri, 'media'),
@@ -650,15 +673,62 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
 
     // message piping
     webviewView.webview.onDidReceiveMessage(async (message) => {
+      const telemetry = getTelemetry();
+
       try {
         if (this.def.onMessage) {
           await this.def.onMessage(message, {
             context: this.context,
             webview: webviewView.webview,
-            telemetry: getTelemetry()
+            telemetry
           });
           return;
+        } else {
+          // DEFAULT BEHAVIOR WHEN onMessage IS NOT PROVIDED
+
+          if (!message || typeof message.command !== 'string') {
+            console.warn('[TensorFleet] Unique panel webview message missing command:', message);
+            return;
+          }
+
+          const command = message.command as string;
+          const args: unknown[] =
+            Array.isArray(message.args)
+              ? message.args
+              : message.args !== undefined
+                ? [message.args]
+                : [];
+
+          telemetry?.trackEvent('webview.action', {
+            viewId: this.def.id,
+            action: command
+          });
+
+          // Forward any tensorfleet.* command
+          if (command.startsWith('tensorfleet.')) {
+            vscode.commands.executeCommand(command, ...args).then(undefined, (error) => {
+              vscode.window.showErrorMessage(
+                `Failed to execute command "${command}": ${
+                  error instanceof Error ? error.message : String(error)
+                }`
+              );
+            });
+            return;
+          }
+
+          // Convenience alias: openAllPanels → tensorfleet.openAllPanels
+          if (command === 'openAllPanels') {
+            vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
+              vscode.window.showErrorMessage(
+                `Failed to execute command "tensorfleet.openAllPanels": ${
+                  error instanceof Error ? error.message : String(error)
+                }`
+              );
+            });
+            return;
+          }
         }
+
         // default handling: just log
         console.log(`[UniquePanel:${this.def.id}] message`, message);
       } catch (e) {
@@ -1341,6 +1411,27 @@ function loadTemplate(templateName: string, replacements: Record<string, string>
   }
 
   return template;
+}
+
+
+function htmlRenderer(templateName: string): PanelHtmlRenderer {
+  return ({ webview, context }) => {
+    const cspSource = webview.cspSource;
+    const styles = getBaseStyles();
+
+    // This is the *root* of your extension as seen by the webview
+    const baseUri = webview.asWebviewUri(context.extensionUri);
+    let baseUrl = baseUri.toString();
+    if (baseUrl.endsWith('/')) {
+      baseUrl = baseUrl.slice(0, -1);
+    }
+
+    return loadTemplate(templateName, {
+      cspSource,
+      styles,
+      base_url: baseUrl
+    });
+  };
 }
 
 function startMCPServer(context: vscode.ExtensionContext) {
