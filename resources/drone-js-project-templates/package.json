@@ -1,0 +1,24 @@
+{
+  "name": "tensorfleet-drone-js-project",
+  "version": "0.0.1",
+  "private": true,
+  "description": "TensorFleet drone starter using JavaScript and roslib over rosbridge.",
+  "scripts": {
+    "restart": "node src/restart_sim.js",
+    "drone:mover": "node src/drone_mover.js",
+    "tutorial:01": "node src/tutorials/01_connect.js",
+    "tutorial:02": "node src/tutorials/02_telemetry.js",
+    "tutorial:03": "node src/tutorials/03_arm.js",
+    "tutorial:04": "node src/tutorials/04_takeoff_land.js",
+    "tutorial:05": "node src/tutorials/05_offboard_hover.js",
+    "tutorial:06": "node src/tutorials/06_move_forward.js",
+    "tutorial:07": "node src/tutorials/07_goto_waypoint.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "jpeg-js": "^0.4.4",
+    "js-yaml": "^4.1.0",
+    "onnxruntime-node": "^1.18.0",
+    "roslib": "^1.3.0"
+  }
+}

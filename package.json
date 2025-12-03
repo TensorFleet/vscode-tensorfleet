@@ -18,7 +18,6 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onView:tensorfleet-qgroundcontrol",
     "onView:tensorfleet-gazebo",
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
@@ -27,7 +26,6 @@
     "onView:tensorfleet-map-panel",
     "onView:tensorfleet-raw-messages-panel",
     "onView:tensorfleet-tooling-view",
-    "onCommand:tensorfleet.openQGroundControlPanel",
     "onCommand:tensorfleet.openGazeboPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
@@ -68,44 +66,58 @@
     "views": {
       "tensorfleet-drone-suite": [
         {
-          "id": "tensorfleet-qgroundcontrol",
-          "name": "QGroundControl",
-          "type": "webview"
+          "id": "tensorfleet-login",
+          "name": "Account",
+          "type": "webview",
+          "when": "!tensorfleet.is_authenticated"
         },
         {
-          "id": "tensorfleet-gazebo",
-          "name": "Gazebo World",
-          "type": "webview"
-        },
-        {
-          "id": "tensorfleet-aiops",
-          "name": "AI Ops",
-          "type": "webview"
-        },
-        {
-          "id": "tensorfleet-ros2-baselines",
-          "name": "ROS 2 & Stable Baselines",
-          "type": "webview"
-        },
-        {
-          "id": "tensorfleet-image-panel",
-          "name": "Image Panel",
-          "type": "webview"
-        },
-        {
-          "id": "tensorfleet-teleops-panel",
-          "name": "Teleops Panel",
-          "type": "webview"
+          "id": "tensorfleet-account",
+          "name": "Account",
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         },
         {
           "id": "tensorfleet-map-panel",
           "name": "Map Panel",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
+        },
+        {
+          "id": "tensorfleet-view-3d",
+          "name": "3D Views",
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
+        },
+        {
+          "id": "tensorfleet-image-panel",
+          "name": "Image Panel",
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
+        },
+        {
+          "id": "tensorfleet-aiops",
+          "name": "AI Ops",
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
+        },
+        {
+          "id": "tensorfleet-ros2-baselines",
+          "name": "ROS 2 & Stable Baselines",
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
+        },
+        {
+          "id": "tensorfleet-teleops-panel",
+          "name": "Teleops Panel",
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         },
         {
           "id": "tensorfleet-raw-messages-panel",
           "name": "Raw Messages Panel",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated"
         }
       ],
       "tensorfleet-tooling": [
@@ -117,11 +129,6 @@
       ]
     },
     "commands": [
-      {
-        "command": "tensorfleet.openQGroundControlPanel",
-        "title": "Open QGroundControl Workspace",
-        "category": "TensorFleet"
-      },
       {
         "command": "tensorfleet.openGazeboPanel",
         "title": "Open Gazebo Workspace",
@@ -252,11 +259,6 @@
     "menus": {
       "view/title": [
         {
-          "command": "tensorfleet.openQGroundControlPanel",
-          "when": "view == tensorfleet-qgroundcontrol",
-          "group": "navigation@1"
-        },
-        {
           "command": "tensorfleet.openGazeboPanel",
           "when": "view == tensorfleet-gazebo",
           "group": "navigation@1"
@@ -288,11 +290,6 @@
         },
         {
           "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-qgroundcontrol",
-          "group": "navigation@9"
-        },
-        {
-          "command": "tensorfleet.openAllPanels",
           "when": "view == tensorfleet-gazebo",
           "group": "navigation@9"
         },
@@ -317,10 +314,12 @@
   "scripts": {
     "vscode:prepublish": "bun run compile:prod",
     "prepare:telemetry": "bun scripts/write-telemetry-config.ts",
-    "compile": "bun run prepare:telemetry && bunx vite build",
-    "compile:dev": "bun run prepare:telemetry && TENSORFLEET_BUILD=development bunx vite build",
-    "compile:prod": "bun run prepare:telemetry && TENSORFLEET_BUILD=production bunx vite build",
-    "watch": "bun run prepare:telemetry && TENSORFLEET_BUILD=development bunx vite build --watch",
+    "build:panels": "bun run --cwd panels-standalone build",
+    "watch:panels": "bun run --cwd panels-standalone build --watch",
+    "build:extension": "bun run prepare:telemetry && bunx vite build",
+    "watch:extension": "bun run prepare:telemetry && bunx vite build --watch",
+    "compile": "bun run build:panels && bun run build:extension",
+    "watch": "bun run watch:panels & bun run watch:extension",
     "typecheck": "bunx tsc -p ./ --noEmit",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
@@ -351,6 +350,7 @@
     "@sentry/node": "^10.26.0",
     "flatbuffers": "^25.9.23",
     "flatbuffers_reflection": "^1.2.0",
+    "jpeg-js": "^0.4.4",
     "protobufjs": "^7.5.4"
   },
   "devDependencies": {
