@@ -7,7 +7,7 @@
  */
 
 import { ros2Bridge } from "@/ros2-bridge";
-import type { GeometryQuaternion } from "@/ros2-bridge";
+import * as RosTypes from "@/ros-util/ros-types"
 import type { DroneStateModel } from "./drone-state-model";
 
 export enum LandedState {
@@ -206,7 +206,7 @@ export class DroneController {
     return { sec, nanosec };
   }
 
-  private _yawToQuat(yaw: number): GeometryQuaternion {
+  private _yawToQuat(yaw: number): RosTypes.GeometryQuaternion {
     const half = yaw / 2;
     return { x: 0, y: 0, z: Math.sin(half), w: Math.cos(half) };
   }

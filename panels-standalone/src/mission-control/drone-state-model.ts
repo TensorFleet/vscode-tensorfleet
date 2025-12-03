@@ -1,6 +1,4 @@
-import { ros2Bridge } from '../ros2-bridge';
 import type {
-  ROS2Bridge,
   SensorMsgsNavSatFix,
   StdMsgsFloat64,
   MavrosMsgsState,
@@ -12,7 +10,7 @@ import type {
   SensorMsgsImu,
   MavrosMsgsAltitude,
   MavrosMsgsHomePosition,
-} from '../ros2-bridge';
+} from '../ros-util/ros-types';
 
 /**
  * Unified drone state assembled from MAVROS topics.
