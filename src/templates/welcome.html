@@ -1,0 +1,442 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'none';
+             style-src {{cspSource}} 'unsafe-inline';
+             script-src {{cspSource}} 'unsafe-inline' 'unsafe-eval';
+             img-src {{cspSource}} data: https:;
+             font-src {{cspSource}} data:;
+             connect-src {{cspSource}} https: http: ws: wss:;">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{title}}</title>
+  {{styles}}
+  <style>
+    .welcome-root {
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    .welcome-header {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+
+    .welcome-subtitle {
+      margin: 0;
+      opacity: 0.75;
+      font-size: 0.9rem;
+    }
+
+    .welcome-steps {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      font-size: 0.85rem;
+      flex-wrap: wrap;
+    }
+
+    .step-pill {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--vscode-editorWidget-border);
+      opacity: 0.8;
+    }
+
+    .step-pill--active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: transparent;
+      opacity: 1;
+    }
+
+    .welcome-page {
+      display: none;
+      margin-top: 4px;
+    }
+
+    .welcome-page--active {
+      display: block;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 20px;
+    }
+
+    .footer__right {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-button-border, var(--vscode-button-background));
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+
+    .btn--secondary {
+      background: transparent;
+    }
+
+    .btn[disabled] {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .panel-toggle-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .panel-toggle {
+      border-radius: 8px;
+      border: 1px solid var(--vscode-editorWidget-border);
+      padding: 8px 10px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.9rem;
+    }
+
+    .panel-toggle--selected {
+      border-color: var(--vscode-button-background);
+      background: rgba(128, 128, 128, 0.1);
+    }
+
+    .panel-toggle__title {
+      font-weight: 600;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 0.9rem;
+    }
+
+    .status-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid var(--vscode-editorWidget-border);
+    }
+
+    .status-icon--ok {
+      border-color: #4caf50;
+      background: #4caf50;
+    }
+
+    .status-icon--waiting {
+      border-color: var(--vscode-editorWidget-border);
+      background: transparent;
+    }
+
+    .status-text-ok {
+      color: #4caf50;
+    }
+  </style>
+</head>
+<body>
+  <div class="viewport viewport--panel welcome-root">
+    <header class="welcome-header">
+      <h1 class="viewport__title">Welcome to TensorFleet</h1>
+      <p class="welcome-subtitle">
+        A guided setup to get your account, project, and panels ready.
+      </p>
+    </header>
+
+    <div class="welcome-steps">
+      <div class="step-pill" data-step-pill="0">1 · About</div>
+      <div class="step-pill" data-step-pill="1">2 · Account</div>
+      <div class="step-pill" data-step-pill="2">3 · Project</div>
+      <div class="step-pill" data-step-pill="3">4 · Panels</div>
+    </div>
+
+    <!-- PAGE 1: about + start / skip -->
+    <section class="welcome-page welcome-page--active" data-page="0">
+      <p class="viewport__description">
+        TensorFleet integrates drone simulations, ROS/ROS 2, and AI workflows directly into VS Code.
+      </p>
+      <ul class="viewport__list">
+        <li>Connect to simulations and telemetry dashboards</li>
+        <li>Manage ROS versions and drone configurations</li>
+        <li>Use the MCP server with external copilots</li>
+      </ul>
+      <div class="viewport__actions" style="margin-top: 16px;">
+        <button class="viewport__action" data-action="startGuided">Start guided setup</button>
+        <button class="viewport__action viewport__action--secondary" data-action="skipToProject">
+          Skip to project creation
+        </button>
+      </div>
+    </section>
+
+    <!-- PAGE 2: account / login -->
+    <section class="welcome-page" data-page="1">
+      <p class="viewport__description">
+        First, sign in to your TensorFleet account so we can connect to your VM manager and services.
+      </p>
+      <div class="viewport__actions" style="margin-top: 12px;">
+        <button class="viewport__action" data-action="login">Login with TensorFleet</button>
+        <button class="viewport__action viewport__action--secondary" data-action="checkAuth">
+          Re-check status
+        </button>
+      </div>
+
+      <div class="status-row">
+        <div class="status-icon status-icon--waiting" data-auth-indicator></div>
+        <span data-auth-text>Not authenticated yet</span>
+      </div>
+
+      <p class="viewport__hint" style="margin-top: 8px;">
+        The login dialog will open in VS Code. Once completed, we’ll mark this step as done.
+      </p>
+
+      <div class="viewport__actions" style="margin-top: 16px;">
+        <button class="viewport__action" data-action="goProject" disabled data-id="btnGoProject">
+          Continue to project setup
+        </button>
+      </div>
+    </section>
+
+    <!-- PAGE 3: project creation -->
+    <section class="welcome-page" data-page="2">
+      <p class="viewport__description">
+        Let’s create a new TensorFleet project from templates.
+      </p>
+      <ul class="viewport__list">
+        <li>Choose a folder and a project name</li>
+        <li>We’ll scaffold config, missions, and source layout</li>
+        <li>You can open the project in this window or a new one</li>
+      </ul>
+
+      <div class="viewport__actions" style="margin-top: 12px;">
+        <button class="viewport__action" data-action="createProject">
+          Create new drone project
+        </button>
+      </div>
+
+      <div class="status-row" data-project-status-row style="display: none;">
+        <div class="status-icon status-icon--ok"></div>
+        <span class="status-text-ok">Project created! You can proceed to panel selection.</span>
+      </div>
+    </section>
+
+    <!-- PAGE 4: panel selection -->
+    <section class="welcome-page" data-page="3">
+      <p class="viewport__description">
+        Pick which panels you want to open initially. You can always open the others later.
+      </p>
+
+      <div class="panel-toggle-grid">
+        <div class="panel-toggle" data-panel-id="tensorfleet-gazebo">
+          <div class="panel-toggle__title">Gazebo Simulation</div>
+          <div class="panel-toggle__desc">World view, sensors, overlays.</div>
+        </div>
+
+        <div class="panel-toggle" data-panel-id="tensorfleet-teleops-panel">
+          <div class="panel-toggle__title">Teleops</div>
+          <div class="panel-toggle__desc">Keyboard-based drone control.</div>
+        </div>
+
+        <div class="panel-toggle" data-panel-id="tensorfleet-map-panel">
+          <div class="panel-toggle__title">Map / Mission Control</div>
+          <div class="panel-toggle__desc">Global view and missions.</div>
+        </div>
+
+        <div class="panel-toggle" data-panel-id="tensorfleet-sensor-3d-panel">
+          <div class="panel-toggle__title">3D Sensor View</div>
+          <div class="panel-toggle__desc">3D data from drone sensors.</div>
+        </div>
+
+        <div class="panel-toggle" data-panel-id="tensorfleet-raw-messages-panel">
+          <div class="panel-toggle__title">Raw Messages</div>
+          <div class="panel-toggle__desc">ROS 2 traffic for debugging.</div>
+        </div>
+
+        <div class="panel-toggle" data-panel-id="tensorfleet-image-panel">
+          <div class="panel-toggle__title">Image View</div>
+          <div class="panel-toggle__desc">Camera feeds and overlays.</div>
+        </div>
+      </div>
+
+      <p class="viewport__hint" style="margin-top: 10px;">
+        We’ll open the selected panels once you finish the setup.
+      </p>
+    </section>
+
+    <!-- Footer nav -->
+    <div class="footer">
+      <button class="btn btn--secondary" data-nav="prev">Back</button>
+      <div class="footer__right">
+        <button class="btn btn--secondary" data-nav="skip">Skip</button>
+        <button class="btn" data-nav="next">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+
+    let currentPage = 0;
+    let isAuthenticated = false;
+
+    const pages = Array.from(document.querySelectorAll('.welcome-page'));
+    const pills = Array.from(document.querySelectorAll('[data-step-pill]'));
+    const prevBtn = document.querySelector('[data-nav="prev"]');
+    const nextBtn = document.querySelector('[data-nav="next"]');
+    const skipBtn = document.querySelector('[data-nav="skip"]');
+    const authIndicator = document.querySelector('[data-auth-indicator]');
+    const authText = document.querySelector('[data-auth-text]');
+    const btnGoProject = document.querySelector('[data-id="btnGoProject"]');
+    const projectStatusRow = document.querySelector('[data-project-status-row]');
+    const panelToggles = Array.from(document.querySelectorAll('.panel-toggle'));
+
+    function setPage(idx) {
+      if (idx < 0 || idx >= pages.length) return;
+      currentPage = idx;
+      render();
+    }
+
+    function render() {
+      pages.forEach((page, i) => {
+        page.classList.toggle('welcome-page--active', i === currentPage);
+      });
+      pills.forEach((pill, i) => {
+        pill.classList.toggle('step-pill--active', i === currentPage);
+      });
+
+      prevBtn.disabled = currentPage === 0;
+      nextBtn.textContent = currentPage === pages.length - 1 ? 'Finish' : 'Next';
+    }
+
+    prevBtn.addEventListener('click', () => {
+      if (currentPage > 0) setPage(currentPage - 1);
+    });
+
+    nextBtn.addEventListener('click', () => {
+      if (currentPage < pages.length - 1) {
+        setPage(currentPage + 1);
+      } else {
+        vscode.postMessage({ command: 'welcome.close' });
+      }
+    });
+
+    skipBtn.addEventListener('click', () => {
+      vscode.postMessage({ command: 'welcome.close' });
+    });
+
+    pills.forEach((pill) => {
+      pill.addEventListener('click', () => {
+        const idx = Number(pill.getAttribute('data-step-pill'));
+        if (!Number.isNaN(idx)) {
+          setPage(idx);
+        }
+      });
+    });
+
+    // Page 1 actions
+    document.querySelector('[data-action="startGuided"]')?.addEventListener('click', () => {
+      setPage(1);
+    });
+
+    document.querySelector('[data-action="skipToProject"]')?.addEventListener('click', () => {
+      setPage(2);
+    });
+
+    // Page 2 actions (account)
+    document.querySelector('[data-action="login"]')?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'welcome.login' });
+    });
+
+    document.querySelector('[data-action="checkAuth"]')?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'welcome.checkAuth' });
+    });
+
+    document.querySelector('[data-action="goProject"]')?.addEventListener('click', () => {
+      if (isAuthenticated) setPage(2);
+    });
+
+    // Page 3 actions (project creation)
+    document.querySelector('[data-action="createProject"]')?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'welcome.createProject' });
+    });
+
+    // Page 4 panel toggles
+    panelToggles.forEach((item) => {
+      item.addEventListener('click', () => {
+        item.classList.toggle('panel-toggle--selected');
+      });
+    });
+
+    // When user finishes on page 4, send selected panels from Next/Finish
+    nextBtn.addEventListener('click', () => {
+      if (currentPage === 3) {
+        const selectedIds = panelToggles
+          .filter((el) => el.classList.contains('panel-toggle--selected'))
+          .map((el) => el.getAttribute('data-panel-id'))
+          .filter(Boolean);
+
+        vscode.postMessage({
+          command: 'welcome.openPanelsSelection',
+          panelIds: selectedIds,
+        });
+      }
+    });
+
+    // Messages from extension
+    window.addEventListener('message', (event) => {
+      const msg = event.data || {};
+      if (msg.type === 'authStatus') {
+        isAuthenticated = !!msg.authenticated;
+        if (isAuthenticated) {
+          authIndicator?.classList.remove('status-icon--waiting');
+          authIndicator?.classList.add('status-icon--ok');
+          if (authText) {
+            authText.textContent = 'Authenticated';
+            authText.classList.add('status-text-ok');
+          }
+          if (btnGoProject) {
+            btnGoProject.disabled = false;
+          }
+        } else {
+          authIndicator?.classList.remove('status-icon--ok');
+          authIndicator?.classList.add('status-icon--waiting');
+          if (authText) {
+            authText.textContent = 'Not authenticated';
+            authText.classList.remove('status-text-ok');
+          }
+          if (btnGoProject) {
+            btnGoProject.disabled = true;
+          }
+        }
+      } else if (msg.type === 'projectCreated') {
+        if (projectStatusRow) {
+          projectStatusRow.style.display = 'flex';
+        }
+        // automatically continue to panels
+        setPage(3);
+      } else if (msg.type === 'welcomeError') {
+        // Optional: show some inline error
+        console.error('[welcome] error from extension', msg);
+      }
+    });
+
+    // initial render
+    render();
+  </script>
+</body>
+</html>

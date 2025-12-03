@@ -764,6 +764,75 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
 }
 
 /**
+ * Welcome page
+ */
+function showWelcomePage(context: vscode.ExtensionContext) {
+  const telemetry = getTelemetry();
+
+  const panel = vscode.window.createWebviewPanel(
+    "tensorfleet.welcome",
+    "Welcome to TensorFleet",
+    vscode.ViewColumn.Active,
+    {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(context.extensionUri, "media"),
+        vscode.Uri.joinPath(context.extensionUri, "src", "templates")
+      ]
+    }
+  );
+
+  const webview = panel.webview;
+  const cspSource = webview.cspSource;
+  const styles = getBaseStyles();
+
+  panel.webview.html = loadTemplate("welcome.html", {
+    cspSource,
+    styles,
+    title: "Welcome to TensorFleet"
+  });
+
+  panel.webview.onDidReceiveMessage(async (msg) => {
+    if (!msg || !msg.command) return;
+
+    switch (msg.command) {
+      case "welcome.login":
+        await vscode.commands.executeCommand("tensorfleet.login");
+        panel.webview.postMessage({
+          type: "authStatus",
+          authenticated: await auth.isAuthenticated(context)
+        });
+        break;
+
+      case "welcome.checkAuth":
+        panel.webview.postMessage({
+          type: "authStatus",
+          authenticated: await auth.isAuthenticated(context)
+        });
+        break;
+
+      case "welcome.createProject":
+        await vscode.commands.executeCommand("tensorfleet.createNewProject");
+        panel.webview.postMessage({ type: "projectCreated" });
+        break;
+
+      case "welcome.nextPage":
+        panel.webview.postMessage({ type: "nextPage" });
+        break;
+
+      case "welcome.close":
+        panel.dispose();
+        break;
+
+      default:
+        console.log("[WELCOME] Unknown message:", msg);
+    }
+  });
+}
+
+
+/**
  * Tooling side view (unchanged)
  */
 class ToolingViewProvider implements vscode.WebviewViewProvider {
