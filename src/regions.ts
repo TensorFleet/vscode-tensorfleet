@@ -74,7 +74,7 @@ export const REGIONS: Record<string, RegionConfig> = {
   'local': {
     id: 'local',
     name: 'Local Development',
-    backendUrl: 'http://localhost:3000',
+    backendUrl: 'https://app.tensorfleet.net',
     vmManagerUrl: 'http://localhost:8080',
     foxglovePort: 8765,
     ros2Port: 9091,
@@ -110,13 +110,13 @@ export const DEFAULT_REGION = 'eu';
 export function getSelectedRegionId(): string {
   const config = vscode.workspace.getConfiguration('tensorfleet');
   const configuredRegion = config.get<string>('region') || DEFAULT_REGION;
-  
+
   // If the configured region is available, use it
   const availableRegions = getAvailableRegions();
   if (availableRegions[configuredRegion]) {
     return configuredRegion;
   }
-  
+
   // Fall back to default if configured region is not available
   // (e.g., "local" was configured but we're in production mode)
   return DEFAULT_REGION;
@@ -181,7 +181,7 @@ export async function setSelectedRegion(regionId: string): Promise<void> {
 export function getRegionQuickPickItems(): vscode.QuickPickItem[] {
   const currentRegionId = getSelectedRegionId();
   const availableRegions = getAvailableRegions();
-  
+
   return Object.values(availableRegions).map(region => ({
     label: `${region.icon} ${region.name}`,
     description: region.id === currentRegionId ? '$(check) Current' : '',
