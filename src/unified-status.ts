@@ -6,6 +6,7 @@
  */
 
 import * as vscode from 'vscode';
+import { getSelectedRegion } from './regions';
 
 // Auth state
 export type AuthState = 'authenticated' | 'not_authenticated' | 'checking';
@@ -127,7 +128,7 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
    * Update status bar display
    */
   private updateStatusBar() {
-    const { auth, connection, vmState, ipAddress } = this.currentState;
+    const { auth, connection, vmState } = this.currentState;
 
     // Determine icon and text based on unified state
     let icon: string;
@@ -172,7 +173,7 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
           break;
         case 'running':
           icon = '$(vm-active)';
-          text = ipAddress ? `TensorFleet · ${ipAddress}` : 'TensorFleet · Running';
+          text = 'TensorFleet · Running';
           // Subtle green tint for running state
           color = new vscode.ThemeColor('terminal.ansiGreen');
           break;
@@ -198,7 +199,7 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
     }
 
     const finalText = `${icon} ${text}`;
-    
+
     this.statusBarItem.text = finalText;
     this.statusBarItem.backgroundColor = backgroundColor;
     this.statusBarItem.color = color;
@@ -209,7 +210,7 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
    * Build tooltip text
    */
   private buildTooltip(): string {
-    const { auth, connection, vmState, ipAddress, provider, region, uptimeSeconds, error, timestamp } =
+    const { auth, connection, vmState, ipAddress, provider, uptimeSeconds, error, timestamp } =
       this.currentState;
     const lines: string[] = [];
 
@@ -218,8 +219,8 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
       auth === 'authenticated'
         ? 'Logged in'
         : auth === 'checking'
-        ? 'Checking...'
-        : 'Not logged in';
+          ? 'Checking...'
+          : 'Not logged in';
     lines.push(`Auth: ${authLabel}`);
 
     let connectionLabel: string;
@@ -265,11 +266,12 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
 
     if (ipAddress) lines.push(`IP: ${ipAddress}`);
     if (provider) lines.push(`Provider: ${provider}`);
-    if (region) lines.push(`Region: ${region}`);
-    
+    const selectedRegion = getSelectedRegion();
+    lines.push(`Region: ${selectedRegion.icon} ${selectedRegion.name}`);
+
     const uptime = this.formatUptime(uptimeSeconds);
     if (uptime) lines.push(`Uptime: ${uptime}`);
-    
+
     lines.push(`Updated: ${new Date(timestamp).toLocaleTimeString()}`);
 
     return lines.join('\n');
