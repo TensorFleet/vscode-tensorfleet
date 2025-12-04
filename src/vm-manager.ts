@@ -789,20 +789,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private getApiBaseUrl(): string {
-    const defaultUrl = 'https://eu.vm.tensorfleet.net';
-    const configuredUrl = vscode.workspace
-      .getConfiguration('tensorfleet.vmManager')
-      .get<string>('apiBaseUrl');
-
-    // Normalize configured URL and strip trailing slashes
-    const normalizedUrl = (configuredUrl || defaultUrl).trim().replace(/\/+$/, '');
-
-    // Avoid http → https redirects for the default EU endpoint
-    if (/^http:\/\/eu\.vm\.tensorfleet\.net$/i.test(normalizedUrl)) {
-      return defaultUrl;
-    }
-
-    return normalizedUrl || defaultUrl;
+    return 'https://eu.vm.tensorfleet.net';
   }
 
   private async getAuthToken(): Promise<string | undefined> {

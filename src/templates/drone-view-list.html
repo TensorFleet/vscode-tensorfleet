@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'unsafe-inline' 'unsafe-eval'; img-src {{cspSource}} data: https:; font-src {{cspSource}} data:; connect-src {{cspSource}} https: http: ws: wss:;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Drone and ROS views</title>
+  {{styles}}
+  <style>
+    html,
+    body {
+      height: 100%;
+    }
+
+    body {
+      margin: 0;
+      padding: 12px 16px 16px 16px;
+      color: var(--vscode-foreground);
+      background: transparent;
+      box-sizing: border-box;
+      overflow: hidden; /* keep header fixed, scroll only inside content */
+    }
+
+    .tf-root {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-width: 960px;
+      margin: 0 auto;
+      height: 100%;
+      min-height: 0; /* allow children to shrink for flex scrolling */
+    }
+
+    .tf-header {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0; /* prevent header from shrinking */
+    }
+
+    .tf-header__title {
+      margin: 0;
+      font-size: 1.2rem;
+      font-weight: 600;
+    }
+
+    .tf-header__hint {
+      margin: 0;
+      font-size: 0.9rem;
+      opacity: 0.75;
+    }
+
+    .tf-search {
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border));
+    }
+
+    .tf-search__input {
+      border: none;
+      outline: none;
+      background: transparent;
+      flex: 1;
+      font: inherit;
+      color: inherit;
+    }
+
+    .tf-search__input::placeholder {
+      opacity: 0.7;
+    }
+
+    .tf-search__icon {
+      opacity: 0.7;
+      font-size: 0.9rem;
+    }
+
+    .tf-content {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      padding-right: 2px;
+      flex: 1 1 auto; /* take remaining space and be scrollable */
+      min-height: 0;  /* critical for flex + overflow to work */
+    }
+
+    .tf-category {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .tf-category.is-hidden {
+      display: none;
+    }
+
+    .tf-category__title {
+      margin: 0;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      opacity: 0.75;
+    }
+
+    .tf-panel-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .tf-panel-card {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      user-select: none;
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-editorWidget-border);
+      transition: background 0.08s ease-out, border-color 0.08s ease-out, transform 0.08s ease-out;
+    }
+
+    .tf-panel-card:hover {
+      background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.04));
+      border-color: var(--vscode-focusBorder, var(--vscode-editorWidget-border));
+      transform: translateY(-0.5px);
+    }
+
+    .tf-panel-card:active {
+      transform: translateY(0);
+    }
+
+    .tf-panel-card.is-hidden {
+      display: none;
+    }
+
+    .tf-panel-card__left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0; /* allow text to truncate */
+    }
+
+    .tf-panel-card__icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      background: var(--vscode-button-secondaryBackground, var(--vscode-editorWidget-border));
+      opacity: 0.9;
+      flex-shrink: 0;
+    }
+
+    .tf-panel-card__text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .tf-panel-card__title {
+      font-size: 0.95rem;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tf-panel-card__subtitle {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tf-panel-card__pill {
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--vscode-button-border, var(--vscode-editorWidget-border));
+      opacity: 0.85;
+    }
+
+    .tf-empty {
+      display: none;
+      margin-top: 8px;
+      font-size: 0.9rem;
+      opacity: 0.7;
+    }
+  </style>
+</head>
+<body>
+  <div class="tf-root">
+    <header class="tf-header">
+      <div class="tf-search">
+        <span class="tf-search__icon">🔍</span>
+        <input
+          id="tf-search-input"
+          class="tf-search__input"
+          type="search"
+          placeholder="Search panels by name or description…"
+          autocomplete="off"
+        />
+      </div>
+    </header>
+
+    <main class="tf-content" aria-label="TensorFleet panels list">
+      <section
+        class="tf-category"
+        data-category-id="mission-control"
+        aria-label="Mission Control"
+      >
+        <h2 class="tf-category__title">Mission control</h2>
+        <div class="tf-panel-list" id="tf-mission-list"></div>
+      </section>
+
+      <section
+        class="tf-category"
+        data-category-id="other"
+        aria-label="Other Panels"
+      >
+        <h2 class="tf-category__title">Other</h2>
+        <div class="tf-panel-list" id="tf-other-list"></div>
+      </section>
+
+      <div id="tf-empty" class="tf-empty">
+        No panels match your search. Try a different keyword.
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+
+    /**
+     * Panel metadata.
+     * category: "mission" | "other"
+     * icon: simple emoji so we don't depend on additional fonts.
+     */
+    const PANELS = [
+      // Mission control (3D + map views)
+      {
+        id: 'tensorfleet-gazebo',
+        title: 'Simulation view',
+        subtitle: '3D world, scenes, and simulation state',
+        description: '3D rendered view from the simulator state',
+        command: 'tensorfleet.openGazeboPanel',
+        category: 'mission',
+        icon: '🌍'
+      },
+      {
+        id: 'tensorfleet-map-panel',
+        title: 'Map View',
+        subtitle: 'World map & mission overlays',
+        description: 'Display world map view with mission control elements.',
+        command: 'tensorfleet.openMapPanel',
+        category: 'mission',
+        icon: '🗺️'
+      },
+      {
+        id: 'tensorfleet-sensor-3d-panel',
+        title: '3D Sensor View',
+        subtitle: '3D point clouds and sensor data',
+        description: '3D view of collected data from drone sensors.',
+        command: 'tensorfleet.openSensor3DPanel',
+        category: 'mission',
+        icon: '📡'
+      },
+
+      // Other panels
+      {
+        id: 'tensorfleet-aiops',
+        title: 'AI Model Ops',
+        subtitle: 'Run models & inspect inference metrics',
+        description: 'Run TensorFleet AI models on live or recorded video feeds, and inspect inference metrics.',
+        command: 'tensorfleet.openAIPanel',
+        category: 'other',
+        icon: '🤖'
+      },
+      {
+        id: 'tensorfleet-ros2-baselines',
+        title: 'ROS 2 & Stable Baselines',
+        subtitle: 'Robotics terminals & RL workflows',
+        description: 'Switch between ROS 2 middleware terminals and Stable Baselines reinforcement learning workflows.',
+        command: 'tensorfleet.openROS2Panel',
+        category: 'other',
+        icon: '📟'
+      },
+      {
+        id: 'tensorfleet-teleops-panel',
+        title: 'Teleops Panel',
+        subtitle: 'Keyboard teleoperation',
+        description: 'Control drones with keyboard using a custom React teleoperation panel.',
+        command: 'tensorfleet.openTeleopsPanel',
+        category: 'other',
+        icon: '🎮'
+      },
+      {
+        id: 'tensorfleet-image-panel',
+        title: 'Image Panel',
+        subtitle: 'Camera feeds & overlays',
+        description: 'Display camera feeds with custom React components.',
+        command: 'tensorfleet.openImagePanel',
+        category: 'other',
+        icon: '📷'
+      },
+      {
+        id: 'tensorfleet-raw-messages-panel',
+        title: 'Raw Messages',
+        subtitle: 'ROS 2 message monitor',
+        description: 'Display raw ROS 2 messages in real time to monitor and debug traffic.',
+        command: 'tensorfleet.openRawMessagesPanel',
+        category: 'other',
+        icon: '📡'
+      }
+    ];
+
+    const missionList = document.getElementById('tf-mission-list');
+    const otherList = document.getElementById('tf-other-list');
+    const searchInput = document.getElementById('tf-search-input');
+    const emptyState = document.getElementById('tf-empty');
+
+    /**
+     * Create a compact card element for a panel.
+     */
+    function createPanelCard(panel) {
+      const card = document.createElement('div');
+      card.className = 'tf-panel-card';
+      card.setAttribute('data-panel-id', panel.id);
+      card.setAttribute('data-category', panel.category);
+      card.setAttribute(
+        'data-search',
+        (panel.title + ' ' + (panel.subtitle || '') + ' ' + (panel.description || '')).toLowerCase()
+      );
+      card.title = panel.description || panel.title;
+
+      const left = document.createElement('div');
+      left.className = 'tf-panel-card__left';
+
+      const icon = document.createElement('div');
+      icon.className = 'tf-panel-card__icon';
+      icon.textContent = panel.icon || '🛰️';
+
+      const text = document.createElement('div');
+      text.className = 'tf-panel-card__text';
+
+      const title = document.createElement('div');
+      title.className = 'tf-panel-card__title';
+      title.textContent = panel.title;
+
+      const subtitle = document.createElement('div');
+      subtitle.className = 'tf-panel-card__subtitle';
+      subtitle.textContent = panel.subtitle || '';
+
+      text.appendChild(title);
+      text.appendChild(subtitle);
+
+      left.appendChild(icon);
+      left.appendChild(text);
+
+      const pill = document.createElement('div');
+      pill.className = 'tf-panel-card__pill';
+      pill.textContent = panel.category === 'mission' ? 'Mission' : 'Other';
+
+      card.appendChild(left);
+      card.appendChild(pill);
+
+      card.addEventListener('click', () => {
+        if (panel.command) {
+          vscode.postMessage({ command: panel.command });
+        }
+      });
+
+      return card;
+    }
+
+    /**
+     * Render all panels into their categories.
+     */
+    function renderPanels() {
+      missionList.innerHTML = '';
+      otherList.innerHTML = '';
+
+      PANELS.forEach((panel) => {
+        const card = createPanelCard(panel);
+        if (panel.category === 'mission') {
+          missionList.appendChild(card);
+        } else {
+          otherList.appendChild(card);
+        }
+      });
+    }
+
+    /**
+     * Apply text filter and hide empty categories.
+     */
+    function applyFilter() {
+      const q = (searchInput.value || '').trim().toLowerCase();
+
+      const cards = Array.from(document.querySelectorAll('.tf-panel-card'));
+      let visibleCount = 0;
+
+      cards.forEach((card) => {
+        const haystack = card.getAttribute('data-search') || '';
+        const matches = !q || haystack.includes(q);
+        if (matches) {
+          card.classList.remove('is-hidden');
+          visibleCount++;
+        } else {
+          card.classList.add('is-hidden');
+        }
+      });
+
+      const categories = Array.from(document.querySelectorAll('.tf-category'));
+      categories.forEach((section) => {
+        const hasVisibleCard = section.querySelector('.tf-panel-card:not(.is-hidden)') !== null;
+        if (hasVisibleCard) {
+          section.classList.remove('is-hidden');
+        } else {
+          section.classList.add('is-hidden');
+        }
+      });
+
+      if (emptyState) {
+        emptyState.style.display = visibleCount === 0 ? 'block' : 'none';
+      }
+    }
+
+    renderPanels();
+    applyFilter();
+
+    searchInput.addEventListener('input', applyFilter);
+  </script>
+</body>
+</html>
