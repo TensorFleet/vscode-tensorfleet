@@ -67,22 +67,16 @@
     "views": {
       "tensorfleet-drone-suite": [
         {
-          "id": "tensorfleet-login",
-          "name": "Account",
-          "type": "webview",
-          "when": "!tensorfleet.is_authenticated"
-        },
-        {
           "id": "tensorfleet-account",
           "name": "Account",
           "type": "webview",
-          "when": "tensorfleet.is_authenticated"
+          "when": "tensorfleet.accountPanelOpen"
         },
         {
           "id": "tensorfleet-drone-view-list",
           "name": "Drone and ROS views",
           "type": "webview",
-          "when": "tensorfleet.is_authenticated"
+          "when": "!tensorfleet.accountPanelOpen"
         }
       ],
       "tensorfleet-tooling": [
@@ -198,6 +192,15 @@
         "command": "tensorfleet.selectRegion",
         "title": "Select Region",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.toggleAccountPanel",
+        "title": "Toggle Account Panel",
+        "category": "TensorFleet",
+        "icon": {
+          "light": "media/avatar_outline.svg",
+          "dark": "media/avatar_outline.svg"
+        }
       }
     ],
     "configuration": {
@@ -223,6 +226,16 @@
     },
     "menus": {
       "view/title": [
+        {
+          "command": "tensorfleet.toggleAccountPanel",
+          "when": "view == tensorfleet-drone-view-list && !tensorfleet.accountPanelOpen",
+          "group": "navigation@0"
+        },
+        {
+          "command": "tensorfleet.toggleAccountPanel",
+          "when": "view == tensorfleet-account",
+          "group": "navigation@0"
+        },
         {
           "command": "tensorfleet.openGazeboPanel",
           "when": "view == tensorfleet-gazebo",
