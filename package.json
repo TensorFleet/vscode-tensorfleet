@@ -41,7 +41,9 @@
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
     "onCommand:tensorfleet.showDroneStatus",
-    "onCommand:tensorfleet.showVMManagerMenu"
+    "onCommand:tensorfleet.showVMManagerMenu",
+    "onCommand:tensorfleet.selectRegion",
+    "onCommand:tensorfleet.login"
   ],
   "main": "./dist/extension.js",
   "packageManager": "bun@1.0.0",
@@ -191,28 +193,31 @@
         "command": "tensorfleet.authStatus",
         "title": "TensorFleet: Show Auth Status",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.selectRegion",
+        "title": "Select Region",
+        "category": "TensorFleet"
       }
     ],
     "configuration": {
       "title": "TensorFleet",
       "properties": {
-        "tensorfleet.ros2.websocketUrl": {
+        "tensorfleet.region": {
           "type": "string",
-          "default": "ws://172.16.0.10:9091",
-          "description": "ROS2 WebSocket URL (rosbridge_suite) for remote connections (e.g., Firecracker VM)",
-          "pattern": "^(ws|wss)://.*$"
-        },
-        "tensorfleet.ros2.foxgloveUrl": {
-          "type": "string",
-          "default": "ws://172.16.0.10:8765",
-          "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
-          "pattern": "^(ws|wss)://.*$"
-        },
-        "tensorfleet.backendUrl": {
-          "type": "string",
-          "default": "https://app.tensorfleet.net",
-          "description": "Base URL for TensorFleet backend API (used for auth and data). Trailing slashes are removed.",
-          "pattern": "^(http|https)://.*$"
+          "default": "eu",
+          "enum": [
+            "eu",
+            "asia",
+            "local"
+          ],
+          "enumDescriptions": [
+            "EU  - Europe Central Region (eu.vm.tensorfleet.net)",
+            "Asia - Southeast Region (asia.vm.tensorfleet.net)",
+            "Local - Development only (hidden in production builds)"
+          ],
+          "description": "Select your TensorFleet region for VM and API access.",
+          "order": 1
         }
       }
     },
@@ -279,10 +284,13 @@
     "build:extension": "bun run prepare:telemetry && bunx vite build",
     "watch:extension": "bun run prepare:telemetry && bunx vite build --watch",
     "compile": "bun run build:panels && bun run build:extension",
-    "watch": "bun run watch:panels & bun run watch:extension",
+    "compile:dev": "TENSORFLEET_BUILD=development bun run compile",
+    "compile:prod": "TENSORFLEET_BUILD=production bun run compile",
+    "watch": "TENSORFLEET_BUILD=development bun run watch:panels & TENSORFLEET_BUILD=development bun run watch:extension",
     "typecheck": "bunx tsc -p ./ --noEmit",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
+    "package:dev": "TENSORFLEET_BUILD=development bun run compile && bunx vsce package",
     "mcp": "node dist/mcp-server.js",
     "version:get": "bun scripts/get-version.ts"
   },
