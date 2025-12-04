@@ -13,6 +13,12 @@ import { MessageWriter as Ros2MessageWriter } from "@lichtblick/rosmsg2-serializ
 import rosDatatypesToMessageDefinition from "@lichtblick/suite-base/util/rosDatatypesToMessageDefinition";
 import CommonRosTypes from "@lichtblick/rosmsg-msgs-common";
 import type { MessageDefinition } from "@lichtblick/message-definition";
+import {
+  ProxyWebSocketClient,
+  type ProxyConnectionConfig,
+  getProxyWebSocketUrl,
+  ROS_PORTS,
+} from "./ws-proxy-client";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -81,6 +87,37 @@ type ResolvedService = {
   responseEncoding: "cdr";
 };
 
+/**
+ * Connection configuration for FoxgloveWsClient
+ * Supports both direct WebSocket connection and proxy through vm-manager
+ */
+export interface FoxgloveConnectionConfig {
+  /** 
+   * Direct connection mode: WebSocket URL to connect to (e.g., ws://172.16.0.10:8765)
+   * Used when connecting directly to VM without proxy
+   */
+  url?: string;
+
+  /**
+   * Proxy connection mode: Connect through vm-manager WebSocket proxy
+   * Requires vmManagerUrl, token, nodeId, and optionally targetPort
+   */
+  useProxy?: boolean;
+
+  /** VM Manager base URL for proxy mode (e.g., https://eu.vm.tensorfleet.net) */
+  vmManagerUrl?: string;
+
+  /** JWT authentication token for proxy mode */
+  token?: string;
+
+  /** VM/Node ID to connect to through proxy */
+  nodeId?: string;
+
+  /** Target port in VM (default: 8765 for Foxglove Bridge) */
+  targetPort?: number;
+}
+
+
 export class FoxgloveWsClient {
   private client: FoxgloveClient;
   private requestCounter: number = 0;
@@ -91,7 +128,6 @@ export class FoxgloveWsClient {
   private subscriptionsByTopic = new Map<string, SubscriptionId>();
   private subscriptionsById = new Map<SubscriptionId, ResolvedChannel>();
   private pendingSubscriptions = new Set<string>();
-  private pendingServiceCalls: Array[]
   private isOpenFlag = false;
 
   // Pubs
@@ -133,10 +169,26 @@ export class FoxgloveWsClient {
   public onNewTopic?: (topic: string, type: string) => void;
   public onMessage?: (msg: FoxgloveDecodedMessage) => void;
 
-  constructor({ url }: { url: string }) {
-    this.client = new FoxgloveClient({
-      ws: new WebSocket(url, [FoxgloveClient.SUPPORTED_SUBPROTOCOL]),
-    });
+  // Proxy client reference (if using proxy mode)
+  private proxyClient: ProxyWebSocketClient | null = null;
+  private connectionConfig: FoxgloveConnectionConfig;
+
+  /**
+   * Create a new FoxgloveWsClient
+   * 
+   * @param config - Connection configuration supporting both direct and proxy modes
+   * 
+   * Direct mode (legacy): { url: "ws://172.16.0.10:8765" }
+   * Proxy mode: { useProxy: true, vmManagerUrl: "https://eu.vm.tensorfleet.net", token: "...", nodeId: "..." }
+   */
+  constructor(config: FoxgloveConnectionConfig | { url: string }) {
+    // Normalize config to FoxgloveConnectionConfig
+    this.connectionConfig = 'url' in config && !('useProxy' in config)
+      ? { url: config.url }
+      : config as FoxgloveConnectionConfig;
+
+    const ws = this.createWebSocket();
+    this.client = new FoxgloveClient({ ws });
 
     // Connection lifecycle
     this.client.on("open", () => {
@@ -199,7 +251,7 @@ export class FoxgloveWsClient {
 
       // Workaround. for now do this every time this happens.
       this.processSetupParameterSets();
-      
+
     });
 
     // Channel advertisement (topics)
@@ -401,12 +453,200 @@ export class FoxgloveWsClient {
       // Workaround. for now don't check .we need proper list
 
       // if (needsParamSetup && this.areStartupParametersReady()) {
-        // this.processSetupParameterSets();
+      // this.processSetupParameterSets();
       // }
     });
   }
 
-  
+  /**
+   * Create the appropriate WebSocket connection based on config
+   * Returns a WebSocket for direct mode, or a proxy-backed WebSocket for proxy mode
+   */
+  private createWebSocket(): WebSocket {
+    const config = this.connectionConfig;
+
+    // Proxy mode: connect through vm-manager
+    if (config.useProxy) {
+      if (!config.vmManagerUrl) {
+        throw new Error("[FoxgloveWsClient] Proxy mode requires vmManagerUrl");
+      }
+      if (!config.token) {
+        throw new Error("[FoxgloveWsClient] Proxy mode requires token");
+      }
+      if (!config.nodeId) {
+        throw new Error("[FoxgloveWsClient] Proxy mode requires nodeId");
+      }
+
+      const proxyUrl = getProxyWebSocketUrl(config.vmManagerUrl);
+      const targetPort = config.targetPort ?? ROS_PORTS.FOXGLOVE_BRIDGE;
+
+      console.log(`[FoxgloveWsClient] Creating proxy connection to ${proxyUrl} for node ${config.nodeId}:${targetPort}`);
+
+      // Create the proxy client
+      this.proxyClient = new ProxyWebSocketClient(
+        {
+          proxyUrl,
+          token: config.token,
+          nodeId: config.nodeId,
+          targetPort,
+          subprotocols: [FoxgloveClient.SUPPORTED_SUBPROTOCOL],
+        },
+        {
+          onStateChange: (state) => {
+            console.log(`[FoxgloveWsClient] Proxy state: ${state}`);
+          },
+          onLoginFailed: (response) => {
+            console.error(`[FoxgloveWsClient] Proxy login failed: ${response.message}`);
+          },
+        }
+      );
+
+      // Return a WebSocket-like shim that manages the proxy handshake before opening
+      return this.createProxyWebSocketShim();
+    }
+
+    // Direct mode: connect directly to VM IP
+    // const url = config.url;
+    // if (!url) {
+    //   throw new Error("[FoxgloveWsClient] Direct mode requires url");
+    // }
+
+    // console.log(`[FoxgloveWsClient] Creating direct connection to ${url}`);
+    // return new WebSocket(url, [FoxgloveClient.SUPPORTED_SUBPROTOCOL]);
+    throw new Error("[FoxgloveWsClient] Direct connection disabled. Use proxy mode.");
+  }
+
+  /**
+   * Create a WebSocket-like shim for proxy mode
+   * This allows FoxgloveClient to attach handlers before the proxy connects
+   */
+  private createProxyWebSocketShim(): WebSocket {
+    const proxyClient = this.proxyClient!;
+
+    // Capture any existing handlers so we can wrap them
+    const baseHandlers = proxyClient.getEventHandlers();
+
+    // Create event handler storage
+    let onopen: ((ev: Event) => void) | null = null;
+    let onclose: ((ev: CloseEvent) => void) | null = null;
+    let onerror: ((ev: Event) => void) | null = null;
+    let onmessage: ((ev: MessageEvent) => void) | null = null;
+
+    // Track ready state
+    let readyState: number = WebSocket.CONNECTING;
+
+    // Message queue for messages sent before connected (normalized to string or ArrayBuffer)
+    const messageQueue: Array<string | ArrayBuffer> = [];
+
+    // Create the shim object
+    const shim = {
+      binaryType: "arraybuffer" as BinaryType,
+
+      get readyState() {
+        return readyState;
+      },
+
+      get onopen() { return onopen; },
+      set onopen(handler: ((ev: Event) => void) | null) {
+        onopen = handler;
+      },
+
+      get onclose() { return onclose; },
+      set onclose(handler: ((ev: CloseEvent) => void) | null) {
+        onclose = handler;
+      },
+
+      get onerror() { return onerror; },
+      set onerror(handler: ((ev: Event) => void) | null) {
+        onerror = handler;
+      },
+
+      get onmessage() { return onmessage; },
+      set onmessage(handler: ((ev: MessageEvent) => void) | null) {
+        onmessage = handler;
+      },
+
+      send(data: string | ArrayBuffer | ArrayBufferView) {
+        const normalized: string | ArrayBuffer =
+          typeof data === "string"
+            ? data
+            : data instanceof ArrayBuffer
+              ? data
+              : new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice().buffer;
+
+        if (readyState !== WebSocket.OPEN) {
+          // Queue messages until connected
+          messageQueue.push(normalized);
+          return;
+        }
+
+        proxyClient.send(normalized);
+      },
+
+      close(code?: number, reason?: string) {
+        readyState = WebSocket.CLOSING;
+        proxyClient.close();
+        readyState = WebSocket.CLOSED;
+      },
+
+      // Constants
+      CONNECTING: WebSocket.CONNECTING,
+      OPEN: WebSocket.OPEN,
+      CLOSING: WebSocket.CLOSING,
+      CLOSED: WebSocket.CLOSED,
+
+      // Additional required properties
+      bufferedAmount: 0,
+      extensions: "",
+      protocol: "",
+      url: this.connectionConfig.vmManagerUrl || "",
+
+      // Event listener methods (not used by FoxgloveClient but required by interface)
+      addEventListener: () => { },
+      removeEventListener: () => { },
+      dispatchEvent: () => true,
+    } as WebSocket;
+
+    // Wire up proxy events to the shim
+    // Use a small delay to let FoxgloveClient attach its handlers
+    setTimeout(() => {
+      proxyClient.setEventHandlers({
+        ...baseHandlers,
+        onOpen: () => {
+          readyState = WebSocket.OPEN;
+          baseHandlers.onOpen?.();
+
+          // Flush queued messages
+          while (messageQueue.length > 0) {
+            const msg = messageQueue.shift()!;
+            proxyClient.send(msg);
+          }
+
+          // Trigger onopen handler
+          onopen?.({ type: "open", target: shim } as unknown as Event);
+        },
+        onClose: (ev: CloseEvent) => {
+          readyState = WebSocket.CLOSED;
+          baseHandlers.onClose?.(ev);
+          onclose?.(ev);
+        },
+        onError: (ev: Event | Error) => {
+          baseHandlers.onError?.(ev as Event);
+          onerror?.(ev instanceof Error ? { type: "error", error: ev, target: shim } as unknown as Event : (ev as Event));
+        },
+        onMessage: (data: ArrayBuffer | string) => {
+          baseHandlers.onMessage?.(data);
+          onmessage?.({ data, type: "message", target: shim } as unknown as MessageEvent);
+        },
+      });
+
+      // Start the connection
+      proxyClient.connect();
+    }, 0);
+
+    return shim;
+  }
+
 
   // ---------- Subscriptions ----------
   private processPendingSubscriptions() {
@@ -519,7 +759,7 @@ export class FoxgloveWsClient {
     // Try datatypes from already parsed channels (best match)
     for (const { parsedChannel } of this.channelsById.values()) {
       try {
-          const msgdef = rosDatatypesToMessageDefinition(parsedChannel.datatypes, schemaName);
+        const msgdef = rosDatatypesToMessageDefinition(parsedChannel.datatypes, schemaName);
         return new Ros2MessageWriter(msgdef);
       } catch {
         // not found here; continue
@@ -617,7 +857,7 @@ export class FoxgloveWsClient {
 
     try {
       const bytes = svc.requestWriter.writeMessage(request);
-      
+
       payload.data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     } catch (err) {
       throw new Error(`Failed to serialize service request for '${serviceName}': ${String(err)}`);
@@ -710,7 +950,7 @@ export class FoxgloveWsClient {
   }
 
   private areStartupParametersReady(): boolean {
-    
+
 
     if (!this.serverCapabilities.includes(ServerCapability.parameters)) return false;
     return true;
@@ -738,8 +978,8 @@ export class FoxgloveWsClient {
     }
   }
 
-  getAvailableTopics(): { topic: string, type: string }[]{
-      return Array.from(this.channelsByTopic.entries()).map(([topic, type]) => ({ topic, type: type.channel.schemaName }));
+  getAvailableTopics(): { topic: string, type: string }[] {
+    return Array.from(this.channelsByTopic.entries()).map(([topic, type]) => ({ topic, type: type.channel.schemaName }));
   }
 
   getTopicType(topic: string): string | undefined {

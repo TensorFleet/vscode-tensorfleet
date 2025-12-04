@@ -307,10 +307,23 @@ export class ROS2Bridge {
     this._configureDefault();
   }
 
-  connect(_mode: ConnectionMode = "foxglove") {
+  connect(_mode: ConnectionMode = "foxglove", targetPort?: number) {
     // @ts-ignore
     const vmIp = (window as any).TENSORFLEET_VM_IP || "172.16.0.10";
-    const url = `ws://${vmIp}:8765`;
+    // @ts-ignore
+    const proxyUrl = (window as any).TENSORFLEET_PROXY_URL;
+    // @ts-ignore
+    const nodeId = (window as any).TENSORFLEET_NODE_ID;
+    // @ts-ignore
+    const token = (window as any).TENSORFLEET_JWT;
+
+    // Default to 8765 (Foxglove Bridge) if not specified
+    const port = targetPort ?? 8765;
+
+    let url = `ws://${vmIp}:${port}`;
+    if (proxyUrl && nodeId && token) {
+      url = proxyUrl;
+    }
 
     if (this.client) {
       try {
@@ -319,7 +332,7 @@ export class ROS2Bridge {
         // ignore
       }
     }
-    this.client = new FoxgloveWsClient({ url });
+    this.client = new FoxgloveWsClient({ url, token, nodeId, targetPort: port });
 
     // Needed to compute 3D transforms.
     this.client.subscribe("/tf");
@@ -515,7 +528,7 @@ export class ROS2Bridge {
     ];
   }
 
- /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
+  /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
   async callService<T = any>(name: string, request: any): Promise<T> {
     if (!this.client) throw new Error("callService() before connect");
     if (typeof (this.client as any).callService !== "function") {
@@ -658,10 +671,10 @@ export class ROS2Bridge {
           enc === "rgb8" || enc === "bgr8"
             ? 3
             : enc === "rgba8" || enc === "bgra8"
-            ? 4
-            : enc === "mono16"
-            ? 2
-            : 1;
+              ? 4
+              : enc === "mono16"
+                ? 2
+                : 1;
 
         const minStep = msg.width * bytesPerPixel;
 
@@ -951,7 +964,7 @@ export class ROS2Bridge {
           .sort(),
       );
       if (sig !== this._lastTopicsSig) {
-        this._lastTopicsSig = sig;
+        this._lastTopicsSig = sig || null;
         this._notifyAvailableTopicsChanged(topics);
       }
     };

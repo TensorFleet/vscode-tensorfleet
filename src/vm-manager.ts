@@ -4,7 +4,6 @@ import * as https from 'https';
 import * as auth from './auth';
 import { UnifiedStatusCoordinator } from './unified-status';
 import type { TelemetryService } from './telemetry';
-import { getVmManagerUrl } from './regions';
 
 // Core state types (imported from unified-status, keeping local types for backward compatibility)
 // Note: These types are now imported from unified-status.ts, but keeping local definitions
@@ -27,6 +26,7 @@ interface VmStatusResponse {
 }
 
 interface VmInfoResponse extends VmStatusResponse {
+  id?: string;
   created_at?: string;
   uptime_seconds?: number | null;
   provider?: string;
@@ -42,6 +42,7 @@ interface ApiHealthResponse {
 interface VmSnapshot {
   connection: ConnectionState;
   vmState: VmState;
+  nodeId?: string;
   ipAddress?: string;
   provider?: string;
   region?: string;
@@ -81,7 +82,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     this.context = context;
     this.unifiedCoordinator = unifiedCoordinator || null;
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
-    
+
     // Keep status bar item for backward compatibility, but hide it (unified coordinator shows it)
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
     this.statusBarItem.name = 'TensorFleet VM';
@@ -96,8 +97,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       this.statusBarItem,
       this.outputChannel,
       vscode.workspace.onDidChangeConfiguration((event) => {
-        // Refresh when region changes (which affects vmManagerUrl)
-        if (event.affectsConfiguration('tensorfleet.region')) {
+        if (event.affectsConfiguration('tensorfleet.vmManager.apiBaseUrl')) {
           void this.refresh(true);
         }
       })
@@ -180,20 +180,20 @@ export class VMManagerIntegration implements vscode.Disposable {
     } catch (error) {
       const message = this.formatError(error);
       this.outputChannel.appendLine(`[VM Manager] Refresh failed: ${message}`);
-      
+
       // Check if it's an auth error scoped to VM Manager
       if (this.isAuthError(error)) {
         this.applySnapshot(
           this.createSnapshot({
             connection: 'not_authenticated',
             vmState: 'unknown',
-            error: 'VM Manager unavailable'
+            error: 'VM Manager authentication failed - check settings or login again'
           })
         );
         return;
       }
       this.captureVmError(error, { source: 'vm.refresh' });
-      
+
       // Mark as disconnected but preserve last known VM state
       this.applySnapshot(
         this.createSnapshot({
@@ -237,7 +237,7 @@ export class VMManagerIntegration implements vscode.Disposable {
           return this.createSnapshot({
             connection: 'not_authenticated',
             vmState: 'unknown',
-            error: 'VM Manager unavailable'
+            error: 'VM Manager authentication failed - check settings or login again'
           });
         }
         if (this.isNotFoundError(statusError)) {
@@ -245,7 +245,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         } else {
           this.outputChannel.appendLine(`[VM Manager] Status fetch failed: ${this.formatError(statusError)}`);
           this.captureVmError(statusError, { source: 'vm.status_fetch' });
-      }
+        }
       }
 
       let info: VmInfoResponse | undefined;
@@ -256,7 +256,7 @@ export class VMManagerIntegration implements vscode.Disposable {
           return this.createSnapshot({
             connection: 'not_authenticated',
             vmState: 'unknown',
-            error: 'VM Manager unavailable'
+            error: 'VM Manager authentication failed - check settings or login again'
           });
         }
         if (this.isNotFoundError(infoError)) {
@@ -264,7 +264,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         } else {
           this.outputChannel.appendLine(`[VM Manager] Info fetch failed: ${this.formatError(infoError)}`);
           this.captureVmError(infoError, { source: 'vm.info_fetch' });
-      }
+        }
       }
 
       const resolvedState = vmState === 'unknown' && sawVmMissing ? 'pending' : vmState;
@@ -272,6 +272,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       return this.createSnapshot({
         connection: 'connected',
         vmState: resolvedState,
+        nodeId: info?.id,
         ipAddress: info?.ip_address || status?.ip_address,
         provider: info?.provider,
         region: info?.region,
@@ -283,7 +284,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         return this.createSnapshot({
           connection: 'not_authenticated',
           vmState: 'unknown',
-          error: 'VM Manager unavailable'
+          error: 'VM Manager authentication failed - check settings or login again'
         });
       }
       // Re-throw other errors to be handled by refresh()
@@ -308,12 +309,13 @@ export class VMManagerIntegration implements vscode.Disposable {
     this.updateStatusBar();
     this.handleStateChange(previousConnection, previousState);
     this.updatePollingSpeed(snapshot.vmState);
-    
+
     // Update unified coordinator
     if (this.unifiedCoordinator) {
       this.unifiedCoordinator.updateVmState({
         connection: snapshot.connection,
         vmState: snapshot.vmState,
+        nodeId: snapshot.nodeId,
         ipAddress: snapshot.ipAddress,
         provider: snapshot.provider,
         region: snapshot.region,
@@ -441,19 +443,19 @@ export class VMManagerIntegration implements vscode.Disposable {
     } else if (connection === 'disconnected') {
       // Primary action
       items.push(
-        { 
-          label: '$(refresh) Retry Connection', 
+        {
+          label: '$(refresh) Retry Connection',
           detail: error || 'Check network and API configuration',
-          action: () => this.refresh(false) 
+          action: () => this.refresh(false)
         }
       );
-      
+
       // Separator
       items.push({
         label: '',
         kind: vscode.QuickPickItemKind.Separator
       });
-      
+
       // Secondary actions (only actionable items)
       items.push({
         label: '$(refresh) Refresh Status',
@@ -461,7 +463,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       });
     } else {
       const primaryActions: VmQuickPickItem[] = [];
-      
+
       // Add informational status items for certain states (before primary actions)
       if (vmState === 'pending') {
         items.push({ label: '$(vm-outline) VM not started' });
@@ -474,7 +476,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       } else if (vmState === 'stopping') {
         items.push({ label: '$(debug-stop) VM is stopping...', detail: 'Usually takes 10-20 seconds' });
       }
-      
+
       // Build primary actions based on VM state
       switch (vmState) {
         case 'running':
@@ -506,7 +508,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       // Add primary actions if any exist
       if (primaryActions.length > 0) {
         items.push(...primaryActions);
-        
+
         // Add separator after primary actions
         items.push({
           label: '',
@@ -520,7 +522,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         action: () => this.refresh(false)
       });
     }
-    
+
     return items;
   }
 
@@ -712,7 +714,7 @@ export class VMManagerIntegration implements vscode.Disposable {
 
             // Handle auth errors (401/403) scoped to VM Manager
             if (res.statusCode === 401 || res.statusCode === 403) {
-              const httpError: HttpError = new Error('VM Manager unavailable');
+              const httpError: HttpError = new Error('VM Manager authentication failed');
               httpError.status = res.statusCode;
               httpError.body = bodyText;
               reject(httpError);
@@ -733,19 +735,11 @@ export class VMManagerIntegration implements vscode.Disposable {
         if (error && typeof error === 'object' && 'code' in error) {
           const code = String((error as NodeJS.ErrnoException).code);
           if (code === 'ECONNREFUSED') {
-            reject(new Error('Cannot connect to VM Manager'));
+            reject(new Error(`VM Manager API not responding`));
             return;
           }
           if (code === 'ETIMEDOUT') {
-            reject(new Error('Connection timed out'));
-            return;
-          }
-          if (code === 'ENOTFOUND') {
-            reject(new Error('Server not found - check your region'));
-            return;
-          }
-          if (code === 'ECONNRESET') {
-            reject(new Error('Connection was reset'));
+            reject(new Error(`Request to ${url.origin} timed out`));
             return;
           }
         }
@@ -764,6 +758,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     return {
       connection: params.connection ?? 'connected',
       vmState: params.vmState ?? 'unknown',
+      nodeId: params.nodeId,
       ipAddress: params.ipAddress,
       provider: params.provider,
       region: params.region,
@@ -789,44 +784,30 @@ export class VMManagerIntegration implements vscode.Disposable {
 
 
   private formatError(error: unknown): string {
-    let message: string;
-    
-    if (error instanceof Error) {
-      message = error.message;
-    } else if (typeof error === 'string') {
-      message = error;
-    } else {
-      try {
-        message = JSON.stringify(error);
-      } catch {
-        return 'Unknown error';
-      }
+    if (error instanceof Error) return error.message;
+    if (typeof error === 'string') return error;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return 'Unknown error';
     }
-    
-    // Clean up common technical error patterns for better UX
-    if (message.includes('getaddrinfo ENOTFOUND')) {
-      return 'Server not found - check your region';
-    }
-    if (message.includes('ECONNREFUSED')) {
-      return 'Cannot connect to VM Manager';
-    }
-    if (message.includes('ETIMEDOUT')) {
-      return 'Connection timed out';
-    }
-    if (message.includes('ECONNRESET')) {
-      return 'Connection was reset';
-    }
-    if (message.includes('CERT_')) {
-      return 'SSL certificate error';
-    }
-    
-    return message;
   }
 
   private getApiBaseUrl(): string {
-    // Get URL from region configuration (single source of truth)
-    // Users cannot set explicit domains - only select a region
-    return getVmManagerUrl().replace(/\/+$/, '');
+    const defaultUrl = 'https://eu.vm.tensorfleet.net';
+    const configuredUrl = vscode.workspace
+      .getConfiguration('tensorfleet.vmManager')
+      .get<string>('apiBaseUrl');
+
+    // Normalize configured URL and strip trailing slashes
+    const normalizedUrl = (configuredUrl || defaultUrl).trim().replace(/\/+$/, '');
+
+    // Avoid http → https redirects for the default EU endpoint
+    if (/^http:\/\/eu\.vm\.tensorfleet\.net$/i.test(normalizedUrl)) {
+      return defaultUrl;
+    }
+
+    return normalizedUrl || defaultUrl;
   }
 
   private async getAuthToken(): Promise<string | undefined> {
@@ -846,9 +827,9 @@ export class VMManagerIntegration implements vscode.Disposable {
 
   private isAuthError(error: unknown): boolean {
     return !!(
-      error && 
-      typeof error === 'object' && 
-      'status' in error && 
+      error &&
+      typeof error === 'object' &&
+      'status' in error &&
       ((error as HttpError).status === 401 || (error as HttpError).status === 403)
     );
   }
