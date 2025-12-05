@@ -480,6 +480,13 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+
+  // Welcome page.
+  if (context.extensionMode === vscode.ExtensionMode.Development) {
+    // Always show in dev mode
+    showWelcomePage(context);
+  }
 }
 
 export function deactivate() {
@@ -769,16 +776,25 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
 function showWelcomePage(context: vscode.ExtensionContext) {
   const telemetry = getTelemetry();
 
+  const PANEL_COMMANDS: Record<string, string> = {
+    'tensorfleet-gazebo': 'tensorfleet.openGazeboPanel',
+    'tensorfleet-teleops-panel': 'tensorfleet.openTeleopsPanel',
+    'tensorfleet-map-panel': 'tensorfleet.openMapPanel',
+    'tensorfleet-sensor-3d-panel': 'tensorfleet.openSensor3DPanel',
+    'tensorfleet-raw-messages-panel': 'tensorfleet.openRawMessagesPanel',
+    'tensorfleet-image-panel': 'tensorfleet.openImagePanel'
+  };
+
   const panel = vscode.window.createWebviewPanel(
-    "tensorfleet.welcome",
-    "Welcome to TensorFleet",
+    'tensorfleet.welcome',
+    'Welcome to TensorFleet',
     vscode.ViewColumn.Active,
     {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [
-        vscode.Uri.joinPath(context.extensionUri, "media"),
-        vscode.Uri.joinPath(context.extensionUri, "src", "templates")
+        vscode.Uri.joinPath(context.extensionUri, 'media'),
+        vscode.Uri.joinPath(context.extensionUri, 'src', 'templates')
       ]
     }
   );
@@ -787,46 +803,72 @@ function showWelcomePage(context: vscode.ExtensionContext) {
   const cspSource = webview.cspSource;
   const styles = getBaseStyles();
 
-  panel.webview.html = loadTemplate("welcome.html", {
+  panel.webview.html = loadTemplate('welcome.html', {
     cspSource,
     styles,
-    title: "Welcome to TensorFleet"
+    title: 'Welcome to TensorFleet'
   });
 
   panel.webview.onDidReceiveMessage(async (msg) => {
     if (!msg || !msg.command) return;
 
     switch (msg.command) {
-      case "welcome.login":
-        await vscode.commands.executeCommand("tensorfleet.login");
+      case 'welcome.login': {
+        await vscode.commands.executeCommand('tensorfleet.login');
         panel.webview.postMessage({
-          type: "authStatus",
+          type: 'authStatus',
           authenticated: await auth.isAuthenticated(context)
         });
         break;
+      }
 
-      case "welcome.checkAuth":
+      case 'welcome.checkAuth': {
         panel.webview.postMessage({
-          type: "authStatus",
+          type: 'authStatus',
           authenticated: await auth.isAuthenticated(context)
         });
         break;
+      }
 
-      case "welcome.createProject":
-        await vscode.commands.executeCommand("tensorfleet.createNewProject");
-        panel.webview.postMessage({ type: "projectCreated" });
+      case 'welcome.createProject': {
+        await vscode.commands.executeCommand('tensorfleet.createNewProject');
+        panel.webview.postMessage({ type: 'projectCreated' });
         break;
+      }
 
-      case "welcome.nextPage":
-        panel.webview.postMessage({ type: "nextPage" });
-        break;
+      case 'welcome.openSelectedPanels': {
+        const ids = Array.isArray(msg.panelIds) ? msg.panelIds : [];
+        const commandsToRun = new Set<string>();
 
-      case "welcome.close":
+        for (const rawId of ids) {
+          if (typeof rawId !== 'string') continue;
+          const cmd = PANEL_COMMANDS[rawId];
+          if (cmd) commandsToRun.add(cmd);
+        }
+
+        for (const cmd of commandsToRun) {
+          vscode.commands.executeCommand(cmd).then(
+            undefined,
+            (err) => {
+              console.error('[TensorFleet][Welcome] Failed to open panel', cmd, err);
+              telemetry?.captureError(err, { source: 'welcome.openSelectedPanels', command: cmd });
+            }
+          );
+        }
+
         panel.dispose();
         break;
+      }
 
-      default:
-        console.log("[WELCOME] Unknown message:", msg);
+      case 'welcome.close': {
+        panel.dispose();
+        break;
+      }
+
+      default: {
+        console.log('[TensorFleet][Welcome] Unknown message:', msg);
+        break;
+      }
     }
   });
 }
@@ -1224,6 +1266,8 @@ async function createNewProjectInternal(
   context: vscode.ExtensionContext,
   options: NewProjectOptions
 ) {
+  const telemetry = getTelemetry();
+
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
     prompt: `Enter a name for your new ${options.kindLabel} project`,

@@ -45,6 +45,8 @@
       border-radius: 999px;
       border: 1px solid var(--vscode-editorWidget-border);
       opacity: 0.8;
+      user-select: none;
+      cursor: default; /* <-- no clicking */
     }
 
     .step-pill--active {
@@ -61,36 +63,6 @@
 
     .welcome-page--active {
       display: block;
-    }
-
-    .footer {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 20px;
-    }
-
-    .footer__right {
-      display: flex;
-      gap: 8px;
-    }
-
-    .btn {
-      padding: 6px 12px;
-      border-radius: 4px;
-      border: 1px solid var(--vscode-button-border, var(--vscode-button-background));
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      cursor: pointer;
-      font-size: 0.95rem;
-    }
-
-    .btn--secondary {
-      background: transparent;
-    }
-
-    .btn[disabled] {
-      opacity: 0.5;
-      cursor: default;
     }
 
     .panel-toggle-grid {
@@ -140,11 +112,6 @@
       background: #4caf50;
     }
 
-    .status-icon--waiting {
-      border-color: var(--vscode-editorWidget-border);
-      background: transparent;
-    }
-
     .status-text-ok {
       color: #4caf50;
     }
@@ -172,15 +139,12 @@
         TensorFleet integrates drone simulations, ROS/ROS 2, and AI workflows directly into VS Code.
       </p>
       <ul class="viewport__list">
-        <li>Connect to simulations and telemetry dashboards</li>
-        <li>Manage ROS versions and drone configurations</li>
-        <li>Use the MCP server with external copilots</li>
+        <li>Connect to robotics simulation using ROS protocols and program robots</li>
+        <li>Visualize simulation and sensor data in real time</li>
+        <li>Access the drone with a map view and mission control features</li>
       </ul>
       <div class="viewport__actions" style="margin-top: 16px;">
         <button class="viewport__action" data-action="startGuided">Start guided setup</button>
-        <button class="viewport__action viewport__action--secondary" data-action="skipToProject">
-          Skip to project creation
-        </button>
       </div>
     </section>
 
@@ -189,25 +153,27 @@
       <p class="viewport__description">
         First, sign in to your TensorFleet account so we can connect to your VM manager and services.
       </p>
+
       <div class="viewport__actions" style="margin-top: 12px;">
-        <button class="viewport__action" data-action="login">Login with TensorFleet</button>
-        <button class="viewport__action viewport__action--secondary" data-action="checkAuth">
-          Re-check status
+        <button class="viewport__action" data-action="login" data-id="btnLogin">
+          Login with TensorFleet
         </button>
       </div>
 
-      <div class="status-row">
-        <div class="status-icon status-icon--waiting" data-auth-indicator></div>
-        <span data-auth-text>Not authenticated yet</span>
+      <!-- This row is only visible when authenticated -->
+      <div class="status-row" data-auth-row style="display: none;">
+        <div class="status-icon status-icon--ok" data-auth-indicator></div>
+        <span data-auth-text class="status-text-ok">Logged in</span>
       </div>
 
       <p class="viewport__hint" style="margin-top: 8px;">
-        The login dialog will open in VS Code. Once completed, we’ll mark this step as done.
+        The login/signup window will open in your browser. Once completed, we’ll mark this step as done.
       </p>
 
-      <div class="viewport__actions" style="margin-top: 16px;">
-        <button class="viewport__action" data-action="goProject" disabled data-id="btnGoProject">
-          Continue to project setup
+      <!-- Only visible when logged in -->
+      <div class="viewport__actions" style="margin-top: 16px; display: none;" data-id="goProjectContainer">
+        <button class="viewport__action" data-action="goProject">
+          Proceed to project creation
         </button>
       </div>
     </section>
@@ -273,19 +239,16 @@
         </div>
       </div>
 
+      <div class="viewport__actions" style="margin-top: 16px;">
+        <button class="viewport__action" data-action="openPanels">
+          Open selected panels
+        </button>
+      </div>
+
       <p class="viewport__hint" style="margin-top: 10px;">
-        We’ll open the selected panels once you finish the setup.
+        You can always open or close panels later from the TensorFleet view.
       </p>
     </section>
-
-    <!-- Footer nav -->
-    <div class="footer">
-      <button class="btn btn--secondary" data-nav="prev">Back</button>
-      <div class="footer__right">
-        <button class="btn btn--secondary" data-nav="skip">Skip</button>
-        <button class="btn" data-nav="next">Next</button>
-      </div>
-    </div>
   </div>
 
   <script>
@@ -296,14 +259,15 @@
 
     const pages = Array.from(document.querySelectorAll('.welcome-page'));
     const pills = Array.from(document.querySelectorAll('[data-step-pill]'));
-    const prevBtn = document.querySelector('[data-nav="prev"]');
-    const nextBtn = document.querySelector('[data-nav="next"]');
-    const skipBtn = document.querySelector('[data-nav="skip"]');
+    const authRow = document.querySelector('[data-auth-row]');
     const authIndicator = document.querySelector('[data-auth-indicator]');
     const authText = document.querySelector('[data-auth-text]');
-    const btnGoProject = document.querySelector('[data-id="btnGoProject"]');
     const projectStatusRow = document.querySelector('[data-project-status-row]');
     const panelToggles = Array.from(document.querySelectorAll('.panel-toggle'));
+
+    const btnLogin = document.querySelector('[data-id="btnLogin"]');
+    const goProjectContainer = document.querySelector('[data-id="goProjectContainer"]');
+    const btnOpenPanels = document.querySelector('[data-action="openPanels"]');
 
     function setPage(idx) {
       if (idx < 0 || idx >= pages.length) return;
@@ -318,56 +282,23 @@
       pills.forEach((pill, i) => {
         pill.classList.toggle('step-pill--active', i === currentPage);
       });
-
-      prevBtn.disabled = currentPage === 0;
-      nextBtn.textContent = currentPage === pages.length - 1 ? 'Finish' : 'Next';
     }
 
-    prevBtn.addEventListener('click', () => {
-      if (currentPage > 0) setPage(currentPage - 1);
-    });
-
-    nextBtn.addEventListener('click', () => {
-      if (currentPage < pages.length - 1) {
-        setPage(currentPage + 1);
-      } else {
-        vscode.postMessage({ command: 'welcome.close' });
-      }
-    });
-
-    skipBtn.addEventListener('click', () => {
-      vscode.postMessage({ command: 'welcome.close' });
-    });
-
-    pills.forEach((pill) => {
-      pill.addEventListener('click', () => {
-        const idx = Number(pill.getAttribute('data-step-pill'));
-        if (!Number.isNaN(idx)) {
-          setPage(idx);
-        }
-      });
-    });
+    // NOTE: step pills are no longer clickable (visual only)
+    // No event listeners on pills.
 
     // Page 1 actions
     document.querySelector('[data-action="startGuided"]')?.addEventListener('click', () => {
       setPage(1);
     });
 
-    document.querySelector('[data-action="skipToProject"]')?.addEventListener('click', () => {
-      setPage(2);
-    });
-
     // Page 2 actions (account)
-    document.querySelector('[data-action="login"]')?.addEventListener('click', () => {
+    btnLogin?.addEventListener('click', () => {
       vscode.postMessage({ command: 'welcome.login' });
     });
 
-    document.querySelector('[data-action="checkAuth"]')?.addEventListener('click', () => {
-      vscode.postMessage({ command: 'welcome.checkAuth' });
-    });
-
     document.querySelector('[data-action="goProject"]')?.addEventListener('click', () => {
-      if (isAuthenticated) setPage(2);
+      setPage(2);
     });
 
     // Page 3 actions (project creation)
@@ -382,19 +313,17 @@
       });
     });
 
-    // When user finishes on page 4, send selected panels from Next/Finish
-    nextBtn.addEventListener('click', () => {
-      if (currentPage === 3) {
-        const selectedIds = panelToggles
-          .filter((el) => el.classList.contains('panel-toggle--selected'))
-          .map((el) => el.getAttribute('data-panel-id'))
-          .filter(Boolean);
+    // "Open selected panels" on last page
+    btnOpenPanels?.addEventListener('click', () => {
+      const selectedPanelIds = panelToggles
+        .filter(el => el.classList.contains('panel-toggle--selected'))
+        .map(el => el.getAttribute('data-panel-id'))
+        .filter(Boolean);
 
-        vscode.postMessage({
-          command: 'welcome.openPanelsSelection',
-          panelIds: selectedIds,
-        });
-      }
+      vscode.postMessage({
+        command: 'welcome.openSelectedPanels',
+        panelIds: selectedPanelIds,
+      });
     });
 
     // Messages from extension
@@ -402,41 +331,53 @@
       const msg = event.data || {};
       if (msg.type === 'authStatus') {
         isAuthenticated = !!msg.authenticated;
+
         if (isAuthenticated) {
-          authIndicator?.classList.remove('status-icon--waiting');
-          authIndicator?.classList.add('status-icon--ok');
+          if (authRow) authRow.style.display = 'flex';
+          if (authIndicator) authIndicator.classList.add('status-icon--ok');
           if (authText) {
-            authText.textContent = 'Authenticated';
+            authText.textContent = 'Logged in';
             authText.classList.add('status-text-ok');
           }
-          if (btnGoProject) {
-            btnGoProject.disabled = false;
+
+          if (goProjectContainer) {
+            goProjectContainer.style.display = 'flex';
           }
+          if (btnLogin) btnLogin.style.display = 'none';
         } else {
-          authIndicator?.classList.remove('status-icon--ok');
-          authIndicator?.classList.add('status-icon--waiting');
+          if (authRow) authRow.style.display = 'none';
+          if (authIndicator) authIndicator.classList.remove('status-icon--ok');
           if (authText) {
-            authText.textContent = 'Not authenticated';
+            authText.textContent = '';
             authText.classList.remove('status-text-ok');
           }
-          if (btnGoProject) {
-            btnGoProject.disabled = true;
+
+          if (goProjectContainer) {
+            goProjectContainer.style.display = 'none';
           }
+          if (btnLogin) btnLogin.style.display = '';
         }
       } else if (msg.type === 'projectCreated') {
         if (projectStatusRow) {
           projectStatusRow.style.display = 'flex';
         }
-        // automatically continue to panels
         setPage(3);
       } else if (msg.type === 'welcomeError') {
-        // Optional: show some inline error
         console.error('[welcome] error from extension', msg);
       }
     });
 
-    // initial render
+    // Initial render
     render();
+
+    // Ask extension for current auth status when the page loads
+    vscode.postMessage({ command: 'welcome.checkAuth' });
+
+    // Poll auth status periodically so logout elsewhere is reflected here
+    const AUTH_POLL_INTERVAL_MS = 5000;
+    setInterval(() => {
+      vscode.postMessage({ command: 'welcome.checkAuth' });
+    }, AUTH_POLL_INTERVAL_MS);
   </script>
 </body>
 </html>
