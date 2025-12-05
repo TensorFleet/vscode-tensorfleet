@@ -29,6 +29,7 @@ export interface UnifiedState {
   auth: AuthState;
   connection: ConnectionState;
   vmState: VmState;
+  nodeId?: string;
   ipAddress?: string;
   provider?: string;
   region?: string;
@@ -85,6 +86,7 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
   updateVmState(params: {
     connection: ConnectionState;
     vmState: VmState;
+    nodeId?: string;
     ipAddress?: string;
     provider?: string;
     region?: string;
@@ -96,6 +98,7 @@ export class UnifiedStatusCoordinator implements vscode.Disposable {
       ...this.currentState,
       connection: params.connection,
       vmState: params.vmState,
+      nodeId: params.nodeId,
       ipAddress: params.ipAddress,
       provider: params.provider,
       region: params.region,

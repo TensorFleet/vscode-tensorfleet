@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as http from 'http';
 import * as https from 'https';
 import * as auth from './auth';
+import { getVmManagerUrl } from './regions';
 import { UnifiedStatusCoordinator } from './unified-status';
 import type { TelemetryService } from './telemetry';
 
@@ -794,20 +795,17 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private getApiBaseUrl(): string {
-    const defaultUrl = 'https://eu.vm.tensorfleet.net';
+    const regionDefault = getVmManagerUrl().trim().replace(/\/+$/, '');
     const configuredUrl = vscode.workspace
       .getConfiguration('tensorfleet.vmManager')
-      .get<string>('apiBaseUrl');
+      .get<string>('apiBaseUrl')
+      ?.trim();
 
-    // Normalize configured URL and strip trailing slashes
-    const normalizedUrl = (configuredUrl || defaultUrl).trim().replace(/\/+$/, '');
-
-    // Avoid http → https redirects for the default EU endpoint
-    if (/^http:\/\/eu\.vm\.tensorfleet\.net$/i.test(normalizedUrl)) {
-      return defaultUrl;
+    if (configuredUrl && configuredUrl.length > 0) {
+      return configuredUrl.replace(/\/+$/, '');
     }
 
-    return normalizedUrl || defaultUrl;
+    return regionDefault;
   }
 
   private async getAuthToken(): Promise<string | undefined> {
