@@ -7,6 +7,8 @@ import { VMManagerIntegration } from './vm-manager';
 import * as auth from './auth';
 import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
+import * as regions from './regions';
+import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -36,24 +38,22 @@ type TerminalConfig = {
  * They do NOT reuse DroneViewport, do NOT have a generic "open" command,
  * and MUST render via their own function.
  */
+type PanelHtmlRenderer = (args: {
+  webview: vscode.Webview;
+  context: vscode.ExtensionContext;
+  panelDef: UniquePanel;
+}) => string | Promise<string>;
+
 type UniquePanel = {
   /** View id to register as WebviewViewProvider */
   id: string;
   /** Title (optional; useful for templates) */
   title?: string;
-  /** Optional description / copy */
-  description?: string;
-  /** Optional media asset to expose to renderer */
-  image?: string;
   /**
    * Function that returns the webview HTML (dynamic).
    * You can share this function across items or make one per item.
    */
-  render: (ctx: {
-    webview: vscode.Webview;
-    context: vscode.ExtensionContext;
-    panelDef: UniquePanel;
-  }) => string | Promise<string>;
+  render: PanelHtmlRenderer;
   /**
    * Optional message handler override. If omitted, default handler runs.
    */
@@ -73,15 +73,6 @@ type UniquePanel = {
 // -----------------------------------------------------------------------------
 
 const DRONE_VIEWS: DroneViewport[] = [
-  {
-    id: 'tensorfleet-qgroundcontrol',
-    title: 'QGroundControl Command Deck',
-    description:
-      'Monitor manual flight controls, telemetry, and mission scripts aligned with QGroundControl workflows.',
-    image: 'connected_vehicle.tasoHGVc.jpg',
-    command: 'tensorfleet.openQGroundControlPanel',
-    actionLabel: 'Launch QGroundControl Workspace'
-  },
   {
     id: 'tensorfleet-gazebo',
     title: 'Gazebo Simulation',
@@ -132,7 +123,7 @@ const DRONE_VIEWS: DroneViewport[] = [
     id: "tensorfleet-map-panel",
     title: 'Map view',
     description: 'Display world map view with msision control elements.',
-    image: 'tensorfleet-icon.svg',
+    image: 'connected_vehicle.tasoHGVc.jpg',
     command: 'tensorfleet.openMapPanel',
     actionLabel: 'Open Map Panel',
     panelKind: 'standard',
@@ -167,8 +158,6 @@ const UNIQUE_PANELS: UniquePanel[] = [
   {
     id: 'tensorfleet-login',
     title: 'TensorFleet Login',
-    description: 'Authenticate to connect simulations, drones, and AI jobs.',
-    image: 'tensorfleet-icon.svg',
     render: ({ webview, context, panelDef }) => {
       const cspSource = webview.cspSource;
       const styles = getBaseStyles();
@@ -225,8 +214,6 @@ const UNIQUE_PANELS: UniquePanel[] = [
   {
     id: 'tensorfleet-account',
     title: 'TensorFleet Account',
-    description: 'Manage your tensorfleet account',
-    image: 'tensorfleet-icon.svg',
     render: ({ webview, context, panelDef }) => {
       const cspSource = webview.cspSource;
       const styles = getBaseStyles();
@@ -280,6 +267,16 @@ const UNIQUE_PANELS: UniquePanel[] = [
       vscode.Uri.joinPath(context.extensionUri, 'media')
     ]
   },
+  {
+    id: 'tensorfleet-view-3d',
+    title: '3D View',
+    render: htmlRenderer('visualization-dashboard.html')
+  },
+  {
+    id: 'tensorfleet-drone-view-list',
+    title: 'Drone and ROS views',
+    render: htmlRenderer('drone-view-list.html')
+  }
 ];
 
 // -----------------------------------------------------------------------------
@@ -319,16 +316,14 @@ let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
 // -----------------------------------------------------------------------------
 
 export function activate(context: vscode.ExtensionContext) {
+  // Initialize environment/mode detection first (must be before any isDev() calls)
+  initializeEnv(context);
+  
+  env.log('Extension activating in', getMode(), 'mode');
+  
   telemetryService = new TelemetryService(context);
   context.subscriptions.push(telemetryService);
-  telemetryService.trackEvent('extension.activate', {
-    mode:
-      context.extensionMode === vscode.ExtensionMode.Production
-        ? 'production'
-        : context.extensionMode === vscode.ExtensionMode.Development
-          ? 'development'
-          : 'test'
-  });
+  telemetryService.trackEvent('extension.activate', { mode: getMode() });
 
   // Start MCP bridge for communication between MCP server and VS Code
   mcpBridge = new MCPBridge(context);
@@ -443,6 +438,13 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tensorfleet.getMCPConfig', () => showMCPConfiguration(context))
   );
 
+  // Region selection command (accessible via unified menu)
+  context.subscriptions.push(
+    registerTensorFleetCommand('tensorfleet.selectRegion', () => selectRegion(context), {
+      feature: 'region'
+    })
+  );
+
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.selectRosVersion', () => selectRosVersion())
   );
@@ -475,6 +477,11 @@ export function activate(context: vscode.ExtensionContext) {
   // Keep auth status command for backward compatibility
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.authStatus', () => showUnifiedMenu(context))
+  );
+
+  // Dev-only debug command (only registered in development mode)
+  context.subscriptions.push(
+    registerDevCommand('tensorfleet.debugInfo', () => showDebugInfo(context))
   );
 
   // ROS bridge commands removed; panels use embedded Foxglove networking.
@@ -571,7 +578,7 @@ function registerTensorFleetCommand(
 }
 
 class DashboardViewProvider implements vscode.WebviewViewProvider {
-  constructor(private readonly config: DroneViewport, private readonly context: vscode.ExtensionContext) { }
+  constructor(private readonly config: DroneViewport, private readonly context: vscode.ExtensionContext) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
     webviewView.webview.options = {
@@ -582,20 +589,52 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.renderHtml(webviewView.webview);
 
     webviewView.webview.onDidReceiveMessage((message) => {
-      if (message?.command === 'openPanel') {
-        getTelemetry()?.trackEvent('webview.action', { viewId: this.config.id, action: 'openPanel' });
+      const telemetry = getTelemetry();
+
+      // Basic sanity check
+      if (!message || typeof message.command !== 'string') {
+        console.warn('[TensorFleet] Webview message missing command:', message);
+        return;
+      }
+
+      const command = message.command as string;
+
+      if (command === 'openPanel') {
+        telemetry?.trackEvent('webview.action', { viewId: this.config.id, action: 'openPanel' });
         vscode.commands.executeCommand(this.config.command).then(undefined, (error) => {
-          vscode.window.showErrorMessage(`Failed to open panel: ${error instanceof Error ? error.message : error}`);
-        });
-      } else if (message?.command === 'openAllPanels') {
-        getTelemetry()?.trackEvent('webview.action', { viewId: this.config.id, action: 'openAllPanels' });
-        vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
           vscode.window.showErrorMessage(
-            `Failed to open all dashboards: ${error instanceof Error ? error.message : error}`
+            `Failed to open panel: ${error instanceof Error ? error.message : String(error)}`
           );
         });
+      } else if (command === 'openAllPanels') {
+        telemetry?.trackEvent('webview.action', { viewId: this.config.id, action: 'openAllPanels' });
+        vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
+          vscode.window.showErrorMessage(
+            `Failed to open all dashboards: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
+      } else if (command.startsWith('tensorfleet.')) {
+        // Generic forward for any tensorfleet.* command
+        telemetry?.trackEvent('webview.action', { viewId: this.config.id, action: command });
+
+        // Optional: support args passed from the webview
+        const args: unknown[] =
+          Array.isArray(message.args)
+            ? message.args
+            : message.args !== undefined
+              ? [message.args]
+              : [];
+
+        vscode.commands.executeCommand(command, ...args).then(undefined, (error) => {
+          vscode.window.showErrorMessage(
+            `Failed to execute command "${command}": ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
+      } else {
+        console.log('[TensorFleet] Ignoring webview command:', command, 'payload:', message);
       }
     });
+
   }
 
   private renderHtml(webview: vscode.Webview): string {
@@ -620,8 +659,9 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
  * Provider for function-driven unique panels
  */
 class UniqueViewProvider implements vscode.WebviewViewProvider {
-  constructor(private readonly def: UniquePanel, private readonly context: vscode.ExtensionContext) { }
+  constructor(private readonly def: UniquePanel, private readonly context: vscode.ExtensionContext) {}
 
+  
   resolveWebviewView(webviewView: vscode.WebviewView) {
     const defaultRoots = [
       vscode.Uri.joinPath(this.context.extensionUri, 'media'),
@@ -650,15 +690,62 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
 
     // message piping
     webviewView.webview.onDidReceiveMessage(async (message) => {
+      const telemetry = getTelemetry();
+
       try {
         if (this.def.onMessage) {
           await this.def.onMessage(message, {
             context: this.context,
             webview: webviewView.webview,
-            telemetry: getTelemetry()
+            telemetry
           });
           return;
+        } else {
+          // DEFAULT BEHAVIOR WHEN onMessage IS NOT PROVIDED
+
+          if (!message || typeof message.command !== 'string') {
+            console.warn('[TensorFleet] Unique panel webview message missing command:', message);
+            return;
+          }
+
+          const command = message.command as string;
+          const args: unknown[] =
+            Array.isArray(message.args)
+              ? message.args
+              : message.args !== undefined
+                ? [message.args]
+                : [];
+
+          telemetry?.trackEvent('webview.action', {
+            viewId: this.def.id,
+            action: command
+          });
+
+          // Forward any tensorfleet.* command
+          if (command.startsWith('tensorfleet.')) {
+            vscode.commands.executeCommand(command, ...args).then(undefined, (error) => {
+              vscode.window.showErrorMessage(
+                `Failed to execute command "${command}": ${
+                  error instanceof Error ? error.message : String(error)
+                }`
+              );
+            });
+            return;
+          }
+
+          // Convenience alias: openAllPanels → tensorfleet.openAllPanels
+          if (command === 'openAllPanels') {
+            vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
+              vscode.window.showErrorMessage(
+                `Failed to execute command "tensorfleet.openAllPanels": ${
+                  error instanceof Error ? error.message : String(error)
+                }`
+              );
+            });
+            return;
+          }
         }
+
         // default handling: just log
         console.log(`[UniquePanel:${this.def.id}] message`, message);
       } catch (e) {
@@ -697,7 +784,7 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
  * Tooling side view (unchanged)
  */
 class ToolingViewProvider implements vscode.WebviewViewProvider {
-  constructor(private readonly context: vscode.ExtensionContext) { }
+  constructor(private readonly context: vscode.ExtensionContext) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
     webviewView.webview.options = {
@@ -725,7 +812,7 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
   private renderHtml(webview: vscode.Webview): string {
     const styles = getBaseStyles();
     const cspSource = webview.cspSource;
-
+    
     return loadTemplate('tooling-view.html', {
       cspSource,
       styles
@@ -822,8 +909,7 @@ async function openDedicatedPanel(
 
     // Check if view has a custom HTML template
     if (view.htmlTemplate) {
-      const token = await auth.getToken(context);
-      panel.webview.html = getCustomPanelHtml(view, panel.webview, context, cspSource, token);
+      panel.webview.html = getCustomPanelHtml(view, panel.webview, context, cspSource);
       telemetry?.trackEvent('panel.open', {
         panelId: view.id,
         kind: view.panelKind ?? 'standard',
@@ -873,29 +959,29 @@ function getTerminalPanelHtml(view: DroneViewport, imageUri: string, cspSource: 
   });
 }
 
-function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, context: vscode.ExtensionContext, cspSource: string, token?: string): string {
+function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, context: vscode.ExtensionContext, cspSource: string): string {
   if (!view.htmlTemplate) {
     throw new Error('No HTML template specified for custom panel');
   }
 
   if (view.htmlTemplate === 'teleops-standalone') {
-    return getStandalonePanelHtml('teleops', webview, context, cspSource, token);
+    return getStandalonePanelHtml('teleops', webview, context, cspSource);
   }
 
   if (view.htmlTemplate === 'image-standalone') {
-    return getStandalonePanelHtml('image', webview, context, cspSource, token);
+    return getStandalonePanelHtml('image', webview, context, cspSource);
   }
 
   if (view.htmlTemplate === 'map-standalone') {
-    return getStandalonePanelHtml('mission_control', webview, context, cspSource, token);
+    return getStandalonePanelHtml('mission_control', webview, context, cspSource);
   }
 
   if (view.htmlTemplate === 'sensor-3d-standalone') {
-    return getStandalonePanelHtml('sensor_view_3d', webview, context, cspSource, token);
+    return getStandalonePanelHtml('sensor_view_3d', webview, context, cspSource);
   }
 
   if (view.htmlTemplate === 'raw-messages-standalone') {
-    return getStandalonePanelHtml('raw_messages', webview, context, cspSource, token);
+    return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
 
   // Load the custom HTML template directly
@@ -925,7 +1011,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 
   // Add CSP meta tag for security
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https:; frame-src ${cspSource};">`;
-
+  
   // Insert CSP meta tag in head if not already present
   if (!template.includes('Content-Security-Policy')) {
     template = template.replace('<head>', `<head>\n    ${cspMeta}`);
@@ -938,8 +1024,7 @@ function getStandalonePanelHtml(
   panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
-  cspSource: string,
-  token?: string
+  cspSource: string
 ): string {
   const htmlPath = path.join(__dirname, '..', 'panels-standalone', 'dist', `${panelName}.html`);
 
@@ -960,35 +1045,10 @@ function getStandalonePanelHtml(
   );
 
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
-
-  const vmIp = vmManagerIntegration?.snapshot?.ipAddress || '172.16.0.10';
-  const nodeId = vmManagerIntegration?.snapshot?.nodeId || '';
-
-  // Calculate proxy URL
-  const defaultUrl = 'https://eu.vm.tensorfleet.net';
-  const configuredUrl = vscode.workspace.getConfiguration('tensorfleet.vmManager').get<string>('apiBaseUrl');
-  const apiBaseUrl = (configuredUrl || defaultUrl).trim().replace(/\/+$/, '');
-  const proxyUrl = apiBaseUrl.replace(/^http/, 'ws') + '/ws';
-
-  console.log('[TensorFleet] Injecting variables into panel:', {
-    vmIp,
-    nodeId,
-    proxyUrl,
-    hasToken: !!token
-  });
-
-  const injectionScript = `<script>
-    window.TENSORFLEET_VM_IP = "${vmIp}";
-    window.TENSORFLEET_PROXY_URL = "${proxyUrl}";
-    window.TENSORFLEET_NODE_ID = "${nodeId}";
-    window.TENSORFLEET_JWT = "${token || ''}";
-  </script>`;
-
   if (html.includes('Content-Security-Policy')) {
     html = html.replace(/<meta[^>]+Content-Security-Policy[^>]+>/i, cspMeta);
-    html = html.replace('<head>', `<head>\n  ${injectionScript}`);
   } else {
-    html = html.replace('<head>', `<head>\n  ${cspMeta}\n  ${injectionScript}`);
+    html = html.replace('<head>', `<head>\n  ${cspMeta}`);
   }
 
   return html;
@@ -1101,11 +1161,17 @@ type NewProjectOptions = {
   templateSubdir?: string;
 };
 
+type NewProjectOptions = {
+  kindLabel: string;
+  defaultName: string;
+  commandLabel: string;
+  templateSubdir?: string;
+};
+
 async function createNewProjectInternal(
   context: vscode.ExtensionContext,
   options: NewProjectOptions
 ) {
-  const telemetry = getTelemetry();
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
     prompt: `Enter a name for your new ${options.kindLabel} project`,
@@ -1364,6 +1430,27 @@ function loadTemplate(templateName: string, replacements: Record<string, string>
   return template;
 }
 
+
+function htmlRenderer(templateName: string): PanelHtmlRenderer {
+  return ({ webview, context }) => {
+    const cspSource = webview.cspSource;
+    const styles = getBaseStyles();
+
+    // This is the *root* of your extension as seen by the webview
+    const baseUri = webview.asWebviewUri(context.extensionUri);
+    let baseUrl = baseUri.toString();
+    if (baseUrl.endsWith('/')) {
+      baseUrl = baseUrl.slice(0, -1);
+    }
+
+    return loadTemplate(templateName, {
+      cspSource,
+      styles,
+      base_url: baseUrl
+    });
+  };
+}
+
 function startMCPServer(context: vscode.ExtensionContext) {
   const telemetry = getTelemetry();
   if (mcpServerProcess) {
@@ -1373,7 +1460,7 @@ function startMCPServer(context: vscode.ExtensionContext) {
   }
 
   const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
-
+  
   if (!fs.existsSync(mcpServerPath)) {
     telemetry?.trackEvent('mcpServer.start', { phase: 'error', reason: 'missingBinary' });
     vscode.window.showErrorMessage(
@@ -1474,7 +1561,7 @@ let drones: DroneInfo[] = [];
 
 async function initializeStatusBarItems(context: vscode.ExtensionContext) {
   console.log('[TensorFleet] Initializing status bar items...');
-
+  
   // Create ROS version status bar item
   rosVersionStatusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
@@ -1565,10 +1652,10 @@ async function updateStatusBars() {
 
   if (isTFProject) {
     console.log('[TensorFleet] TensorFleet project detected, showing status bars');
-
+    
     // Detect ROS version from config or system
     await detectRosVersion();
-
+    
     // Initialize drone status
     await updateDroneStatus();
 
@@ -1808,14 +1895,14 @@ async function showDroneStatus() {
   const items = drones.map((drone) => {
     const statusIcon =
       drone.status === 'flying' ? '$(rocket)' :
-        drone.status === 'armed' ? '$(target)' :
-          drone.status === 'idle' ? '$(circle-outline)' :
-            '$(circle-slash)';
+      drone.status === 'armed' ? '$(target)' :
+      drone.status === 'idle' ? '$(circle-outline)' :
+      '$(circle-slash)';
 
     const batteryIcon =
       drone.battery > 50 ? '$(pulse)' :
-        drone.battery > 25 ? '$(warning)' :
-          '$(alert)';
+      drone.battery > 25 ? '$(warning)' :
+      '$(alert)';
 
     return {
       label: `${statusIcon} ${drone.name}`,
@@ -1884,7 +1971,7 @@ Click "Open Gazebo Workspace" to view in simulation.
       vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
     }
   });
-}
+  }
 
 // ============================================================================
 // ROS2 Connection Management
@@ -1965,14 +2052,14 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
  * Update unified auth status
  */
 async function updateUnifiedAuthStatus(context: vscode.ExtensionContext) {
-  console.log('[TensorFleet] updateUnifiedAuthStatus called');
+console.log('[TensorFleet] updateUnifiedAuthStatus called');
   if (!unifiedStatusCoordinator) {
     console.log('[TensorFleet] No unified status coordinator');
     return;
   }
 
   const isAuth = await auth.isAuthenticated(context);
-  console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
+console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
   unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
 }
 
@@ -1996,7 +2083,7 @@ function buildMenuForState(
         primaryActions.push({
           label: '$(terminal) Connect via SSH'
         });
-      }
+}
       break;
 
     case 'stopped':
@@ -2022,7 +2109,7 @@ function buildMenuForState(
   // Add primary actions if any exist
   if (primaryActions.length > 0) {
     items.push(...primaryActions);
-
+    
     // Add separator after primary actions
     items.push({
       label: '',
@@ -2031,9 +2118,14 @@ function buildMenuForState(
   }
 
   // Add secondary actions (always shown)
+  const currentRegion = regions.getSelectedRegion();
   items.push(
     {
       label: '$(refresh) Refresh Status'
+    },
+    {
+      label: `$(globe) Change Region`,
+      detail: `Current: ${currentRegion.name}`
     },
     {
       label: '$(sign-out) Logout'
@@ -2084,13 +2176,13 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
   // User not authenticated at all
   if (state.auth === 'not_authenticated') {
-    // Primary action
+    // Primary action - only login available before authentication
     items.push({
       label: '$(key) Login',
       detail: 'Authenticate with TensorFleet',
       kind: vscode.QuickPickItemKind.Default
     });
-
+    
     const selection = await vscode.window.showQuickPick(items, {
       placeHolder: 'Not Logged In',
       ignoreFocusOut: true
@@ -2102,11 +2194,13 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     return;
   }
 
-  // VM Manager auth error (user is logged in but VM Manager rejected token)
+  // VM Manager unavailable (user is logged in but VM Manager can't be reached)
   if (state.connection === 'not_authenticated') {
+    const currentRegion = regions.getSelectedRegion();
+    
     items.push({
-      label: '$(warning) VM Manager auth error',
-      detail: state.error || 'Current token was rejected by VM Manager',
+      label: '$(warning) VM Manager unavailable',
+      detail: state.error || 'Service may not be deployed in this region',
       kind: vscode.QuickPickItemKind.Default
     });
 
@@ -2122,18 +2216,26 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       });
     }
 
-    items.push({
-      label: '$(sign-out) Logout',
-      detail: 'Logout from TensorFleet'
-    });
+    items.push(
+      {
+        label: `$(globe) Change Region`,
+        detail: `Current: ${currentRegion.name}`
+      },
+      {
+        label: '$(sign-out) Logout',
+        detail: 'Logout from TensorFleet'
+      }
+    );
 
     const selection = await vscode.window.showQuickPick(items, {
-      placeHolder: 'VM Manager auth error',
+      placeHolder: 'VM Manager unavailable',
       ignoreFocusOut: true
     });
 
     if (selection?.label.includes('Retry') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
+    } else if (selection?.label.includes('Change Region')) {
+      await selectRegion(context);
     } else if (selection?.label.includes('Logout')) {
       await handleLogout(context);
     }
@@ -2142,12 +2244,14 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
   // API disconnected state
   if (state.connection === 'disconnected') {
+    const currentRegion = regions.getSelectedRegion();
+    
     // Primary action
     items.push({
       label: '$(refresh) Retry Connection',
       detail: state.error || 'Attempt to reconnect'
     });
-
+    
     // Separator
     items.push({
       label: '',
@@ -2155,10 +2259,16 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     });
 
     // Secondary actions (always available while authenticated)
-    items.push({
-      label: '$(sign-out) Logout',
-      detail: 'Logout from TensorFleet'
-    });
+    items.push(
+      {
+        label: `$(globe) Change Region`,
+        detail: `Current: ${currentRegion.name}`
+      },
+      {
+        label: '$(sign-out) Logout',
+        detail: 'Logout from TensorFleet'
+      }
+    );
 
     const selection = await vscode.window.showQuickPick(items, {
       placeHolder: 'API Disconnected',
@@ -2167,6 +2277,8 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
 
     if (selection?.label.includes('Retry') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
+    } else if (selection?.label.includes('Change Region')) {
+      await selectRegion(context);
     } else if (selection?.label.includes('Logout')) {
       await handleLogout(context);
     }
@@ -2239,6 +2351,8 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       terminal.show();
     } else if (selection.label.includes('Refresh Status') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
+    } else if (selection.label.includes('Change Region')) {
+      await selectRegion(context);
     } else if (selection.label.includes('Logout')) {
       await handleLogout(context);
     }
@@ -2330,6 +2444,61 @@ function formatHeader(
         label: '$(sync~spin) Checking...',
         detail: 'Determining VM status'
       };
+}
+}
+
+// ============================================================================
+// Region Selection
+// ============================================================================
+
+/**
+ * Show region selection quick pick
+ */
+async function selectRegion(_context: vscode.ExtensionContext) {
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('region.select', { phase: 'start' });
+
+  const items = regions.getRegionQuickPickItems();
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select TensorFleet region',
+    title: 'TensorFleet: Select Region',
+    matchOnDescription: true,
+    matchOnDetail: true
+  });
+
+  if (!selected) {
+    telemetry?.trackEvent('region.select', { phase: 'cancelled' });
+    return;
+  }
+
+  const regionId = regions.getRegionIdFromQuickPick(selected.label);
+  if (!regionId) {
+    telemetry?.trackEvent('region.select', { phase: 'error', reason: 'invalid_selection' });
+    return;
+  }
+
+  try {
+    await regions.setSelectedRegion(regionId);
+    
+    const newRegion = regions.getSelectedRegion();
+    telemetry?.trackEvent('region.select', { phase: 'success', region: regionId });
+
+    // Refresh VM Manager status automatically
+    if (vmManagerIntegration) {
+      vmManagerIntegration.refreshStatus(false);
+    }
+
+    vscode.window.showInformationMessage(
+      `Region changed to ${newRegion.name}. API endpoints updated.`
+    );
+
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'selectRegion' });
+    telemetry?.trackEvent('region.select', { phase: 'error' });
+    vscode.window.showErrorMessage(
+      `Failed to change region: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -2357,11 +2526,11 @@ async function handleLogin(context: vscode.ExtensionContext) {
       unifiedStatusCoordinator.updateAuth('checking');
     }
     await auth.authenticate(context);
-
+    
     console.log('[TensorFleet] Authentication completed, updating status...');
     await updateUnifiedAuthStatus(context);
     await updateAuthenticatedContext(context);
-
+    
     // Force immediate status update
     const isAuth = await auth.isAuthenticated(context);
     console.log('[TensorFleet] Auth status after login:', isAuth);
@@ -2369,13 +2538,13 @@ async function handleLogin(context: vscode.ExtensionContext) {
     if (unifiedStatusCoordinator) {
       unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
     }
-
+    
     // Trigger VM Manager refresh after login
     if (vmManagerIntegration) {
       console.log('[TensorFleet] Refreshing VM Manager status...');
       vmManagerIntegration.refreshStatus(false);
     }
-
+    
     console.log('[TensorFleet] Login process completed');
   } catch (error) {
     console.error('[TensorFleet] Login error:', error);
@@ -2407,4 +2576,40 @@ async function handleLogout(context: vscode.ExtensionContext) {
  */
 export async function showAuthStatus(context: vscode.ExtensionContext) {
   await showUnifiedMenu(context);
+}
+
+// ============================================================================
+// Development-Only Functions
+// ============================================================================
+
+/**
+ * Show debug information (dev mode only)
+ */
+async function showDebugInfo(context: vscode.ExtensionContext) {
+  if (!isDev()) return;
+  
+  const state = unifiedStatusCoordinator?.getState();
+  const currentRegion = regions.getSelectedRegion();
+  
+  const info = {
+    mode: getMode(),
+    region: currentRegion.id,
+    regionName: currentRegion.name,
+    backendUrl: regions.getBackendUrl(),
+    vmManagerUrl: regions.getVmManagerUrl(),
+    authState: state?.auth,
+    vmState: state?.vmState,
+    connectionState: state?.connection,
+    ipAddress: state?.ipAddress,
+    extensionPath: context.extensionPath,
+  };
+  
+  env.log('Debug info:', info);
+  
+  const document = await vscode.workspace.openTextDocument({
+    content: JSON.stringify(info, null, 2),
+    language: 'json'
+  });
+  
+  await vscode.window.showTextDocument(document);
 }
