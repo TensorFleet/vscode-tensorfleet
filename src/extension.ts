@@ -270,6 +270,11 @@ const UNIQUE_PANELS: UniquePanel[] = [
     title: '3D View',
     render: htmlRenderer('visualization-dashboard.html')
   },
+  {
+    id: 'tensorfleet-drone-view-list',
+    title: 'Drone and ROS views',
+    render: htmlRenderer('drone-view-list.html')
+  }
 ];
 
 // -----------------------------------------------------------------------------

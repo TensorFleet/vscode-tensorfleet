@@ -77,44 +77,8 @@
           "when": "tensorfleet.is_authenticated"
         },
         {
-          "id": "tensorfleet-map-panel",
-          "name": "Map Panel",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-view-3d",
-          "name": "3D Views",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-image-panel",
-          "name": "Image Panel",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-aiops",
-          "name": "AI Ops",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-ros2-baselines",
-          "name": "ROS 2 & Stable Baselines",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-teleops-panel",
-          "name": "Teleops Panel",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-raw-messages-panel",
-          "name": "Raw Messages Panel",
+          "id": "tensorfleet-drone-view-list",
+          "name": "Drone and ROS views",
           "type": "webview",
           "when": "tensorfleet.is_authenticated"
         }
