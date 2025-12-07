@@ -243,12 +243,16 @@ const UNIQUE_PANELS: UniquePanel[] = [
     <h1 class="viewport__title">Tensorfleet</h1>
     <div class="viewport__actions">
       <button class="viewport__action" id="tf-logout">Logout</button>
+      <button class="viewport__action--secondary" id="tf-back-page">Back</button>
     </div>
   </div>
   <script>
     const vscode = acquireVsCodeApi();
     document.getElementById('tf-logout')?.addEventListener('click', () => {
       vscode.postMessage({ command: 'logout' });
+    });
+    document.getElementById('tf-back-page')?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'back-page' });
     });
   </script>
 </body>
@@ -259,6 +263,9 @@ const UNIQUE_PANELS: UniquePanel[] = [
       if (!message || !message.command) return;
       if (message.command === 'logout') {
         await vscode.commands.executeCommand('tensorfleet.logout');
+      }
+      if (message.command === 'back-page') {
+        await vscode.commands.executeCommand('tensorfleet.closeAccountPanel');
       }
     },
     localResourceRoots: ({ context }) => [
@@ -274,6 +281,11 @@ const UNIQUE_PANELS: UniquePanel[] = [
     id: 'tensorfleet-drone-view-list',
     title: 'Drone and ROS views',
     render: htmlRenderer('drone-view-list.html')
+  },
+  {
+    id: 'tensorfleet-help-panel',
+    title: 'Help panel',
+    render: htmlRenderer('help-panel.html')
   }
 ];
 
@@ -354,6 +366,7 @@ export function activate(context: vscode.ExtensionContext) {
   unifiedStatusCoordinator = new UnifiedStatusCoordinator(context);
 
   // Initialize auth state
+  vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
   updateUnifiedAuthStatus(context);
   updateAuthenticatedContext(context);
 
@@ -400,6 +413,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Tooling / misc
   const toolingProvider = new ToolingViewProvider(context);
+
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('tensorfleet-tooling-view', toolingProvider, {
       webviewOptions: { retainContextWhenHidden: true }
@@ -471,6 +485,28 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.authStatus', () => showUnifiedMenu(context))
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openAccountPanel', () => showAccountPanel(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.closeAccountPanel', () => closeAccountPanel(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openHelpPanel', () => showHelpPanel(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.closeHelpPanel', () => closeHelpPanel(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openDroneViewsPanel', () => openDroneViewsPanel(context))
+  );
+
+
 
   // ROS bridge commands removed; panels use embedded Foxglove networking.
 
@@ -2231,6 +2267,28 @@ function buildMenuForState(
   return items;
 }
 
+
+async function showAccountPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "account");
+}
+
+async function closeAccountPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "");
+}
+
+async function showHelpPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "help");
+}
+
+async function closeHelpPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "");
+}
+
+async function openDroneViewsPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
+}
+
+
 /**
  * Show unified menu (adaptive based on state)
  */
@@ -2582,6 +2640,8 @@ async function handleLogout(context: vscode.ExtensionContext) {
   await updateUnifiedAuthStatus(context);
   await updateAuthenticatedContext(context);
   void vscode.window.showInformationMessage('Logged out successfully');
+
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "");
 
   // Reset VM Manager state after logout
   if (vmManagerIntegration) {
