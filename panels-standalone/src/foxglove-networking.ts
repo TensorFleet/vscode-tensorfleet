@@ -15,7 +15,6 @@ import CommonRosTypes from "@lichtblick/rosmsg-msgs-common";
 import type { MessageDefinition } from "@lichtblick/message-definition";
 import {
   ProxyWebSocketClient,
-  type ProxyConnectionConfig,
   getProxyWebSocketUrl,
   ROS_PORTS,
 } from "./ws-proxy-client";
@@ -89,7 +88,7 @@ type ResolvedService = {
 
 /**
  * Connection configuration for FoxgloveWsClient
- * Supports both direct WebSocket connection and proxy through vm-manager
+ * Currently routed through the vm-manager WebSocket proxy only.
  */
 export interface FoxgloveConnectionConfig {
   /** 
@@ -100,9 +99,12 @@ export interface FoxgloveConnectionConfig {
 
   /**
    * Proxy connection mode: Connect through vm-manager WebSocket proxy
-   * Requires vmManagerUrl, token, nodeId, and optionally targetPort
+   * Requires proxyUrl (or vmManagerUrl), token, nodeId, and optionally targetPort
    */
   useProxy?: boolean;
+
+  /** Fully qualified WebSocket proxy URL (e.g., wss://eu.vm.tensorfleet.net/ws) */
+  proxyUrl?: string;
 
   /** VM Manager base URL for proxy mode (e.g., https://eu.vm.tensorfleet.net) */
   vmManagerUrl?: string;
@@ -464,11 +466,18 @@ export class FoxgloveWsClient {
    */
   private createWebSocket(): WebSocket {
     const config = this.connectionConfig;
+    const useProxy = config.useProxy ?? true;
 
     // Proxy mode: connect through vm-manager
-    if (config.useProxy) {
-      if (!config.vmManagerUrl) {
-        throw new Error("[FoxgloveWsClient] Proxy mode requires vmManagerUrl");
+    if (useProxy) {
+      const proxyUrl = config.proxyUrl
+        ? getProxyWebSocketUrl(config.proxyUrl)
+        : config.vmManagerUrl
+          ? getProxyWebSocketUrl(config.vmManagerUrl)
+          : undefined;
+
+      if (!proxyUrl) {
+        throw new Error("[FoxgloveWsClient] Proxy mode requires proxyUrl or vmManagerUrl");
       }
       if (!config.token) {
         throw new Error("[FoxgloveWsClient] Proxy mode requires token");
@@ -477,7 +486,6 @@ export class FoxgloveWsClient {
         throw new Error("[FoxgloveWsClient] Proxy mode requires nodeId");
       }
 
-      const proxyUrl = getProxyWebSocketUrl(config.vmManagerUrl);
       const targetPort = config.targetPort ?? ROS_PORTS.FOXGLOVE_BRIDGE;
 
       console.log(`[FoxgloveWsClient] Creating proxy connection to ${proxyUrl} for node ${config.nodeId}:${targetPort}`);
@@ -502,26 +510,19 @@ export class FoxgloveWsClient {
       );
 
       // Return a WebSocket-like shim that manages the proxy handshake before opening
-      return this.createProxyWebSocketShim();
+      return this.createProxyWebSocketShim(proxyUrl);
     }
 
-    // Direct mode: connect directly to VM IP
-    // const url = config.url;
-    // if (!url) {
-    //   throw new Error("[FoxgloveWsClient] Direct mode requires url");
-    // }
-
-    // console.log(`[FoxgloveWsClient] Creating direct connection to ${url}`);
-    // return new WebSocket(url, [FoxgloveClient.SUPPORTED_SUBPROTOCOL]);
-    throw new Error("[FoxgloveWsClient] Direct connection disabled. Use proxy mode.");
+    throw new Error("[FoxgloveWsClient] Proxy mode only is supported.");
   }
 
   /**
    * Create a WebSocket-like shim for proxy mode
    * This allows FoxgloveClient to attach handlers before the proxy connects
    */
-  private createProxyWebSocketShim(): WebSocket {
+  private createProxyWebSocketShim(proxyUrl: string): WebSocket {
     const proxyClient = this.proxyClient!;
+    const requestedProtocol = FoxgloveClient.SUPPORTED_SUBPROTOCOL;
 
     // Capture any existing handlers so we can wrap them
     const baseHandlers = proxyClient.getEventHandlers();
@@ -534,6 +535,7 @@ export class FoxgloveWsClient {
 
     // Track ready state
     let readyState: number = WebSocket.CONNECTING;
+    let negotiatedProtocol: string = requestedProtocol;
 
     // Message queue for messages sent before connected (normalized to string or ArrayBuffer)
     const messageQueue: Array<string | ArrayBuffer> = [];
@@ -598,8 +600,10 @@ export class FoxgloveWsClient {
       // Additional required properties
       bufferedAmount: 0,
       extensions: "",
-      protocol: "",
-      url: this.connectionConfig.vmManagerUrl || "",
+      get protocol() {
+        return negotiatedProtocol;
+      },
+      url: proxyUrl,
 
       // Event listener methods (not used by FoxgloveClient but required by interface)
       addEventListener: () => { },
@@ -614,6 +618,7 @@ export class FoxgloveWsClient {
         ...baseHandlers,
         onOpen: () => {
           readyState = WebSocket.OPEN;
+          negotiatedProtocol = proxyClient.getRawWebSocket()?.protocol || negotiatedProtocol;
           baseHandlers.onOpen?.();
 
           // Flush queued messages

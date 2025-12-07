@@ -908,13 +908,13 @@ async function openDedicatedPanel(
     }
 
     // Check if view has a custom HTML template
-    if (view.htmlTemplate) {
-      panel.webview.html = getCustomPanelHtml(view, panel.webview, context, cspSource);
-      telemetry?.trackEvent('panel.open', {
-        panelId: view.id,
-        kind: view.panelKind ?? 'standard',
-        template: view.htmlTemplate,
-        phase: 'success'
+  if (view.htmlTemplate) {
+    panel.webview.html = await getCustomPanelHtml(view, panel.webview, context, cspSource);
+    telemetry?.trackEvent('panel.open', {
+      panelId: view.id,
+      kind: view.panelKind ?? 'standard',
+      template: view.htmlTemplate,
+      phase: 'success'
       });
       return panel;
     }
@@ -959,7 +959,7 @@ function getTerminalPanelHtml(view: DroneViewport, imageUri: string, cspSource: 
   });
 }
 
-function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, context: vscode.ExtensionContext, cspSource: string): string {
+async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, context: vscode.ExtensionContext, cspSource: string): Promise<string> {
   if (!view.htmlTemplate) {
     throw new Error('No HTML template specified for custom panel');
   }
@@ -1020,12 +1020,12 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   return template;
 }
 
-function getStandalonePanelHtml(
+async function getStandalonePanelHtml(
   panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
-): string {
+): Promise<string> {
   const htmlPath = path.join(__dirname, '..', 'panels-standalone', 'dist', `${panelName}.html`);
 
   if (!fs.existsSync(htmlPath)) {
@@ -1049,6 +1049,26 @@ function getStandalonePanelHtml(
     html = html.replace(/<meta[^>]+Content-Security-Policy[^>]+>/i, cspMeta);
   } else {
     html = html.replace('<head>', `<head>\n  ${cspMeta}`);
+  }
+
+  // Inject TensorFleet VM manager configuration into the webview so that
+  // panels-standalone ROS2 bridge can discover proxy settings.
+  const vmManagerUrl = regions.getVmManagerUrl();
+  const nodeId = vmManagerIntegration?.snapshot.nodeId ?? '';
+  const token = await auth.getToken(context);
+
+  const tfConfigScript = `
+  <script>
+    window.TENSORFLEET_VM_MANAGER_URL = "${vmManagerUrl}";
+    ${nodeId ? `window.TENSORFLEET_NODE_ID = "${nodeId}";` : ''}
+    ${token ? `window.TENSORFLEET_JWT = "${token}";` : ''}
+  </script>
+  `;
+
+  if (html.includes('</head>')) {
+    html = html.replace('</head>', `${tfConfigScript}\n</head>`);
+  } else {
+    html = `${tfConfigScript}\n${html}`;
   }
 
   return html;

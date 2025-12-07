@@ -401,11 +401,20 @@ export function createProxyWebSocket(
 export function getProxyWebSocketUrl(vmManagerUrl: string): string {
     const url = new URL(vmManagerUrl);
 
-    // Convert http(s) to ws(s)
-    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    // If already a websocket URL, just normalize the path
+    if (url.protocol === 'ws:' || url.protocol === 'wss:') {
+        if (!url.pathname || url.pathname === '/') {
+            url.pathname = '/ws';
+        }
+        return url.toString();
+    }
 
-    // Use /ws endpoint
-    return `${protocol}//${url.host}/ws`;
+    // Convert http(s) to ws(s) and ensure /ws path
+    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    const basePath = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : url.pathname;
+    const path = basePath.endsWith('/ws') ? basePath : `${basePath}/ws`;
+
+    return `${protocol}//${url.host}${path}`;
 }
 
 /**

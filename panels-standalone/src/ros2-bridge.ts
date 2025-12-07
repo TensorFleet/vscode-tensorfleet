@@ -1,7 +1,7 @@
 // ros2-bridge.ts
 /**
  * ROS2 Bridge for Standalone Mode
- * Connects directly to Foxglove Bridge WebSocket (CDR + services).
+ * Connects to Foxglove Bridge WebSocket (CDR + services) via the vm-manager proxy.
  *
  * Constraints:
  *  - No rosbridge usage.
@@ -10,6 +10,7 @@
  */
 
 import { FoxgloveWsClient } from "./foxglove-networking";
+import { ROS_PORTS } from "./ws-proxy-client";
 
 export type ConnectionMode = "foxglove";
 
@@ -309,20 +310,32 @@ export class ROS2Bridge {
 
   connect(_mode: ConnectionMode = "foxglove", targetPort?: number) {
     // @ts-ignore
-    const vmIp = (window as any).TENSORFLEET_VM_IP || "172.16.0.10";
-    // @ts-ignore
     const proxyUrl = (window as any).TENSORFLEET_PROXY_URL;
+    // @ts-ignore
+    const vmManagerUrl = (window as any).TENSORFLEET_VM_MANAGER_URL;
     // @ts-ignore
     const nodeId = (window as any).TENSORFLEET_NODE_ID;
     // @ts-ignore
     const token = (window as any).TENSORFLEET_JWT;
 
     // Default to 8765 (Foxglove Bridge) if not specified
-    const port = targetPort ?? 8765;
+    const port = targetPort ?? ROS_PORTS.FOXGLOVE_BRIDGE;
 
-    let url = `ws://${vmIp}:${port}`;
-    if (proxyUrl && nodeId && token) {
-      url = proxyUrl;
+    if (!proxyUrl && !vmManagerUrl) {
+      // eslint-disable-next-line no-console
+      console.error("[ROS2Bridge] Missing proxy URL for vm-manager WebSocket proxy. Expected window.TENSORFLEET_PROXY_URL or window.TENSORFLEET_VM_MANAGER_URL to be set in the webview HTML.", {
+        proxyUrl,
+        vmManagerUrl,
+      });
+      return;
+    }
+    if (!nodeId || !token) {
+      // eslint-disable-next-line no-console
+      console.error("[ROS2Bridge] Missing nodeId or token for proxy connection. Expected window.TENSORFLEET_NODE_ID and window.TENSORFLEET_JWT to be set in the webview HTML.", {
+        hasNodeId: !!nodeId,
+        hasToken: !!token,
+      });
+      return;
     }
 
     if (this.client) {
@@ -332,7 +345,25 @@ export class ROS2Bridge {
         // ignore
       }
     }
-    this.client = new FoxgloveWsClient({ url, token, nodeId, targetPort: port });
+
+    const tokenPreview = typeof token === "string" ? `${token.slice(0, 8)}…` : undefined;
+    // eslint-disable-next-line no-console
+    console.log("[ROS2Bridge] Connecting via vm-manager proxy", {
+      proxyUrl: proxyUrl ?? null,
+      vmManagerUrl: vmManagerUrl ?? null,
+      nodeId,
+      port,
+      tokenPreview,
+    });
+
+    this.client = new FoxgloveWsClient({
+      useProxy: true,
+      proxyUrl,
+      vmManagerUrl,
+      token,
+      nodeId,
+      targetPort: port,
+    });
 
     // Needed to compute 3D transforms.
     this.client.subscribe("/tf");

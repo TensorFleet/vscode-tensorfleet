@@ -22,6 +22,7 @@ type VmState =
 // API response types
 interface VmStatusResponse {
   status: string;
+  vm_id?: string;
   ip_address?: string;
   updated_at?: string;
 }
@@ -273,7 +274,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       return this.createSnapshot({
         connection: 'connected',
         vmState: resolvedState,
-        nodeId: info?.id,
+        nodeId: info?.id ?? status?.vm_id,
         ipAddress: info?.ip_address || status?.ip_address,
         provider: info?.provider,
         region: info?.region,
