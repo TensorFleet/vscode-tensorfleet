@@ -67,7 +67,10 @@ No more environment juggling or shell acrobatics.
 ## 📦 Getting Started
 
 ### For Extension Development
-<video src="media/bun-watch.mp4" poster="media/bun-watch-thumbnail.jpg" width="100%" controls></video>
+#### Watch the demo video
+<video src="./media/bun-watch.mp4" poster="./media/bun-watch-thumbnail.jpg" width="100%" controls>
+  <a href="./media/bun-watch.mp4">Watch the demo video</a>
+</video>
 
 1. **Install dependencies with Bun:**
    ```bash
