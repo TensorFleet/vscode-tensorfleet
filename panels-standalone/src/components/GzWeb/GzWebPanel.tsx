@@ -39,6 +39,9 @@ type VsCodeApi = {
 declare global {
   interface Window {
     acquireVsCodeApi?: () => VsCodeApi;
+    TENSORFLEET_VM_MANAGER_URL?: string;
+    TENSORFLEET_NODE_ID?: string;
+    TENSORFLEET_JWT?: string;
   }
 }
 
@@ -293,10 +296,15 @@ const getInitialValue = (key: string, fallback: string) => {
 };
 
 const getInitialVmBase = () => {
+  // 1. Extension-injected value (highest priority for remote server support)
+  if (typeof window !== 'undefined' && window.TENSORFLEET_VM_MANAGER_URL) {
+    return window.TENSORFLEET_VM_MANAGER_URL;
+  }
+  // 2. Query string override
   const fromQuery = getInitialValue('vm', '');
   if (fromQuery) return fromQuery;
+  // 3. Dev mode same-origin proxy
   if (typeof window !== 'undefined' && window.location.hostname === 'localhost' && window.location.port === '5173') {
-    // Use same-origin so Vite dev proxy handles CORS
     return window.location.origin;
   }
   return 'http://localhost:8080';
@@ -324,8 +332,20 @@ export const GzWebPanel: React.FC = () => {
   const userEditedToken = useRef(false);
 
   const [vmBase, setVmBase] = useState(getInitialVmBase);
-  const [nodeId, setNodeId] = useState(() => getInitialValue('nodeId', ''));
-  const [token, setToken] = useState(() => getInitialValue('token', ''));
+  const [nodeId, setNodeId] = useState(() => {
+    // Extension-injected nodeId takes priority
+    if (typeof window !== 'undefined' && window.TENSORFLEET_NODE_ID) {
+      return window.TENSORFLEET_NODE_ID;
+    }
+    return getInitialValue('nodeId', '');
+  });
+  const [token, setToken] = useState(() => {
+    // Extension-injected JWT takes priority
+    if (typeof window !== 'undefined' && window.TENSORFLEET_JWT) {
+      return window.TENSORFLEET_JWT;
+    }
+    return getInitialValue('token', '');
+  });
   const [autoVmId, setAutoVmId] = useState<string | null>(null);
   const [vmIdFetchState, setVmIdFetchState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [vmIdFetchError, setVmIdFetchError] = useState('');
