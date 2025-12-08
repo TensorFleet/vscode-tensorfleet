@@ -67,13 +67,7 @@ No more environment juggling or shell acrobatics.
 ## 📦 Getting Started
 
 ### For Extension Development
-<!-- for mp4 vfile 
-[![Watch the demo video](media/bun-watch-thumbnail.jpg)](media/bun-watch.mp4)
--->
-
-<!-- for gif file 
-![Watch the demo video](media/bun-watch.gif)
--->
+<video src="media/bun-watch.mp4" poster="media/bun-watch-thumbnail.jpg" width="100%" controls></video>
 
 1. **Install dependencies with Bun:**
    ```bash
