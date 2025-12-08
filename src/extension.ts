@@ -74,21 +74,12 @@ type UniquePanel = {
 
 const DRONE_VIEWS: DroneViewport[] = [
   {
-    id: 'tensorfleet-gazebo',
-    title: 'Gazebo Simulation',
-    description: 'Review Gazebo scenes, sensor overlays, and simulation states for the current drone world.',
-    image: 'gazebo-placeholder.svg',
-    command: 'tensorfleet.openGazeboPanel',
-    actionLabel: 'Open Gazebo Viewer',
-    htmlTemplate: 'visualization.html'
-  },
-  {
     id: 'tensorfleet-gzweb-panel',
-    title: 'gzweb 3D View',
+    title: 'Simulation view',
     description: 'Render Gazebo scenes via gzweb with direct WS or VM manager login shims.',
     image: 'gazebo-placeholder.svg',
     command: 'tensorfleet.openGzWebPanel',
-    actionLabel: 'Open gzweb Viewer',
+    actionLabel: 'Open Simulation View',
     panelKind: 'standard',
     htmlTemplate: 'gzweb-standalone'
   },
