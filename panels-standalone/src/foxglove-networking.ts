@@ -8,9 +8,9 @@ import {
   ServiceCallResponse,
   Parameter,
 } from "@foxglove/ws-protocol";
-import { parseChannel } from "./lichtblick/mcap-support";
+import { parseChannel } from "@lichtblick/mcap-support";
 import { MessageWriter as Ros2MessageWriter } from "@lichtblick/rosmsg2-serialization";
-import rosDatatypesToMessageDefinition from "./lichtblick/suite-base/util/rosDatatypesToMessageDefinition";
+import rosDatatypesToMessageDefinition from "@lichtblick/suite-base/util/rosDatatypesToMessageDefinition";
 import CommonRosTypes from "@lichtblick/rosmsg-msgs-common";
 import type { MessageDefinition } from "@lichtblick/message-definition";
 

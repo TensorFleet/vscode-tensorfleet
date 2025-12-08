@@ -2,48 +2,26 @@
   "fileType": "Plan",
   "version": 1,
   "groundStation": "TensorFleet",
-  "notes": "Used by src/drone_mover.js to generate local ENU waypoints (lat/lon -> offsets from vehicle home).",
+  "notes": "Simple square pattern mission using local ENU offsets from home position.",
   "mission": {
     "cruiseSpeed": 5.0,
     "hoverSpeed": 2.0,
-    "items": [
+    "waypoints": [
       {
-        "type": "Takeoff",
-        "altitude": 1.0,
-        "params": {
-          "pitch": 0,
-          "yaw": 0
-        }
+        "offset": [5.0, 0.0],
+        "label": "WP1_EAST"
       },
       {
-        "type": "Waypoint",
-        "coordinate": [47.397742, 8.545594, 1.0],
-        "params": {
-          "holdTime": 2.0,
-          "acceptanceRadius": 1.0
-        }
+        "offset": [5.0, 5.0],
+        "label": "WP2_NORTHEAST"
       },
       {
-        "type": "Waypoint",
-        "coordinate": [47.397742, 8.54566, 1.0],
-        "params": {
-          "holdTime": 2.0,
-          "acceptanceRadius": 1.0
-        }
+        "offset": [0.0, 5.0],
+        "label": "WP3_NORTH"
       },
       {
-        "type": "Waypoint",
-        "coordinate": [47.39779, 8.54566, 1.0],
-        "params": {
-          "holdTime": 2.0,
-          "acceptanceRadius": 1.0
-        }
-      },
-      {
-        "type": "RTL",
-        "params": {
-          "landImmediately": true
-        }
+        "offset": [0.0, 0.0],
+        "label": "WP4_HOME"
       }
     ]
   },

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}} https: data:; script-src 'nonce-dashboard'; style-src {{cspSource}} 'unsafe-inline';" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Visualization</title>
+    {{styles}}
+  </head>
+  <body>
+    <section class="viewport">
+      <img src="{{base_url}}/media/gazebo-placeholder.svg" alt="visualization placeholder" class="viewport__artwork" />
+
+      <h2 class="viewport__title">3D Visualization</h2>
+      <p class="viewport__description">Display 3D simulator and sensor data</p>
+
+      <div class="viewport__actions">
+        <!-- Primary Buttons -->
+        <button id="simulatorView" class="viewport__action">
+          Simulator View
+        </button>
+
+        <button id="sensorView" class="viewport__action">
+          Sensor View
+        </button>
+
+        <!-- Secondary Button -->
+        <button id="openAllPanels" class="viewport__action viewport__action--secondary">
+          Open All Dashboards
+        </button>
+      </div>
+    </section>
+
+    <script nonce="dashboard">
+      const vscode = acquireVsCodeApi();
+
+      document.getElementById('simulatorView')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'tensorfleet.openGazeboPanel' });
+      });
+
+      document.getElementById('sensorView')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'tensorfleet.openSensor3DPanel' });
+      });
+
+      document.getElementById('openAllPanels')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'tensorfleet.openAllPanels' });
+      });
+    </script>
+  </body>
+</html>
