@@ -1,8 +1,10 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'unsafe-inline' 'unsafe-eval'; img-src {{cspSource}} data: https:; font-src {{cspSource}} data:; connect-src {{cspSource}} https: http: ws: wss:;" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'unsafe-inline' 'unsafe-eval'; img-src {{cspSource}} data: https:; font-src {{cspSource}} data:; connect-src {{cspSource}} https: http: ws: wss:;" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Drone and ROS views</title>
   {{styles}}
@@ -18,7 +20,8 @@
       color: var(--vscode-foreground);
       background: transparent;
       box-sizing: border-box;
-      overflow: hidden; /* keep header fixed, scroll only inside content */
+      overflow: hidden;
+      /* keep header fixed, scroll only inside content */
     }
 
     .tf-root {
@@ -28,14 +31,16 @@
       max-width: 960px;
       margin: 0 auto;
       height: 100%;
-      min-height: 0; /* allow children to shrink for flex scrolling */
+      min-height: 0;
+      /* allow children to shrink for flex scrolling */
     }
 
     .tf-header {
       display: flex;
       flex-direction: column;
       gap: 6px;
-      flex-shrink: 0; /* prevent header from shrinking */
+      flex-shrink: 0;
+      /* prevent header from shrinking */
     }
 
     .tf-header__title {
@@ -86,8 +91,10 @@
       gap: 12px;
       overflow-y: auto;
       padding-right: 2px;
-      flex: 1 1 auto; /* take remaining space and be scrollable */
-      min-height: 0;  /* critical for flex + overflow to work */
+      flex: 1 1 auto;
+      /* take remaining space and be scrollable */
+      min-height: 0;
+      /* critical for flex + overflow to work */
     }
 
     .tf-category {
@@ -148,7 +155,8 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      min-width: 0; /* allow text to truncate */
+      min-width: 0;
+      /* allow text to truncate */
     }
 
     .tf-panel-card__icon {
@@ -204,36 +212,24 @@
     }
   </style>
 </head>
+
 <body>
   <div class="tf-root">
     <header class="tf-header">
       <div class="tf-search">
         <span class="tf-search__icon">🔍</span>
-        <input
-          id="tf-search-input"
-          class="tf-search__input"
-          type="search"
-          placeholder="Search panels by name or description…"
-          autocomplete="off"
-        />
+        <input id="tf-search-input" class="tf-search__input" type="search"
+          placeholder="Search panels by name or description…" autocomplete="off" />
       </div>
     </header>
 
     <main class="tf-content" aria-label="TensorFleet panels list">
-      <section
-        class="tf-category"
-        data-category-id="mission-control"
-        aria-label="Mission Control"
-      >
+      <section class="tf-category" data-category-id="mission-control" aria-label="Mission Control">
         <h2 class="tf-category__title">Mission control</h2>
         <div class="tf-panel-list" id="tf-mission-list"></div>
       </section>
 
-      <section
-        class="tf-category"
-        data-category-id="other"
-        aria-label="Other Panels"
-      >
+      <section class="tf-category" data-category-id="other" aria-label="Other Panels">
         <h2 class="tf-category__title">Other</h2>
         <div class="tf-panel-list" id="tf-other-list"></div>
       </section>
@@ -255,11 +251,11 @@
     const PANELS = [
       // Mission control (3D + map views)
       {
-        id: 'tensorfleet-gazebo',
+        id: 'tensorfleet-gzweb-panel',
         title: 'Simulation view',
         subtitle: '3D world, scenes, and simulation state',
-        description: '3D rendered view from the simulator state',
-        command: 'tensorfleet.openGazeboPanel',
+        description: 'Render Gazebo scenes via gzweb with direct WebSocket or VM manager login.',
+        command: 'tensorfleet.openGzWebPanel',
         category: 'mission',
         icon: '🌍'
       },
@@ -447,4 +443,5 @@
     searchInput.addEventListener('input', applyFilter);
   </script>
 </body>
+
 </html>

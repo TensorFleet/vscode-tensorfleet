@@ -8,9 +8,6 @@ JavaScript/Node.js template for drone control over rosbridge using `roslib`. Inc
 3) Start PX4 + MAVROS + rosbridge in your VM, then run:
    - `bun run restart` - Restart the simulation (resets drone state)
    - `bun src/drone_mover.js` - ARM → TAKEOFF → OFFBOARD waypoint mission → LAND
-     - Reads waypoints from `missions/example_mission.plan` (5m square pattern)
-     - Falls back to 8-point circle if mission plan is missing
-
 
 ## Scripts
 - `src/restart_sim.js`: Restart the PX4 simulation via `/simulation_manager/start_simulation` service. Useful for resetting drone state between test runs.

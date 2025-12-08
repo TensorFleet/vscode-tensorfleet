@@ -144,7 +144,7 @@ Replace the placeholder files in `resources/tools/` with your actual ROS 2 archi
 TensorFleet surfaces VM health through a lightweight status bar item — no extra panels to open or local daemons to manage.
 
 1. **Configure the endpoint**
-   - `tensorfleet.vmManager.apiBaseUrl`: default HTTP endpoint (defaults to `http://localhost:8080`).  
+   - `tensorfleet.vmManager.apiBaseUrl`: base URL for the VM Manager API (defaults to `https://eu.vm.tensorfleet.net`).  
    - `tensorfleet.vmManager.authToken`: optional bearer token sent to `/vms/self/*` APIs when your server enforces JWT auth.
 
 2. **Watch the status bar**  
