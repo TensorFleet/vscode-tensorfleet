@@ -45,6 +45,7 @@
     "onCommand:tensorfleet.showVMManagerMenu",
     "onCommand:tensorfleet.showDroneStatus",
     "onCommand:tensorfleet.selectRegion",
+    "onCommand:tensorfleet.showUnifiedMenu",
     "onCommand:tensorfleet.login"
   ],
   "main": "./dist/extension.js",
@@ -98,18 +99,18 @@
     "commands": [
       {
         "command": "tensorfleet.openGazeboPanel",
-      "title": "TensorFleet: Open Gazebo Workspace",
-      "category": "TensorFleet"
-    },
-    {
-      "command": "tensorfleet.openGzWebPanel",
-      "title": "TensorFleet: Open gzweb 3D View",
-      "category": "TensorFleet"
-    },
-    {
-      "command": "tensorfleet.openAIPanel",
-      "title": "TensorFleet: Open AI Ops Workspace",
-      "category": "TensorFleet"
+        "title": "TensorFleet: Open Gazebo Workspace",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openGzWebPanel",
+        "title": "TensorFleet: Open gzweb 3D View",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openAIPanel",
+        "title": "TensorFleet: Open AI Ops Workspace",
+        "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openROS2Panel",

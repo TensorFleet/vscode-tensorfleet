@@ -329,9 +329,9 @@ let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
 export function activate(context: vscode.ExtensionContext) {
   // Initialize environment/mode detection first (must be before any isDev() calls)
   initializeEnv(context);
-  
+
   env.log('Extension activating in', getMode(), 'mode');
-  
+
   telemetryService = new TelemetryService(context);
   context.subscriptions.push(telemetryService);
   telemetryService.trackEvent('extension.activate', { mode: getMode() });
@@ -427,10 +427,6 @@ export function activate(context: vscode.ExtensionContext) {
     registerTensorFleetCommand('tensorfleet.createNewProject', () => createNewProject(context), {
       feature: 'projects'
     })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.createNewRoboticProject', () => createNewRoboticProject(context))
   );
 
   context.subscriptions.push(
@@ -593,7 +589,7 @@ function registerTensorFleetCommand(
 }
 
 class DashboardViewProvider implements vscode.WebviewViewProvider {
-  constructor(private readonly config: DroneViewport, private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly config: DroneViewport, private readonly context: vscode.ExtensionContext) { }
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
     webviewView.webview.options = {
@@ -674,9 +670,9 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
  * Provider for function-driven unique panels
  */
 class UniqueViewProvider implements vscode.WebviewViewProvider {
-  constructor(private readonly def: UniquePanel, private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly def: UniquePanel, private readonly context: vscode.ExtensionContext) { }
 
-  
+
   resolveWebviewView(webviewView: vscode.WebviewView) {
     const defaultRoots = [
       vscode.Uri.joinPath(this.context.extensionUri, 'media'),
@@ -740,8 +736,7 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
           if (command.startsWith('tensorfleet.')) {
             vscode.commands.executeCommand(command, ...args).then(undefined, (error) => {
               vscode.window.showErrorMessage(
-                `Failed to execute command "${command}": ${
-                  error instanceof Error ? error.message : String(error)
+                `Failed to execute command "${command}": ${error instanceof Error ? error.message : String(error)
                 }`
               );
             });
@@ -752,8 +747,7 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
           if (command === 'openAllPanels') {
             vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
               vscode.window.showErrorMessage(
-                `Failed to execute command "tensorfleet.openAllPanels": ${
-                  error instanceof Error ? error.message : String(error)
+                `Failed to execute command "tensorfleet.openAllPanels": ${error instanceof Error ? error.message : String(error)
                 }`
               );
             });
@@ -799,7 +793,7 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
  * Tooling side view (unchanged)
  */
 class ToolingViewProvider implements vscode.WebviewViewProvider {
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly context: vscode.ExtensionContext) { }
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
     webviewView.webview.options = {
@@ -827,7 +821,7 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
   private renderHtml(webview: vscode.Webview): string {
     const styles = getBaseStyles();
     const cspSource = webview.cspSource;
-    
+
     return loadTemplate('tooling-view.html', {
       cspSource,
       styles
@@ -865,31 +859,31 @@ async function openDedicatedPanel(
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
       }
 
-    if (view.htmlTemplate == 'raw-messages-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
+      if (view.htmlTemplate == 'raw-messages-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
 
-    if (view.htmlTemplate === 'gzweb-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
-      
-    if (view.htmlTemplate == 'map-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
+      if (view.htmlTemplate === 'gzweb-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
 
-    if (view.htmlTemplate == 'sensor-3d-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
-    }
+      if (view.htmlTemplate == 'map-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
 
-    if (view.htmlTemplate == 'raw-messages-standalone') {
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
-      localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      if (view.htmlTemplate == 'sensor-3d-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+
+      if (view.htmlTemplate == 'raw-messages-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
     }
-  }
 
     const panel = vscode.window.createWebviewPanel(
       viewType,
@@ -1012,7 +1006,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   if (view.htmlTemplate === 'gzweb-standalone') {
     return getStandalonePanelHtml('gzweb', webview, context, cspSource);
   }
-  
+
   // Load the custom HTML template directly
   const templatePath = path.join(__dirname, '..', 'src', 'templates', view.htmlTemplate);
   let template = fs.readFileSync(templatePath, 'utf8');
@@ -1040,7 +1034,7 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 
   // Add CSP meta tag for security
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https:; frame-src ${cspSource};">`;
-  
+
   // Insert CSP meta tag in head if not already present
   if (!template.includes('Content-Security-Policy')) {
     template = template.replace('<head>', `<head>\n    ${cspMeta}`);
@@ -1223,6 +1217,7 @@ async function createNewProjectInternal(
   context: vscode.ExtensionContext,
   options: NewProjectOptions
 ) {
+  const telemetry = getTelemetry();
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
     prompt: `Enter a name for your new ${options.kindLabel} project`,
@@ -1511,7 +1506,7 @@ function startMCPServer(context: vscode.ExtensionContext) {
   }
 
   const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
-  
+
   if (!fs.existsSync(mcpServerPath)) {
     telemetry?.trackEvent('mcpServer.start', { phase: 'error', reason: 'missingBinary' });
     vscode.window.showErrorMessage(
@@ -1612,7 +1607,7 @@ let drones: DroneInfo[] = [];
 
 async function initializeStatusBarItems(context: vscode.ExtensionContext) {
   console.log('[TensorFleet] Initializing status bar items...');
-  
+
   // Create ROS version status bar item
   rosVersionStatusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
@@ -1703,10 +1698,10 @@ async function updateStatusBars() {
 
   if (isTFProject) {
     console.log('[TensorFleet] TensorFleet project detected, showing status bars');
-    
+
     // Detect ROS version from config or system
     await detectRosVersion();
-    
+
     // Initialize drone status
     await updateDroneStatus();
 
@@ -1946,14 +1941,14 @@ async function showDroneStatus() {
   const items = drones.map((drone) => {
     const statusIcon =
       drone.status === 'flying' ? '$(rocket)' :
-      drone.status === 'armed' ? '$(target)' :
-      drone.status === 'idle' ? '$(circle-outline)' :
-      '$(circle-slash)';
+        drone.status === 'armed' ? '$(target)' :
+          drone.status === 'idle' ? '$(circle-outline)' :
+            '$(circle-slash)';
 
     const batteryIcon =
       drone.battery > 50 ? '$(pulse)' :
-      drone.battery > 25 ? '$(warning)' :
-      '$(alert)';
+        drone.battery > 25 ? '$(warning)' :
+          '$(alert)';
 
     return {
       label: `${statusIcon} ${drone.name}`,
@@ -2022,7 +2017,7 @@ Click "Open Gazebo Workspace" to view in simulation.
       vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
     }
   });
-  }
+}
 
 // ============================================================================
 // ROS2 Connection Management
@@ -2103,14 +2098,14 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
  * Update unified auth status
  */
 async function updateUnifiedAuthStatus(context: vscode.ExtensionContext) {
-console.log('[TensorFleet] updateUnifiedAuthStatus called');
+  console.log('[TensorFleet] updateUnifiedAuthStatus called');
   if (!unifiedStatusCoordinator) {
     console.log('[TensorFleet] No unified status coordinator');
     return;
   }
 
   const isAuth = await auth.isAuthenticated(context);
-console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
+  console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
   unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
 }
 
@@ -2134,7 +2129,7 @@ function buildMenuForState(
         primaryActions.push({
           label: '$(terminal) Connect via SSH'
         });
-}
+      }
       break;
 
     case 'stopped':
@@ -2160,7 +2155,7 @@ function buildMenuForState(
   // Add primary actions if any exist
   if (primaryActions.length > 0) {
     items.push(...primaryActions);
-    
+
     // Add separator after primary actions
     items.push({
       label: '',
@@ -2233,7 +2228,7 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       detail: 'Authenticate with TensorFleet',
       kind: vscode.QuickPickItemKind.Default
     });
-    
+
     const selection = await vscode.window.showQuickPick(items, {
       placeHolder: 'Not Logged In',
       ignoreFocusOut: true
@@ -2248,7 +2243,7 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   // VM Manager unavailable (user is logged in but VM Manager can't be reached)
   if (state.connection === 'not_authenticated') {
     const currentRegion = regions.getSelectedRegion();
-    
+
     items.push({
       label: '$(warning) VM Manager unavailable',
       detail: state.error || 'Service may not be deployed in this region',
@@ -2296,13 +2291,13 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   // API disconnected state
   if (state.connection === 'disconnected') {
     const currentRegion = regions.getSelectedRegion();
-    
+
     // Primary action
     items.push({
       label: '$(refresh) Retry Connection',
       detail: state.error || 'Attempt to reconnect'
     });
-    
+
     // Separator
     items.push({
       label: '',
@@ -2495,7 +2490,7 @@ function formatHeader(
         label: '$(sync~spin) Checking...',
         detail: 'Determining VM status'
       };
-}
+  }
 }
 
 // ============================================================================
@@ -2531,7 +2526,7 @@ async function selectRegion(_context: vscode.ExtensionContext) {
 
   try {
     await regions.setSelectedRegion(regionId);
-    
+
     const newRegion = regions.getSelectedRegion();
     telemetry?.trackEvent('region.select', { phase: 'success', region: regionId });
 
@@ -2577,11 +2572,11 @@ async function handleLogin(context: vscode.ExtensionContext) {
       unifiedStatusCoordinator.updateAuth('checking');
     }
     await auth.authenticate(context);
-    
+
     console.log('[TensorFleet] Authentication completed, updating status...');
     await updateUnifiedAuthStatus(context);
     await updateAuthenticatedContext(context);
-    
+
     // Force immediate status update
     const isAuth = await auth.isAuthenticated(context);
     console.log('[TensorFleet] Auth status after login:', isAuth);
@@ -2589,13 +2584,13 @@ async function handleLogin(context: vscode.ExtensionContext) {
     if (unifiedStatusCoordinator) {
       unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
     }
-    
+
     // Trigger VM Manager refresh after login
     if (vmManagerIntegration) {
       console.log('[TensorFleet] Refreshing VM Manager status...');
       vmManagerIntegration.refreshStatus(false);
     }
-    
+
     console.log('[TensorFleet] Login process completed');
   } catch (error) {
     console.error('[TensorFleet] Login error:', error);
@@ -2638,10 +2633,10 @@ export async function showAuthStatus(context: vscode.ExtensionContext) {
  */
 async function showDebugInfo(context: vscode.ExtensionContext) {
   if (!isDev()) return;
-  
+
   const state = unifiedStatusCoordinator?.getState();
   const currentRegion = regions.getSelectedRegion();
-  
+
   const info = {
     mode: getMode(),
     region: currentRegion.id,
@@ -2654,13 +2649,13 @@ async function showDebugInfo(context: vscode.ExtensionContext) {
     ipAddress: state?.ipAddress,
     extensionPath: context.extensionPath,
   };
-  
+
   env.log('Debug info:', info);
-  
+
   const document = await vscode.workspace.openTextDocument({
     content: JSON.stringify(info, null, 2),
     language: 'json'
   });
-  
+
   await vscode.window.showTextDocument(document);
 }
