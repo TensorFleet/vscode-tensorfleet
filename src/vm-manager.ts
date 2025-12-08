@@ -25,6 +25,8 @@ interface VmStatusResponse {
   vm_id?: string;
   ip_address?: string;
   updated_at?: string;
+  vm_id?: string;
+  vmId?: string;
 }
 
 interface VmInfoResponse extends VmStatusResponse {
@@ -84,6 +86,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     this.context = context;
     this.unifiedCoordinator = unifiedCoordinator || null;
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
+
 
     // Keep status bar item for backward compatibility, but hide it (unified coordinator shows it)
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
@@ -664,9 +667,9 @@ export class VMManagerIntegration implements vscode.Disposable {
     method: string,
     endpoint: string,
     body?: any,
-    options?: { includeAuth?: boolean }
+    options?: { includeAuth?: boolean; baseUrlOverride?: string; tokenOverride?: string }
   ): Promise<T> {
-    const baseUrl = this.getApiBaseUrl();
+    const baseUrl = (options?.baseUrlOverride ?? this.getApiBaseUrl()).trim() || this.getApiBaseUrl();
     const url = new URL(endpoint.replace(/^\//, ''), baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
     const isHttps = url.protocol === 'https:';
     const lib = isHttps ? https : http;

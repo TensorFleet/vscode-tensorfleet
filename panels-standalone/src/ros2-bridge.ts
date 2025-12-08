@@ -420,6 +420,11 @@ export class ROS2Bridge {
       this.discoveredTopics.set(topic, type);
     };
 
+    this.client.onNewTopic = (topic, type) => {
+      console.log("new Foxglove topic:", topic, "type:", type);
+      this.discoveredTopics.set(topic, type);
+    };
+
     this.client.onMessage = (msg) => {
       const ref = {
         topic: msg.topic,
@@ -622,11 +627,19 @@ export class ROS2Bridge {
     return await this.callService<CommandTOL_Response>("/mavros/cmd/land", req);
   }
 
+  getAvailableTopics(): Subscription[] {
+    return Array.from(this.discoveredTopics.entries()).map(([topic, type]) => ({ topic, type }));
+  }
+
+    /** /mavros/param/set (mavros_msgs/srv/ParamSet) */
   async mavrosParamSet(param_id: string, value: ParamValue): Promise<ParamSet_Response> {
     const req: ParamSet_Request = { param_id, value };
     return await this.callService<ParamSet_Response>("/mavros/param/set", req);
   }
 
+  getTopicType(topic: string): string | undefined {
+    return this.discoveredTopics.get(topic);
+  }
   // ---------- RawImage normalization helper ----------
 
   /**
