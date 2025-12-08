@@ -18,7 +18,7 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onView:tensorfleet-gazebo",
+    "onView:tensorfleet-gzweb-panel",
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
     "onView:tensorfleet-image-panel",
@@ -26,7 +26,7 @@
     "onView:tensorfleet-map-panel",
     "onView:tensorfleet-raw-messages-panel",
     "onView:tensorfleet-tooling-view",
-    "onCommand:tensorfleet.openGazeboPanel",
+    "onCommand:tensorfleet.openGzWebPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
     "onCommand:tensorfleet.openImagePanel",
@@ -40,9 +40,10 @@
     "onCommand:tensorfleet.stopMCPServer",
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
-    "onCommand:tensorfleet.showDroneStatus",
     "onCommand:tensorfleet.showVMManagerMenu",
+    "onCommand:tensorfleet.showDroneStatus",
     "onCommand:tensorfleet.selectRegion",
+    "onCommand:tensorfleet.showUnifiedMenu",
     "onCommand:tensorfleet.login"
   ],
   "main": "./dist/extension.js",
@@ -119,16 +120,14 @@
         "icon": "$(question)"
       },
       {
-        "command": "tensorfleet.openGazeboPanel",
-        "title": "Open Gazebo Workspace",
-        "category": "TensorFleet",
-        "icon": "media/tensorfleet-icon.svg"
+        "command": "tensorfleet.openGzWebPanel",
+        "title": "TensorFleet: Open Simulation View",
+        "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openAIPanel",
-        "title": "Open AI Ops Workspace",
-        "category": "TensorFleet",
-        "icon": "media/tensorfleet-icon.svg"
+        "title": "TensorFleet: Open AI Ops Workspace",
+        "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openROS2Panel",
