@@ -927,13 +927,13 @@ async function openDedicatedPanel(
     }
 
     // Check if view has a custom HTML template
-  if (view.htmlTemplate) {
-    panel.webview.html = await getCustomPanelHtml(view, panel.webview, context, cspSource);
-    telemetry?.trackEvent('panel.open', {
-      panelId: view.id,
-      kind: view.panelKind ?? 'standard',
-      template: view.htmlTemplate,
-      phase: 'success'
+    if (view.htmlTemplate) {
+      panel.webview.html = await getCustomPanelHtml(view, panel.webview, context, cspSource);
+      telemetry?.trackEvent('panel.open', {
+        panelId: view.id,
+        kind: view.panelKind ?? 'standard',
+        template: view.htmlTemplate,
+        phase: 'success'
       });
       return panel;
     }
@@ -1043,7 +1043,7 @@ async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, 
   return template;
 }
 
-function getStandalonePanelHtml(
+async function getStandalonePanelHtml(
   panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d' | 'gzweb',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
