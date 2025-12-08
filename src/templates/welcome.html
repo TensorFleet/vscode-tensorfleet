@@ -118,23 +118,23 @@
   </style>
 </head>
 <body>
-  <div class="viewport viewport--panel welcome-root">
+  <div class="viewport viewport--panel welcome-root" data-initial-page="{{initialPage}}">
     <header class="welcome-header">
-      <h1 class="viewport__title">Welcome to TensorFleet</h1>
+      <h1 class="viewport__title">{{title}}</h1>
       <p class="welcome-subtitle">
         A guided setup to get your account, project, and panels ready.
       </p>
     </header>
 
     <div class="welcome-steps">
-      <div class="step-pill" data-step-pill="0">1 · About</div>
-      <div class="step-pill" data-step-pill="1">2 · Account</div>
-      <div class="step-pill" data-step-pill="2">3 · Project</div>
-      <div class="step-pill" data-step-pill="3">4 · Panels</div>
+      <div class="step-pill" data-step-pill="about">1 · About</div>
+      <div class="step-pill" data-step-pill="account">2 · Account</div>
+      <div class="step-pill" data-step-pill="project">3 · Project</div>
+      <div class="step-pill" data-step-pill="panels">4 · Panels</div>
     </div>
 
     <!-- PAGE 1: about + start / skip -->
-    <section class="welcome-page welcome-page--active" data-page="0">
+    <section class="welcome-page welcome-page--active" data-page="about">
       <p class="viewport__description">
         TensorFleet integrates drone simulations, ROS/ROS 2, and AI workflows directly into VS Code.
       </p>
@@ -149,7 +149,7 @@
     </section>
 
     <!-- PAGE 2: account / login -->
-    <section class="welcome-page" data-page="1">
+    <section class="welcome-page" data-page="account">
       <p class="viewport__description">
         First, sign in to your TensorFleet account so we can connect to your VM manager and services.
       </p>
@@ -179,7 +179,7 @@
     </section>
 
     <!-- PAGE 3: project creation -->
-    <section class="welcome-page" data-page="2">
+    <section class="welcome-page" data-page="project">
       <p class="viewport__description">
         Let’s create a new TensorFleet project from templates.
       </p>
@@ -195,6 +195,12 @@
         </button>
       </div>
 
+      <div class="viewport__actions" style="margin-top: 12px; display: none;" data-id="continueProjectContainer">
+        <button class="viewport__action" data-action="continueProject">
+          Continue with existing project
+        </button>
+      </div>
+
       <div class="status-row" data-project-status-row style="display: none;">
         <div class="status-icon status-icon--ok"></div>
         <span class="status-text-ok">Project created! You can proceed to panel selection.</span>
@@ -202,7 +208,7 @@
     </section>
 
     <!-- PAGE 4: panel selection -->
-    <section class="welcome-page" data-page="3">
+    <section class="welcome-page" data-page="panels">
       <p class="viewport__description">
         Pick which panels you want to open initially. You can always open the others later.
       </p>
@@ -254,7 +260,15 @@
   <script>
     const vscode = acquireVsCodeApi();
 
-    let currentPage = 0;
+    const rootEl = document.querySelector('.welcome-root');
+    const initialPageAttr = rootEl?.getAttribute('data-initial-page');
+    let currentPage = initialPageAttr || 'about';
+    if (typeof initialPageAttr === 'string') {
+      const parsed = parseInt(initialPageAttr, 10);
+      if (!Number.isNaN(parsed)) {
+        currentPage = parsed;
+      }
+    }
     let isAuthenticated = false;
 
     const pages = Array.from(document.querySelectorAll('.welcome-page'));
@@ -268,19 +282,20 @@
     const btnLogin = document.querySelector('[data-id="btnLogin"]');
     const goProjectContainer = document.querySelector('[data-id="goProjectContainer"]');
     const btnOpenPanels = document.querySelector('[data-action="openPanels"]');
+    const continueProjectContainer = document.querySelector('[data-id="continueProjectContainer"]');
 
-    function setPage(idx) {
-      if (idx < 0 || idx >= pages.length) return;
-      currentPage = idx;
+    function setPage(id) {
+      currentPage = id;
+      vscode.postMessage({ command: 'welcome.setPage', page: id});
       render();
     }
 
     function render() {
-      pages.forEach((page, i) => {
-        page.classList.toggle('welcome-page--active', i === currentPage);
+      pages.forEach((page) => {
+        page.classList.toggle('welcome-page--active', page.getAttribute('data-page') === currentPage);
       });
-      pills.forEach((pill, i) => {
-        pill.classList.toggle('step-pill--active', i === currentPage);
+      pills.forEach((pill) => {
+        pill.classList.toggle('step-pill--active', pill.getAttribute('data-step-pill') === currentPage);
       });
     }
 
@@ -289,7 +304,7 @@
 
     // Page 1 actions
     document.querySelector('[data-action="startGuided"]')?.addEventListener('click', () => {
-      setPage(1);
+      setPage('account');
     });
 
     // Page 2 actions (account)
@@ -298,12 +313,16 @@
     });
 
     document.querySelector('[data-action="goProject"]')?.addEventListener('click', () => {
-      setPage(2);
+      setPage('project');
     });
 
     // Page 3 actions (project creation)
     document.querySelector('[data-action="createProject"]')?.addEventListener('click', () => {
       vscode.postMessage({ command: 'welcome.createProject' });
+    });
+
+    document.querySelector('[data-action="continueProject"]')?.addEventListener('click', () => {
+      setPage('panels');
     });
 
     // Page 4 panel toggles
@@ -324,6 +343,8 @@
         command: 'welcome.openSelectedPanels',
         panelIds: selectedPanelIds,
       });
+
+      vscode.postMessage({ command: 'welcome.setPage', page: 'end'});
     });
 
     // Messages from extension
@@ -361,7 +382,11 @@
         if (projectStatusRow) {
           projectStatusRow.style.display = 'flex';
         }
-        setPage(3);
+        setPage('panels');
+      } else if (msg.type === 'projectStatus') {
+        if (msg.hasProject && continueProjectContainer) {
+          continueProjectContainer.style.display = 'flex';
+        }
       } else if (msg.type === 'welcomeError') {
         console.error('[welcome] error from extension', msg);
       }
@@ -372,6 +397,7 @@
 
     // Ask extension for current auth status when the page loads
     vscode.postMessage({ command: 'welcome.checkAuth' });
+    vscode.postMessage({ command: 'welcome.checkProject' });
 
     // Poll auth status periodically so logout elsewhere is reflected here
     const AUTH_POLL_INTERVAL_MS = 5000;

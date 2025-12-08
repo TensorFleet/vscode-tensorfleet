@@ -5,6 +5,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
 import { VMManagerIntegration } from './vm-manager';
 import * as auth from './auth';
+import * as help from './help';
 import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
 
@@ -337,6 +338,9 @@ export function activate(context: vscode.ExtensionContext) {
           : 'test'
   });
 
+  // Onboarding initialization
+  help.ensureOnboardingProgressInitialized(context);
+
   // Start MCP bridge for communication between MCP server and VS Code
   mcpBridge = new MCPBridge(context);
   mcpBridge
@@ -527,6 +531,12 @@ export function activate(context: vscode.ExtensionContext) {
   if (context.extensionMode === vscode.ExtensionMode.Development) {
     // Always show in dev mode
     showWelcomePage(context);
+  } else {
+    // If onboarding hasn't ended show it
+    const lastStep = help.loadOnboardingProgress(context).lastCompletedStep;
+    if (lastStep == 'none' || lastStep == 'project' ) {
+      showWelcomePage(context);
+    }
   }
 }
 
@@ -814,7 +824,18 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
 /**
  * Welcome page
  */
-function showWelcomePage(context: vscode.ExtensionContext) {
+async function showWelcomePage(context: vscode.ExtensionContext) {
+  const lastState = help.loadOnboardingProgress(context);
+  if (lastState.lastCompletedStep === 'none') {
+    // If the state is none switch it to the starting page.
+    lastState.lastCompletedStep = 'about';
+    help.saveOnboardingProgress(context, lastState);
+  }
+  let lastStep = lastState.lastCompletedStep;
+  if (lastStep == 'end') {
+    lastStep = 'panels';
+  }
+
   const telemetry = getTelemetry();
 
   const PANEL_COMMANDS: Record<string, string> = {
@@ -847,7 +868,8 @@ function showWelcomePage(context: vscode.ExtensionContext) {
   panel.webview.html = loadTemplate('welcome.html', {
     cspSource,
     styles,
-    title: 'Welcome to TensorFleet'
+    title: `Welcome to TensorFleet`,
+    initialPage: lastStep
   });
 
   panel.webview.onDidReceiveMessage(async (msg) => {
@@ -868,6 +890,22 @@ function showWelcomePage(context: vscode.ExtensionContext) {
           type: 'authStatus',
           authenticated: await auth.isAuthenticated(context)
         });
+        break;
+      }
+
+      case 'welcome.checkProject': {
+        panel.webview.postMessage({
+          type: 'projectStatus',
+          hasProject: await hasTensorfleetMarker()
+        });
+        break;
+      }
+
+      case 'welcome.setPage': {
+        const page: string = msg.page;
+        const state = help.loadOnboardingProgress(context);
+        state.lastCompletedStep = page;
+        help.saveOnboardingProgress(context, state);
         break;
       }
 
@@ -1302,6 +1340,25 @@ type NewProjectOptions = {
   commandLabel: string;
   templateSubdir?: string;
 };
+
+
+/**
+ * Check if the current workspace is a tensorfleet project.
+ */
+async function hasTensorfleetMarker(): Promise<boolean> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return false;
+
+  const root = folders[0].uri;
+  const markerUri = vscode.Uri.joinPath(root, '.tensorfleet');
+
+  try {
+    await vscode.workspace.fs.stat(markerUri);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function createNewProjectInternal(
   context: vscode.ExtensionContext,
@@ -2444,6 +2501,23 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   // Build menu with visual grouping (primary actions, separator, secondary actions)
   const menuItems = buildMenuForState(vmState, ipAddress);
   items.push(...menuItems);
+  
+  const developmentActions: vscode.QuickPickItem[] = [
+    {
+      label: '$(question) Reset Onboarding'
+    }
+  ];
+  if (context.extensionMode === vscode.ExtensionMode.Development) {
+    if (developmentActions) {
+      items.push(...developmentActions);
+    }
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+  }
+
+
 
   const selection = await vscode.window.showQuickPick(items, {
     placeHolder: headerLabel.replace(/\$\([^)]+\)\s*/, ''),
@@ -2487,6 +2561,9 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       vmManagerIntegration.refreshStatus(false);
     } else if (selection.label.includes('Logout')) {
       await handleLogout(context);
+    } else if (selection.label.includes("Reset Onboarding")) {
+      await help.resetOnboardingProgress(context);
+      showWelcomePage(context);
     }
   } catch (error) {
     void vscode.window.showErrorMessage(
