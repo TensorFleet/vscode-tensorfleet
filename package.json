@@ -43,7 +43,7 @@
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
     "onCommand:tensorfleet.showVMManagerMenu",
-    "onCommand:tensorfleet.showDroneStatus"
+    "onCommand:tensorfleet.showDroneStatus",
     "onCommand:tensorfleet.selectRegion",
     "onCommand:tensorfleet.login"
   ],
