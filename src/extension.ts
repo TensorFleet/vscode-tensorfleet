@@ -245,9 +245,9 @@ const UNIQUE_PANELS: UniquePanel[] = [
       style="border: none; background: transparent; border-radius: 0; max-width: 160px; width: auto;"
     />
     <h1 class="viewport__title">Tensorfleet</h1>
-    <div class="viewport__actions">
+    <div class="viewport__actions" style="display:flex; flex-direction:column;">
       <button class="viewport__action" id="tf-logout">Logout</button>
-      <button class="viewport__action--secondary" id="tf-back-page">Back</button>
+      <button class="viewport__action viewport__action--secondary" id="tf-back-page">Back</button>
     </div>
   </div>
   <script>
@@ -261,6 +261,7 @@ const UNIQUE_PANELS: UniquePanel[] = [
   </script>
 </body>
 </html>
+
       `;
     },
     onMessage: async (message, api) => {
@@ -1431,8 +1432,6 @@ async function createNewProjectInternal(
   context: vscode.ExtensionContext,
   options: NewProjectOptions
 ) {
-  const telemetry = getTelemetry();
-
   const telemetry = getTelemetry();
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
