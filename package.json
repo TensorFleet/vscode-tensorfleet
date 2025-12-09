@@ -68,22 +68,16 @@
     "views": {
       "tensorfleet-drone-suite": [
         {
-          "id": "tensorfleet-login",
-          "name": "Account",
-          "type": "webview",
-          "when": "!tensorfleet.is_authenticated"
-        },
-        {
           "id": "tensorfleet-account",
           "name": "Account",
           "type": "webview",
-          "when": "tensorfleet.is_authenticated"
+          "when": "tensorfleet.accountPanelOpen"
         },
         {
           "id": "tensorfleet-drone-view-list",
           "name": "Drone and ROS views",
           "type": "webview",
-          "when": "tensorfleet.is_authenticated"
+          "when": "!tensorfleet.accountPanelOpen"
         }
       ],
       "tensorfleet-tooling": [
@@ -95,6 +89,15 @@
       ]
     },
     "commands": [
+      {
+        "command": "tensorfleet.toggleAccountPanel",
+        "title": "Toggle Account Panel",
+        "category": "TensorFleet",
+        "icon": {
+          "light": "media/avatar_outline.svg",
+          "dark": "media/avatar_outline.svg"
+        }
+      },
       {
         "command": "tensorfleet.openGzWebPanel",
         "title": "TensorFleet: Open Simulation View",
@@ -224,6 +227,11 @@
     },
     "menus": {
       "view/title": [
+        {
+          "command": "tensorfleet.toggleAccountPanel",
+          "group": "navigation@1",
+          "when": "activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
+        },
         {
           "command": "tensorfleet.openGzWebPanel",
           "when": "view == tensorfleet-gzweb-panel",
