@@ -842,7 +842,28 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
  * Provider for function-driven unique panels
  */
 class UniqueViewProvider implements vscode.WebviewViewProvider {
+  private webviewView: vscode.WebviewView | null = null;
+
   constructor(private readonly def: UniquePanel, private readonly context: vscode.ExtensionContext) { }
+
+  async refresh(): Promise<void> {
+    if (!this.webviewView) {
+      return;
+    }
+
+    try {
+      const html = await Promise.resolve(
+        this.def.render({ webview: this.webviewView.webview, context: this.context, panelDef: this.def })
+      );
+      this.webviewView.webview.html = html;
+    } catch (err) {
+      getTelemetry()?.captureError(err, { source: 'UniqueViewProvider.refresh', id: this.def.id });
+      this.webviewView.webview.html = this.renderFallbackHtml(
+        this.webviewView.webview,
+        String(err ?? 'Failed to render')
+      );
+    }
+  }
 
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
@@ -2782,6 +2803,13 @@ async function handleLogin(context: vscode.ExtensionContext) {
 
     if (unifiedStatusCoordinator) {
       unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
+    }
+
+
+    // Refresh account panel
+    const accountPanel = uniquePanelRegistry.get('tensorfleet-account');
+    if (accountPanel) {
+      await accountPanel.refresh();
     }
 
     // Trigger VM Manager refresh after login

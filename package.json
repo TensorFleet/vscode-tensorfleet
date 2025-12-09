@@ -90,6 +90,15 @@
     },
     "commands": [
       {
+        "command": "tensorfleet.toggleAccountPanel",
+        "title": "Toggle Account Panel",
+        "category": "TensorFleet",
+        "icon": {
+          "light": "media/avatar_outline.svg",
+          "dark": "media/avatar_outline.svg"
+        }
+      },
+      {
         "command": "tensorfleet.openGzWebPanel",
         "title": "TensorFleet: Open Simulation View",
         "category": "TensorFleet"
@@ -193,15 +202,6 @@
         "command": "tensorfleet.selectRegion",
         "title": "Select Region",
         "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.toggleAccountPanel",
-        "title": "Toggle Account Panel",
-        "category": "TensorFleet",
-        "icon": {
-          "light": "media/avatar_outline.svg",
-          "dark": "media/avatar_outline.svg"
-        }
       }
     ],
     "configuration": {
@@ -227,6 +227,11 @@
     },
     "menus": {
       "view/title": [
+        {
+          "command": "tensorfleet.toggleAccountPanel",
+          "group": "navigation@1",
+          "when": "activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
+        },
         {
           "command": "tensorfleet.openGzWebPanel",
           "when": "view == tensorfleet-gzweb-panel",
