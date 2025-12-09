@@ -5,6 +5,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
 import { VMManagerIntegration } from './vm-manager';
 import * as auth from './auth';
+import * as help from './help';
 import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
 import * as regions from './regions';
@@ -419,6 +420,7 @@ const UNIQUE_PANELS: UniquePanel[] = [
   </script>
 </body>
 </html>
+
       `;
     },
     onMessage: async (message, api) => {
@@ -430,7 +432,7 @@ const UNIQUE_PANELS: UniquePanel[] = [
       } else if (message.command === 'openDashboard') {
         vscode.env.openExternal(vscode.Uri.parse('https://app.tensorfleet.net/'));
       } else if (message.command === 'back') {
-        await vscode.commands.executeCommand('tensorfleet.toggleAccountPanel');
+        await vscode.commands.executeCommand('tensorfleet.closeAccountPanel');
       }
     },
     localResourceRoots: ({ context }) => [
@@ -446,6 +448,11 @@ const UNIQUE_PANELS: UniquePanel[] = [
     id: 'tensorfleet-drone-view-list',
     title: 'Drone and ROS views',
     render: htmlRenderer('drone-view-list.html')
+  },
+  {
+    id: 'tensorfleet-help-panel',
+    title: 'Help panel',
+    render: htmlRenderer('help-panel.html')
   }
 ];
 
@@ -498,6 +505,7 @@ export function activate(context: vscode.ExtensionContext) {
   telemetryService = new TelemetryService(context);
   context.subscriptions.push(telemetryService);
   telemetryService.trackEvent('extension.activate', { mode: getMode() });
+  help.ensureOnboardingProgressInitialized(context);
 
   // Start MCP bridge for communication between MCP server and VS Code
   mcpBridge = new MCPBridge(context);
@@ -528,6 +536,7 @@ export function activate(context: vscode.ExtensionContext) {
   unifiedStatusCoordinator = new UnifiedStatusCoordinator(context);
 
   // Initialize auth state
+  vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
   updateUnifiedAuthStatus(context);
   updateAuthenticatedContext(context);
 
@@ -575,6 +584,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Tooling / misc
   const toolingProvider = new ToolingViewProvider(context);
+
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('tensorfleet-tooling-view', toolingProvider, {
       webviewOptions: { retainContextWhenHidden: true }
@@ -589,6 +599,12 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     registerTensorFleetCommand('tensorfleet.createNewProject', () => createNewProject(context), {
+      feature: 'projects'
+    })
+  );
+
+  context.subscriptions.push(
+    registerTensorFleetCommand('tensorfleet.createAndOpenNewProject', () => createNewProject(context, true), {
       feature: 'projects'
     })
   );
@@ -649,11 +665,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tensorfleet.logout', () => handleLogout(context))
   );
 
-  // Toggle account panel command
-  context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.toggleAccountPanel', () => toggleAccountPanel(context))
-  );
-
   // Initialize account panel state (closed by default)
   vscode.commands.executeCommand('setContext', 'tensorfleet.accountPanelOpen', false);
 
@@ -666,6 +677,39 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     registerDevCommand('tensorfleet.debugInfo', () => showDebugInfo(context))
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openAccountPanel', () => showAccountPanel(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.closeAccountPanel', () => closeAccountPanel(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openHelpPanel', () => showHelpPanel(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.closeHelpPanel', () => closeHelpPanel(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openDroneViewsPanel', () => openDroneViewsPanel(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openTutorialsGuide', () => openTutorialsGuide(context))
+  )
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.resetOnboarding', () => resetOnboarding(context))
+  )
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openWebsite', () => openWebsite(context))
+  )
+
+
 
   // ROS bridge commands removed; panels use embedded Foxglove networking.
 
@@ -680,6 +724,19 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+
+  // Welcome page.
+  if (context.extensionMode === vscode.ExtensionMode.Development) {
+    // Always show in dev mode
+    showWelcomePage(context);
+  } else {
+    // If onboarding hasn't ended show it
+    const lastStep = help.loadOnboardingProgress(context).lastCompletedStep;
+    if (lastStep == 'none' || lastStep == 'project' ) {
+      showWelcomePage(context);
+    }
+  }
 }
 
 export function deactivate() {
@@ -758,6 +815,16 @@ function registerTensorFleetCommand(
       throw error;
     }
   });
+}
+
+function getImageUrl(
+  webview: vscode.Webview,
+  context: vscode.ExtensionContext,
+  image: string
+): string {
+  return webview
+    .asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', image))
+    .toString();
 }
 
 class DashboardViewProvider implements vscode.WebviewViewProvider {
@@ -988,6 +1055,139 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
 </html>`;
   }
 }
+
+/**
+ * Welcome page
+ */
+async function showWelcomePage(context: vscode.ExtensionContext) {
+  const lastState = help.loadOnboardingProgress(context);
+  if (lastState.lastCompletedStep === 'none') {
+    // If the state is none switch it to the starting page.
+    lastState.lastCompletedStep = 'account';
+    help.saveOnboardingProgress(context, lastState);
+  }
+  let lastStep = lastState.lastCompletedStep;
+  if (lastStep == 'end') {
+    lastStep = 'panels';
+  }
+
+  const telemetry = getTelemetry();
+
+  const PANEL_COMMANDS: Record<string, string> = {
+    'tensorfleet-gazebo': 'tensorfleet.openGazeboPanel',
+    'tensorfleet-teleops-panel': 'tensorfleet.openTeleopsPanel',
+    'tensorfleet-map-panel': 'tensorfleet.openMapPanel',
+    'tensorfleet-sensor-3d-panel': 'tensorfleet.openSensor3DPanel',
+    'tensorfleet-raw-messages-panel': 'tensorfleet.openRawMessagesPanel',
+    'tensorfleet-image-panel': 'tensorfleet.openImagePanel'
+  };
+
+  const panel = vscode.window.createWebviewPanel(
+    'tensorfleet.welcome',
+    'Welcome to TensorFleet',
+    vscode.ViewColumn.Active,
+    {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(context.extensionUri, 'media'),
+        vscode.Uri.joinPath(context.extensionUri, 'src', 'templates')
+      ]
+    }
+  );
+
+  const webview = panel.webview;
+  const cspSource = webview.cspSource;
+  const styles = getBaseStyles();
+
+  panel.webview.html = loadTemplate('welcome.html', {
+    cspSource,
+    styles,
+    title: `Welcome to TensorFleet ${lastStep}`,
+    initialPage: lastStep,
+    onboarding_panels_image: getImageUrl(webview, context, 'onboarding-drone-views.png'),
+    onboarding_new_project_button_image: getImageUrl(webview, context, 'onboarding-create-new-project-button.png'),
+    onboarding_open_new_project: getImageUrl(webview, context, 'onboarding_open_new_project.png')
+  });
+
+  panel.webview.onDidReceiveMessage(async (msg) => {
+    if (!msg || !msg.command) return;
+
+    switch (msg.command) {
+      case 'welcome.login': {
+        await vscode.commands.executeCommand('tensorfleet.login');
+        panel.webview.postMessage({
+          type: 'authStatus',
+          authenticated: await auth.isAuthenticated(context)
+        });
+        break;
+      }
+
+      case 'welcome.checkAuth': {
+        panel.webview.postMessage({
+          type: 'authStatus',
+          authenticated: await auth.isAuthenticated(context)
+        });
+        break;
+      }
+
+      case 'welcome.checkProject': {
+        panel.webview.postMessage({
+          type: 'projectStatus',
+          hasProject: await hasTensorfleetMarker()
+        });
+        break;
+      }
+
+      case 'welcome.setPage': {
+        const page: string = msg.page;
+        const state = help.loadOnboardingProgress(context);
+        state.lastCompletedStep = page;
+        help.saveOnboardingProgress(context, state);
+        break;
+      }
+
+      case 'welcome.createProject': {
+        await vscode.commands.executeCommand('tensorfleet.createAndOpenNewProject');
+        panel.webview.postMessage({ type: 'projectCreated' });
+        break;
+      }
+
+      case 'welcome.openStarterPanels': {
+        const ids = Array.isArray(msg.panelIds) ? msg.panelIds : [];
+        const commandsToRun = new Set<string>();
+
+        commandsToRun.add('tensorfleet.openGzWebPanel');
+        commandsToRun.add('tensorfleet.openMapPanel');
+        commandsToRun.add('tensorfleet.openTutorialsGuide');
+
+        for (const cmd of commandsToRun) {
+          vscode.commands.executeCommand(cmd).then(
+            undefined,
+            (err) => {
+              console.error('[TensorFleet][Welcome] Failed to call command ', cmd, err);
+              telemetry?.captureError(err, { source: 'welcome.openStarterPanels', command: cmd });
+            }
+          );
+        }
+
+        panel.dispose();
+        break;
+      }
+
+      case 'welcome.close': {
+        panel.dispose();
+        break;
+      }
+
+      default: {
+        console.log('[TensorFleet][Welcome] Unknown message:', msg);
+        break;
+      }
+    }
+  });
+}
+
 
 /**
  * Tooling side view (unchanged)
@@ -1409,21 +1609,21 @@ function launchTerminalSession(target: string) {
   });
 }
 
-async function createNewProject(context: vscode.ExtensionContext) {
+async function createNewProject(context: vscode.ExtensionContext, openNew: boolean = false) {
   await createNewProjectInternal(context, {
     kindLabel: 'drone',
     defaultName: 'my-drone-project',
-    commandLabel: 'TensorFleet Project'
-  });
+    commandLabel: 'TensorFleet Project',
+  }, openNew);
 }
 
-async function createNewRoboticProject(context: vscode.ExtensionContext) {
+async function createNewRoboticProject(context: vscode.ExtensionContext, openNew: boolean = false) {
   await createNewProjectInternal(context, {
     kindLabel: 'robotic',
     defaultName: 'my-robotic-project',
     commandLabel: 'TensorFleet Robotic Project',
     templateSubdir: 'robotic-js-project-templates'
-  });
+  }, openNew);
 }
 
 type NewProjectOptions = {
@@ -1433,9 +1633,30 @@ type NewProjectOptions = {
   templateSubdir?: string;
 };
 
+
+/**
+ * Check if the current workspace is a tensorfleet project.
+ */
+async function hasTensorfleetMarker(): Promise<boolean> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return false;
+
+  const root = folders[0].uri;
+  const markerUri = vscode.Uri.joinPath(root, '.tensorfleet');
+
+  try {
+    await vscode.workspace.fs.stat(markerUri);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+
 async function createNewProjectInternal(
   context: vscode.ExtensionContext,
-  options: NewProjectOptions
+  options: NewProjectOptions,
+  openNew: boolean = false
 ) {
   const telemetry = getTelemetry();
   // Get project name from user
@@ -1510,6 +1731,13 @@ async function createNewProjectInternal(
       }
     );
 
+    telemetry?.trackEvent('project.create', { phase: 'success' });
+
+    if (openNew) {
+      await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
+      return;
+    }
+
     const openProject = await vscode.window.showInformationMessage(
       `✨ ${options.commandLabel} "${projectName}" created successfully!`,
       'Open Project',
@@ -1517,7 +1745,6 @@ async function createNewProjectInternal(
       'Close'
     );
 
-    telemetry?.trackEvent('project.create', { phase: 'success' });
     if (openProject === 'Open Project') {
       await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
     } else if (openProject === 'Open in New Window') {
@@ -2401,6 +2628,57 @@ function buildMenuForState(
   return items;
 }
 
+
+async function showAccountPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "account");
+}
+
+async function closeAccountPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "");
+}
+
+async function showHelpPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "help");
+}
+
+async function closeHelpPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "");
+}
+
+async function openDroneViewsPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
+}
+
+async function openTutorialsGuide(context: vscode.ExtensionContext) {
+  if (!vscode.workspace.workspaceFolders) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  // Workspace root
+  const workspaceFolder = vscode.workspace.workspaceFolders[0].uri;
+  const readmeUri = vscode.Uri.joinPath(workspaceFolder, 'README.md');
+
+  try {
+    const doc = await vscode.workspace.openTextDocument(readmeUri);
+    await vscode.window.showTextDocument(doc);
+  } catch (err) {
+    vscode.window.showErrorMessage('README.md not found or cannot be opened');
+  }
+}
+
+async function resetOnboarding(context: vscode.ExtensionContext) {
+  await help.resetOnboardingProgress(context);
+  showWelcomePage(context);
+}
+
+async function openWebsite(context: vscode.ExtensionContext) {
+  vscode.env.openExternal(
+    vscode.Uri.parse('https://tensorfleet.net')
+  );
+}
+
+
 /**
  * Show unified menu (adaptive based on state)
  */
@@ -2576,6 +2854,23 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   // Build menu with visual grouping (primary actions, separator, secondary actions)
   const menuItems = buildMenuForState(vmState, ipAddress);
   items.push(...menuItems);
+  
+  const developmentActions: vscode.QuickPickItem[] = [
+    {
+      label: '$(question) Reset Onboarding'
+    }
+  ];
+  if (context.extensionMode === vscode.ExtensionMode.Development) {
+    if (developmentActions) {
+      items.push(...developmentActions);
+    }
+    items.push({
+      label: '',
+      kind: vscode.QuickPickItemKind.Separator
+    });
+  }
+
+
 
   const selection = await vscode.window.showQuickPick(items, {
     placeHolder: headerLabel.replace(/\$\([^)]+\)\s*/, ''),
@@ -2621,6 +2916,8 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       await selectRegion(context);
     } else if (selection.label.includes('Logout')) {
       await handleLogout(context);
+    } else if (selection.label.includes("Reset Onboarding")) {
+      await resetOnboarding(context);
     }
   } catch (error) {
     void vscode.window.showErrorMessage(
@@ -2837,6 +3134,8 @@ async function handleLogout(context: vscode.ExtensionContext) {
   await updateAuthenticatedContext(context);
   void vscode.window.showInformationMessage('Logged out successfully');
 
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "");
+
   // Reset VM Manager state after logout
   if (vmManagerIntegration) {
     vmManagerIntegration.refreshStatus(true);
@@ -2847,17 +3146,6 @@ async function handleLogout(context: vscode.ExtensionContext) {
   if (accountPanel) {
     await accountPanel.refresh();
   }
-}
-
-// Account panel state
-let accountPanelOpen = false;
-
-/**
- * Toggle account panel visibility
- */
-async function toggleAccountPanel(context: vscode.ExtensionContext) {
-  accountPanelOpen = !accountPanelOpen;
-  await vscode.commands.executeCommand('setContext', 'tensorfleet.accountPanelOpen', accountPanelOpen);
 }
 
 /**

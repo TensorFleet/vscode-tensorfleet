@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'unsafe-inline' 'unsafe-eval'; img-src {{cspSource}} data: https:; font-src {{cspSource}} data:; connect-src {{cspSource}} https: http: ws: wss:;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TensorFleet Help</title>
+  {{styles}}
+  <style>
+    :root {
+      --tf-help-accent: #28a27a;
+      --tf-help-accent-soft: rgba(40, 162, 122, 0.18);
+      --tf-help-accent-strong: rgba(40, 162, 122, 0.35);
+    }
+
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      padding: 12px 16px 16px 16px;
+      color: var(--vscode-foreground);
+      background: transparent;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+
+    .tf-root {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-width: 960px;
+      margin: 0 auto;
+      height: 100%;
+      min-height: 0;
+    }
+
+    .tf-header { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+
+    .tf-header__title {
+      margin: 0;
+      font-size: 1.3rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tf-header__title-badge {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--tf-help-accent-strong);
+      background: var(--tf-help-accent-soft);
+      color: var(--tf-help-accent);
+    }
+
+    .tf-header__hint {
+      margin: 0;
+      font-size: 0.9rem;
+      opacity: 0.8;
+    }
+
+    .tf-search {
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border));
+      box-shadow: 0 0 0 1px var(--tf-help-accent-soft);
+    }
+
+    .tf-search__input {
+      border: none;
+      outline: none;
+      background: transparent;
+      flex: 1;
+      font: inherit;
+      color: inherit;
+      font-size: 0.95rem;
+    }
+
+    .tf-search__icon { opacity: 0.9; font-size: 1rem; }
+
+    .tf-content {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      padding-right: 4px;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    .tf-section-header {
+      margin: 4px 0;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.7;
+    }
+
+    .tf-panel-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .tf-panel-card {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-editorWidget-border);
+      transition: background 0.08s, border-color 0.08s, transform 0.08s;
+    }
+
+    .tf-panel-card.is-clickable { cursor: pointer; }
+    .tf-panel-card.is-clickable:hover {
+      background: var(--tf-help-accent-soft);
+      border-color: var(--tf-help-accent-strong);
+      transform: translateY(-1px);
+    }
+
+    .tf-panel-card.is-static { cursor: default; }
+    .tf-panel-card.is-hidden { display: none; }
+
+    .tf-panel-card__header {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .tf-panel-card__icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      background: var(--tf-help-accent-soft);
+      color: var(--tf-help-accent);
+      flex-shrink: 0;
+      box-shadow: 0 0 0 1px var(--tf-help-accent-strong);
+    }
+
+    .tf-panel-card__title { font-size: 1rem; font-weight: 600; margin: 0; }
+    .tf-panel-card__subtitle { font-size: 0.85rem; opacity: 0.8; margin: 0; }
+    .tf-panel-card__description {
+      font-size: 0.9rem;
+      margin: 2px 0 0 0;
+      word-wrap: break-word;
+      white-space: normal;
+      line-height: 1.4;
+    }
+
+    .tf-empty {
+      display: none;
+      margin-top: 8px;
+      font-size: 0.9rem;
+      opacity: 0.7;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="tf-root">
+    <header class="tf-header">
+      <h1 class="tf-header__title">
+        TensorFleet Help
+      </h1>
+      <p class="tf-header__hint">Use the search box below to quickly find the help topic you need.</p>
+
+      <div class="tf-search">
+        <span class="tf-search__icon">🔍</span>
+        <input id="tf-search-input" class="tf-search__input" type="search"
+          placeholder="Search help topics by name or description…" autocomplete="off" />
+      </div>
+    </header>
+
+    <main class="tf-content" aria-label="TensorFleet help topics">
+      <h2 class="tf-section-header">Core topics</h2>
+      <div class="tf-panel-list" id="tf-help-list"></div>
+
+      <div id="tf-empty" class="tf-empty">
+        No help topics match your search. Try a different keyword.
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+
+    const PANELS = [
+      {
+        id: 'tensorfleet-guided-setup',
+        title: 'Guided setup',
+        subtitle: 'Open guided setup again',
+        description:
+          'Open the guided setup again to go through account creation and project creation',
+        command: 'tensorfleet.resetOnboarding',
+        icon: '❔'
+      },
+      {
+        id: 'tensorfleet-account',
+        title: 'Tensorfleet Account',
+        subtitle: 'Sign in to unlock cloud features',
+        description:
+          'To use the cloud features that make drone simulation deployments much easier you will need to create a TensorFleet account or log in to an existing one.',
+        command: 'tensorfleet.openAccountPanel',
+        icon: '🪪'
+      },
+      {
+        id: 'tensorfleet-project-creation',
+        title: 'Project Creation',
+        subtitle: 'Connect your simulation to the cloud',
+        description:
+          'To connect to your simulation on the cloud you will need to set up some dependencies. We also install some helpers to avoid boilerplate when using ROS protocols to control your drone.',
+        command: 'tensorfleet.createNewProject',
+        icon: '📦'
+      },
+      {
+        id: 'tensorfleet-drone-visualizations',
+        title: 'Drone Visualizations & ROS Debug',
+        subtitle: 'Mission control, 3D panels, and ROS tools',
+        description:
+          'In a TensorFleet project you can use Mission Control and 3D panels. You can also debug ROS topics and service calls with the provided panels. In order to access these panels, click on the drone icon at the top.',
+        command: 'tensorfleet.openDroneViewsPanel',
+        icon: '🛰️'
+      },
+      {
+        id: 'tensorfleet-website',
+        title: 'Tensorfleet Website',
+        subtitle: 'Learn more online',
+        description:
+          'For more information about TensorFleet you can access our website at https://tensorfleet.net/.',
+        command: 'tensorfleet.openWebsite',
+        icon: '🌐'
+      }
+    ];
+
+    const helpList = document.getElementById('tf-help-list');
+    const searchInput = document.getElementById('tf-search-input');
+    const emptyState = document.getElementById('tf-empty');
+
+    function createPanelCard(panel) {
+      const card = document.createElement('article');
+      card.className = 'tf-panel-card ' + (panel.command ? 'is-clickable' : 'is-static');
+      card.setAttribute('data-search',
+        (panel.title + ' ' + (panel.subtitle || '') + ' ' + (panel.description || '')).toLowerCase()
+      );
+
+      const header = document.createElement('div');
+      header.className = 'tf-panel-card__header';
+
+      const icon = document.createElement('div');
+      icon.className = 'tf-panel-card__icon';
+      icon.textContent = panel.icon || '💡';
+
+      const titles = document.createElement('div');
+      const title = document.createElement('h3');
+      title.className = 'tf-panel-card__title';
+      title.textContent = panel.title;
+      const subtitle = document.createElement('p');
+      subtitle.className = 'tf-panel-card__subtitle';
+      subtitle.textContent = panel.subtitle || '';
+      titles.appendChild(title);
+      if (panel.subtitle) titles.appendChild(subtitle);
+
+      header.appendChild(icon);
+      header.appendChild(titles);
+
+      const desc = document.createElement('p');
+      desc.className = 'tf-panel-card__description';
+      desc.textContent = panel.description;
+
+      card.appendChild(header);
+      card.appendChild(desc);
+
+      if (panel.command) {
+        card.addEventListener('click', () => {
+          vscode.postMessage({ command: panel.command });
+        });
+      }
+      return card;
+    }
+
+    function renderPanels() {
+      helpList.innerHTML = '';
+      PANELS.forEach((panel) => {
+        helpList.appendChild(createPanelCard(panel));
+      });
+    }
+
+    function applyFilter() {
+      const q = searchInput.value.toLowerCase().trim();
+      const cards = document.querySelectorAll('.tf-panel-card');
+      let visible = 0;
+      cards.forEach(card => {
+        const match = !q || card.getAttribute('data-search').includes(q);
+        card.classList.toggle('is-hidden', !match);
+        if (match) visible++;
+      });
+      emptyState.style.display = visible === 0 ? 'block' : 'none';
+    }
+
+    renderPanels();
+    applyFilter();
+    searchInput.addEventListener('input', applyFilter);
+  </script>
+</body>
+</html>

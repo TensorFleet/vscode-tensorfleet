@@ -71,13 +71,19 @@
           "id": "tensorfleet-account",
           "name": "Account",
           "type": "webview",
-          "when": "tensorfleet.accountPanelOpen"
+          "when": "(!tensorfleet.is_authenticated && tensorfleet.current_panel != 'help') || tensorfleet.current_panel == 'account'"
         },
         {
           "id": "tensorfleet-drone-view-list",
-          "name": "Drone and ROS views",
+          "name": "Drone and ROS Views",
           "type": "webview",
-          "when": "!tensorfleet.accountPanelOpen"
+          "when": "tensorfleet.is_authenticated && (tensorfleet.current_panel == '')"
+        },
+        {
+          "id": "tensorfleet-help-panel",
+          "name": "Help",
+          "type": "webview",
+          "when": "(tensorfleet.current_panel == 'help')"
         }
       ],
       "tensorfleet-tooling": [
@@ -90,7 +96,25 @@
     },
     "commands": [
       {
-        "command": "tensorfleet.toggleAccountPanel",
+        "command": "tensorfleet.createNewProject",
+        "title": "Create new tensorfleet project",
+        "category": "Tensorfleet",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "tensorfleet.openDroneViewsPanel",
+        "title": "Open drone views",
+        "category": "Tensorfleet",
+        "icon": "media/tensorfleet-icon.svg"
+      },
+      {
+        "command": "tensorfleet.openHelpPanel",
+        "title": "Open Help Panel",
+        "category": "Tensorfleet",
+        "icon": "$(question)"
+      },
+      {
+        "command": "tensorfleet.openAccountPanel",
         "title": "Toggle Account Panel",
         "category": "TensorFleet",
         "icon": {
@@ -131,11 +155,6 @@
       {
         "command": "tensorfleet.openRawMessagesPanel",
         "title": "Open Raw Messages Panel",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.createNewProject",
-        "title": "Create New Project",
         "category": "TensorFleet"
       },
       {
@@ -228,59 +247,24 @@
     "menus": {
       "view/title": [
         {
-          "command": "tensorfleet.toggleAccountPanel",
+          "command": "tensorfleet.openAccountPanel",
+          "group": "navigation@2",
+          "when": "view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel"
+        },
+        {
+          "command": "tensorfleet.openDroneViewsPanel",
           "group": "navigation@1",
-          "when": "activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
+          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel) && tensorfleet.is_authenticated"
         },
         {
-          "command": "tensorfleet.openGzWebPanel",
-          "when": "view == tensorfleet-gzweb-panel",
-          "group": "navigation@1"
+          "command": "tensorfleet.openHelpPanel",
+          "group": "navigation@3",
+          "when": "view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel"
         },
         {
-          "command": "tensorfleet.openAIPanel",
-          "when": "view == tensorfleet-aiops",
-          "group": "navigation@1"
-        },
-        {
-          "command": "tensorfleet.openROS2Panel",
-          "when": "view == tensorfleet-ros2-baselines",
-          "group": "navigation@1"
-        },
-        {
-          "command": "tensorfleet.openImagePanel",
-          "when": "view == tensorfleet-image-panel",
-          "group": "navigation@1"
-        },
-        {
-          "command": "tensorfleet.openTeleopsPanel",
-          "when": "view == tensorfleet-teleops-panel",
-          "group": "navigation@1"
-        },
-        {
-          "command": "tensorfleet.openRawMessagesPanel",
-          "when": "view == tensorfleet-raw-messages-panel",
-          "group": "navigation@1"
-        },
-        {
-          "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-gzweb-panel",
-          "group": "navigation@9"
-        },
-        {
-          "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-aiops",
-          "group": "navigation@9"
-        },
-        {
-          "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-ros2-baselines",
-          "group": "navigation@9"
-        },
-        {
-          "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-tooling-view",
-          "group": "navigation@9"
+          "command": "tensorfleet.createNewProject",
+          "group": "navigation@0",
+          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel) && tensorfleet.is_authenticated"
         }
       ]
     }
