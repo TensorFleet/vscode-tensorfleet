@@ -7,6 +7,9 @@ const rootDir = __dirname;
 const packagesDir = resolve(rootDir, "./packages");
 const typesDir = resolve(rootDir, "./packages/@types");
 
+const vmProxyTarget = process.env.VM_MANAGER_PROXY ?? process.env.VITE_VM_MANAGER_PROXY ?? 'http://localhost:8080'
+const wsProxyTarget = vmProxyTarget.replace(/^http/, 'ws')
+
 export default defineConfig({
   plugins: [
     react(),
@@ -63,6 +66,7 @@ export default defineConfig({
         image: resolve(rootDir, "image.html"),
         teleops: resolve(rootDir, "teleops.html"),
         map: resolve(rootDir, "mission_control.html"),
+        gzweb: resolve(rootDir, 'gzweb.html'),
         raw_messages: resolve(rootDir, "raw_messages.html"),
         sensor_3d: resolve(rootDir, "sensor_view_3d.html"),
       },
@@ -102,5 +106,22 @@ export default defineConfig({
     ],
   },
 
-  assetsInclude: ["**/*.wasm"],
-});
+  // Helps Vite treat wasm as an asset type too (harmless redundancy)
+  assetsInclude: ['**/*.wasm'],
+
+  server: {
+    proxy: vmProxyTarget
+      ? {
+          '/vms': {
+            target: vmProxyTarget,
+            changeOrigin: true,
+          },
+          '/ws': {
+            target: wsProxyTarget,
+            ws: true,
+            changeOrigin: true,
+          },
+        }
+      : undefined,
+  },
+})

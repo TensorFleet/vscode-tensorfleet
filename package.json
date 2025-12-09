@@ -18,7 +18,7 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onView:tensorfleet-gazebo",
+    "onView:tensorfleet-gzweb-panel",
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
     "onView:tensorfleet-image-panel",
@@ -26,7 +26,7 @@
     "onView:tensorfleet-map-panel",
     "onView:tensorfleet-raw-messages-panel",
     "onView:tensorfleet-tooling-view",
-    "onCommand:tensorfleet.openGazeboPanel",
+    "onCommand:tensorfleet.openGzWebPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
     "onCommand:tensorfleet.openImagePanel",
@@ -40,9 +40,10 @@
     "onCommand:tensorfleet.stopMCPServer",
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
-    "onCommand:tensorfleet.showDroneStatus",
     "onCommand:tensorfleet.showVMManagerMenu",
+    "onCommand:tensorfleet.showDroneStatus",
     "onCommand:tensorfleet.selectRegion",
+    "onCommand:tensorfleet.showUnifiedMenu",
     "onCommand:tensorfleet.login"
   ],
   "main": "./dist/extension.js",
@@ -89,13 +90,13 @@
     },
     "commands": [
       {
-        "command": "tensorfleet.openGazeboPanel",
-        "title": "Open Gazebo Workspace",
+        "command": "tensorfleet.openGzWebPanel",
+        "title": "TensorFleet: Open Simulation View",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openAIPanel",
-        "title": "Open AI Ops Workspace",
+        "title": "TensorFleet: Open AI Ops Workspace",
         "category": "TensorFleet"
       },
       {
@@ -227,18 +228,8 @@
     "menus": {
       "view/title": [
         {
-          "command": "tensorfleet.toggleAccountPanel",
-          "when": "view == tensorfleet-drone-view-list && !tensorfleet.accountPanelOpen",
-          "group": "navigation@0"
-        },
-        {
-          "command": "tensorfleet.toggleAccountPanel",
-          "when": "view == tensorfleet-account",
-          "group": "navigation@0"
-        },
-        {
-          "command": "tensorfleet.openGazeboPanel",
-          "when": "view == tensorfleet-gazebo",
+          "command": "tensorfleet.openGzWebPanel",
+          "when": "view == tensorfleet-gzweb-panel",
           "group": "navigation@1"
         },
         {
@@ -268,7 +259,7 @@
         },
         {
           "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-gazebo",
+          "when": "view == tensorfleet-gzweb-panel",
           "group": "navigation@9"
         },
         {

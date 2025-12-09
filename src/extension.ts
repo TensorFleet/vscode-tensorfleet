@@ -74,13 +74,14 @@ type UniquePanel = {
 
 const DRONE_VIEWS: DroneViewport[] = [
   {
-    id: 'tensorfleet-gazebo',
-    title: 'Gazebo Simulation',
-    description: 'Review Gazebo scenes, sensor overlays, and simulation states for the current drone world.',
+    id: 'tensorfleet-gzweb-panel',
+    title: 'Simulation view',
+    description: 'Render Gazebo scenes via gzweb with direct WS or VM manager login shims.',
     image: 'gazebo-placeholder.svg',
-    command: 'tensorfleet.openGazeboPanel',
-    actionLabel: 'Open Gazebo Viewer',
-    htmlTemplate: 'visualization.html'
+    command: 'tensorfleet.openGzWebPanel',
+    actionLabel: 'Open Simulation View',
+    panelKind: 'standard',
+    htmlTemplate: 'gzweb-standalone'
   },
   {
     id: 'tensorfleet-aiops',
@@ -472,6 +473,7 @@ let vmManagerIntegration: VMManagerIntegration | null = null;
 let telemetryService: TelemetryService | null = null;
 
 
+
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
 let droneStatusBar: vscode.StatusBarItem | null = null;
@@ -840,31 +842,8 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
  * Provider for function-driven unique panels
  */
 class UniqueViewProvider implements vscode.WebviewViewProvider {
-  private webviewView: vscode.WebviewView | null = null;
-
   constructor(private readonly def: UniquePanel, private readonly context: vscode.ExtensionContext) { }
 
-  /**
-   * Refresh the webview content (re-render HTML)
-   */
-  async refresh(): Promise<void> {
-    if (!this.webviewView) {
-      return;
-    }
-
-    try {
-      const html = await Promise.resolve(
-        this.def.render({ webview: this.webviewView.webview, context: this.context, panelDef: this.def })
-      );
-      this.webviewView.webview.html = html;
-    } catch (err) {
-      getTelemetry()?.captureError(err, { source: 'UniqueViewProvider.refresh', id: this.def.id });
-      this.webviewView.webview.html = this.renderFallbackHtml(
-        this.webviewView.webview,
-        String(err ?? 'Failed to render')
-      );
-    }
-  }
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
     this.webviewView = webviewView;
@@ -1059,6 +1038,16 @@ async function openDedicatedPanel(
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
       }
 
+      if (view.htmlTemplate == 'raw-messages-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+
+      if (view.htmlTemplate === 'gzweb-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+
       if (view.htmlTemplate == 'map-standalone') {
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
@@ -1118,7 +1107,7 @@ async function openDedicatedPanel(
 
     // Check if view has a custom HTML template
     if (view.htmlTemplate) {
-      panel.webview.html = getCustomPanelHtml(view, panel.webview, context, cspSource);
+      panel.webview.html = await getCustomPanelHtml(view, panel.webview, context, cspSource);
       telemetry?.trackEvent('panel.open', {
         panelId: view.id,
         kind: view.panelKind ?? 'standard',
@@ -1168,7 +1157,7 @@ function getTerminalPanelHtml(view: DroneViewport, imageUri: string, cspSource: 
   });
 }
 
-function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, context: vscode.ExtensionContext, cspSource: string): string {
+async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, context: vscode.ExtensionContext, cspSource: string): Promise<string> {
   if (!view.htmlTemplate) {
     throw new Error('No HTML template specified for custom panel');
   }
@@ -1191,6 +1180,10 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
 
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
+  }
+
+  if (view.htmlTemplate === 'gzweb-standalone') {
+    return getStandalonePanelHtml('gzweb', webview, context, cspSource);
   }
 
   // Load the custom HTML template directly
@@ -1229,12 +1222,12 @@ function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, contex
   return template;
 }
 
-function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d',
+async function getStandalonePanelHtml(
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d' | 'gzweb',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
-): string {
+): Promise<string> {
   const htmlPath = path.join(__dirname, '..', 'panels-standalone', 'dist', `${panelName}.html`);
 
   if (!fs.existsSync(htmlPath)) {
@@ -1253,14 +1246,63 @@ function getStandalonePanelHtml(
     }
   );
 
-  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
+  const remoteScriptSrc = panelName === 'gzweb' ? ' https://esm.sh' : '';
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource}${remoteScriptSrc} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
   if (html.includes('Content-Security-Policy')) {
     html = html.replace(/<meta[^>]+Content-Security-Policy[^>]+>/i, cspMeta);
   } else {
     html = html.replace('<head>', `<head>\n  ${cspMeta}`);
   }
 
+  // Inject TensorFleet VM manager configuration into the webview so that
+  // panels-standalone ROS2 bridge can discover proxy settings.
+  const vmManagerUrl = regions.getVmManagerUrl();
+  const nodeId = vmManagerIntegration?.snapshot.nodeId ?? '';
+  const token = await auth.getToken(context);
+
+  const tfConfigScript = `
+  <script>
+    window.TENSORFLEET_VM_MANAGER_URL = "${vmManagerUrl}";
+    ${nodeId ? `window.TENSORFLEET_NODE_ID = "${nodeId}";` : ''}
+    ${token ? `window.TENSORFLEET_JWT = "${token}";` : ''}
+  </script>
+  `;
+
+  if (html.includes('</head>')) {
+    html = html.replace('</head>', `${tfConfigScript}\n</head>`);
+  } else {
+    html = `${tfConfigScript}\n${html}`;
+  }
+
   return html;
+}
+
+async function sendVmManagerInfoToWebview(
+  webview: vscode.Webview,
+  payload?: { vmBase?: string; token?: string }
+) {
+  if (!vmManagerIntegration) {
+    webview.postMessage({
+      command: 'tensorfleet.vmManagerInfo',
+      payload: { error: 'VM Manager integration not initialized' }
+    });
+    return;
+  }
+
+  try {
+    const requestedVmBase = typeof payload?.vmBase === 'string' ? payload.vmBase : undefined;
+    const requestedToken = typeof payload?.token === 'string' ? payload.token : undefined;
+    const info = await vmManagerIntegration.fetchVmManagerInfo({
+      vmBase: requestedVmBase,
+      token: requestedToken
+    });
+    webview.postMessage({ command: 'tensorfleet.vmManagerInfo', payload: info });
+  } catch (error) {
+    webview.postMessage({
+      command: 'tensorfleet.vmManagerInfo',
+      payload: { error: error instanceof Error ? error.message : String(error) }
+    });
+  }
 }
 
 async function handleOption3Message(_panel: vscode.WebviewPanel, message: any, _context: vscode.ExtensionContext) {
@@ -1370,17 +1412,11 @@ type NewProjectOptions = {
   templateSubdir?: string;
 };
 
-type NewProjectOptions = {
-  kindLabel: string;
-  defaultName: string;
-  commandLabel: string;
-  templateSubdir?: string;
-};
-
 async function createNewProjectInternal(
   context: vscode.ExtensionContext,
   options: NewProjectOptions
 ) {
+  const telemetry = getTelemetry();
   // Get project name from user
   const projectName = await vscode.window.showInputBox({
     prompt: `Enter a name for your new ${options.kindLabel} project`,
@@ -2752,13 +2788,6 @@ async function handleLogin(context: vscode.ExtensionContext) {
     if (vmManagerIntegration) {
       console.log('[TensorFleet] Refreshing VM Manager status...');
       vmManagerIntegration.refreshStatus(false);
-    }
-
-    // Refresh account panel to show updated auth state
-    const accountPanel = uniquePanelRegistry.get('tensorfleet-account');
-    if (accountPanel) {
-      console.log('[TensorFleet] Refreshing account panel...');
-      await accountPanel.refresh();
     }
 
     console.log('[TensorFleet] Login process completed');
