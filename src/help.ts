@@ -5,7 +5,7 @@ export type OnboardingProgress = {
 };
 
 const ONBOARDING_KEY = 'tensorfleet.onboarding.lastCompletedStep';
-const ONBOARDING_DEFAULT: OnboardingProgress = { lastCompletedStep: 'account' };
+const ONBOARDING_DEFAULT: OnboardingProgress = { lastCompletedStep: 'none' };
 
 /**
  * Read from VS Code extension storage (no filesystem)
@@ -32,7 +32,14 @@ export async function ensureOnboardingProgressInitialized(
 ): Promise<OnboardingProgress> {
   const current = ctx.globalState.get<OnboardingProgress | undefined>(ONBOARDING_KEY);
 
-  if (!current || !current.lastCompletedStep) {
+  const validSteps = new Set(['none', 'account', 'project', 'panels', 'end']);
+
+  const isValid =
+    current &&
+    typeof current.lastCompletedStep === 'string' &&
+    validSteps.has(current.lastCompletedStep);
+
+  if (!isValid) {
     await saveOnboardingProgress(ctx, ONBOARDING_DEFAULT);
     return ONBOARDING_DEFAULT;
   }

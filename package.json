@@ -249,22 +249,22 @@
         {
           "command": "tensorfleet.openAccountPanel",
           "group": "navigation@2",
-          "when": "activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
+          "when": "view.tensorfleet-account.visible || view.tensorfleet-drone-view-list.visible || view.tensorfleet-help-panel.visible"
         },
         {
           "command": "tensorfleet.openDroneViewsPanel",
           "group": "navigation@1",
-          "when": "tensorfleet.is_authenticated && activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
+          "when": "tensorfleet.is_authenticated && (view.tensorfleet-account.visible || view.tensorfleet-drone-view-list.visible || view.tensorfleet-help-panel.visible)"
         },
         {
           "command": "tensorfleet.openHelpPanel",
           "group": "navigation@3",
-          "when": "activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
+          "when": "view.tensorfleet-account.visible || view.tensorfleet-drone-view-list.visible || view.tensorfleet-help-panel.visible"
         },
         {
           "command": "tensorfleet.createNewProject",
           "group": "navigation@0",
-          "when": "activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
+          "when": "tensorfleet.is_authenticated && (view.tensorfleet-account.visible || view.tensorfleet-drone-view-list.visible || view.tensorfleet-help-panel.visible)"
         }
       ]
     }
