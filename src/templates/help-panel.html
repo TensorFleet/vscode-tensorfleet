@@ -172,7 +172,6 @@
     <header class="tf-header">
       <h1 class="tf-header__title">
         TensorFleet Help
-        <span class="tf-header__title-badge">Getting started</span>
       </h1>
       <p class="tf-header__hint">Use the search box below to quickly find the help topic you need.</p>
 
@@ -198,12 +197,21 @@
 
     const PANELS = [
       {
+        id: 'tensorfleet-guided-setup',
+        title: 'Guided setup',
+        subtitle: 'Open guided setup again',
+        description:
+          'Open the guided setup again to go through account creation and project creation',
+        command: 'tensorfleet.resetOnboarding',
+        icon: '❔'
+      },
+      {
         id: 'tensorfleet-account',
         title: 'Tensorfleet Account',
         subtitle: 'Sign in to unlock cloud features',
         description:
           'To use the cloud features that make drone simulation deployments much easier you will need to create a TensorFleet account or log in to an existing one.',
-        command: 'tensorfleet.openAcountPanel',
+        command: 'tensorfleet.openAccountPanel',
         icon: '🪪'
       },
       {
@@ -212,7 +220,7 @@
         subtitle: 'Connect your simulation to the cloud',
         description:
           'To connect to your simulation on the cloud you will need to set up some dependencies. We also install some helpers to avoid boilerplate when using ROS protocols to control your drone.',
-        command: 'tensorfleet.openProjectCreationGuide',
+        command: 'tensorfleet.createNewProject',
         icon: '📦'
       },
       {
@@ -221,7 +229,7 @@
         subtitle: 'Mission control, 3D panels, and ROS tools',
         description:
           'In a TensorFleet project you can use Mission Control and 3D panels. You can also debug ROS topics and service calls with the provided panels. In order to access these panels, click on the drone icon at the top.',
-        command: null,
+        command: 'tensorfleet.openDroneViewsPanel',
         icon: '🛰️'
       },
       {

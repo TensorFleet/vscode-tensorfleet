@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 
 export type OnboardingProgress = {
-  lastCompletedStep: 'none' | 'about' | 'account' | 'project' | 'panels' | 'end';
+  lastCompletedStep: 'none' | 'account' | 'project' | 'panels' | 'end';
 };
 
 const ONBOARDING_KEY = 'tensorfleet.onboarding.lastCompletedStep';
-const ONBOARDING_DEFAULT: OnboardingProgress = { lastCompletedStep: 'about' };
+const ONBOARDING_DEFAULT: OnboardingProgress = { lastCompletedStep: 'account' };
 
 /**
  * Read from VS Code extension storage (no filesystem)

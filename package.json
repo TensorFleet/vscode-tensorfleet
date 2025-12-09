@@ -96,6 +96,12 @@
     },
     "commands": [
       {
+        "command": "tensorfleet.createNewProject",
+        "title": "Create new tensorfleet project",
+        "category": "Tensorfleet",
+        "icon": "$(plus)"
+      },
+      {
         "command": "tensorfleet.openDroneViewsPanel",
         "title": "Open drone views",
         "category": "Tensorfleet",
@@ -149,11 +155,6 @@
       {
         "command": "tensorfleet.openRawMessagesPanel",
         "title": "Open Raw Messages Panel",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.createNewProject",
-        "title": "Create New Project",
         "category": "TensorFleet"
       },
       {
@@ -247,17 +248,22 @@
       "view/title": [
         {
           "command": "tensorfleet.openAccountPanel",
-          "group": "navigation@1",
+          "group": "navigation@2",
           "when": "activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
         },
         {
           "command": "tensorfleet.openDroneViewsPanel",
-          "group": "navigation@0",
+          "group": "navigation@1",
           "when": "tensorfleet.is_authenticated && activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
         },
         {
           "command": "tensorfleet.openHelpPanel",
-          "group": "navigation@2",
+          "group": "navigation@3",
+          "when": "activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
+        },
+        {
+          "command": "tensorfleet.createNewProject",
+          "group": "navigation@0",
           "when": "activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
         }
       ]
