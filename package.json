@@ -68,16 +68,10 @@
     "views": {
       "tensorfleet-drone-suite": [
         {
-          "id": "tensorfleet-login",
-          "name": "Account",
-          "type": "webview",
-          "when": "!tensorfleet.is_authenticated && tensorfleet.current_panel != 'help'"
-        },
-        {
           "id": "tensorfleet-account",
           "name": "Account",
           "type": "webview",
-          "when": "tensorfleet.current_panel == 'account' && tensorfleet.is_authenticated"
+          "when": "(!tensorfleet.is_authenticated && tensorfleet.current_panel != 'help') || tensorfleet.current_panel == 'account'"
         },
         {
           "id": "tensorfleet-drone-view-list",
@@ -108,16 +102,19 @@
         "icon": "media/tensorfleet-icon.svg"
       },
       {
-        "command": "tensorfleet.openAccountPanel",
-        "title": "Open Account Panel",
-        "category": "Tensorfleet",
-        "icon": "$(account)"
-      },
-      {
         "command": "tensorfleet.openHelpPanel",
         "title": "Open Help Panel",
         "category": "Tensorfleet",
         "icon": "$(question)"
+      },
+      {
+        "command": "tensorfleet.openAccountPanel",
+        "title": "Toggle Account Panel",
+        "category": "TensorFleet",
+        "icon": {
+          "light": "media/avatar_outline.svg",
+          "dark": "media/avatar_outline.svg"
+        }
       },
       {
         "command": "tensorfleet.openGzWebPanel",
@@ -249,14 +246,14 @@
     "menus": {
       "view/title": [
         {
-          "command": "tensorfleet.openDroneViewsPanel",
-          "group": "navigation@0",
-          "when": "tensorfleet.is_authenticated && activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
-        },
-        {
           "command": "tensorfleet.openAccountPanel",
           "group": "navigation@1",
           "when": "activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
+        },
+        {
+          "command": "tensorfleet.openDroneViewsPanel",
+          "group": "navigation@0",
+          "when": "tensorfleet.is_authenticated && activeViewlet == workbench.view.extension.tensorfleet-drone-suite"
         },
         {
           "command": "tensorfleet.openHelpPanel",

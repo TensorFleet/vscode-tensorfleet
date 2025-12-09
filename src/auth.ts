@@ -42,7 +42,7 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
     try {
         // Step 1: Initiate OAuth flow
         const { state, authUrl } = await initiateAuth();
-        
+
         vscode.window.showInformationMessage(
             'Opening browser for authentication...'
         );
@@ -58,7 +58,7 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
             setTimeout(() => {
                 server.close();
                 reject(new Error('Authentication timeout'));
-            }, 5 * 60 * 1000);  
+            }, 5 * 60 * 1000);
         });
 
         // Step 4: Store token securely
@@ -79,7 +79,7 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
  */
 async function initiateAuth(): Promise<{ state: string; authUrl: string }> {
     const BACKEND_URL = getBackendUrl();
-    
+
     const response = await fetch(`${BACKEND_URL}/api/auth/vscode/initiate`, {
         method: 'POST',
         headers: {
@@ -388,6 +388,41 @@ export async function clearToken(context: vscode.ExtensionContext): Promise<void
     verificationCache = null; // Clear cache on logout
 }
 
+/**
+ * User profile information extracted from JWT
+ */
+export interface UserProfile {
+    name?: string;
+    email?: string;
+    picture?: string;
+}
+
+/**
+ * Get user profile from stored token
+ */
+export async function getUserProfile(context: vscode.ExtensionContext): Promise<UserProfile | null> {
+    const token = await getToken(context);
+    if (!token) {
+        return null;
+    }
+
+    try {
+        // Decode JWT payload (middle part)
+        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+
+        const profile = {
+            name: payload.name || payload.given_name || payload.nickname,
+            email: payload.email,
+            picture: payload.picture || payload.avatar_url
+        };
+
+        return profile;
+    } catch (error) {
+        console.error('[Auth] Failed to decode token profile:', error);
+        return null;
+    }
+}
+
 // Cache for token verification to avoid excessive API calls
 let verificationCache: { valid: boolean; timestamp: number } | null = null;
 const VERIFICATION_CACHE_TTL = 30000; // 30 seconds
@@ -410,7 +445,7 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
     // Verify token with backend
     try {
         const BACKEND_URL = getBackendUrl();
-        
+
         const response = await fetch(`${BACKEND_URL}/api/auth/verify`, {
             method: 'POST',
             headers: {
@@ -435,7 +470,7 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
         return valid;
     } catch (error) {
         console.error('[Auth] Token verification error:', error);
-        
+
         // Fallback to basic JWT validation if backend is unreachable
         try {
             const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
