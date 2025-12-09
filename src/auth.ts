@@ -409,13 +409,14 @@ export async function getUserProfile(context: vscode.ExtensionContext): Promise<
     try {
         // Decode JWT payload (middle part)
         const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-        console.log('[Auth] Decoded token payload:', JSON.stringify(payload, null, 2));
 
-        return {
+        const profile = {
             name: payload.name || payload.given_name || payload.nickname,
             email: payload.email,
             picture: payload.picture || payload.avatar_url
         };
+
+        return profile;
     } catch (error) {
         console.error('[Auth] Failed to decode token profile:', error);
         return null;
