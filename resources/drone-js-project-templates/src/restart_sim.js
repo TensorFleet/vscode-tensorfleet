@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
  * Restart Simulation
- * 
+ *
  * Simple utility to restart the PX4 simulation via ROS service call.
  * Useful for resetting the drone state between test runs.
- * 
+ *
  * Run:
  *   bun src/restart_sim.js
  */
@@ -12,12 +12,33 @@
 require("dotenv").config();
 const ROSLIB = require("roslib");
 const { getTensorfleetSettings } = require("./lib/tensorfleet_config");
-
-const { rosbridgeUrl } = getTensorfleetSettings();
+const socketAdapter = require("roslib/src/core/SocketAdapter.js");
+const { createProxyWebSocket } = require("./lib/proxy_ws_client");
 
 async function restartSimulation() {
-    console.log(`[SIM] Connecting to rosbridge at ${rosbridgeUrl}...`);
-    const ros = new ROSLIB.Ros({ url: rosbridgeUrl });
+    const tf = getTensorfleetSettings();
+    const useProxy = tf.useProxy && tf.proxyUrl;
+
+    let ros;
+
+    if (useProxy) {
+        console.log(
+            `[SIM] Connecting via VM Manager proxy at ${tf.proxyUrl} (nodeId=${tf.nodeId}, targetPort=${tf.targetPort}) ...`
+        );
+        const proxyWs = createProxyWebSocket({
+            proxyUrl: tf.proxyUrl,
+            token: tf.token,
+            nodeId: tf.nodeId,
+            targetPort: tf.targetPort,
+        });
+        ros = new ROSLIB.Ros({});
+        const adaptedSocket = Object.assign(proxyWs, socketAdapter(ros));
+        ros.socket = adaptedSocket;
+    } else {
+        const directUrl = tf.rosbridgeUrl || "ws://localhost:9091";
+        console.log(`[SIM] Connecting to rosbridge at ${directUrl}...`);
+        ros = new ROSLIB.Ros({ url: directUrl });
+    }
 
     await new Promise((resolve, reject) => {
         const timer = setTimeout(
@@ -41,7 +62,7 @@ async function restartSimulation() {
     const simSrv = new ROSLIB.Service({
         ros,
         name: "/simulation_manager/start_simulation",
-        serviceType: "std_srvs/Trigger"
+        serviceType: "std_srvs/Trigger",
     });
 
     console.log("[SIM] Requesting simulation restart...");
