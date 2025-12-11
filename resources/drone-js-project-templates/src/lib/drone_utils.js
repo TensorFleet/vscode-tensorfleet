@@ -47,9 +47,9 @@ function makeServiceCall(service, request, timeoutMs = 5000) {
 /**
  * Connect to rosbridge and return ROS client.
  *
- * If TensorFleet VM Manager proxy settings are available (TENSORFLEET_VM_MANAGER_URL,
- * TENSORFLEET_NODE_ID, TENSORFLEET_JWT), traffic is routed through the proxy.
- * Otherwise, we connect directly to the resolved rosbridge URL.
+ * If TensorFleet proxy settings are available (base/vm-manager URL + node ID + JWT),
+ * traffic is routed through the derived proxy socket. Otherwise, we connect directly
+ * to the resolved rosbridge URL.
  */
 async function connectToDrone(url) {
     const settings = getTensorfleetSettings();
@@ -62,6 +62,7 @@ async function connectToDrone(url) {
 
         const proxyWs = createProxyWebSocket({
             proxyUrl: settings.proxyUrl,
+            vmManagerUrl: settings.vmManagerUrl,
             token: settings.token,
             nodeId: settings.nodeId,
             targetPort: settings.targetPort

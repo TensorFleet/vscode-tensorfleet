@@ -75,6 +75,7 @@ type TensorfleetMetadata = {
   managedEnv?: boolean;
   env?: {
     region?: string;
+    baseUrl?: string;
     vmManagerUrl?: string;
     proxyUrl?: string;
     rosbridgeUrl?: string;
@@ -476,15 +477,8 @@ const UNIQUE_PANELS: UniquePanel[] = [
 // -----------------------------------------------------------------------------
 
 const MANAGED_ENV_KEYS = [
-  'TENSORFLEET_REGION',
-  'TENSORFLEET_VM_MANAGER_URL',
-  'TENSORFLEET_PROXY_URL',
-  'TENSORFLEET_NODE_ID',
-  'TENSORFLEET_JWT',
-  'ROSBRIDGE_URL',
-  'ROSBRIDGE_PORT',
-  'R2B_HOST',
-  'R2B_PORT'
+  'TENSORFLEET_BASE_URL',
+  'TENSORFLEET_JWT'
 ] as const;
 
 const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
@@ -1892,6 +1886,14 @@ async function writeEnvForFolder(
       markerEnv.rosbridgeUrl ||
       (r2bHost ? `ws://${r2bHost}:${rosbridgePort}` : '');
 
+  const baseUrl =
+    inputs.region.vmManagerUrl ||
+    existingEnv.TENSORFLEET_BASE_URL ||
+    markerEnv.baseUrl ||
+    existingEnv.TENSORFLEET_VM_MANAGER_URL ||
+    markerEnv.vmManagerUrl ||
+    '';
+
   const nodeId = regionChanged
     ? ''
     : inputs.nodeId ||
@@ -1903,23 +1905,18 @@ async function writeEnvForFolder(
     inputs.region.vmManagerUrl ||
     markerEnv.vmManagerUrl ||
     existingEnv.TENSORFLEET_VM_MANAGER_URL ||
+    baseUrl ||
     '';
 
   const proxyUrl =
     inputs.proxyUrl ||
     markerEnv.proxyUrl ||
-    buildProxyWebSocketUrl(vmManagerUrl);
+    buildProxyWebSocketUrl(vmManagerUrl) ||
+    buildProxyWebSocketUrl(baseUrl);
 
   const managed: Record<(typeof MANAGED_ENV_KEYS)[number], string | undefined> = {
-    TENSORFLEET_REGION: inputs.region.id,
-    TENSORFLEET_VM_MANAGER_URL: vmManagerUrl,
-    TENSORFLEET_PROXY_URL: proxyUrl || undefined,
-    TENSORFLEET_NODE_ID: nodeId || undefined,
-    TENSORFLEET_JWT: inputs.token || undefined,
-    ROSBRIDGE_URL: rosbridgeUrl || undefined,
-    ROSBRIDGE_PORT: String(rosbridgePort),
-    R2B_HOST: r2bHost || undefined,
-    R2B_PORT: String(rosbridgePort)
+    TENSORFLEET_BASE_URL: baseUrl || undefined,
+    TENSORFLEET_JWT: inputs.token || undefined
   };
 
   const header = [
@@ -1958,6 +1955,7 @@ async function writeEnvForFolder(
     env: {
       ...markerEnv,
       region: inputs.region.id,
+      baseUrl,
       vmManagerUrl,
       proxyUrl: proxyUrl || markerEnv.proxyUrl,
       rosbridgeUrl: regionChanged ? undefined : rosbridgeUrl || markerEnv.rosbridgeUrl,

@@ -15,6 +15,15 @@ const fs = require("fs");
 const path = require("path");
 const yaml = require("js-yaml");
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim() !== "") {
+      return value;
+    }
+  }
+  return "";
+}
+
 function loadYamlConfig() {
   const configPath = path.join(process.cwd(), "config", "drone_config.yaml");
   try {
@@ -102,6 +111,14 @@ function getTensorfleetSettings() {
     network.setpoint_frame ||
     "map";
 
+  const baseUrl =
+    firstNonEmpty(
+      process.env.TENSORFLEET_BASE_URL,
+      process.env.TENSORFLEET_VM_MANAGER_URL,
+      markerEnv.baseUrl,
+      markerEnv.vmManagerUrl
+    ) || "";
+
   const portStr =
     process.env.R2B_PORT ||
     process.env.ROSBRIDGE_PORT ||
@@ -125,6 +142,7 @@ function getTensorfleetSettings() {
   const vmManagerUrl =
     process.env.TENSORFLEET_VM_MANAGER_URL ||
     markerEnv.vmManagerUrl ||
+    baseUrl ||
     "";
   const nodeId = process.env.TENSORFLEET_NODE_ID || markerEnv.nodeId || "";
   const token = process.env.TENSORFLEET_JWT || "";
@@ -133,11 +151,13 @@ function getTensorfleetSettings() {
     process.env.TENSORFLEET_PROXY_URL || markerEnv.proxyUrl || "";
   const proxyUrl =
     explicitProxyUrl ||
-    (vmManagerUrl ? getProxyWebSocketUrl(vmManagerUrl) : "");
+    (vmManagerUrl ? getProxyWebSocketUrl(vmManagerUrl) : "") ||
+    (baseUrl ? getProxyWebSocketUrl(baseUrl) : "");
   const useProxy = Boolean(proxyUrl && nodeId && token);
   const fallbackHost = host || markerEnv.r2bHost || "127.0.0.1";
 
   return {
+    baseUrl: vmManagerUrl || baseUrl || "",
     frameId,
     rosbridgeUrl,
     host: fallbackHost,

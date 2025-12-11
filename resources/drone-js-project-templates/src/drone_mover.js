@@ -169,6 +169,7 @@ class GuidedMissionController {
       );
       const proxyWs = createProxyWebSocket({
         proxyUrl: tf.proxyUrl,
+        vmManagerUrl: tf.vmManagerUrl,
         token: tf.token,
         nodeId: tf.nodeId,
         targetPort: tf.targetPort,

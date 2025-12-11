@@ -11,16 +11,47 @@ const WebSocket = require("ws");
  * Create a proxy WebSocket that routes traffic through the VM Manager.
  *
  * config: {
- *   proxyUrl: string;     // ws(s)://.../ws
+ *   proxyUrl?: string;    // ws(s)://.../ws (derived from vmManagerUrl if omitted)
+ *   vmManagerUrl?: string; // Optional base to derive proxyUrl when proxyUrl is empty
  *   token: string;        // JWT token
  *   nodeId: string;       // Target VM/node identifier
  *   targetPort: number;   // Port inside VM (9091 for rosbridge)
  * }
  */
-function createProxyWebSocket(config) {
-  const { proxyUrl, token, nodeId, targetPort } = config;
 
-  const ws = new WebSocket(proxyUrl);
+function deriveProxyUrl(vmManagerUrl) {
+  if (!vmManagerUrl) return "";
+  try {
+    const url = new URL(vmManagerUrl);
+
+    if (url.protocol === "ws:" || url.protocol === "wss:") {
+      if (!url.pathname || url.pathname === "/") {
+        url.pathname = "/ws";
+      }
+      return url.toString();
+    }
+
+    const protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const basePath = url.pathname.endsWith("/")
+      ? url.pathname.slice(0, -1)
+      : url.pathname;
+    const pathName = basePath.endsWith("/ws") ? basePath : `${basePath}/ws`;
+
+    return `${protocol}//${url.host}${pathName}`;
+  } catch {
+    return "";
+  }
+}
+
+function createProxyWebSocket(config) {
+  const { proxyUrl, token, nodeId, targetPort, vmManagerUrl } = config;
+  const resolvedProxyUrl = proxyUrl || deriveProxyUrl(vmManagerUrl);
+
+  if (!resolvedProxyUrl) {
+    throw new Error("Missing proxyUrl for VM Manager WebSocket proxy");
+  }
+
+  const ws = new WebSocket(resolvedProxyUrl);
   let state = "connecting"; // connecting | authenticating | connected | error | closed
   const queue = [];
 
@@ -59,7 +90,7 @@ function createProxyWebSocket(config) {
     bufferedAmount: 0,
     extensions: "",
     protocol: "",
-    url: proxyUrl,
+    url: resolvedProxyUrl,
   };
 
   function flushQueue() {
@@ -167,4 +198,3 @@ function createProxyWebSocket(config) {
 module.exports = {
   createProxyWebSocket,
 };
-

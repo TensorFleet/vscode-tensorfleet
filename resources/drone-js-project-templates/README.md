@@ -4,7 +4,7 @@ JavaScript/Node.js template for drone control over rosbridge using `roslib`. Inc
 
 ## Quick start
 1) Install deps: `bun install` (or `npm install`)
-2) Point to rosbridge: the VS Code extension auto-fills `.env` from your TensorFleet VM; or set it yourself: `export ROSBRIDGE_URL=ws://<vm-ip>:9091`
+2) Point to rosbridge: copy `.env.example` → `.env` and set just two fields: `TENSORFLEET_BASE_URL` (your region’s VM Manager URL) and `TENSORFLEET_JWT` (token). The extension will derive the proxy + rosbridge URLs from that base and `.tensorfleet` metadata automatically. If you’re running outside the extension, set `ROSBRIDGE_URL=ws://<vm-ip>:9091`.
 3) Start PX4 + MAVROS + rosbridge in your VM, then run:
    - `bun run restart` - Restart the simulation (resets drone state)
    - `bun src/drone_mover.js` - ARM → TAKEOFF → OFFBOARD waypoint mission → LAND
@@ -34,6 +34,7 @@ Each tutorial is ~50-100 lines and demonstrates one concept clearly. See `src/tu
 
 ## Configuration
 Edit `config/drone_config.yaml` or override via env vars:
+- `TENSORFLEET_BASE_URL` + `TENSORFLEET_JWT` - primary TensorFleet connection (other URLs are derived automatically when blank)
 - `ROSBRIDGE_URL` - rosbridge WebSocket URL
 - `SETPOINT_FRAME_ID` - frame for setpoints (default `map`)
 - `ALT_TARGET`, `EDGE_M`, `V_FAST`, `V_MIN`, `WAYPOINT_RADIUS`, `SLOW_RADIUS`, `SETPOINT_HZ`, `R2B_HOST`, `R2B_PORT` - OFFBOARD tuning for `drone_mover.js` (defaults favor a small world: ~1m alt, ~5m hop, gentle velocities)
