@@ -11,14 +11,13 @@
 
 require("dotenv").config();
 const ROSLIB = require("roslib");
+const { getTensorfleetSettings } = require("./lib/tensorfleet_config");
 
-const R2B_HOST = process.env.R2B_HOST || process.env.ROS_HOST || "172.16.0.10";
-const R2B_PORT = process.env.R2B_PORT || process.env.ROS_PORT || "9091";
-const url = process.env.ROSBRIDGE_URL || `ws://${R2B_HOST}:${R2B_PORT}`;
+const { rosbridgeUrl } = getTensorfleetSettings();
 
 async function restartSimulation() {
-    console.log(`[SIM] Connecting to rosbridge at ${url}...`);
-    const ros = new ROSLIB.Ros({ url });
+    console.log(`[SIM] Connecting to rosbridge at ${rosbridgeUrl}...`);
+    const ros = new ROSLIB.Ros({ url: rosbridgeUrl });
 
     await new Promise((resolve, reject) => {
         const timer = setTimeout(

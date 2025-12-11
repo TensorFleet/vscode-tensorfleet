@@ -1,11 +1,14 @@
 /**
  * Shared utilities for drone control tutorials
- * 
+ *
  * Common functions used across tutorial scripts to reduce duplication
  * and keep individual tutorials focused on one concept.
  */
 
 const ROSLIB = require("roslib");
+const { getTensorfleetSettings } = require("./tensorfleet_config");
+const { createProxyWebSocket } = require("./proxy_ws_client");
+const socketAdapter = require("roslib/src/core/SocketAdapter.js");
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -42,11 +45,38 @@ function makeServiceCall(service, request, timeoutMs = 5000) {
 }
 
 /**
- * Connect to rosbridge and return ROS client
+ * Connect to rosbridge and return ROS client.
+ *
+ * If TensorFleet VM Manager proxy settings are available (TENSORFLEET_VM_MANAGER_URL,
+ * TENSORFLEET_NODE_ID, TENSORFLEET_JWT), traffic is routed through the proxy.
+ * Otherwise, we connect directly to the resolved rosbridge URL.
  */
 async function connectToDrone(url) {
-    console.log(`[CONNECT] Connecting to rosbridge at ${url}...`);
-    const ros = new ROSLIB.Ros({ url });
+    const settings = getTensorfleetSettings();
+
+    const useProxy = settings.useProxy && settings.proxyUrl;
+    let ros;
+
+    if (useProxy) {
+        console.log(`[CONNECT] Connecting via VM Manager proxy at ${settings.proxyUrl} (nodeId=${settings.nodeId}, targetPort=${settings.targetPort})...`);
+
+        const proxyWs = createProxyWebSocket({
+            proxyUrl: settings.proxyUrl,
+            token: settings.token,
+            nodeId: settings.nodeId,
+            targetPort: settings.targetPort
+        });
+
+        // Attach roslib's socket adapter to the proxy websocket so it behaves
+        // like a normal rosbridge connection after the vm-manager login.
+        ros = new ROSLIB.Ros({});
+        const adaptedSocket = Object.assign(proxyWs, socketAdapter(ros));
+        ros.socket = adaptedSocket;
+    } else {
+        const directUrl = settings.rosbridgeUrl || url;
+        console.log(`[CONNECT] Connecting to rosbridge at ${directUrl}...`);
+        ros = new ROSLIB.Ros({ url: directUrl });
+    }
 
     await new Promise((resolve, reject) => {
         const timer = setTimeout(

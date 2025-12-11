@@ -1,8 +1,8 @@
 # TensorFleet Drone JS Configuration
 
 network:
-  vm_ip: "172.16.0.10"
-  rosbridge_url: "ws://172.16.0.10:9091"  # rosbridge websocket URL
+  vm_ip: ""              # Populated automatically when the VM is running
+  rosbridge_url: ""      # rosbridge websocket URL (auto-filled via .env)
   rosbridge_port: 9091
   namespace: "/drone"
   setpoint_frame: "map"

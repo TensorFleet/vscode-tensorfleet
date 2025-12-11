@@ -24,11 +24,10 @@ const {
     landDrone,
     sleep
 } = require("../lib/drone_utils");
+const { getTensorfleetSettings } = require("../lib/tensorfleet_config");
 const ROSLIB = require("roslib");
 
-const R2B_HOST = process.env.R2B_HOST || process.env.ROS_HOST || "172.16.0.10";
-const R2B_PORT = process.env.R2B_PORT || process.env.ROS_PORT || "9091";
-const url = process.env.ROSBRIDGE_URL || `ws://${R2B_HOST}:${R2B_PORT}`;
+const { rosbridgeUrl } = getTensorfleetSettings();
 
 const TARGET_ALTITUDE = 3.0; // meters
 const WAYPOINT_OFFSET_X = 5.0; // meters forward
@@ -39,7 +38,7 @@ const SETPOINT_HZ = 20;
 
 async function main() {
 
-    const ros = await connectToDrone(url);
+    const ros = await connectToDrone(rosbridgeUrl);
     const { telemetry } = await waitForTelemetry(ros);
 
     // Arm and takeoff
@@ -141,4 +140,3 @@ if (require.main === module) {
         process.exit(1);
     });
 }
-
