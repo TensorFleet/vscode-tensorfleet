@@ -105,13 +105,19 @@ This script:
 - Runs YOLO object detection on CPU using `ultralytics` and OpenCV
 - Publishes annotated images on `/camera/image_annotated`
 
-```bash
-uv run python src/vision_yolo.py
-```
+**Setup:**
+1. Open the **Simulation View** from the sidebar to see the robot in Gazebo
+2. Open the **Image Panel** from the sidebar
+3. Open the **Teleop Panel** to manually drive the robot around
+4. In the Image Panel dropdown, select `/camera/image_raw` to see the robot's camera feed
 
-In VS Code (TensorFleet extension):
-- Open the **Raw Message panel** and select `/camera/image_annotated`
-- Use the **Teleop panel** to move the robot while detections update
+**Running vision detection:**
+1. Run the vision script:
+   ```bash
+   uv run python src/vision_yolo.py
+   ```
+2. Switch the Image Panel dropdown to `/camera/image_annotated` to see the detection output with bounding boxes and labels
+3. Use the Teleop Panel to drive the robot and see detections update in real-time
 
 YOLO runs on **CPU only**; no GPU is required.
 
