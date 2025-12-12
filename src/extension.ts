@@ -69,6 +69,22 @@ type UniquePanel = {
   localResourceRoots?: (ctx: { context: vscode.ExtensionContext }) => vscode.Uri[];
 };
 
+type TensorfleetMetadata = {
+  template?: string;
+  version?: number;
+  managedEnv?: boolean;
+  env?: {
+    region?: string;
+    baseUrl?: string;
+    vmManagerUrl?: string;
+    proxyUrl?: string;
+    rosbridgeUrl?: string;
+    rosbridgePort?: number;
+    nodeId?: string;
+    r2bHost?: string;
+  };
+};
+
 // -----------------------------------------------------------------------------
 // Collections
 // -----------------------------------------------------------------------------
@@ -460,6 +476,11 @@ const UNIQUE_PANELS: UniquePanel[] = [
 // Globals / services
 // -----------------------------------------------------------------------------
 
+const MANAGED_ENV_KEYS = [
+  'TENSORFLEET_BASE_URL',
+  'TENSORFLEET_JWT'
+] as const;
+
 const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
   ros2: {
     id: 'tensorfleet-ros2-terminal',
@@ -478,6 +499,7 @@ let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 let vmManagerIntegration: VMManagerIntegration | null = null;
 let telemetryService: TelemetryService | null = null;
+let envRefreshTimer: NodeJS.Timeout | null = null;
 
 
 
@@ -534,6 +556,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Initialize unified status coordinator (replaces separate auth and VM status bars)
   unifiedStatusCoordinator = new UnifiedStatusCoordinator(context);
+  context.subscriptions.push(
+    unifiedStatusCoordinator.onStateChange(() => scheduleEnvRefresh(context, 'unified-status'))
+  );
 
   // Initialize auth state
   vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
@@ -635,6 +660,9 @@ export function activate(context: vscode.ExtensionContext) {
       feature: 'region'
     })
   );
+  context.subscriptions.push(
+    regions.onRegionChange(() => scheduleEnvRefresh(context, 'region-change'))
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.selectRosVersion', () => selectRosVersion())
@@ -709,6 +737,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tensorfleet.openWebsite', () => openWebsite(context))
   )
 
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => scheduleEnvRefresh(context, 'workspace-folders'))
+  );
 
 
   // ROS bridge commands removed; panels use embedded Foxglove networking.
@@ -724,6 +755,8 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+  scheduleEnvRefresh(context, 'activation');
 
 
   // Welcome page.
@@ -741,6 +774,11 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
   telemetryService?.trackEvent('extension.deactivate');
+
+  if (envRefreshTimer) {
+    clearTimeout(envRefreshTimer);
+    envRefreshTimer = null;
+  }
 
   // Clean up MCP bridge
   if (mcpBridge) {
@@ -1641,15 +1679,351 @@ async function hasTensorfleetMarker(): Promise<boolean> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) return false;
 
-  const root = folders[0].uri;
-  const markerUri = vscode.Uri.joinPath(root, '.tensorfleet');
-
-  try {
-    await vscode.workspace.fs.stat(markerUri);
-    return true;
-  } catch {
-    return false;
+  for (const folder of folders) {
+    const markerUri = vscode.Uri.joinPath(folder.uri, '.tensorfleet');
+    try {
+      await vscode.workspace.fs.stat(markerUri);
+      return true;
+    } catch {
+      // Not a TensorFleet workspace, keep scanning
+    }
   }
+
+  return false;
+}
+
+function buildProxyWebSocketUrl(vmManagerUrl: string): string {
+  if (!vmManagerUrl) return '';
+  try {
+    const url = new URL(vmManagerUrl);
+
+    if (url.protocol === 'ws:' || url.protocol === 'wss:') {
+      if (!url.pathname || url.pathname === '/') {
+        url.pathname = '/ws';
+      }
+      return url.toString();
+    }
+
+    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    const basePath = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : url.pathname;
+    const pathName = basePath.endsWith('/ws') ? basePath : `${basePath}/ws`;
+
+    return `${protocol}//${url.host}${pathName}`;
+  } catch {
+    return '';
+  }
+}
+
+async function readTensorfleetMetadata(folder: vscode.Uri): Promise<TensorfleetMetadata> {
+  const markerUri = vscode.Uri.joinPath(folder, '.tensorfleet');
+  try {
+    const buf = await vscode.workspace.fs.readFile(markerUri);
+    const text = Buffer.from(buf).toString('utf8').trim();
+    if (!text) return {};
+    return JSON.parse(text);
+  } catch (error) {
+    const code = (error as Partial<vscode.FileSystemError>)?.code;
+    if (code === 'FileNotFound' || code === 'ENOENT') {
+      return {};
+    }
+    console.warn('[TensorFleet] Failed to read .tensorfleet metadata:', error);
+    return {};
+  }
+}
+
+async function writeTensorfleetMetadata(folder: vscode.Uri, metadata: TensorfleetMetadata): Promise<void> {
+  const markerUri = vscode.Uri.joinPath(folder, '.tensorfleet');
+  const normalized: TensorfleetMetadata = {
+    template: metadata.template || 'tensorfleet',
+    version: metadata.version ?? 1,
+    managedEnv: metadata.managedEnv ?? true,
+    env: metadata.env
+  };
+  const content = JSON.stringify(normalized, null, 2) + '\n';
+  await vscode.workspace.fs.writeFile(markerUri, Buffer.from(content, 'utf8'));
+}
+
+function parseEnvFile(content: string): Record<string, string> {
+  const envVars: Record<string, string> = {};
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const match =
+      line.match(/^export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$/) ||
+      line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+
+    if (match) {
+      const [, key, value] = match;
+      envVars[key] = value;
+    }
+  }
+
+  return envVars;
+}
+
+function collectUnmanagedLines(content: string, managedKeys: Set<string>): string[] {
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const extras: string[] = [];
+  const ignoreCommentPrefixes = [
+    '# TensorFleet environment (managed',
+    '# Values refresh automatically when login',
+    '# User overrides and additional variables',
+    '# Add custom variables below.'
+  ];
+  let hasPreservedContent = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (hasPreservedContent) {
+        extras.push(rawLine);
+      }
+      continue;
+    }
+
+    if (line.startsWith('#')) {
+      if (ignoreCommentPrefixes.some((prefix) => line.startsWith(prefix))) {
+        continue;
+      }
+      hasPreservedContent = true;
+      extras.push(rawLine);
+      continue;
+    }
+
+    const match =
+      line.match(/^export\s+([A-Za-z_][A-Za-z0-9_]*)=/) ||
+      line.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
+
+    if (match) {
+      const key = match[1];
+      if (managedKeys.has(key)) {
+        continue;
+      }
+    }
+
+    hasPreservedContent = true;
+    extras.push(rawLine);
+  }
+
+  // Trim trailing blank lines to keep output tidy
+  while (extras.length > 0 && extras[extras.length - 1].trim() === '') {
+    extras.pop();
+  }
+
+  return extras;
+}
+
+async function getTensorfleetProjectFolders(additionalFolders: vscode.Uri[] = []): Promise<vscode.Uri[]> {
+  const seen = new Map<string, vscode.Uri>();
+  const workspaceUris = vscode.workspace.workspaceFolders?.map((f) => f.uri) ?? [];
+  const candidates = [...workspaceUris, ...additionalFolders];
+
+  for (const folder of candidates) {
+    const key = folder.fsPath;
+    if (seen.has(key)) continue;
+
+    try {
+      await vscode.workspace.fs.stat(vscode.Uri.joinPath(folder, '.tensorfleet'));
+      seen.set(key, folder);
+    } catch {
+      // Not a TensorFleet project
+    }
+  }
+
+  return Array.from(seen.values());
+}
+
+async function writeEnvForFolder(
+  folder: vscode.Uri,
+  inputs: {
+    region: ReturnType<typeof regions.getSelectedRegion>;
+    proxyUrl: string;
+    nodeId?: string;
+    ipAddress?: string;
+    token?: string | undefined;
+  },
+  reason: string
+): Promise<void> {
+  const envUri = vscode.Uri.joinPath(folder, '.env');
+  const metadata = await readTensorfleetMetadata(folder);
+  const markerEnv = metadata.env ?? {};
+
+  env.log('[TensorFleet] Syncing .env for', folder.fsPath, `(reason: ${reason})`);
+
+  let existingContent = '';
+  try {
+    const buf = await vscode.workspace.fs.readFile(envUri);
+    existingContent = Buffer.from(buf).toString('utf8');
+  } catch {
+    // No existing .env, will create one
+  }
+
+  const existingEnv = parseEnvFile(existingContent);
+  const managedKeys = new Set<string>(MANAGED_ENV_KEYS);
+  const previousRegion = existingEnv.TENSORFLEET_REGION || markerEnv.region;
+  const regionChanged = Boolean(previousRegion && previousRegion !== inputs.region.id);
+
+  const rosbridgePort =
+    Number(inputs.region.ros2Port) ||
+    Number(markerEnv.rosbridgePort) ||
+    Number(existingEnv.ROSBRIDGE_PORT) ||
+    9091;
+
+  const r2bHost = regionChanged
+    ? ''
+    : inputs.ipAddress ||
+      markerEnv.r2bHost ||
+      existingEnv.R2B_HOST ||
+      '';
+
+  const rosbridgeUrl = regionChanged
+    ? ''
+    : (inputs.ipAddress ? regions.getRos2WebsocketUrl(inputs.ipAddress) : '') ||
+      existingEnv.ROSBRIDGE_URL ||
+      markerEnv.rosbridgeUrl ||
+      (r2bHost ? `ws://${r2bHost}:${rosbridgePort}` : '');
+
+  const baseUrl =
+    inputs.region.vmManagerUrl ||
+    existingEnv.TENSORFLEET_BASE_URL ||
+    markerEnv.baseUrl ||
+    existingEnv.TENSORFLEET_VM_MANAGER_URL ||
+    markerEnv.vmManagerUrl ||
+    '';
+
+  const nodeId = regionChanged
+    ? ''
+    : inputs.nodeId ||
+      markerEnv.nodeId ||
+      existingEnv.TENSORFLEET_NODE_ID ||
+      '';
+
+  const vmManagerUrl =
+    inputs.region.vmManagerUrl ||
+    markerEnv.vmManagerUrl ||
+    existingEnv.TENSORFLEET_VM_MANAGER_URL ||
+    baseUrl ||
+    '';
+
+  const proxyUrl =
+    inputs.proxyUrl ||
+    markerEnv.proxyUrl ||
+    buildProxyWebSocketUrl(vmManagerUrl) ||
+    buildProxyWebSocketUrl(baseUrl);
+
+  const managed: Record<(typeof MANAGED_ENV_KEYS)[number], string | undefined> = {
+    TENSORFLEET_BASE_URL: baseUrl || undefined,
+    TENSORFLEET_JWT: inputs.token || undefined
+  };
+
+  const header = [
+    '# TensorFleet environment (managed by the VS Code extension)',
+    '# Values refresh automatically when login, region, or VM status changes.'
+  ];
+
+  const managedLines = MANAGED_ENV_KEYS.map((key) => {
+    const value = managed[key];
+    return value ? `${key}=${value}` : `# ${key}=`;
+  });
+
+  const extras = collectUnmanagedLines(existingContent, managedKeys);
+
+  const lines = [...header, '', ...managedLines, ''];
+  if (extras.length > 0) {
+    lines.push('# User overrides and additional variables (preserved):', ...extras);
+  } else {
+    lines.push('# Add custom variables below. They will be preserved on refresh.');
+  }
+
+  let nextContent = lines.join('\n');
+  if (!nextContent.endsWith('\n')) {
+    nextContent += '\n';
+  }
+
+  const normalizedExisting = existingContent.replace(/\r\n/g, '\n');
+  if (normalizedExisting !== nextContent) {
+    await vscode.workspace.fs.writeFile(envUri, Buffer.from(nextContent, 'utf8'));
+  }
+
+  const nextMetadata: TensorfleetMetadata = {
+    template: metadata.template || 'tensorfleet',
+    version: metadata.version ?? 1,
+    managedEnv: metadata.managedEnv ?? true,
+    env: {
+      ...markerEnv,
+      region: inputs.region.id,
+      baseUrl,
+      vmManagerUrl,
+      proxyUrl: proxyUrl || markerEnv.proxyUrl,
+      rosbridgeUrl: regionChanged ? undefined : rosbridgeUrl || markerEnv.rosbridgeUrl,
+      rosbridgePort,
+      nodeId: regionChanged ? undefined : nodeId || markerEnv.nodeId,
+      r2bHost: regionChanged ? undefined : r2bHost || markerEnv.r2bHost
+    }
+  };
+
+  const previousMetadataString = JSON.stringify({
+    template: metadata.template || 'tensorfleet',
+    version: metadata.version ?? 1,
+    managedEnv: metadata.managedEnv ?? true,
+    env: markerEnv
+  });
+
+  const nextMetadataString = JSON.stringify(nextMetadata);
+
+  if (previousMetadataString !== nextMetadataString) {
+    await writeTensorfleetMetadata(folder, nextMetadata);
+  }
+}
+
+async function refreshTensorfleetEnvFiles(
+  context: vscode.ExtensionContext,
+  reason: string,
+  additionalFolders: vscode.Uri[] = []
+): Promise<void> {
+  try {
+    const folders = await getTensorfleetProjectFolders(additionalFolders);
+    if (folders.length === 0) {
+      return;
+    }
+
+    const region = regions.getSelectedRegion();
+    const token = await auth.getToken(context);
+    const snapshot = vmManagerIntegration?.snapshot;
+
+    const proxyUrl = buildProxyWebSocketUrl(region.vmManagerUrl);
+    const nodeId = snapshot?.nodeId;
+    const ipAddress = snapshot?.ipAddress;
+
+    await Promise.all(
+      folders.map((folder) =>
+        writeEnvForFolder(
+          folder,
+          { region, proxyUrl, nodeId, ipAddress, token },
+          reason
+        )
+      )
+    );
+  } catch (error) {
+    console.warn(`[TensorFleet] Failed to refresh TensorFleet .env (${reason}):`, error);
+  }
+}
+
+function scheduleEnvRefresh(
+  context: vscode.ExtensionContext,
+  reason: string,
+  additionalFolders: vscode.Uri[] = []
+) {
+  if (envRefreshTimer) {
+    clearTimeout(envRefreshTimer);
+  }
+  envRefreshTimer = setTimeout(() => {
+    envRefreshTimer = null;
+    void refreshTensorfleetEnvFiles(context, reason, additionalFolders);
+  }, 300);
 }
 
 
@@ -1727,6 +2101,13 @@ async function createNewProjectInternal(
       async (progress) => {
         progress.report({ message: 'Setting up project structure…' });
         await copyDirectory(templateFolder, projectFolder);
+
+        try {
+          await refreshTensorfleetEnvFiles(context, 'project-create', [projectFolder]);
+        } catch (err) {
+          console.warn('[TensorFleet] Failed to create default .env for new project:', err);
+        }
+
         progress.report({ message: 'Project created successfully!' });
       }
     );
@@ -3052,6 +3433,7 @@ async function selectRegion(_context: vscode.ExtensionContext) {
       vmManagerIntegration.refreshStatus(false);
     }
 
+    scheduleEnvRefresh(_context, 'region-change');
     vscode.window.showInformationMessage(
       `Region changed to ${newRegion.name}. API endpoints updated.`
     );
@@ -3115,6 +3497,7 @@ async function handleLogin(context: vscode.ExtensionContext) {
       vmManagerIntegration.refreshStatus(false);
     }
 
+    scheduleEnvRefresh(context, 'login');
     console.log('[TensorFleet] Login process completed');
   } catch (error) {
     console.error('[TensorFleet] Login error:', error);
@@ -3146,6 +3529,8 @@ async function handleLogout(context: vscode.ExtensionContext) {
   if (accountPanel) {
     await accountPanel.refresh();
   }
+
+  scheduleEnvRefresh(context, 'logout');
 }
 
 /**

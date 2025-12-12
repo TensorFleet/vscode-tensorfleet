@@ -8,28 +8,20 @@
  *  - Switch to OFFBOARD and stream velocity setpoints to waypoints
  *  - Command AUTO.LAND and wait for disarm
  *
- * Run:
- *   ROSBRIDGE_URL=ws://172.16.0.10:9091 bun src/drone_mover.js
+ * Run (remote VM or local):
+ *   - Ensure .env contains ROSBRIDGE_URL or R2B_HOST/R2B_PORT (the VS Code
+ *     extension refreshes this automatically from .tensorfleet metadata), or
+ *   - Set ROSBRIDGE_URL in environment and run:
+ *       bun src/drone_mover.js
  */
 
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const ROSLIB = require("roslib");
-const yaml = require("js-yaml");
-
-function loadConfig() {
-  const configPath = path.join(process.cwd(), "config", "drone_config.yaml");
-  try {
-    const contents = fs.readFileSync(configPath, "utf8");
-    return yaml.load(contents) || {};
-  } catch (err) {
-    console.warn(`[CFG] Could not load config at ${configPath}, using defaults. ${err.message}`);
-    return {};
-  }
-}
-
-const config = loadConfig();
+const { getTensorfleetSettings } = require("./lib/tensorfleet_config");
+const socketAdapter = require("roslib/src/core/SocketAdapter.js");
+const { createProxyWebSocket } = require("./lib/proxy_ws_client");
 
 function loadMissionPlan() {
   const planPath = path.join(process.cwd(), "missions", "example_mission.plan");
@@ -70,9 +62,20 @@ function numEnv(key, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function buildSettings(configObject) {
-  const offboard = configObject?.offboard || {};
-  const network = configObject?.network || {};
+function buildSettings() {
+  const tf = getTensorfleetSettings();
+
+  // Offboard / mission tuning comes from env with fallback to YAML.
+  const cfgPath = path.join(process.cwd(), "config", "drone_config.yaml");
+  let cfg = {};
+  try {
+    const contents = fs.readFileSync(cfgPath, "utf8");
+    cfg = (require("js-yaml").load(contents) || {});
+  } catch (err) {
+    console.warn(`[CFG] Could not reload config at ${cfgPath}, using defaults. ${err.message}`);
+  }
+
+  const offboard = cfg.offboard || {};
 
   const altTarget = numEnv("ALT_TARGET", offboard.alt_target ?? 3.0);
   const edgeMeters = numEnv("EDGE_M", offboard.edge_m ?? 200.0);
@@ -91,15 +94,6 @@ function buildSettings(configObject) {
   );
   const setpointHz = numEnv("SETPOINT_HZ", offboard.setpoint_hz ?? 20.0);
 
-  const frameId = process.env.SETPOINT_FRAME_ID || network.setpoint_frame || "map";
-
-  const r2bHost = process.env.R2B_HOST || network.vm_ip || "172.16.0.10";
-  const r2bPort = process.env.R2B_PORT || network.rosbridge_port || "9091";
-  const rosbridgeUrl =
-    process.env.ROSBRIDGE_URL ||
-    network.rosbridge_url ||
-    `ws://${r2bHost}:${r2bPort}`;
-
   return {
     altTarget,
     edgeMeters,
@@ -111,12 +105,12 @@ function buildSettings(configObject) {
     takeoffTimeoutSec,
     landTimeoutSec,
     setpointHz,
-    frameId,
-    rosbridgeUrl
+    frameId: tf.frameId,
+    rosbridgeUrl: tf.rosbridgeUrl,
   };
 }
 
-const SETTINGS = buildSettings(config);
+const SETTINGS = buildSettings();
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -166,8 +160,28 @@ class GuidedMissionController {
   }
 
   async connect() {
-    console.log(`[SYS] Connecting to rosbridge at ${this.settings.rosbridgeUrl} ...`);
-    this.ros = new ROSLIB.Ros({ url: this.settings.rosbridgeUrl });
+    const tf = getTensorfleetSettings();
+    const useProxy = tf.useProxy && tf.proxyUrl;
+
+    if (useProxy) {
+      console.log(
+        `[SYS] Connecting via VM Manager proxy at ${tf.proxyUrl} (nodeId=${tf.nodeId}, targetPort=${tf.targetPort}) ...`
+      );
+      const proxyWs = createProxyWebSocket({
+        proxyUrl: tf.proxyUrl,
+        vmManagerUrl: tf.vmManagerUrl,
+        token: tf.token,
+        nodeId: tf.nodeId,
+        targetPort: tf.targetPort,
+      });
+      this.ros = new ROSLIB.Ros({});
+      const adaptedSocket = Object.assign(proxyWs, socketAdapter(this.ros));
+      this.ros.socket = adaptedSocket;
+    } else {
+      const directUrl = tf.rosbridgeUrl || this.settings.rosbridgeUrl;
+      console.log(`[SYS] Connecting to rosbridge at ${directUrl} ...`);
+      this.ros = new ROSLIB.Ros({ url: directUrl });
+    }
 
     await new Promise((resolve, reject) => {
       const timer = setTimeout(

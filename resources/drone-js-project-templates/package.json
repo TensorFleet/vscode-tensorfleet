@@ -19,6 +19,7 @@
     "jpeg-js": "^0.4.4",
     "js-yaml": "^4.1.0",
     "onnxruntime-node": "^1.18.0",
-    "roslib": "^1.3.0"
+    "roslib": "^1.3.0",
+    "ws": "^8.18.0"
   }
 }

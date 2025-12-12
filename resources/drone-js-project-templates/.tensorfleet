@@ -1,0 +1,5 @@
+{
+  "template": "drone-js",
+  "version": 1,
+  "managedEnv": true
+}
