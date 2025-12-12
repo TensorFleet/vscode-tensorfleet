@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
 """
-Simple client for the rosbridge WebSocket server running inside the VM.
+Vision client: subscribe to images over rosbridge, run YOLO, and republish.
 
-This is a trimmed‑down version of the working example you provided, focused on:
+This script:
+  - Connects to the rosbridge WebSocket server (via proxy or direct)
+  - Subscribes to an image topic from the VM via rosbridge
+  - Converts to numpy
+  - Optionally runs YOLO on CPU + draws annotations
+  - Publishes annotated image to another ROS topic
 
-  - Connectivity test via /rosapi/topics
-  - Sending control commands to ROS 2 topics
-  - Subscribing to a raw image topic, running YOLO on CPU, and
-    republishing an annotated image back into ROS
+Usage:
+  python src/vision_yolo.py
 
-Dependencies (on the host):
+Environment overrides:
+  - TENSORFLEET_BASE_URL, TENSORFLEET_JWT (for proxy connection)
+  - ROS_HOST, ROS_PORT, ROSBRIDGE_URL (for direct connection)
+  - IMAGE_TOPIC, ANNOTATED_IMAGE_TOPIC
+  - NO_YOLO (set to 1 to disable YOLO)
+  - MAX_IMAGES, MAX_WAIT_SECONDS
+
+Dependencies:
   pip install roslibpy numpy
   # For YOLO image mode:
   pip install ultralytics opencv-python
@@ -17,32 +27,45 @@ Dependencies (on the host):
 
 import argparse
 import base64
+import os
 import sys
 import time
 import threading
 
+# Add parent directory to path for lib imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 try:
-    import roslibpy  # type: ignore[import]
-except ImportError:  # pragma: no cover - import-time check
+    import roslibpy
+except ImportError:
     print("ERROR: The 'roslibpy' package is required.", file=sys.stderr)
-    print("Install it on the host with:", file=sys.stderr)
-    print("  pip install roslibpy", file=sys.stderr)
+    print("Install it with: pip install roslibpy", file=sys.stderr)
     sys.exit(1)
 
 try:
-    import numpy as np  # type: ignore[import]
-except ImportError:  # pragma: no cover - optional
-    np = None  # Image/Yolo mode will check for this explicitly.
+    import numpy as np
+except ImportError:
+    np = None
 
 try:
-    from ultralytics import YOLO  # type: ignore[import]
-except ImportError:  # pragma: no cover - optional
-    YOLO = None  # YOLO mode will check for this explicitly.
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
 try:
-    import cv2  # type: ignore[import]
-except ImportError:  # pragma: no cover - optional
-    cv2 = None  # Compressed image mode will check for this explicitly.
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    from lib.robotic_utils import connect_to_robot, Topic, Service
+except ImportError:
+    try:
+        from robotic_utils import connect_to_robot, Topic, Service
+    except ImportError:
+        connect_to_robot = None
+        Topic = None
+        Service = None
 
 
 YOLO_MODEL = None
@@ -53,59 +76,44 @@ def parse_args() -> argparse.Namespace:
         description="Vision client: subscribe to images over rosbridge, run YOLO, and republish.",
     )
     parser.add_argument(
-        "--host",
-        default="172.16.0.10",
-        help="ROS bridge host (default: 172.16.0.10 inside VM)",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=9091,
-        help="ROS bridge WebSocket port (default: 9091)",
-    )
-    parser.add_argument(
         "--timeout",
         type=float,
-        default=5.0,
+        default=float(os.getenv("TIMEOUT", "5.0")),
         help="Timeout in seconds for rosbridge service calls (default: 5.0).",
     )
     parser.add_argument(
         "--image-topic",
-        default="/camera/image_raw",
-        help=(
-            "Source image topic for image_yolo mode. "
-        ),
+        default=os.getenv("IMAGE_TOPIC", "/camera/image_raw"),
+        help="Source image topic for image_yolo mode.",
     )
     parser.add_argument(
         "--annotated-image-topic",
-        default="/camera/image_annotated",
-        help="Destination topic for annotated images in image_yolo mode (default: /camera/image_annotated).",
+        default=os.getenv("ANNOTATED_IMAGE_TOPIC", "/camera/image_annotated"),
+        help="Destination topic for annotated images (default: /camera/image_annotated).",
     )
     parser.add_argument(
         "--max-images",
         type=int,
-        default=0,
-        help="Maximum number of images to process in image_yolo mode (default: 0; <=0 means infinite).",
+        default=int(os.getenv("MAX_IMAGES", "0")),
+        help="Maximum number of images to process (default: 0; <=0 means infinite).",
     )
     parser.add_argument(
         "--no-yolo",
         action="store_true",
-        help="In image_yolo mode, disable YOLO and just republish images.",
+        default=os.getenv("NO_YOLO", "").lower() in ("1", "true", "yes"),
+        help="Disable YOLO and just republish images.",
     )
     parser.add_argument(
         "--max-wait-seconds",
         type=float,
-        default=0.0,
-        help=(
-            "In image_yolo mode with --max-images 0, maximum wall-clock "
-            "seconds to wait before exiting (default: 0 for infinite)."
-        ),
+        default=float(os.getenv("MAX_WAIT_SECONDS", "0.0")),
+        help="Maximum wall-clock seconds to wait before exiting (default: 0 for infinite).",
     )
     return parser.parse_args()
 
 
 def _require_numpy() -> None:
-    if np is None:  # type: ignore[truthy-function]
+    if np is None:
         print(
             "ERROR: numpy is required for image_yolo mode.\n"
             "Install it with:\n"
@@ -116,7 +124,7 @@ def _require_numpy() -> None:
 
 
 def _require_yolo() -> None:
-    if YOLO is None:  # type: ignore[truthy-function]
+    if YOLO is None:
         print(
             "ERROR: ultralytics YOLO is required for image_yolo mode.\n"
             "Install it (and CPU deps) with:\n"
@@ -130,24 +138,19 @@ def _get_yolo_model():
     global YOLO_MODEL
     _require_yolo()
     if YOLO_MODEL is None:
-        # Small default model for CPU inference.
-        YOLO_MODEL = YOLO("yolov8n.pt")  # type: ignore[call-arg]
+        YOLO_MODEL = YOLO("yolov8n.pt")
     return YOLO_MODEL
 
 
 def _run_yolo_on_image(img_np):
-    """
-    Run YOLO on an RGB image and return an annotated RGB image.
-    """
+    """Run YOLO on an RGB image and return an annotated RGB image."""
     print("Running YOLO inference on image ...")
     model = _get_yolo_model()
-    # YOLO expects BGR images; convert from RGB.
     bgr = img_np[..., ::-1].copy()
     try:
-        results = model(bgr, verbose=False, device="cpu")  # type: ignore[call-arg]
+        results = model(bgr, verbose=False, device="cpu")
     except TypeError:
-        # Older versions might not accept device kwarg.
-        results = model(bgr, verbose=False)  # type: ignore[call-arg]
+        results = model(bgr, verbose=False)
     annotated_bgr = results[0].plot()
     annotated_rgb = annotated_bgr[..., ::-1]
     print("YOLO inference finished.")
@@ -155,7 +158,7 @@ def _run_yolo_on_image(img_np):
 
 
 def _require_cv2() -> None:
-    if cv2 is None:  # type: ignore[truthy-function]
+    if cv2 is None:
         print(
             "ERROR: OpenCV (cv2) is required for compressed image mode.\n"
             "Install it with:\n"
@@ -166,12 +169,7 @@ def _require_cv2() -> None:
 
 
 def _decode_ros_image(img_msg: dict):
-    """
-    Decode a ROS sensor_msgs/Image-style message from rosbridge into a numpy array.
-
-    Returns (image_np, meta) where image_np is HxWxC uint8 and meta tracks how
-    the data field was encoded so we can re-encode it later.
-    """
+    """Decode a ROS sensor_msgs/Image-style message from rosbridge into a numpy array."""
     _require_numpy()
 
     height = img_msg["height"]
@@ -188,13 +186,12 @@ def _decode_ros_image(img_msg: dict):
         encoding_kind = "list"
 
     if step is None or step == 0:
-        # Assume tightly packed RGB
         channels = 3
         step = width * channels
     else:
         channels = step // width
 
-    img = np.frombuffer(raw, dtype=np.uint8)  # type: ignore[arg-type]
+    img = np.frombuffer(raw, dtype=np.uint8)
     img = img.reshape((height, width, channels))
 
     meta = {
@@ -208,13 +205,7 @@ def _decode_ros_image(img_msg: dict):
 
 
 def _decode_compressed_ros_image(img_msg: dict):
-    """
-    Decode a ROS sensor_msgs/CompressedImage-style message into an RGB numpy array.
-
-    Returns (image_np, meta) where image_np is HxWxC uint8 (RGB) and meta is
-    compatible with _encode_ros_image so that we can republish as a raw
-    sensor_msgs/Image message.
-    """
+    """Decode a ROS sensor_msgs/CompressedImage-style message into an RGB numpy array."""
     _require_numpy()
     _require_cv2()
 
@@ -227,19 +218,16 @@ def _decode_compressed_ros_image(img_msg: dict):
         compressed = bytes(data_field)
         encoding_kind = "list"
 
-    buf = np.frombuffer(compressed, dtype=np.uint8)  # type: ignore[arg-type]
-    bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)  # type: ignore[arg-type]
+    buf = np.frombuffer(compressed, dtype=np.uint8)
+    bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
     if bgr is None:
         raise RuntimeError("cv2.imdecode returned None for compressed image")
 
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)  # type: ignore[arg-type]
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     height, width, _channels = rgb.shape
 
-    # We republish as rgb8 raw image data.
     meta = {
         "encoding": "rgb8",
-        # We always encode annotated images as base64 strings when republishing
-        # (works well over rosbridge and keeps messages compact).
         "encoding_kind": encoding_kind or "base64",
         "step": width * 3,
         "height": height,
@@ -249,11 +237,7 @@ def _decode_compressed_ros_image(img_msg: dict):
 
 
 def _encode_ros_image(img, template_msg: dict, meta: dict) -> dict:
-    """
-    Encode a numpy image back into a sensor_msgs/Image-style dict.
-
-    This copies the original message and overrides only the image-related fields.
-    """
+    """Encode a numpy image back into a sensor_msgs/Image-style dict."""
     _require_numpy()
 
     height, width, channels = img.shape
@@ -273,13 +257,16 @@ def _encode_ros_image(img, template_msg: dict, meta: dict) -> dict:
     return out
 
 
-def _lookup_topic_type(client: "roslibpy.Ros", topic: str, timeout: float = 5.0) -> str:
+def _lookup_topic_type(client, topic: str, timeout: float = 5.0) -> str:
     """Ask rosapi for the type of a given topic for image streams."""
-    service = roslibpy.Service(client, "/rosapi/topic_type", "rosapi/TopicType")
-    request = roslibpy.ServiceRequest({"topic": topic})
     try:
-        response = service.call(request, timeout=timeout)
-    except Exception as exc:  # pragma: no cover - network-dependent
+        if Service:
+            service = Service(client, "/rosapi/topic_type", "rosapi/TopicType")
+        else:
+            service = roslibpy.Service(client, "/rosapi/topic_type", "rosapi/TopicType")
+        
+        response = service.call({"topic": topic}, timeout=timeout)
+    except Exception as exc:
         print(
             f"WARNING: Failed to query /rosapi/topic_type for '{topic}': {exc}",
             file=sys.stderr,
@@ -295,8 +282,6 @@ def _lookup_topic_type(client: "roslibpy.Ros", topic: str, timeout: float = 5.0)
     else:
         print(f"Resolved topic '{topic}' type as '{topic_type_ros2}'.")
 
-    # roslibpy expects ROS 1 style names (pkg/Msg), but rosapi on ROS 2 returns
-    # 'pkg/msg/Msg'. Convert if needed.
     if "/msg/" in topic_type_ros2:
         pkg, msg = topic_type_ros2.split("/msg/", 1)
         topic_type_ros1 = f"{pkg}/{msg}"
@@ -306,7 +291,7 @@ def _lookup_topic_type(client: "roslibpy.Ros", topic: str, timeout: float = 5.0)
     return topic_type_ros1
 
 
-def image_yolo(client: "roslibpy.Ros", args: argparse.Namespace) -> None:
+def image_yolo(client, args: argparse.Namespace) -> None:
     """
     Simple pipeline:
       - subscribe to an image topic from the VM via rosbridge
@@ -325,36 +310,23 @@ def image_yolo(client: "roslibpy.Ros", args: argparse.Namespace) -> None:
     print(f"Subscribing to image topic '{src_topic}' ...")
     resolved_type = _lookup_topic_type(client, src_topic, timeout=args.timeout)
     if not resolved_type:
-        # Fallback to a common ROS 1 style type name expected by roslibpy.
-        # We assume a raw Image here; compressed streams should normally be
-        # discoverable via rosapi.
         resolved_type = "sensor_msgs/Image"
-        print(
-            f"Falling back to default type '{resolved_type}' for '{src_topic}'.",
-        )
+        print(f"Falling back to default type '{resolved_type}' for '{src_topic}'.")
 
     print(f"Input topic '{src_topic}' resolved type: '{resolved_type}'.")
     input_is_compressed = "CompressedImage" in resolved_type
 
-    subscriber = roslibpy.Topic(
-        client,
-        src_topic,
-        resolved_type,
-        queue_length=1,
-    )
-
-    # Always publish annotated frames as raw sensor_msgs/Image so that tools
-    # like ImagePanel and RawMessagesPanel can visualize them easily.
-    annotated_type = "sensor_msgs/Image"
+    # Use Topic factory for compatibility
+    if Topic:
+        subscriber = Topic(client, src_topic, resolved_type, queue_length=1)
+        publisher = Topic(client, dst_topic, "sensor_msgs/Image")
+    else:
+        subscriber = roslibpy.Topic(client, src_topic, resolved_type, queue_length=1)
+        publisher = roslibpy.Topic(client, dst_topic, "sensor_msgs/Image")
 
     print(
         f"Advertising annotated image topic '{dst_topic}' "
-        f"({annotated_type}) ...",
-    )
-    publisher = roslibpy.Topic(
-        client,
-        dst_topic,
-        annotated_type,
+        f"(sensor_msgs/Image) ..."
     )
 
     processed = 0
@@ -374,17 +346,16 @@ def image_yolo(client: "roslibpy.Ros", args: argparse.Namespace) -> None:
         if args.no_yolo:
             annotated = img_np
         else:
-            # Run YOLO on CPU and get annotated frame.
             annotated = _run_yolo_on_image(img_np)
 
         annotated_msg = _encode_ros_image(annotated, img_msg, meta)
-        publisher.publish(roslibpy.Message(annotated_msg))
+        publisher.publish(annotated_msg)
 
         processed += 1
         print(
             f"Processed image {processed} "
             f"({meta['width']}x{meta['height']}), "
-            f"published to {dst_topic}",
+            f"published to {dst_topic}"
         )
 
         if max_images > 0 and processed >= max_images:
@@ -394,17 +365,15 @@ def image_yolo(client: "roslibpy.Ros", args: argparse.Namespace) -> None:
     subscriber.subscribe(_on_image)
 
     if max_images > 0:
-        # Wait until we've processed the requested number of images.
         done_event.wait()
     else:
-        # Run until interrupted or until max_wait_seconds (if > 0) elapses.
         start = time.time()
         try:
             while True:
                 if args.max_wait_seconds > 0.0 and (time.time() - start) > args.max_wait_seconds:
                     print(
                         f"No images received within {args.max_wait_seconds} seconds; "
-                        "exiting image_yolo.",
+                        "exiting image_yolo."
                     )
                     subscriber.unsubscribe()
                     break
@@ -417,20 +386,27 @@ def image_yolo(client: "roslibpy.Ros", args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parse_args()
-    print(f"Connecting to rosbridge at {args.host}:{args.port} using roslibpy ...")
-    client = roslibpy.Ros(host=args.host, port=args.port)
-    try:
-        client.run()
-    except Exception as exc:  # pragma: no cover - network-dependent
-        print(f"ERROR: Failed to connect to rosbridge: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    print("roslibpy connection established successfully.")
+    client = None
 
     try:
+        if connect_to_robot:
+            client = connect_to_robot()
+        else:
+            # Fallback to direct connection
+            host = os.getenv("ROS_HOST", "172.16.0.10")
+            port = int(os.getenv("ROS_PORT", "9091"))
+            print(f"Connecting to rosbridge at {host}:{port} using roslibpy ...")
+            client = roslibpy.Ros(host=host, port=port)
+            client.run()
+
+        print("roslibpy connection established successfully.")
         image_yolo(client, args)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
     finally:
-        client.terminate()
+        if client:
+            client.terminate()
 
 
 if __name__ == "__main__":

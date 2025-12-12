@@ -2,16 +2,33 @@
 """
 Obstacle avoidance using LiDAR and roslibpy with adaptive scoring.
 
+This script:
+  - Connects to the rosbridge WebSocket server (via proxy or direct)
+  - Subscribes to LiDAR scan data
+  - Publishes velocity commands for autonomous obstacle avoidance
+
 Behavior:
   - Moves forward by default with a speed scaled by clearance
   - Picks the best maneuver when blocked: TURN_LEFT, TURN_RIGHT, or BACK_UP
   - Resets to FORWARD when the path ahead is clear
+
+Usage:
+  python src/obstacle_avoider.py
+
+Environment overrides:
+  - TENSORFLEET_BASE_URL, TENSORFLEET_JWT (for proxy connection)
+  - ROS_HOST, ROS_PORT, ROSBRIDGE_URL (for direct connection)
+  - CMD_VEL_TOPIC, SCAN_TOPIC
+  - OBSTACLE_DISTANCE, CLEAR_DISTANCE
+  - LINEAR_SPEED, ANGULAR_SPEED
 """
 
-import argparse
 import os
 import sys
 import time
+
+# Add parent directory to path for lib imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     import roslibpy
@@ -20,21 +37,43 @@ except ImportError:
     print("Install it with: pip install roslibpy", file=sys.stderr)
     sys.exit(1)
 
+try:
+    from lib.robotic_utils import connect_to_robot, Topic
+except ImportError:
+    try:
+        from robotic_utils import connect_to_robot, Topic
+    except ImportError:
+        connect_to_robot = None
+        Topic = None
+
+
+# Configuration from environment
+CMD_VEL_TOPIC = os.getenv("CMD_VEL_TOPIC", "/cmd_vel_raw")
+SCAN_TOPIC = os.getenv("SCAN_TOPIC", "/scan")
+OBSTACLE_DISTANCE = float(os.getenv("OBSTACLE_DISTANCE", "0.5"))
+CLEAR_DISTANCE = float(os.getenv("CLEAR_DISTANCE", "1.0"))
+LINEAR_SPEED = float(os.getenv("LINEAR_SPEED", "3.0"))
+ANGULAR_SPEED = float(os.getenv("ANGULAR_SPEED", "4.0"))
+
 
 class ObstacleAvoider:
-    """
-    Obstacle avoidance logic adapted from the Node.js template.
-    """
+    """Obstacle avoidance logic adapted from the Node.js template."""
 
-    def __init__(self, client, cmd_vel_topic, scan_topic, obstacle_distance, clear_distance, linear_speed, angular_speed):
+    def __init__(self, client):
         self.client = client
-        self.obstacle_distance = obstacle_distance
-        self.clear_distance = clear_distance
-        self.linear_speed = linear_speed
-        self.angular_speed = angular_speed
+        self.obstacle_distance = OBSTACLE_DISTANCE
+        self.clear_distance = CLEAR_DISTANCE
+        self.linear_speed = LINEAR_SPEED
+        self.angular_speed = ANGULAR_SPEED
 
-        self.cmd_vel_pub = roslibpy.Topic(client, cmd_vel_topic, "geometry_msgs/Twist")
-        self.scan_sub = roslibpy.Topic(client, scan_topic, "sensor_msgs/LaserScan")
+        # Use Topic factory for compatibility with both roslibpy.Ros and ProxyRosClient
+        if Topic:
+            self.cmd_vel_pub = Topic(client, CMD_VEL_TOPIC, "geometry_msgs/Twist")
+            self.scan_sub = Topic(client, SCAN_TOPIC, "sensor_msgs/LaserScan")
+        else:
+            self.cmd_vel_pub = roslibpy.Topic(client, CMD_VEL_TOPIC, "geometry_msgs/Twist")
+            self.scan_sub = roslibpy.Topic(client, SCAN_TOPIC, "sensor_msgs/LaserScan")
+        
         self.scan_sub.subscribe(self.on_scan)
 
         self.latest_scan = None
@@ -45,10 +84,10 @@ class ObstacleAvoider:
         self.max_maneuver_ticks = 60  # ~3s at 50ms loop
 
         print("Obstacle avoider initialized:")
-        print(f"  - Obstacle distance threshold: {obstacle_distance} m")
-        print(f"  - Clear distance required: {clear_distance} m")
-        print(f"  - Linear speed: {linear_speed} m/s")
-        print(f"  - Angular speed: {angular_speed} rad/s")
+        print(f"  - Obstacle distance threshold: {self.obstacle_distance} m")
+        print(f"  - Clear distance required: {self.clear_distance} m")
+        print(f"  - Linear speed: {self.linear_speed} m/s")
+        print(f"  - Angular speed: {self.angular_speed} rad/s")
 
     def on_scan(self, message):
         self.latest_scan = message
@@ -181,7 +220,7 @@ class ObstacleAvoider:
         return {"action": action, "front_dist": front_dist, "linear": 0.0, "angular": angular, "reason": reason}
 
     def publish_velocity(self, linear_x, angular_z):
-        msg = roslibpy.Message({"linear": {"x": linear_x, "y": 0.0, "z": 0.0}, "angular": {"x": 0.0, "y": 0.0, "z": angular_z}})
+        msg = {"linear": {"x": linear_x, "y": 0.0, "z": 0.0}, "angular": {"x": 0.0, "y": 0.0, "z": angular_z}}
         self.cmd_vel_pub.publish(msg)
 
     def loop(self):
@@ -277,48 +316,30 @@ class ObstacleAvoider:
         print("Robot stopped.")
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Obstacle avoidance using LiDAR"
-    )
-    parser.add_argument("--host", default=os.getenv("ROS_HOST", "172.16.0.10"), help="ROS bridge host")
-    parser.add_argument("--port", type=int, default=int(os.getenv("ROS_PORT", "9091")), help="ROS bridge port")
-    parser.add_argument("--cmd-vel-topic", default=os.getenv("CMD_VEL_TOPIC", "/cmd_vel_raw"), help="Velocity command topic")
-    parser.add_argument("--scan-topic", default=os.getenv("SCAN_TOPIC", "/scan"), help="LiDAR scan topic")
-    parser.add_argument("--obstacle-distance", type=float, default=float(os.getenv("OBSTACLE_DISTANCE", "0.5")), help="Distance to trigger avoidance (m)")
-    parser.add_argument("--clear-distance", type=float, default=float(os.getenv("CLEAR_DISTANCE", "1.0")), help="Distance needed to resume forward (m)")
-    parser.add_argument("--linear-speed", type=float, default=float(os.getenv("LINEAR_SPEED", "3.0")), help="Forward speed in m/s")
-    parser.add_argument("--angular-speed", type=float, default=float(os.getenv("ANGULAR_SPEED", "4.0")), help="Turning speed in rad/s")
-    return parser.parse_args()
-
-
 def main():
-    args = parse_args()
-
-    print(f"Connecting to rosbridge at {args.host}:{args.port}...")
-    client = roslibpy.Ros(host=args.host, port=args.port)
-
+    client = None
     try:
-        client.run()
-        print("Connected to rosbridge\n")
+        if connect_to_robot:
+            client = connect_to_robot()
+            print("Connected to rosbridge\n")
+        else:
+            # Fallback to direct connection
+            host = os.getenv("ROS_HOST", "172.16.0.10")
+            port = int(os.getenv("ROS_PORT", "9091"))
+            print(f"Connecting to rosbridge at {host}:{port}...")
+            client = roslibpy.Ros(host=host, port=port)
+            client.run()
+            print("Connected to rosbridge\n")
+
+        avoider = ObstacleAvoider(client)
+        avoider.run()
     except Exception as e:
         print(f"ERROR: Failed to connect: {e}", file=sys.stderr)
         sys.exit(1)
-    
-    try:
-        avoider = ObstacleAvoider(
-            client=client,
-            cmd_vel_topic=args.cmd_vel_topic,
-            scan_topic=args.scan_topic,
-            obstacle_distance=args.obstacle_distance,
-            clear_distance=args.clear_distance,
-            linear_speed=args.linear_speed,
-            angular_speed=args.angular_speed
-        )
-        avoider.run()
     finally:
-        client.terminate()
-        print("Connection closed.")
+        if client:
+            client.terminate()
+            print("Connection closed.")
 
 
 if __name__ == "__main__":
