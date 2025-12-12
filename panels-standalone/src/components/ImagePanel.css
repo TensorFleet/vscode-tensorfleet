@@ -49,6 +49,13 @@
   gap: 12px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .panel-title {
   margin: 0;
   font-size: 15px;

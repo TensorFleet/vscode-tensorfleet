@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ros2Bridge, Subscription, type ImageMessage } from '../ros2-bridge';
-import { 
+import { ros2Bridge, Subscription } from '../ros2-bridge';
+import { type ImageMessage } from 'tensorfleet-util/ros-util/ros-types';
+import {
   type CameraInfo,
-  type ICameraModel, 
+  type ICameraModel,
   createFallbackCameraModel,
 } from '../utils/CameraModel';
+import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from './ConnectionSettingsProvider';
 import './ImagePanel.css';
 
 export const ImagePanel: React.FC = () => {
@@ -527,21 +529,29 @@ export const ImagePanel: React.FC = () => {
   }, [currentImage]);
 
   return (
-    <div className="image-panel">
-      {/* HEADER PANEL */}
-      <div className="image-panel-header-panel">
-        {/* Layer 1: Title + Status */}
-        <div className="header-top">
-          <div className="header-title-section">
-            <h2 className="panel-title">Image Viewer</h2>
-            <div className={`connection-indicator ${connectionStatus === 'connected' ? 'connected' : 'disconnected'}`}>
-              <span className="status-dot"></span>
-              <span className="status-text">
-                {connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting' : 'Disconnected'}
-              </span>
+    <ConnectionSettingsProvider onSettingsChange={(settings) => {
+      // Handle connection settings changes - could trigger reconnection
+      console.log('Connection settings changed:', settings);
+      // TODO: Implement reconnection logic if needed
+    }}>
+      <div className="image-panel">
+        {/* HEADER PANEL */}
+        <div className="image-panel-header-panel">
+          {/* Layer 1: Title + Status */}
+          <div className="header-top">
+            <div className="header-title-section">
+              <h2 className="panel-title">Image Viewer</h2>
+              <div className="header-actions">
+                <ConnectionSettingsTrigger />
+              </div>
+              <div className={`connection-indicator ${connectionStatus === 'connected' ? 'connected' : 'disconnected'}`}>
+                <span className="status-dot"></span>
+                <span className="status-text">
+                  {connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting' : 'Disconnected'}
+                </span>
+              </div>
             </div>
           </div>
-        </div>
         
         {/* Layer 2: Primary Settings */}
           <div className="header-settings">
@@ -750,5 +760,6 @@ export const ImagePanel: React.FC = () => {
         )}
       </div>
     </div>
+    </ConnectionSettingsProvider>
   );
 };
