@@ -32,9 +32,8 @@ This template is focused on ground robots and simple velocity control. It is des
 
 ## Quick Start
 
-1. Create a **Robotic Project** from the TensorFleet tooling view in VS Code.
-2. The extension will automatically create a `.env` file with your connection settings.
-3. Install dependencies with `uv` on your **local machine**:
+1. **Start your VM**: Click the **TensorFleet** status bar at the bottom of VS Code and select **Start VM**.
+2. Install dependencies with `uv` .
 
 ```bash
 # If uv isn't installed: curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -42,7 +41,7 @@ uv venv
 uv pip install -r requirements.txt
 ```
 
-4. Run any of the example scripts:
+5. Run any of the example scripts:
 
 ```bash
 # Basic movement demo
@@ -106,9 +105,9 @@ This script:
 - Publishes annotated images on `/camera/image_annotated`
 
 **Setup:**
-1. Open the **Simulation View** from the sidebar to see the robot in Gazebo
-2. Open the **Image Panel** from the sidebar
-3. Open the **Teleop Panel** to manually drive the robot around
+1. Open **Simulation View** from the sidebar to see the robot in Gazebo
+2. Open **Image Panel** from the sidebar
+3. Open **Teleops Panel** to manually drive the robot around
 4. In the Image Panel dropdown, select `/camera/image_raw` to see the robot's camera feed
 
 **Running vision detection:**
@@ -117,7 +116,7 @@ This script:
    uv run python src/vision_yolo.py
    ```
 2. Switch the Image Panel dropdown to `/camera/image_annotated` to see the detection output with bounding boxes and labels
-3. Use the Teleop Panel to drive the robot and see detections update in real-time
+3. Use the Teleops Panel to drive the robot and see detections update in real-time
 
 YOLO runs on **CPU only**; no GPU is required.
 

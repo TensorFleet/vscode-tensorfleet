@@ -2,10 +2,12 @@
 
 JavaScript/Node.js template for robot control over rosbridge using `roslib`. Includes obstacle avoidance and vision examples.
 
-## Quick start
-1) Install deps: `bun install` (or `npm install`)
-2) Open `Simulation view` and `Image View`.
-3) Start your VM, then run:
+## Quick Start
+
+1. **Start your VM**: Click the **TensorFleet** status bar at the bottom of VS Code and select **Start VM**.
+2. Install dependencies: `bun install` (or `npm install`)
+3. Open **Simulation View** and **Image Panel** from the sidebar.
+4. Run any of the example scripts:
    - `bun robot:mover` - Drive forward, backward, turn left/right sequence
    - `bun robot:obstacle` - LiDAR-based obstacle avoidance
    - `bun robot:vision` - YOLO object detection on camera feed
@@ -20,8 +22,8 @@ JavaScript/Node.js template for robot control over rosbridge using `roslib`. Inc
 ### Vision Scripts
 
 **Setup:**
-1. Open the **Image Panel** from the sidebar
-2. Open the **Teleop Panel** to manually drive the robot around
+1. Open **Image Panel** from the sidebar
+2. Open **Teleops Panel** to manually drive the robot around
 3. In the Image Panel dropdown, select `/camera/image_raw` to see the robot's camera feed
 
 **Running vision detection:**
@@ -29,7 +31,7 @@ JavaScript/Node.js template for robot control over rosbridge using `roslib`. Inc
    - `bun robot:vision` - YOLO detection (80 real-world object classes like people, cars, animals)
    - `bun robot:vision:colors` - Color-based detection (best for simulation with solid-colored shapes)
 2. Switch the Image Panel dropdown to `/camera/image_annotated` to see the detection output with bounding boxes and labels
-3. Use the Teleop Panel to drive the robot and see detections update in real-time
+3. Use the Teleops Panel to drive the robot and see detections update in real-time
 
 ## Configuration
 Edit `config/robot_config.yaml` or override via env vars:

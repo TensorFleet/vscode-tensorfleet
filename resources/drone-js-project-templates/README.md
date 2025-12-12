@@ -2,10 +2,12 @@
 
 JavaScript/Node.js template for drone control over rosbridge using `roslib`. Includes an OFFBOARD velocity guided mover driven by a mission plan.
 
-## Quick start
-1) Install deps: `bun install` (or `npm install`)
-2) Open `Simulation view` and `Map View`. 
-2) Start your VM, then run:
+## Quick Start
+
+1. **Start your VM**: Click the **TensorFleet** status bar at the bottom of VS Code and select **Start VM**.
+2. Install dependencies: `bun install` (or `npm install`)
+3. Open **Simulation View** and **Map View** from the sidebar.
+4. Run any of the example scripts:
    - `bun run restart` - Restart the simulation (resets drone state)
    - `bun drone:mover` - ARM → TAKEOFF → OFFBOARD waypoint mission → LAND
 
