@@ -6,7 +6,8 @@
   "scripts": {
     "robot:mover": "node src/robot_mover.js",
     "robot:obstacle": "node src/obstacle_avoider.js",
-    "robot:vision": "node src/vision_yolo.js"
+    "robot:vision": "node src/vision_yolo.js",
+    "robot:vision:colors": "node src/vision_colors.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
