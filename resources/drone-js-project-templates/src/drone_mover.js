@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S bun run
 /**
  * Simple PX4/MAVROS OFFBOARD velocity mission using roslib + rosbridge.
  *
