@@ -550,6 +550,7 @@ export class ROS2Bridge {
     return [
       { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/image_raw", type: "sensor_msgs/msg/Image" },
+      { topic: "/camera/image_annotated", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
       { topic: "/camera/color/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/color/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
@@ -631,7 +632,7 @@ export class ROS2Bridge {
     return Array.from(this.discoveredTopics.entries()).map(([topic, type]) => ({ topic, type }));
   }
 
-    /** /mavros/param/set (mavros_msgs/srv/ParamSet) */
+  /** /mavros/param/set (mavros_msgs/srv/ParamSet) */
   async mavrosParamSet(param_id: string, value: ParamValue): Promise<ParamSet_Response> {
     const req: ParamSet_Request = { param_id, value };
     return await this.callService<ParamSet_Response>("/mavros/param/set", req);
