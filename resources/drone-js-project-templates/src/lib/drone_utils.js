@@ -45,6 +45,19 @@ function makeServiceCall(service, request, timeoutMs = 5000) {
 }
 
 /**
+ * Attach a proxy WebSocket to a ROSLIB.Ros instance.
+ * This wires up the socket adapter so roslib can communicate through the proxy.
+ *
+ * @param {ROSLIB.Ros} ros - The ROSLIB.Ros instance
+ * @param {Object} proxyWs - The proxy WebSocket wrapper
+ * @returns {ROSLIB.Ros} The same ros instance (for chaining)
+ */
+function attachProxySocket(ros, proxyWs) {
+    ros.socket = Object.assign(proxyWs, socketAdapter(ros));
+    return ros;
+}
+
+/**
  * Connect to rosbridge and return ROS client.
  *
  * If TensorFleet proxy settings are available (base/vm-manager URL + node ID + JWT),
@@ -68,11 +81,8 @@ async function connectToDrone(url) {
             targetPort: settings.targetPort
         });
 
-        // Attach roslib's socket adapter to the proxy websocket so it behaves
-        // like a normal rosbridge connection after the vm-manager login.
-        ros = new ROSLIB.Ros({});
-        const adaptedSocket = Object.assign(proxyWs, socketAdapter(ros));
-        ros.socket = adaptedSocket;
+        // Attach proxy socket to ROSLIB using helper
+        ros = attachProxySocket(new ROSLIB.Ros({}), proxyWs);
     } else {
         const directUrl = settings.rosbridgeUrl || url;
         console.log(`[CONNECT] Connecting to rosbridge at ${directUrl}...`);
@@ -277,7 +287,7 @@ async function takeoffToAlt(ros, telemetry, targetAlt, timeoutSec = 60) {
     // Note: NAV_TAKEOFF can work in GUIDED, AUTO, or AUTO.LOITER modes
     const currentMode = (telemetry.state?.mode || "").toUpperCase();
     const compatibleModes = ["GUIDED", "AUTO", "AUTO.LOITER"];
-    
+
     if (!compatibleModes.includes(currentMode)) {
         console.log(`[TAKEOFF] Current mode ${currentMode} may not support takeoff, attempting to switch to GUIDED...`);
         try {
@@ -330,7 +340,7 @@ async function takeoffToAlt(ros, telemetry, targetAlt, timeoutSec = 60) {
     let lastAlt = telemetry.altitude?.relative || 0;
     let stableCount = 0;
     let hasStartedClimbing = false;
-    
+
     while (true) {
         // Read live values from telemetry container (updated by subscriptions)
         const mode = (telemetry.state?.mode || "").toUpperCase();
@@ -363,9 +373,9 @@ async function takeoffToAlt(ros, telemetry, targetAlt, timeoutSec = 60) {
         } else {
             stableCount = 0; // Reset if not at target yet
         }
-        
+
         lastAlt = relAlt;
-        
+
         if (Date.now() - start > timeoutSec * 1000) {
             throw new Error(`Timeout waiting for altitude ${targetAlt.toFixed(2)}m (current: ${relAlt.toFixed(2)}m)`);
         }

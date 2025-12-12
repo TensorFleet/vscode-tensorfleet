@@ -20,8 +20,7 @@ const fs = require("fs");
 const path = require("path");
 const ROSLIB = require("roslib");
 const { getTensorfleetSettings } = require("./lib/tensorfleet_config");
-const socketAdapter = require("roslib/src/core/SocketAdapter.js");
-const { createProxyWebSocket } = require("./lib/proxy_ws_client");
+const { connectToDrone, sleep, waitFor, makeServiceCall } = require("./lib/drone_utils");
 
 function loadMissionPlan() {
   const planPath = path.join(process.cwd(), "missions", "example_mission.plan");
@@ -112,40 +111,6 @@ function buildSettings() {
 
 const SETTINGS = buildSettings();
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(checkFn, label, timeoutMs = 10000, intervalMs = 100) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (checkFn()) return true;
-    await sleep(intervalMs);
-  }
-  throw new Error(`Timeout waiting for ${label}`);
-}
-
-function makeServiceCall(service, request, timeoutMs = 5000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error("Service call timeout")),
-      timeoutMs
-    );
-
-    service.callService(
-      new ROSLIB.ServiceRequest(request),
-      (result) => {
-        clearTimeout(timer);
-        resolve(result || {});
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
-
 class GuidedMissionController {
   constructor(settings) {
     this.settings = settings;
@@ -160,43 +125,11 @@ class GuidedMissionController {
   }
 
   async connect() {
-    const tf = getTensorfleetSettings();
-    const useProxy = tf.useProxy && tf.proxyUrl;
+    const settings = getTensorfleetSettings();
 
-    if (useProxy) {
-      console.log(
-        `[SYS] Connecting via VM Manager proxy at ${tf.proxyUrl} (nodeId=${tf.nodeId}, targetPort=${tf.targetPort}) ...`
-      );
-      const proxyWs = createProxyWebSocket({
-        proxyUrl: tf.proxyUrl,
-        vmManagerUrl: tf.vmManagerUrl,
-        token: tf.token,
-        nodeId: tf.nodeId,
-        targetPort: tf.targetPort,
-      });
-      this.ros = new ROSLIB.Ros({});
-      const adaptedSocket = Object.assign(proxyWs, socketAdapter(this.ros));
-      this.ros.socket = adaptedSocket;
-    } else {
-      const directUrl = tf.rosbridgeUrl || this.settings.rosbridgeUrl;
-      console.log(`[SYS] Connecting to rosbridge at ${directUrl} ...`);
-      this.ros = new ROSLIB.Ros({ url: directUrl });
-    }
+    // Use shared connection logic from drone_utils
+    this.ros = await connectToDrone(settings.rosbridgeUrl);
 
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("rosbridge connection timeout")),
-        10000
-      );
-      this.ros.on("connection", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      this.ros.on("error", (err) => {
-        clearTimeout(timer);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      });
-    });
     console.log("[SYS] Connected to rosbridge");
 
     this._initTopicsAndServices();

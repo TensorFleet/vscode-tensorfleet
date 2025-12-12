@@ -766,7 +766,7 @@ export function activate(context: vscode.ExtensionContext) {
   } else {
     // If onboarding hasn't ended show it
     const lastStep = help.loadOnboardingProgress(context).lastCompletedStep;
-    if (lastStep == 'none' || lastStep == 'project' ) {
+    if (lastStep == 'none' || lastStep == 'project') {
       showWelcomePage(context);
     }
   }
@@ -1836,36 +1836,20 @@ async function getTensorfleetProjectFolders(additionalFolders: vscode.Uri[] = []
   return Array.from(seen.values());
 }
 
-async function writeEnvForFolder(
-  folder: vscode.Uri,
+/**
+ * Resolve connection values from various sources with region change handling
+ */
+function resolveConnectionValues(
   inputs: {
     region: ReturnType<typeof regions.getSelectedRegion>;
     proxyUrl: string;
     nodeId?: string;
     ipAddress?: string;
-    token?: string | undefined;
   },
-  reason: string
-): Promise<void> {
-  const envUri = vscode.Uri.joinPath(folder, '.env');
-  const metadata = await readTensorfleetMetadata(folder);
-  const markerEnv = metadata.env ?? {};
-
-  env.log('[TensorFleet] Syncing .env for', folder.fsPath, `(reason: ${reason})`);
-
-  let existingContent = '';
-  try {
-    const buf = await vscode.workspace.fs.readFile(envUri);
-    existingContent = Buffer.from(buf).toString('utf8');
-  } catch {
-    // No existing .env, will create one
-  }
-
-  const existingEnv = parseEnvFile(existingContent);
-  const managedKeys = new Set<string>(MANAGED_ENV_KEYS);
-  const previousRegion = existingEnv.TENSORFLEET_REGION || markerEnv.region;
-  const regionChanged = Boolean(previousRegion && previousRegion !== inputs.region.id);
-
+  markerEnv: Record<string, any>,
+  existingEnv: Record<string, string>,
+  regionChanged: boolean
+) {
   const rosbridgePort =
     Number(inputs.region.ros2Port) ||
     Number(markerEnv.rosbridgePort) ||
@@ -1875,16 +1859,16 @@ async function writeEnvForFolder(
   const r2bHost = regionChanged
     ? ''
     : inputs.ipAddress ||
-      markerEnv.r2bHost ||
-      existingEnv.R2B_HOST ||
-      '';
+    markerEnv.r2bHost ||
+    existingEnv.R2B_HOST ||
+    '';
 
   const rosbridgeUrl = regionChanged
     ? ''
     : (inputs.ipAddress ? regions.getRos2WebsocketUrl(inputs.ipAddress) : '') ||
-      existingEnv.ROSBRIDGE_URL ||
-      markerEnv.rosbridgeUrl ||
-      (r2bHost ? `ws://${r2bHost}:${rosbridgePort}` : '');
+    existingEnv.ROSBRIDGE_URL ||
+    markerEnv.rosbridgeUrl ||
+    (r2bHost ? `ws://${r2bHost}:${rosbridgePort}` : '');
 
   const baseUrl =
     inputs.region.vmManagerUrl ||
@@ -1897,9 +1881,9 @@ async function writeEnvForFolder(
   const nodeId = regionChanged
     ? ''
     : inputs.nodeId ||
-      markerEnv.nodeId ||
-      existingEnv.TENSORFLEET_NODE_ID ||
-      '';
+    markerEnv.nodeId ||
+    existingEnv.TENSORFLEET_NODE_ID ||
+    '';
 
   const vmManagerUrl =
     inputs.region.vmManagerUrl ||
@@ -1914,11 +1898,17 @@ async function writeEnvForFolder(
     buildProxyWebSocketUrl(vmManagerUrl) ||
     buildProxyWebSocketUrl(baseUrl);
 
-  const managed: Record<(typeof MANAGED_ENV_KEYS)[number], string | undefined> = {
-    TENSORFLEET_BASE_URL: baseUrl || undefined,
-    TENSORFLEET_JWT: inputs.token || undefined
-  };
+  return { rosbridgePort, r2bHost, rosbridgeUrl, baseUrl, nodeId, vmManagerUrl, proxyUrl };
+}
 
+/**
+ * Build the .env file content from managed keys and user extras
+ */
+function buildEnvFileContent(
+  managed: Record<string, string | undefined>,
+  managedKeys: Set<string>,
+  existingContent: string
+): string {
   const header = [
     '# TensorFleet environment (managed by the VS Code extension)',
     '# Values refresh automatically when login, region, or VM status changes.'
@@ -1938,32 +1928,103 @@ async function writeEnvForFolder(
     lines.push('# Add custom variables below. They will be preserved on refresh.');
   }
 
-  let nextContent = lines.join('\n');
-  if (!nextContent.endsWith('\n')) {
-    nextContent += '\n';
+  let content = lines.join('\n');
+  if (!content.endsWith('\n')) {
+    content += '\n';
   }
 
-  const normalizedExisting = existingContent.replace(/\r\n/g, '\n');
-  if (normalizedExisting !== nextContent) {
-    await vscode.workspace.fs.writeFile(envUri, Buffer.from(nextContent, 'utf8'));
-  }
+  return content;
+}
 
-  const nextMetadata: TensorfleetMetadata = {
+/**
+ * Build updated .tensorfleet metadata
+ */
+function buildTensorfleetMetadata(
+  metadata: TensorfleetMetadata,
+  markerEnv: Record<string, any>,
+  inputs: {
+    region: ReturnType<typeof regions.getSelectedRegion>;
+  },
+  values: {
+    baseUrl: string;
+    vmManagerUrl: string;
+    proxyUrl: string;
+    rosbridgeUrl: string;
+    rosbridgePort: number;
+    nodeId: string;
+    r2bHost: string;
+  },
+  regionChanged: boolean
+): TensorfleetMetadata {
+  return {
     template: metadata.template || 'tensorfleet',
     version: metadata.version ?? 1,
     managedEnv: metadata.managedEnv ?? true,
     env: {
       ...markerEnv,
       region: inputs.region.id,
-      baseUrl,
-      vmManagerUrl,
-      proxyUrl: proxyUrl || markerEnv.proxyUrl,
-      rosbridgeUrl: regionChanged ? undefined : rosbridgeUrl || markerEnv.rosbridgeUrl,
-      rosbridgePort,
-      nodeId: regionChanged ? undefined : nodeId || markerEnv.nodeId,
-      r2bHost: regionChanged ? undefined : r2bHost || markerEnv.r2bHost
+      baseUrl: values.baseUrl,
+      vmManagerUrl: values.vmManagerUrl,
+      proxyUrl: values.proxyUrl || markerEnv.proxyUrl,
+      rosbridgeUrl: regionChanged ? undefined : values.rosbridgeUrl || markerEnv.rosbridgeUrl,
+      rosbridgePort: values.rosbridgePort,
+      nodeId: regionChanged ? undefined : values.nodeId || markerEnv.nodeId,
+      r2bHost: regionChanged ? undefined : values.r2bHost || markerEnv.r2bHost
     }
   };
+}
+
+async function writeEnvForFolder(
+  folder: vscode.Uri,
+  inputs: {
+    region: ReturnType<typeof regions.getSelectedRegion>;
+    proxyUrl: string;
+    nodeId?: string;
+    ipAddress?: string;
+    token?: string | undefined;
+  },
+  reason: string
+): Promise<void> {
+  const envUri = vscode.Uri.joinPath(folder, '.env');
+  const metadata = await readTensorfleetMetadata(folder);
+  const markerEnv = metadata.env ?? {};
+
+  env.log('[TensorFleet] Syncing .env for', folder.fsPath, `(reason: ${reason})`);
+
+  // Read existing .env file
+  let existingContent = '';
+  try {
+    const buf = await vscode.workspace.fs.readFile(envUri);
+    existingContent = Buffer.from(buf).toString('utf8');
+  } catch {
+    // No existing .env, will create one
+  }
+
+  const existingEnv = parseEnvFile(existingContent);
+  const managedKeys = new Set<string>(MANAGED_ENV_KEYS);
+  const previousRegion = existingEnv.TENSORFLEET_REGION || markerEnv.region;
+  const regionChanged = Boolean(previousRegion && previousRegion !== inputs.region.id);
+
+  // Resolve all connection values
+  const values = resolveConnectionValues(inputs, markerEnv, existingEnv, regionChanged);
+
+  // Build managed env variables
+  const managed: Record<(typeof MANAGED_ENV_KEYS)[number], string | undefined> = {
+    TENSORFLEET_BASE_URL: values.baseUrl || undefined,
+    TENSORFLEET_JWT: inputs.token || undefined
+  };
+
+  // Build .env file content
+  const nextContent = buildEnvFileContent(managed, managedKeys, existingContent);
+
+  // Write .env file if changed
+  const normalizedExisting = existingContent.replace(/\r\n/g, '\n');
+  if (normalizedExisting !== nextContent) {
+    await vscode.workspace.fs.writeFile(envUri, Buffer.from(nextContent, 'utf8'));
+  }
+
+  // Build and write .tensorfleet metadata if changed
+  const nextMetadata = buildTensorfleetMetadata(metadata, markerEnv, inputs, values, regionChanged);
 
   const previousMetadataString = JSON.stringify({
     template: metadata.template || 'tensorfleet',
@@ -3235,7 +3296,7 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   // Build menu with visual grouping (primary actions, separator, secondary actions)
   const menuItems = buildMenuForState(vmState, ipAddress);
   items.push(...menuItems);
-  
+
   const developmentActions: vscode.QuickPickItem[] = [
     {
       label: '$(question) Reset Onboarding'
