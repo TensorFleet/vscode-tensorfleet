@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S bun run
 /**
  * Tutorial 05: OFFBOARD Hover
  * 
@@ -15,9 +15,8 @@
  */
 
 require("dotenv").config();
-const R2B_HOST = process.env.R2B_HOST || process.env.ROS_HOST || "172.16.0.10";
-const R2B_PORT = process.env.R2B_PORT || process.env.ROS_PORT || "9091";
-const url = process.env.ROSBRIDGE_URL || `ws://${R2B_HOST}:${R2B_PORT}`;
+const { getTensorfleetSettings } = require("../lib/tensorfleet_config");
+const { rosbridgeUrl } = getTensorfleetSettings();
 const {
     connectToDrone,
     waitForTelemetry,
@@ -34,7 +33,7 @@ const HOVER_DURATION = 10.0; // seconds
 const SETPOINT_HZ = 20;
 
 async function main() {
-    const ros = await connectToDrone(url);
+    const ros = await connectToDrone(rosbridgeUrl);
     const { telemetry } = await waitForTelemetry(ros);
 
     // Arm and takeoff
@@ -93,4 +92,3 @@ if (require.main === module) {
         process.exit(1);
     });
 }
-

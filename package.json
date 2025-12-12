@@ -18,7 +18,7 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onView:tensorfleet-gazebo",
+    "onView:tensorfleet-gzweb-panel",
     "onView:tensorfleet-aiops",
     "onView:tensorfleet-ros2-baselines",
     "onView:tensorfleet-image-panel",
@@ -26,7 +26,7 @@
     "onView:tensorfleet-map-panel",
     "onView:tensorfleet-raw-messages-panel",
     "onView:tensorfleet-tooling-view",
-    "onCommand:tensorfleet.openGazeboPanel",
+    "onCommand:tensorfleet.openGzWebPanel",
     "onCommand:tensorfleet.openAIPanel",
     "onCommand:tensorfleet.openROS2Panel",
     "onCommand:tensorfleet.openImagePanel",
@@ -40,8 +40,11 @@
     "onCommand:tensorfleet.stopMCPServer",
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
+    "onCommand:tensorfleet.showVMManagerMenu",
     "onCommand:tensorfleet.showDroneStatus",
-    "onCommand:tensorfleet.showVMManagerMenu"
+    "onCommand:tensorfleet.selectRegion",
+    "onCommand:tensorfleet.showUnifiedMenu",
+    "onCommand:tensorfleet.login"
   ],
   "main": "./dist/extension.js",
   "packageManager": "bun@1.0.0",
@@ -65,58 +68,22 @@
     "views": {
       "tensorfleet-drone-suite": [
         {
-          "id": "tensorfleet-login",
-          "name": "Account",
-          "type": "webview",
-          "when": "!tensorfleet.is_authenticated"
-        },
-        {
           "id": "tensorfleet-account",
           "name": "Account",
           "type": "webview",
-          "when": "tensorfleet.is_authenticated"
+          "when": "(!tensorfleet.is_authenticated && tensorfleet.current_panel != 'help') || tensorfleet.current_panel == 'account'"
         },
         {
-          "id": "tensorfleet-map-panel",
-          "name": "Map Panel",
+          "id": "tensorfleet-drone-view-list",
+          "name": "Drone and ROS Views",
           "type": "webview",
-          "when": "tensorfleet.is_authenticated"
+          "when": "tensorfleet.is_authenticated && (tensorfleet.current_panel == '')"
         },
         {
-          "id": "tensorfleet-view-3d",
-          "name": "3D Views",
+          "id": "tensorfleet-help-panel",
+          "name": "Help",
           "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-image-panel",
-          "name": "Image Panel",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-aiops",
-          "name": "AI Ops",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-ros2-baselines",
-          "name": "ROS 2 & Stable Baselines",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-teleops-panel",
-          "name": "Teleops Panel",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
-        },
-        {
-          "id": "tensorfleet-raw-messages-panel",
-          "name": "Raw Messages Panel",
-          "type": "webview",
-          "when": "tensorfleet.is_authenticated"
+          "when": "(tensorfleet.current_panel == 'help')"
         }
       ],
       "tensorfleet-tooling": [
@@ -129,13 +96,40 @@
     },
     "commands": [
       {
-        "command": "tensorfleet.openGazeboPanel",
-        "title": "Open Gazebo Workspace",
+        "command": "tensorfleet.createNewProject",
+        "title": "Create new tensorfleet project",
+        "category": "Tensorfleet",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "tensorfleet.openDroneViewsPanel",
+        "title": "Open drone views",
+        "category": "Tensorfleet",
+        "icon": "media/tensorfleet-icon.svg"
+      },
+      {
+        "command": "tensorfleet.openHelpPanel",
+        "title": "Open Help Panel",
+        "category": "Tensorfleet",
+        "icon": "$(question)"
+      },
+      {
+        "command": "tensorfleet.openAccountPanel",
+        "title": "Toggle Account Panel",
+        "category": "TensorFleet",
+        "icon": {
+          "light": "media/avatar_outline.svg",
+          "dark": "media/avatar_outline.svg"
+        }
+      },
+      {
+        "command": "tensorfleet.openGzWebPanel",
+        "title": "TensorFleet: Open Simulation View",
         "category": "TensorFleet"
       },
       {
         "command": "tensorfleet.openAIPanel",
-        "title": "Open AI Ops Workspace",
+        "title": "TensorFleet: Open AI Ops Workspace",
         "category": "TensorFleet"
       },
       {
@@ -161,11 +155,6 @@
       {
         "command": "tensorfleet.openRawMessagesPanel",
         "title": "Open Raw Messages Panel",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.createNewProject",
-        "title": "Create New Project",
         "category": "TensorFleet"
       },
       {
@@ -227,82 +216,55 @@
         "command": "tensorfleet.authStatus",
         "title": "TensorFleet: Show Auth Status",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.selectRegion",
+        "title": "Select Region",
+        "category": "TensorFleet"
       }
     ],
     "configuration": {
       "title": "TensorFleet",
       "properties": {
-        "tensorfleet.ros2.websocketUrl": {
+        "tensorfleet.region": {
           "type": "string",
-          "default": "ws://172.16.0.10:9091",
-          "description": "ROS2 WebSocket URL (rosbridge_suite) for remote connections (e.g., Firecracker VM)",
-          "pattern": "^(ws|wss)://.*$"
-        },
-        "tensorfleet.ros2.foxgloveUrl": {
-          "type": "string",
-          "default": "ws://172.16.0.10:8765",
-          "description": "Foxglove Bridge WebSocket URL (high-performance C++ bridge) for remote ROS2 connections",
-          "pattern": "^(ws|wss)://.*$"
-        },
-        "tensorfleet.backendUrl": {
-          "type": "string",
-          "default": "https://app.tensorfleet.net",
-          "description": "Base URL for TensorFleet backend API (used for auth and data). Trailing slashes are removed.",
-          "pattern": "^(http|https)://.*$"
+          "default": "eu",
+          "enum": [
+            "eu",
+            "asia",
+            "local"
+          ],
+          "enumDescriptions": [
+            "EU  - Europe Central Region (eu.vm.tensorfleet.net)",
+            "Asia - Southeast Region (asia.vm.tensorfleet.net)",
+            "Local - Development only (hidden in production builds)"
+          ],
+          "description": "Select your TensorFleet region for VM and API access.",
+          "order": 1
         }
       }
     },
     "menus": {
       "view/title": [
         {
-          "command": "tensorfleet.openGazeboPanel",
-          "when": "view == tensorfleet-gazebo",
-          "group": "navigation@1"
+          "command": "tensorfleet.openAccountPanel",
+          "group": "navigation@2",
+          "when": "view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel"
         },
         {
-          "command": "tensorfleet.openAIPanel",
-          "when": "view == tensorfleet-aiops",
-          "group": "navigation@1"
+          "command": "tensorfleet.openDroneViewsPanel",
+          "group": "navigation@1",
+          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel) && tensorfleet.is_authenticated"
         },
         {
-          "command": "tensorfleet.openROS2Panel",
-          "when": "view == tensorfleet-ros2-baselines",
-          "group": "navigation@1"
+          "command": "tensorfleet.openHelpPanel",
+          "group": "navigation@3",
+          "when": "view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel"
         },
         {
-          "command": "tensorfleet.openImagePanel",
-          "when": "view == tensorfleet-image-panel",
-          "group": "navigation@1"
-        },
-        {
-          "command": "tensorfleet.openTeleopsPanel",
-          "when": "view == tensorfleet-teleops-panel",
-          "group": "navigation@1"
-        },
-        {
-          "command": "tensorfleet.openRawMessagesPanel",
-          "when": "view == tensorfleet-raw-messages-panel",
-          "group": "navigation@1"
-        },
-        {
-          "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-gazebo",
-          "group": "navigation@9"
-        },
-        {
-          "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-aiops",
-          "group": "navigation@9"
-        },
-        {
-          "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-ros2-baselines",
-          "group": "navigation@9"
-        },
-        {
-          "command": "tensorfleet.openAllPanels",
-          "when": "view == tensorfleet-tooling-view",
-          "group": "navigation@9"
+          "command": "tensorfleet.createNewProject",
+          "group": "navigation@0",
+          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel) && tensorfleet.is_authenticated"
         }
       ]
     }
@@ -310,11 +272,18 @@
   "scripts": {
     "vscode:prepublish": "bun run compile",
     "prepare:telemetry": "bun scripts/write-telemetry-config.ts",
-    "compile": "bun run prepare:telemetry && bunx vite build",
-    "watch": "bun run prepare:telemetry && bunx vite build --watch",
+    "build:panels": "bun run --cwd panels-standalone build",
+    "watch:panels": "bun run --cwd panels-standalone build --watch",
+    "build:extension": "bun run prepare:telemetry && bunx vite build",
+    "watch:extension": "bun run prepare:telemetry && bunx vite build --watch",
+    "compile": "bun run build:panels && bun run build:extension",
+    "compile:dev": "TENSORFLEET_BUILD=development bun run compile",
+    "compile:prod": "TENSORFLEET_BUILD=production bun run compile",
+    "watch": "TENSORFLEET_BUILD=development bun run watch:panels & TENSORFLEET_BUILD=development bun run watch:extension",
     "typecheck": "bunx tsc -p ./ --noEmit",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
+    "package:dev": "TENSORFLEET_BUILD=development bun run compile && bunx vsce package",
     "mcp": "node dist/mcp-server.js",
     "version:get": "bun scripts/get-version.ts"
   },

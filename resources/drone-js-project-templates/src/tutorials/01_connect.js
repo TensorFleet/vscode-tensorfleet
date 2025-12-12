@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S bun run
 /**
  * Tutorial 01: Basic Connection
  * 
@@ -14,16 +14,14 @@
 
 require("dotenv").config();
 const { connectToDrone } = require("../lib/drone_utils");
+const { getTensorfleetSettings } = require("../lib/tensorfleet_config");
 const ROSLIB = require("roslib");
 
-const R2B_HOST = process.env.R2B_HOST || process.env.ROS_HOST || "172.16.0.10";
-const R2B_PORT = process.env.R2B_PORT || process.env.ROS_PORT || "9091";
-const url = process.env.ROSBRIDGE_URL || `ws://${R2B_HOST}:${R2B_PORT}`;
+const { rosbridgeUrl } = getTensorfleetSettings();
 
 async function main() {
 
-    // Connect to rosbridge
-    const ros = await connectToDrone(url);
+    const ros = await connectToDrone(rosbridgeUrl);
 
     // Subscribe to state topic
     const stateSub = new ROSLIB.Topic({

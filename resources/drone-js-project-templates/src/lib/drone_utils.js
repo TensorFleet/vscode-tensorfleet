@@ -1,11 +1,14 @@
 /**
  * Shared utilities for drone control tutorials
- * 
+ *
  * Common functions used across tutorial scripts to reduce duplication
  * and keep individual tutorials focused on one concept.
  */
 
 const ROSLIB = require("roslib");
+const { getTensorfleetSettings } = require("./tensorfleet_config");
+const { createProxyWebSocket } = require("./proxy_ws_client");
+const socketAdapter = require("roslib/src/core/SocketAdapter.js");
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -42,11 +45,49 @@ function makeServiceCall(service, request, timeoutMs = 5000) {
 }
 
 /**
- * Connect to rosbridge and return ROS client
+ * Attach a proxy WebSocket to a ROSLIB.Ros instance.
+ * This wires up the socket adapter so roslib can communicate through the proxy.
+ *
+ * @param {ROSLIB.Ros} ros - The ROSLIB.Ros instance
+ * @param {Object} proxyWs - The proxy WebSocket wrapper
+ * @returns {ROSLIB.Ros} The same ros instance (for chaining)
+ */
+function attachProxySocket(ros, proxyWs) {
+    ros.socket = Object.assign(proxyWs, socketAdapter(ros));
+    return ros;
+}
+
+/**
+ * Connect to rosbridge and return ROS client.
+ *
+ * If TensorFleet proxy settings are available (base/vm-manager URL + node ID + JWT),
+ * traffic is routed through the derived proxy socket. Otherwise, we connect directly
+ * to the resolved rosbridge URL.
  */
 async function connectToDrone(url) {
-    console.log(`[CONNECT] Connecting to rosbridge at ${url}...`);
-    const ros = new ROSLIB.Ros({ url });
+    const settings = getTensorfleetSettings();
+
+    const useProxy = settings.useProxy && settings.proxyUrl;
+    let ros;
+
+    if (useProxy) {
+        console.log(`[CONNECT] Connecting via VM Manager proxy at ${settings.proxyUrl} (nodeId=${settings.nodeId}, targetPort=${settings.targetPort})...`);
+
+        const proxyWs = createProxyWebSocket({
+            proxyUrl: settings.proxyUrl,
+            vmManagerUrl: settings.vmManagerUrl,
+            token: settings.token,
+            nodeId: settings.nodeId,
+            targetPort: settings.targetPort
+        });
+
+        // Attach proxy socket to ROSLIB using helper
+        ros = attachProxySocket(new ROSLIB.Ros({}), proxyWs);
+    } else {
+        const directUrl = settings.rosbridgeUrl || url;
+        console.log(`[CONNECT] Connecting to rosbridge at ${directUrl}...`);
+        ros = new ROSLIB.Ros({ url: directUrl });
+    }
 
     await new Promise((resolve, reject) => {
         const timer = setTimeout(
@@ -246,7 +287,7 @@ async function takeoffToAlt(ros, telemetry, targetAlt, timeoutSec = 60) {
     // Note: NAV_TAKEOFF can work in GUIDED, AUTO, or AUTO.LOITER modes
     const currentMode = (telemetry.state?.mode || "").toUpperCase();
     const compatibleModes = ["GUIDED", "AUTO", "AUTO.LOITER"];
-    
+
     if (!compatibleModes.includes(currentMode)) {
         console.log(`[TAKEOFF] Current mode ${currentMode} may not support takeoff, attempting to switch to GUIDED...`);
         try {
@@ -299,7 +340,7 @@ async function takeoffToAlt(ros, telemetry, targetAlt, timeoutSec = 60) {
     let lastAlt = telemetry.altitude?.relative || 0;
     let stableCount = 0;
     let hasStartedClimbing = false;
-    
+
     while (true) {
         // Read live values from telemetry container (updated by subscriptions)
         const mode = (telemetry.state?.mode || "").toUpperCase();
@@ -332,9 +373,9 @@ async function takeoffToAlt(ros, telemetry, targetAlt, timeoutSec = 60) {
         } else {
             stableCount = 0; // Reset if not at target yet
         }
-        
+
         lastAlt = relAlt;
-        
+
         if (Date.now() - start > timeoutSec * 1000) {
             throw new Error(`Timeout waiting for altitude ${targetAlt.toFixed(2)}m (current: ${relAlt.toFixed(2)}m)`);
         }

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S bun run
 /**
  * Tutorial 04: Takeoff and Land
  * 
@@ -23,16 +23,15 @@ const {
     takeoffToAlt,
     landDrone
 } = require("../lib/drone_utils");
+const { getTensorfleetSettings } = require("../lib/tensorfleet_config");
 
-const R2B_HOST = process.env.R2B_HOST || process.env.ROS_HOST || "172.16.0.10";
-const R2B_PORT = process.env.R2B_PORT || process.env.ROS_PORT || "9091";
-const url = process.env.ROSBRIDGE_URL || `ws://${R2B_HOST}:${R2B_PORT}`;
+const { rosbridgeUrl } = getTensorfleetSettings();
 
 const TARGET_ALTITUDE = 3.0; // meters
 
 async function main() {
 
-    const ros = await connectToDrone(url);
+    const ros = await connectToDrone(rosbridgeUrl);
     const { telemetry } = await waitForTelemetry(ros);
 
     console.log(`\n[INFO] Target altitude: ${TARGET_ALTITUDE}m\n`);
@@ -71,4 +70,3 @@ if (require.main === module) {
         process.exit(1);
     });
 }
-

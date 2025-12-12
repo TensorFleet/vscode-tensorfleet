@@ -7,7 +7,7 @@
  */
 
 import { ros2Bridge } from "@/ros2-bridge";
-import * as RosTypes from "@/ros-util/ros-types"
+import * as RosTypes from "tensorfleet-util/ros-util/ros-types"
 import type { DroneStateModel } from "./drone-state-model";
 
 export enum LandedState {

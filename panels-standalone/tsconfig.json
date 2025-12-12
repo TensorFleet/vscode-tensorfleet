@@ -29,7 +29,10 @@
       "@lichtblick/*": ["./packages/*/src"],
 
       // Local @types/*
-      "@types/*": ["./packages/@types/*"]
+      "@types/*": ["./packages/@types/*"],
+
+      "tensorfleet-util": ["./packages/tensorfleet-util/src/index.ts"],
+      "tensorfleet-util/*": ["./packages/tensorfleet-util/src/*"]
     }
   },
 
@@ -37,7 +40,7 @@
     "src",
     "packages/**/*.ts",
     "packages/**/*.tsx"
-  ],
+, "shared/ros-util", "packages/tensorfleet-util"  ],
 
   "references": [
     { "path": "./tsconfig.node.json" }

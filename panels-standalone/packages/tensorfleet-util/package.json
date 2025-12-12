@@ -1,0 +1,29 @@
+{
+  "name": "tensorfleet-util",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  },
+
+  "files": ["dist"],
+
+  "scripts": {
+    "build": "tsup src/index.ts src/**/*.ts --format esm --dts --outDir dist --clean",
+    "prepublishOnly": "bun run build"
+  },
+
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.3"
+  }
+}

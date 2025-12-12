@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as http from 'http';
 import * as https from 'https';
 import * as auth from './auth';
+import { getVmManagerUrl } from './regions';
 import { UnifiedStatusCoordinator } from './unified-status';
 import type { TelemetryService } from './telemetry';
 
@@ -21,11 +22,15 @@ type VmState =
 // API response types
 interface VmStatusResponse {
   status: string;
+  vm_id?: string;
   ip_address?: string;
   updated_at?: string;
+  vm_id?: string;
+  vmId?: string;
 }
 
 interface VmInfoResponse extends VmStatusResponse {
+  id?: string;
   created_at?: string;
   uptime_seconds?: number | null;
   provider?: string;
@@ -41,6 +46,7 @@ interface ApiHealthResponse {
 interface VmSnapshot {
   connection: ConnectionState;
   vmState: VmState;
+  nodeId?: string;
   ipAddress?: string;
   provider?: string;
   region?: string;
@@ -69,6 +75,10 @@ export class VMManagerIntegration implements vscode.Disposable {
   private pollInterval = 30_000;
   private userInitiatedAction: 'start' | 'stop' | null = null;
 
+  public get snapshot(): VmSnapshot {
+    return this.currentSnapshot;
+  }
+
   private static readonly NORMAL_POLL_MS = 30_000;
   private static readonly FAST_POLL_MS = 5_000;
 
@@ -76,7 +86,8 @@ export class VMManagerIntegration implements vscode.Disposable {
     this.context = context;
     this.unifiedCoordinator = unifiedCoordinator || null;
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
-    
+
+
     // Keep status bar item for backward compatibility, but hide it (unified coordinator shows it)
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
     this.statusBarItem.name = 'TensorFleet VM';
@@ -155,8 +166,8 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private updatePollingSpeed(vmState: VmState) {
-    const newInterval = (vmState === 'starting' || vmState === 'stopping') 
-      ? VMManagerIntegration.FAST_POLL_MS 
+    const newInterval = (vmState === 'starting' || vmState === 'stopping')
+      ? VMManagerIntegration.FAST_POLL_MS
       : VMManagerIntegration.NORMAL_POLL_MS;
 
     if (newInterval !== this.pollInterval) {
@@ -174,7 +185,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     } catch (error) {
       const message = this.formatError(error);
       this.outputChannel.appendLine(`[VM Manager] Refresh failed: ${message}`);
-      
+
       // Check if it's an auth error scoped to VM Manager
       if (this.isAuthError(error)) {
         this.applySnapshot(
@@ -187,7 +198,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         return;
       }
       this.captureVmError(error, { source: 'vm.refresh' });
-      
+
       // Mark as disconnected but preserve last known VM state
       this.applySnapshot(
         this.createSnapshot({
@@ -239,7 +250,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         } else {
           this.outputChannel.appendLine(`[VM Manager] Status fetch failed: ${this.formatError(statusError)}`);
           this.captureVmError(statusError, { source: 'vm.status_fetch' });
-      }
+        }
       }
 
       let info: VmInfoResponse | undefined;
@@ -258,7 +269,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         } else {
           this.outputChannel.appendLine(`[VM Manager] Info fetch failed: ${this.formatError(infoError)}`);
           this.captureVmError(infoError, { source: 'vm.info_fetch' });
-      }
+        }
       }
 
       const resolvedState = vmState === 'unknown' && sawVmMissing ? 'pending' : vmState;
@@ -266,6 +277,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       return this.createSnapshot({
         connection: 'connected',
         vmState: resolvedState,
+        nodeId: info?.id ?? status?.vm_id,
         ipAddress: info?.ip_address || status?.ip_address,
         provider: info?.provider,
         region: info?.region,
@@ -297,17 +309,18 @@ export class VMManagerIntegration implements vscode.Disposable {
   private applySnapshot(snapshot: VmSnapshot) {
     const previousState = this.currentSnapshot.vmState;
     const previousConnection = this.currentSnapshot.connection;
-    
+
     this.currentSnapshot = snapshot;
     this.updateStatusBar();
     this.handleStateChange(previousConnection, previousState);
     this.updatePollingSpeed(snapshot.vmState);
-    
+
     // Update unified coordinator
     if (this.unifiedCoordinator) {
       this.unifiedCoordinator.updateVmState({
         connection: snapshot.connection,
         vmState: snapshot.vmState,
+        nodeId: snapshot.nodeId,
         ipAddress: snapshot.ipAddress,
         provider: snapshot.provider,
         region: snapshot.region,
@@ -435,19 +448,19 @@ export class VMManagerIntegration implements vscode.Disposable {
     } else if (connection === 'disconnected') {
       // Primary action
       items.push(
-        { 
-          label: '$(refresh) Retry Connection', 
+        {
+          label: '$(refresh) Retry Connection',
           detail: error || 'Check network and API configuration',
-          action: () => this.refresh(false) 
+          action: () => this.refresh(false)
         }
       );
-      
+
       // Separator
       items.push({
         label: '',
         kind: vscode.QuickPickItemKind.Separator
       });
-      
+
       // Secondary actions (only actionable items)
       items.push({
         label: '$(refresh) Refresh Status',
@@ -455,7 +468,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       });
     } else {
       const primaryActions: VmQuickPickItem[] = [];
-      
+
       // Add informational status items for certain states (before primary actions)
       if (vmState === 'pending') {
         items.push({ label: '$(vm-outline) VM not started' });
@@ -468,7 +481,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       } else if (vmState === 'stopping') {
         items.push({ label: '$(debug-stop) VM is stopping...', detail: 'Usually takes 10-20 seconds' });
       }
-      
+
       // Build primary actions based on VM state
       switch (vmState) {
         case 'running':
@@ -500,7 +513,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       // Add primary actions if any exist
       if (primaryActions.length > 0) {
         items.push(...primaryActions);
-        
+
         // Add separator after primary actions
         items.push({
           label: '',
@@ -514,7 +527,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         action: () => this.refresh(false)
       });
     }
-    
+
     return items;
   }
 
@@ -522,7 +535,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     const { connection, vmState } = this.currentSnapshot;
     if (connection === 'not_authenticated') return 'Not Logged In';
     if (connection === 'disconnected') return 'API Disconnected';
-    
+
     switch (vmState) {
       case 'running': return 'Running';
       case 'starting': return 'Starting';
@@ -578,6 +591,31 @@ export class VMManagerIntegration implements vscode.Disposable {
     }
   }
 
+  private async restartVm() {
+    try {
+      const { vmState } = this.currentSnapshot;
+
+      // Set user action based on current state
+      // If running/starting, we're stopping (will need to start again)
+      // If stopped/failed, we're starting
+      if (vmState === 'running' || vmState === 'starting') {
+        this.userInitiatedAction = 'stop';
+        this.setOptimisticState('stopping');
+      } else if (vmState === 'stopped' || vmState === 'failed') {
+        this.userInitiatedAction = 'start';
+        this.setOptimisticState('starting');
+      }
+
+      await this.apiRequest<{ status: string; message?: string }>('POST', '/vms/self/restart');
+      await this.refresh(true);
+      this.outputChannel.appendLine('[VM Manager] VM restart initiated');
+    } catch (error) {
+      this.userInitiatedAction = null;
+      await this.refresh(true);
+      this.handleCommandError('restart', error);
+    }
+  }
+
   private handleCommandError(action: string, error: unknown) {
     const message = this.formatError(error);
     this.outputChannel.appendLine(`[VM Manager] ${action} failed: ${message}`);
@@ -609,7 +647,13 @@ export class VMManagerIntegration implements vscode.Disposable {
         .showErrorMessage(`VM ${action} failed: ${message}`, 'Retry', 'Logs')
         .then((choice) => {
           if (choice === 'Retry') {
-            void (action === 'start' ? this.startVm() : this.stopVm());
+            if (action === 'start') {
+              void this.startVm();
+            } else if (action === 'stop') {
+              void this.stopVm();
+            } else if (action === 'restart') {
+              void this.restartVm();
+            }
           } else if (choice === 'Logs') {
             this.outputChannel.show();
           }
@@ -623,9 +667,9 @@ export class VMManagerIntegration implements vscode.Disposable {
     method: string,
     endpoint: string,
     body?: any,
-    options?: { includeAuth?: boolean }
+    options?: { includeAuth?: boolean; baseUrlOverride?: string; tokenOverride?: string }
   ): Promise<T> {
-    const baseUrl = this.getApiBaseUrl();
+    const baseUrl = (options?.baseUrlOverride ?? this.getApiBaseUrl()).trim() || this.getApiBaseUrl();
     const url = new URL(endpoint.replace(/^\//, ''), baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
     const isHttps = url.protocol === 'https:';
     const lib = isHttps ? https : http;
@@ -659,7 +703,7 @@ export class VMManagerIntegration implements vscode.Disposable {
           res.on('data', (chunk) => chunks.push(chunk));
           res.on('end', () => {
             const bodyText = Buffer.concat(chunks).toString('utf8');
-            
+
             if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
               if (!bodyText) {
                 resolve(undefined as T);
@@ -719,6 +763,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     return {
       connection: params.connection ?? 'connected',
       vmState: params.vmState ?? 'unknown',
+      nodeId: params.nodeId,
       ipAddress: params.ipAddress,
       provider: params.provider,
       region: params.region,
@@ -754,7 +799,17 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private getApiBaseUrl(): string {
-    return 'http://localhost:8080';
+    const regionDefault = getVmManagerUrl().trim().replace(/\/+$/, '');
+    const configuredUrl = vscode.workspace
+      .getConfiguration('tensorfleet.vmManager')
+      .get<string>('apiBaseUrl')
+      ?.trim();
+
+    if (configuredUrl && configuredUrl.length > 0) {
+      return configuredUrl.replace(/\/+$/, '');
+    }
+
+    return regionDefault;
   }
 
   private async getAuthToken(): Promise<string | undefined> {
@@ -774,9 +829,9 @@ export class VMManagerIntegration implements vscode.Disposable {
 
   private isAuthError(error: unknown): boolean {
     return !!(
-      error && 
-      typeof error === 'object' && 
-      'status' in error && 
+      error &&
+      typeof error === 'object' &&
+      'status' in error &&
       ((error as HttpError).status === 401 || (error as HttpError).status === 403)
     );
   }

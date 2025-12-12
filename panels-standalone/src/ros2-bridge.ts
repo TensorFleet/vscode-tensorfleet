@@ -1,7 +1,7 @@
 // ros2-bridge.ts
 /**
  * ROS2 Bridge for Standalone Mode
- * Connects directly to Foxglove Bridge WebSocket (CDR + services).
+ * Connects to Foxglove Bridge WebSocket (CDR + services) via the vm-manager proxy.
  *
  * Constraints:
  *  - No rosbridge usage.
@@ -10,8 +10,9 @@
  */
 
 import { FoxgloveWsClient } from "./foxglove-networking";
-import * as RosTypes from "@/ros-util/ros-types";
-import { ROS2BridgeApi } from "@/ros-util/ros-bridge-api";
+import { ROS_PORTS } from "./ws-proxy-client";
+import * as RosTypes from "tensorfleet-util/ros-util/ros-types";
+import { ROS2BridgeApi } from "packages/tensorfleet-util/src/ros-util/ros-bridge-api";
 
 export type ConnectionMode = "foxglove";
 
@@ -56,8 +57,35 @@ export class ROS2Bridge {
     this._configureDefault();
   }
 
-  connect(_mode: ConnectionMode = "foxglove") {
-    const url = "ws://172.16.0.10:8765";
+  connect(_mode: ConnectionMode = "foxglove", targetPort?: number) {
+    // @ts-ignore
+    const proxyUrl = (window as any).TENSORFLEET_PROXY_URL;
+    // @ts-ignore
+    const vmManagerUrl = (window as any).TENSORFLEET_VM_MANAGER_URL;
+    // @ts-ignore
+    const nodeId = (window as any).TENSORFLEET_NODE_ID;
+    // @ts-ignore
+    const token = (window as any).TENSORFLEET_JWT;
+
+    // Default to 8765 (Foxglove Bridge) if not specified
+    const port = targetPort ?? ROS_PORTS.FOXGLOVE_BRIDGE;
+
+    if (!proxyUrl && !vmManagerUrl) {
+      // eslint-disable-next-line no-console
+      console.error("[ROS2Bridge] Missing proxy URL for vm-manager WebSocket proxy. Expected window.TENSORFLEET_PROXY_URL or window.TENSORFLEET_VM_MANAGER_URL to be set in the webview HTML.", {
+        proxyUrl,
+        vmManagerUrl,
+      });
+      return;
+    }
+    if (!nodeId || !token) {
+      // eslint-disable-next-line no-console
+      console.error("[ROS2Bridge] Missing nodeId or token for proxy connection. Expected window.TENSORFLEET_NODE_ID and window.TENSORFLEET_JWT to be set in the webview HTML.", {
+        hasNodeId: !!nodeId,
+        hasToken: !!token,
+      });
+      return;
+    }
 
     if (this.client) {
       try {
@@ -66,7 +94,25 @@ export class ROS2Bridge {
         // ignore
       }
     }
-    this.client = new FoxgloveWsClient({ url });
+
+    const tokenPreview = typeof token === "string" ? `${token.slice(0, 8)}…` : undefined;
+    // eslint-disable-next-line no-console
+    console.log("[ROS2Bridge] Connecting via vm-manager proxy", {
+      proxyUrl: proxyUrl ?? null,
+      vmManagerUrl: vmManagerUrl ?? null,
+      nodeId,
+      port,
+      tokenPreview,
+    });
+
+    this.client = new FoxgloveWsClient({
+      useProxy: true,
+      proxyUrl,
+      vmManagerUrl,
+      token,
+      nodeId,
+      targetPort: port,
+    });
 
     // Needed to compute 3D transforms.
     this.client.subscribe("/tf");
@@ -116,6 +162,11 @@ export class ROS2Bridge {
     this.client.onError = (err) => {
       // eslint-disable-next-line no-console
       console.error("[ROS2Bridge] Foxglove client error", err);
+    };
+
+    this.client.onNewTopic = (topic, type) => {
+      console.log("new Foxglove topic:", topic, "type:", type);
+      this.discoveredTopics.set(topic, type);
     };
 
     this.client.onNewTopic = (topic, type) => {
@@ -262,16 +313,16 @@ export class ROS2Bridge {
     ];
   }
 
- /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
+  /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
   async callService<T = any>(name: string, request: any): Promise<T> {
     if (!this.client) throw new Error("callService() before connect");
     if (typeof (this.client as any).callService !== "function") {
       throw new Error("FoxgloveWsClient.callService() not available");
     }
-    return await (this.client as any).callService<T>({
+    return await (this.client as any).callService({
       serviceName: name,
-      request,
-    });
+      request: request
+    }) as T;
   }
 
   // ---------- MAVROS service helpers ----------
@@ -317,6 +368,7 @@ export class ROS2Bridge {
   } = {}): Promise<RosTypes.CommandTOL_Response> {
     const req: RosTypes.CommandTOL_Request = {
       altitude: args.altitude ?? 0.0,
+      min_pitch: 0.0,
       yaw: args.yaw ?? 0.0,
       latitude: args.latitude ?? 0.0,
       longitude: args.longitude ?? 0.0,
@@ -324,11 +376,11 @@ export class ROS2Bridge {
     return await this.callService<RosTypes.CommandTOL_Response>("/mavros/cmd/land", req);
   }
 
+    /** /mavros/param/set (mavros_msgs/srv/ParamSet) */
   async mavrosParamSet(param_id: string, value: RosTypes.ParamValue): Promise<RosTypes.ParamSet_Response> {
     const req: RosTypes.ParamSet_Request = { param_id, value };
     return await this.callService<RosTypes.ParamSet_Response>("/mavros/param/set", req);
   }
-
   // ---------- RawImage normalization helper ----------
 
   /**
@@ -404,10 +456,10 @@ export class ROS2Bridge {
           enc === "rgb8" || enc === "bgr8"
             ? 3
             : enc === "rgba8" || enc === "bgra8"
-            ? 4
-            : enc === "mono16"
-            ? 2
-            : 1;
+              ? 4
+              : enc === "mono16"
+                ? 2
+                : 1;
 
         const minStep = msg.width * bytesPerPixel;
 
@@ -697,7 +749,7 @@ export class ROS2Bridge {
           .sort(),
       );
       if (sig !== this._lastTopicsSig) {
-        this._lastTopicsSig = sig;
+        this._lastTopicsSig = sig || null;
         this._notifyAvailableTopicsChanged(topics);
       }
     };

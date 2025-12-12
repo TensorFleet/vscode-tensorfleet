@@ -67,6 +67,9 @@ No more environment juggling or shell acrobatics.
 ## 📦 Getting Started
 
 ### For Extension Development
+#### Watch the demo video
+https://github.com/user-attachments/assets/112f096e-e3b7-4890-bafe-f3d3cd22dd76
+
 
 1. **Install dependencies with Bun:**
    ```bash
@@ -137,7 +140,7 @@ Replace the placeholder files in `resources/tools/` with your actual ROS 2 archi
 TensorFleet surfaces VM health through a lightweight status bar item — no extra panels to open or local daemons to manage.
 
 1. **Configure the endpoint**
-   - `tensorfleet.vmManager.apiBaseUrl`: default HTTP endpoint (defaults to `http://localhost:8080`).  
+   - `tensorfleet.vmManager.apiBaseUrl`: base URL for the VM Manager API (defaults to `https://eu.vm.tensorfleet.net`).  
    - `tensorfleet.vmManager.authToken`: optional bearer token sent to `/vms/self/*` APIs when your server enforces JWT auth.
 
 2. **Watch the status bar**  
@@ -270,7 +273,56 @@ This guide covers:
 - Bundled tool installer  
 - VM Manager integration  
 - Packaging (`vsix`)  
-- MCP server setup for AI-assisted workflows  
+- MCP server setup for AI-assisted workflows
+
+### Development vs Production Builds
+
+The extension supports **two levels** of dev/prod separation:
+
+#### 1. Build-Time (`__DEV__`) — Code Stripping
+
+Features wrapped in `if (__DEV__)` are **completely removed** from production packages:
+
+```bash
+bun run compile:dev   # Dev build (~1.3MB, includes debug code)
+bun run compile:prod  # Prod build (~600KB, debug code stripped)
+bun run package       # Uses prod build for marketplace
+```
+
+```typescript
+// This entire block is removed in production builds
+if (__DEV__) {
+  registerDebugCommand();
+  console.log('Debug mode active');
+}
+```
+
+#### 2. Runtime (`isDev()`) — Behavior Changes
+
+Same binary, different behavior based on how VS Code launches it:
+
+```typescript
+import { isDev, env } from './env';
+
+// Code exists in prod, but only runs when debugging (F5)
+if (isDev()) {
+  showExtraDebugInfo();
+}
+
+// Dev-only logging (no-op in prod builds)
+env.log('Debug:', data);
+```
+
+#### When to Use Which
+
+| Use Case                           | Use                               |
+| ---------------------------------- | --------------------------------- |
+| Debug commands that shouldn't ship | `if (__DEV__)`                    |
+| Local dev server region            | `isDev()` (runtime)               |
+| Verbose logging                    | `env.log()` (build-time stripped) |
+| Experimental features              | `if (__DEV__)`                    |
+
+See `src/env.ts` for the full API including `registerDevCommand()`, `devOnly()`, `envSwitch()`, feature flags, and more.  
 
 If you have questions or want to propose improvements, feel free to open an issue or discussion. We’d love to hear from you!
 

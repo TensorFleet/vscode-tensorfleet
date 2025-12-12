@@ -7,6 +7,13 @@ const rootDir = __dirname;
 const packagesDir = resolve(rootDir, "./packages");
 const typesDir = resolve(rootDir, "./packages/@types");
 
+// ✅ tensorfleet-util resolves to SOURCE in dev/build (like your @lichtblick packages)
+const tensorfleetUtilDir = resolve(rootDir, "./packages/tensorfleet-util/src");
+
+const vmProxyTarget =
+  process.env.VM_MANAGER_PROXY ?? process.env.VITE_VM_MANAGER_PROXY ?? "http://localhost:8080";
+const wsProxyTarget = vmProxyTarget.replace(/^http/, "ws");
+
 export default defineConfig({
   plugins: [
     react(),
@@ -63,6 +70,7 @@ export default defineConfig({
         image: resolve(rootDir, "image.html"),
         teleops: resolve(rootDir, "teleops.html"),
         map: resolve(rootDir, "mission_control.html"),
+        gzweb: resolve(rootDir, "gzweb.html"),
         raw_messages: resolve(rootDir, "raw_messages.html"),
         sensor_3d: resolve(rootDir, "sensor_view_3d.html"),
       },
@@ -75,6 +83,15 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: "@", replacement: resolve(rootDir, "./src") },
+
+      // ✅ tensorfleet-util deep imports:
+      // import "... from 'tensorfleet-util/ros-util/ros-types'"
+      // -> packages/tensorfleet-util/src/ros-util/ros-types.ts
+      {
+        find: /^tensorfleet-util(\/.*)?$/,
+        replacement: `${tensorfleetUtilDir}$1`,
+      },
+
       {
         find:
           /^@lichtblick\/(suite-base|log|suite|hooks|mcap-support|theme|message-path|typescript-transformers|comlink-transfer-handlers)(\/.*)?$/,
@@ -93,6 +110,9 @@ export default defineConfig({
 
   optimizeDeps: {
     exclude: [
+      // ✅ keep this excluded so Vite doesn't prebundle it weirdly
+      "tensorfleet-util",
+
       "@lichtblick/wasm-bz2",
       "@lichtblick/wasm-zstd",
       "@lichtblick/wasm-lz4",
@@ -103,4 +123,20 @@ export default defineConfig({
   },
 
   assetsInclude: ["**/*.wasm"],
+
+  server: {
+    proxy: vmProxyTarget
+      ? {
+          "/vms": {
+            target: vmProxyTarget,
+            changeOrigin: true,
+          },
+          "/ws": {
+            target: wsProxyTarget,
+            ws: true,
+            changeOrigin: true,
+          },
+        }
+      : undefined,
+  },
 });
