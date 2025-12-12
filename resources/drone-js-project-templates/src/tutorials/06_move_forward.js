@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S bun run
 /**
  * Tutorial 06: Move Forward
  * 
