@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S bun run
 /**
  * Tutorial 04: Takeoff and Land
  * 
