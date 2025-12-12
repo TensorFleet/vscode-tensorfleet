@@ -4,10 +4,10 @@ JavaScript/Node.js template for drone control over rosbridge using `roslib`. Inc
 
 ## Quick start
 1) Install deps: `bun install` (or `npm install`)
-2) Point to rosbridge: copy `.env.example` → `.env` and set just two fields: `TENSORFLEET_BASE_URL` (your region’s VM Manager URL) and `TENSORFLEET_JWT` (token). The extension will derive the proxy + rosbridge URLs from that base and `.tensorfleet` metadata automatically. If you’re running outside the extension, set `ROSBRIDGE_URL=ws://<vm-ip>:9091`.
-3) Start PX4 + MAVROS + rosbridge in your VM, then run:
+2) Open `Simulation view` and `Map View`. 
+2) Start your VM, then run:
    - `bun run restart` - Restart the simulation (resets drone state)
-   - `bun src/drone_mover.js` - ARM → TAKEOFF → OFFBOARD waypoint mission → LAND
+   - `bun drone:mover` - ARM → TAKEOFF → OFFBOARD waypoint mission → LAND
 
 ## Scripts
 - `src/restart_sim.js`: Restart the PX4 simulation via `/simulation_manager/start_simulation` service. Useful for resetting drone state between test runs.
