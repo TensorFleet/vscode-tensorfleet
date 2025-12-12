@@ -12,19 +12,21 @@
  *   bun src/obstacle_avoider.js
  *
  * Environment overrides:
- *   ROS_HOST, ROS_PORT, CMD_VEL_TOPIC, SCAN_TOPIC,
- *   OBSTACLE_DISTANCE, CLEAR_DISTANCE,
- *   LINEAR_SPEED, ANGULAR_SPEED
+ *   - TENSORFLEET_BASE_URL, TENSORFLEET_JWT (for proxy connection)
+ *   - ROS_HOST, ROS_PORT, ROSBRIDGE_URL (for direct connection)
+ *   - CMD_VEL_TOPIC, SCAN_TOPIC, OBSTACLE_DISTANCE, CLEAR_DISTANCE,
+ *     LINEAR_SPEED, ANGULAR_SPEED
  */
+
+require("dotenv").config();
 const ROSLIB = require("roslib");
 const {
-  getRosConnectionDetails,
   getCmdVelTopic,
   getScanTopic,
   getObstacleParams
 } = require("./config");
+const { connectToRobot } = require("./lib/robotic_utils");
 
-const { url: ROSBRIDGE_URL } = getRosConnectionDetails();
 const CMD_VEL_TOPIC = getCmdVelTopic();
 const SCAN_TOPIC = getScanTopic();
 const {
@@ -427,20 +429,21 @@ class ObstacleAvoider {
   }
 }
 
-function main() {
-  console.log(`Connecting to rosbridge at ${ROSBRIDGE_URL} ...`);
+async function main() {
+  let ros;
+  let avoider;
 
-  const ros = new ROSLIB.Ros({ url: ROSBRIDGE_URL });
-
-  ros.on("connection", () => {
+  try {
+    ros = await connectToRobot();
     console.log("Connected to rosbridge.");
-    const avoider = new ObstacleAvoider(ros);
+
+    avoider = new ObstacleAvoider(ros);
     avoider.start();
 
     const shutdown = () => {
       console.log("Shutting down obstacle avoider.");
-      avoider.stop();
-      ros.close();
+      if (avoider) avoider.stop();
+      if (ros) ros.close();
     };
 
     process.on("SIGINT", () => {
@@ -449,15 +452,10 @@ function main() {
     process.on("SIGTERM", () => {
       shutdown();
     });
-  });
-
-  ros.on("error", (err) => {
-    console.error("rosbridge error:", err);
-  });
-
-  ros.on("close", () => {
-    console.log("rosbridge connection closed.");
-  });
+  } catch (err) {
+    console.error("Failed to connect:", err);
+    process.exit(1);
+  }
 }
 
 if (require.main === module) {

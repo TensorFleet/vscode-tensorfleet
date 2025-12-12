@@ -12,27 +12,20 @@
  *   bun src/vision_yolo.js
  *
  * Environment overrides:
- *   ROS_HOST, ROS_PORT,
- *   IMAGE_TOPIC, ANNOTATED_IMAGE_TOPIC,
- *   IMAGE_MESSAGE_TYPE
- *   YOLO_MODEL_NAME / YOLO_MODEL:
- *     Logical model name to load (defaults to smallest yolov8n)
- *   YOLO_MODEL_PATH:
- *     Full path to YOLO ONNX file; overrides model name
- *   YOLO_MODEL_URL:
- *     Explicit download URL for the ONNX model; overrides the built-in default.
- *   YOLO_DEVICE / YOLO_BACKEND:
- *     Execution device; JS implementation only uses "cpu"
+ *   - TENSORFLEET_BASE_URL, TENSORFLEET_JWT (for proxy connection)
+ *   - ROS_HOST, ROS_PORT, ROSBRIDGE_URL (for direct connection)
+ *   - IMAGE_TOPIC, ANNOTATED_IMAGE_TOPIC, IMAGE_MESSAGE_TYPE
+ *   - YOLO_MODEL_NAME / YOLO_MODEL, YOLO_MODEL_PATH, YOLO_MODEL_URL,
+ *     YOLO_DEVICE / YOLO_BACKEND
  */
+
+require("dotenv").config();
 const ROSLIB = require("roslib");
 const jpeg = require("jpeg-js");
- const {
-  getRosConnectionDetails,
-  getImageTopics
-} = require("./config");
+const { getImageTopics } = require("./config");
 const { runYoloOnImageMsg } = require("./yolo_inference");
+const { connectToRobot } = require("./lib/robotic_utils");
 
-const { url: ROSBRIDGE_URL } = getRosConnectionDetails();
 const {
   imageTopic: IMAGE_TOPIC,
   annotatedImageTopic: ANNOTATED_IMAGE_TOPIC,
@@ -377,16 +370,16 @@ function annotateImageMessage(msg, detections) {
     return msg;
   }
 }
-function main() {
-  console.log(`Connecting to rosbridge at ${ROSBRIDGE_URL} ...`);
 
-  const ros = new ROSLIB.Ros({ url: ROSBRIDGE_URL });
+async function main() {
+  let ros;
 
-  ros.on("connection", () => {
+  try {
+    ros = await connectToRobot();
     console.log("Connected to rosbridge.");
     console.log(
       `Subscribing to '${IMAGE_TOPIC}' (${IMAGE_MESSAGE_TYPE}) and ` +
-        `republishing to '${ANNOTATED_IMAGE_TOPIC}'.`
+      `republishing to '${ANNOTATED_IMAGE_TOPIC}'.`
     );
 
     const subscriber = new ROSLIB.Topic({
@@ -442,15 +435,10 @@ function main() {
     process.on("SIGTERM", () => {
       shutdown();
     });
-  });
-
-  ros.on("error", (err) => {
-    console.error("rosbridge error:", err);
-  });
-
-  ros.on("close", () => {
-    console.log("rosbridge connection closed.");
-  });
+  } catch (err) {
+    console.error("Failed to connect:", err);
+    process.exit(1);
+  }
 }
 
 if (require.main === module) {
