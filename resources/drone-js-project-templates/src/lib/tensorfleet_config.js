@@ -14,6 +14,7 @@ require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const yaml = require("js-yaml");
+const { toProxyWebSocketUrl } = require("./url_utils");
 
 function firstNonEmpty(...values) {
   for (const value of values) {
@@ -58,34 +59,6 @@ function numEnv(key, fallback) {
   if (raw === undefined) return fallback;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function getProxyWebSocketUrl(vmManagerUrl) {
-  try {
-    const url = new URL(vmManagerUrl);
-
-    // If already a websocket URL, normalize the path
-    if (url.protocol === "ws:" || url.protocol === "wss:") {
-      if (!url.pathname || url.pathname === "/") {
-        url.pathname = "/ws";
-      }
-      return url.toString();
-    }
-
-    const protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const basePath = url.pathname.endsWith("/")
-      ? url.pathname.slice(0, -1)
-      : url.pathname;
-    const pathName = basePath.endsWith("/ws") ? basePath : `${basePath}/ws`;
-
-    return `${protocol}//${url.host}${pathName}`;
-  } catch (e) {
-    console.warn(
-      `[TF-CONFIG] Invalid TENSORFLEET_VM_MANAGER_URL "${vmManagerUrl}", falling back to direct WS:`,
-      e.message || e
-    );
-    return "";
-  }
 }
 
 /**
@@ -151,8 +124,8 @@ function getTensorfleetSettings() {
     process.env.TENSORFLEET_PROXY_URL || markerEnv.proxyUrl || "";
   const proxyUrl =
     explicitProxyUrl ||
-    (vmManagerUrl ? getProxyWebSocketUrl(vmManagerUrl) : "") ||
-    (baseUrl ? getProxyWebSocketUrl(baseUrl) : "");
+    (vmManagerUrl ? toProxyWebSocketUrl(vmManagerUrl) : "") ||
+    (baseUrl ? toProxyWebSocketUrl(baseUrl) : "");
   const useProxy = Boolean(proxyUrl && nodeId && token);
   const fallbackHost = host || markerEnv.r2bHost || "127.0.0.1";
 
