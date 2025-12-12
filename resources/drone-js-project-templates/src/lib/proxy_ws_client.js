@@ -6,6 +6,7 @@
  */
 
 const WebSocket = require("ws");
+const { toProxyWebSocketUrl } = require("./url_utils");
 
 /**
  * Create a proxy WebSocket that routes traffic through the VM Manager.
@@ -19,33 +20,9 @@ const WebSocket = require("ws");
  * }
  */
 
-function deriveProxyUrl(vmManagerUrl) {
-  if (!vmManagerUrl) return "";
-  try {
-    const url = new URL(vmManagerUrl);
-
-    if (url.protocol === "ws:" || url.protocol === "wss:") {
-      if (!url.pathname || url.pathname === "/") {
-        url.pathname = "/ws";
-      }
-      return url.toString();
-    }
-
-    const protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const basePath = url.pathname.endsWith("/")
-      ? url.pathname.slice(0, -1)
-      : url.pathname;
-    const pathName = basePath.endsWith("/ws") ? basePath : `${basePath}/ws`;
-
-    return `${protocol}//${url.host}${pathName}`;
-  } catch {
-    return "";
-  }
-}
-
 function createProxyWebSocket(config) {
   const { proxyUrl, token, nodeId, targetPort, vmManagerUrl } = config;
-  const resolvedProxyUrl = proxyUrl || deriveProxyUrl(vmManagerUrl);
+  const resolvedProxyUrl = proxyUrl || toProxyWebSocketUrl(vmManagerUrl);
 
   if (!resolvedProxyUrl) {
     throw new Error("Missing proxyUrl for VM Manager WebSocket proxy");

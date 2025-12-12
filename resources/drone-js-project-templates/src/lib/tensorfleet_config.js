@@ -14,6 +14,7 @@ require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const yaml = require("js-yaml");
+const { toProxyWebSocketUrl } = require("./url_utils");
 
 function firstNonEmpty(...values) {
   for (const value of values) {
@@ -60,65 +61,34 @@ function numEnv(key, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function getProxyWebSocketUrl(vmManagerUrl) {
-  try {
-    const url = new URL(vmManagerUrl);
+/**
+ * Load configuration sources (YAML config and .tensorfleet metadata)
+ */
+function loadConfigSources() {
+  const cfg = loadYamlConfig();
+  const marker = loadTensorfleetMetadata();
+  const markerEnv = marker?.env ?? {};
+  const network = cfg.network || {};
 
-    // If already a websocket URL, normalize the path
-    if (url.protocol === "ws:" || url.protocol === "wss:") {
-      if (!url.pathname || url.pathname === "/") {
-        url.pathname = "/ws";
-      }
-      return url.toString();
-    }
-
-    const protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const basePath = url.pathname.endsWith("/")
-      ? url.pathname.slice(0, -1)
-      : url.pathname;
-    const pathName = basePath.endsWith("/ws") ? basePath : `${basePath}/ws`;
-
-    return `${protocol}//${url.host}${pathName}`;
-  } catch (e) {
-    console.warn(
-      `[TF-CONFIG] Invalid TENSORFLEET_VM_MANAGER_URL "${vmManagerUrl}", falling back to direct WS:`,
-      e.message || e
-    );
-    return "";
-  }
+  return { cfg, marker, markerEnv, network };
 }
 
 /**
- * Build resolved TensorFleet settings for this workspace.
- *
- * Precedence:
- *   1. Environment variables (from .env, tasks, or shell)
- *   2. config/drone_config.yaml values
- *   3. Hardcoded safe defaults
+ * Resolve the base/VM manager URL from various sources
  */
-function getTensorfleetSettings() {
-  const cfg = loadYamlConfig();
-  const network = cfg.network || {};
-  const marker = loadTensorfleetMetadata();
-  const markerEnv =
-    marker && typeof marker === "object" && typeof marker.env === "object"
-      ? marker.env
-      : {};
+function resolveBaseUrl(markerEnv) {
+  return firstNonEmpty(
+    process.env.TENSORFLEET_BASE_URL,
+    process.env.TENSORFLEET_VM_MANAGER_URL,
+    markerEnv.baseUrl,
+    markerEnv.vmManagerUrl
+  ) || "";
+}
 
-  const frameId =
-    process.env.SETPOINT_FRAME_ID ||
-    markerEnv.frameId ||
-    network.setpoint_frame ||
-    "map";
-
-  const baseUrl =
-    firstNonEmpty(
-      process.env.TENSORFLEET_BASE_URL,
-      process.env.TENSORFLEET_VM_MANAGER_URL,
-      markerEnv.baseUrl,
-      markerEnv.vmManagerUrl
-    ) || "";
-
+/**
+ * Resolve rosbridge connection details (host, port, URL)
+ */
+function resolveRosbridgeConnection(markerEnv, network) {
   const portStr =
     process.env.R2B_PORT ||
     process.env.ROSBRIDGE_PORT ||
@@ -139,11 +109,19 @@ function getTensorfleetSettings() {
     network.rosbridge_url ||
     (host ? `ws://${host}:${port}` : `ws://127.0.0.1:${port}`);
 
+  return { host, port, rosbridgeUrl };
+}
+
+/**
+ * Resolve proxy connection details
+ */
+function resolveProxyConnection(baseUrl, markerEnv) {
   const vmManagerUrl =
     process.env.TENSORFLEET_VM_MANAGER_URL ||
     markerEnv.vmManagerUrl ||
     baseUrl ||
     "";
+
   const nodeId = process.env.TENSORFLEET_NODE_ID || markerEnv.nodeId || "";
   const token = process.env.TENSORFLEET_JWT || "";
 
@@ -151,9 +129,35 @@ function getTensorfleetSettings() {
     process.env.TENSORFLEET_PROXY_URL || markerEnv.proxyUrl || "";
   const proxyUrl =
     explicitProxyUrl ||
-    (vmManagerUrl ? getProxyWebSocketUrl(vmManagerUrl) : "") ||
-    (baseUrl ? getProxyWebSocketUrl(baseUrl) : "");
+    (vmManagerUrl ? toProxyWebSocketUrl(vmManagerUrl) : "") ||
+    (baseUrl ? toProxyWebSocketUrl(baseUrl) : "");
+
   const useProxy = Boolean(proxyUrl && nodeId && token);
+
+  return { vmManagerUrl, nodeId, token, proxyUrl, useProxy };
+}
+
+/**
+ * Build resolved TensorFleet settings for this workspace.
+ *
+ * Precedence:
+ *   1. Environment variables (from .env, tasks, or shell)
+ *   2. config/drone_config.yaml values
+ *   3. Hardcoded safe defaults
+ */
+function getTensorfleetSettings() {
+  const { markerEnv, network } = loadConfigSources();
+
+  const frameId =
+    process.env.SETPOINT_FRAME_ID ||
+    markerEnv.frameId ||
+    network.setpoint_frame ||
+    "map";
+
+  const baseUrl = resolveBaseUrl(markerEnv);
+  const { host, port, rosbridgeUrl } = resolveRosbridgeConnection(markerEnv, network);
+  const { vmManagerUrl, nodeId, token, proxyUrl, useProxy } = resolveProxyConnection(baseUrl, markerEnv);
+
   const fallbackHost = host || markerEnv.r2bHost || "127.0.0.1";
 
   return {
