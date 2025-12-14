@@ -55,16 +55,23 @@ export const ConnectionSettingsProvider: React.FC<ConnectionSettingsProviderProp
   return (
     <ConnectionSettingsContext.Provider value={contextValue}>
       {children}
-      <ConnectionSettingsOverlay
-        isOpen={isOpen}
-        onClose={closeOverlay}
-        onSettingsChange={handleSettingsChange}
-      />
+      {(import.meta as any).env?.DEV && (
+        <ConnectionSettingsOverlay
+          isOpen={isOpen}
+          onClose={closeOverlay}
+          onSettingsChange={handleSettingsChange}
+        />
+      )}
     </ConnectionSettingsContext.Provider>
   );
 };
 
 export const ConnectionSettingsTrigger: React.FC<{ className?: string }> = ({ className }) => {
+  // Only show connection settings trigger in development mode
+  if (!(import.meta as any).env?.DEV) {
+    return null;
+  }
+
   const { openOverlay } = useConnectionSettings();
 
   return (

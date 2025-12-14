@@ -16,6 +16,14 @@ import { ROS2BridgeApi } from "packages/tensorfleet-util/src/ros-util/ros-bridge
 
 export type ConnectionMode = "foxglove";
 
+interface ConnectionSettings {
+  proxyUrl: string;
+  vmManagerUrl: string;
+  nodeId: string;
+  token: string;
+  targetPort: number;
+}
+
 export interface Subscription {
   topic: string;
   type: string;
@@ -53,36 +61,39 @@ export class ROS2Bridge {
   private topicsWatchTimer: number | null = null;
   private _lastTopicsSig: string | null = null;
 
+  // Stored connection settings (copy, not reference)
+  private connectionSettings: ConnectionSettings | null = null;
+
+  // Timer for checking settings changes
+  private settingsCheckTimer: number | null = null;
+
   constructor() {
     this._configureDefault();
+    this._startSettingsWatcher();
   }
 
-  connect(_mode: ConnectionMode = "foxglove", targetPort?: number) {
-    // @ts-ignore
-    const proxyUrl = (window as any).TENSORFLEET_PROXY_URL;
-    // @ts-ignore
-    const vmManagerUrl = (window as any).TENSORFLEET_VM_MANAGER_URL;
-    // @ts-ignore
-    const nodeId = (window as any).TENSORFLEET_NODE_ID;
-    // @ts-ignore
-    const token = (window as any).TENSORFLEET_JWT;
+  connect(_mode: ConnectionMode = "foxglove", targetPort?: number, settings?: ConnectionSettings) {
+    // Use provided settings or fall back to window globals
+    const proxyUrl = settings?.proxyUrl ?? (window as any).TENSORFLEET_PROXY_URL;
+    const vmManagerUrl = settings?.vmManagerUrl ?? (window as any).TENSORFLEET_VM_MANAGER_URL;
+    const nodeId = settings?.nodeId ?? (window as any).TENSORFLEET_NODE_ID;
+    const token = settings?.token ?? (window as any).TENSORFLEET_JWT;
+    const port = settings?.targetPort ?? targetPort ?? ROS_PORTS.FOXGLOVE_BRIDGE;
 
-    // Default to 8765 (Foxglove Bridge) if not specified
-    const port = targetPort ?? ROS_PORTS.FOXGLOVE_BRIDGE;
+    // Store a copy of the connection settings (not reference)
+    this.connectionSettings = {
+      proxyUrl: proxyUrl || '',
+      vmManagerUrl: vmManagerUrl || '',
+      nodeId: nodeId || '',
+      token: token || '',
+      targetPort: port,
+    };
 
-    if (!proxyUrl && !vmManagerUrl) {
+    if (!proxyUrl) {
       // eslint-disable-next-line no-console
       console.error("[ROS2Bridge] Missing proxy URL for vm-manager WebSocket proxy. Expected window.TENSORFLEET_PROXY_URL or window.TENSORFLEET_VM_MANAGER_URL to be set in the webview HTML.", {
         proxyUrl,
         vmManagerUrl,
-      });
-      return;
-    }
-    if (!nodeId || !token) {
-      // eslint-disable-next-line no-console
-      console.error("[ROS2Bridge] Missing nodeId or token for proxy connection. Expected window.TENSORFLEET_NODE_ID and window.TENSORFLEET_JWT to be set in the webview HTML.", {
-        hasNodeId: !!nodeId,
-        hasToken: !!token,
       });
       return;
     }
@@ -197,6 +208,24 @@ export class ROS2Bridge {
     }
     this.client = null;
     this.discoveredTopics.clear();
+  }
+
+  /** Update connection settings and reconnect if they changed. */
+  updateConnectionSettings(settings: ConnectionSettings) {
+    const settingsChanged =
+      !this.connectionSettings ||
+      this.connectionSettings.proxyUrl !== settings.proxyUrl ||
+      this.connectionSettings.vmManagerUrl !== settings.vmManagerUrl ||
+      this.connectionSettings.nodeId !== settings.nodeId ||
+      this.connectionSettings.token !== settings.token ||
+      this.connectionSettings.targetPort !== settings.targetPort;
+
+    if (settingsChanged) {
+      // eslint-disable-next-line no-console
+      console.log("[ROS2Bridge] Connection settings changed, reconnecting...");
+      this.disconnect();
+      this.connect("foxglove", undefined, settings);
+    }
   }
 
   /** Store a subscription and (re)apply it on connect. */
@@ -765,9 +794,30 @@ export class ROS2Bridge {
     }
     this._lastTopicsSig = null;
   }
+
+  private _startSettingsWatcher() {
+    if (this.settingsCheckTimer) clearInterval(this.settingsCheckTimer);
+    this.settingsCheckTimer = window.setInterval(() => {
+      const currentSettings: ConnectionSettings = {
+        proxyUrl: (window as any).TENSORFLEET_PROXY_URL || '',
+        vmManagerUrl: (window as any).TENSORFLEET_VM_MANAGER_URL || '',
+        nodeId: (window as any).TENSORFLEET_NODE_ID || '',
+        token: (window as any).TENSORFLEET_JWT || '',
+        targetPort: (window as any).TENSORFLEET_TARGET_PORT || 8765,
+      };
+      this.updateConnectionSettings(currentSettings);
+    }, 1000); // check every second
+  }
+
+  private _stopSettingsWatcher() {
+    if (this.settingsCheckTimer) {
+      clearInterval(this.settingsCheckTimer);
+      this.settingsCheckTimer = null;
+    }
+  }
 }
 
 export const ros2Bridge: ROS2BridgeApi = new ROS2Bridge();
 
 // Auto-connect on load
-ros2Bridge.connect();
+(ros2Bridge as any).connect();

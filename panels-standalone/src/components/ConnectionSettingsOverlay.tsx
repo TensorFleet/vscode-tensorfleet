@@ -60,6 +60,17 @@ export const ConnectionSettingsOverlay: React.FC<ConnectionSettingsOverlayProps>
     setSettings(defaultSettings);
   };
 
+  const handleResetFirst = () => {
+    const defaultSettings: ConnectionSettings = {
+      proxyUrl: 'http://172.16.0.10',
+      vmManagerUrl: '',
+      nodeId: '',
+      token: '',
+      targetPort: 8765,
+    };
+    setSettings(defaultSettings);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -128,6 +139,9 @@ export const ConnectionSettingsOverlay: React.FC<ConnectionSettingsOverlayProps>
           <div className="connection-settings-actions">
             <button onClick={handleReset} className="reset-btn">
               Reset
+            </button>
+            <button onClick={handleResetFirst} className="reset-btn">
+              Reset to first VM
             </button>
             <div className="spacer" />
             <button onClick={onClose} className="cancel-btn">

@@ -8,6 +8,7 @@ import * as auth from './auth';
 import * as help from './help';
 import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
+import { registerDevCommand } from './env'
 
 type PanelKind = 'standard' | 'terminalTabs';
 
