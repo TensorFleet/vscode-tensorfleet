@@ -17,6 +17,7 @@ import { ROS2BridgeApi } from "packages/tensorfleet-util/src/ros-util/ros-bridge
 export type ConnectionMode = "foxglove";
 
 interface ConnectionSettings {
+  useProxy: boolean
   proxyUrl: string;
   vmManagerUrl: string;
   nodeId: string;
@@ -79,9 +80,11 @@ export class ROS2Bridge {
     const nodeId = settings?.nodeId ?? (window as any).TENSORFLEET_NODE_ID;
     const token = settings?.token ?? (window as any).TENSORFLEET_JWT;
     const port = settings?.targetPort ?? targetPort ?? ROS_PORTS.FOXGLOVE_BRIDGE;
+    const useProxy = settings?.useProxy ?? (window as any).TENSORFLEET_USE_PROXY ?? true;
 
     // Store a copy of the connection settings (not reference)
     this.connectionSettings = {
+      useProxy: useProxy,
       proxyUrl: proxyUrl || '',
       vmManagerUrl: vmManagerUrl || '',
       nodeId: nodeId || '',
@@ -89,7 +92,7 @@ export class ROS2Bridge {
       targetPort: port,
     };
 
-    if (!proxyUrl) {
+    if (!proxyUrl && !vmManagerUrl) {
       // eslint-disable-next-line no-console
       console.error("[ROS2Bridge] Missing proxy URL for vm-manager WebSocket proxy. Expected window.TENSORFLEET_PROXY_URL or window.TENSORFLEET_VM_MANAGER_URL to be set in the webview HTML.", {
         proxyUrl,
@@ -117,7 +120,7 @@ export class ROS2Bridge {
     });
 
     this.client = new FoxgloveWsClient({
-      useProxy: true,
+      useProxy,
       proxyUrl,
       vmManagerUrl,
       token,
@@ -799,6 +802,7 @@ export class ROS2Bridge {
     if (this.settingsCheckTimer) clearInterval(this.settingsCheckTimer);
     this.settingsCheckTimer = window.setInterval(() => {
       const currentSettings: ConnectionSettings = {
+        useProxy: (window as any).TENSORFLEET_USE_PROXY || '',
         proxyUrl: (window as any).TENSORFLEET_PROXY_URL || '',
         vmManagerUrl: (window as any).TENSORFLEET_VM_MANAGER_URL || '',
         nodeId: (window as any).TENSORFLEET_NODE_ID || '',

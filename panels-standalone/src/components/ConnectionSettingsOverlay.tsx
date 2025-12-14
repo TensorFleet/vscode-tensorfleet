@@ -7,6 +7,7 @@ interface ConnectionSettings {
   nodeId: string;
   token: string;
   targetPort: number;
+  useProxy: boolean;
 }
 
 interface ConnectionSettingsOverlayProps {
@@ -26,9 +27,10 @@ export const ConnectionSettingsOverlay: React.FC<ConnectionSettingsOverlayProps>
     nodeId: (window as any).TENSORFLEET_NODE_ID || '',
     token: (window as any).TENSORFLEET_JWT || '',
     targetPort: 8765, // Default Foxglove Bridge port
+    useProxy: (window as any).TENSORFLEET_USE_PROXY !== undefined ? (window as any).TENSORFLEET_USE_PROXY : true,
   });
 
-  const handleInputChange = (field: keyof ConnectionSettings, value: string | number) => {
+  const handleInputChange = (field: keyof ConnectionSettings, value: string | number | boolean) => {
     setSettings(prev => ({ ...prev, [field]: value }));
   };
 
@@ -38,6 +40,7 @@ export const ConnectionSettingsOverlay: React.FC<ConnectionSettingsOverlayProps>
     (window as any).TENSORFLEET_VM_MANAGER_URL = settings.vmManagerUrl;
     (window as any).TENSORFLEET_NODE_ID = settings.nodeId;
     (window as any).TENSORFLEET_JWT = settings.token;
+    (window as any).TENSORFLEET_USE_PROXY = settings.useProxy;
 
     // Notify parent via postMessage
     window.parent.postMessage({
@@ -56,17 +59,19 @@ export const ConnectionSettingsOverlay: React.FC<ConnectionSettingsOverlayProps>
       nodeId: '',
       token: '',
       targetPort: 8765,
+      useProxy: true,
     };
     setSettings(defaultSettings);
   };
 
   const handleResetFirst = () => {
     const defaultSettings: ConnectionSettings = {
-      proxyUrl: 'http://172.16.0.10',
-      vmManagerUrl: '',
-      nodeId: '',
-      token: '',
+      proxyUrl: '',
+      vmManagerUrl: 'http://localhost:8080',
+      nodeId: '[copy your vm id here]',
+      token: 'eyJhbGciOiJSUzI1NiIsImNhdCI6ImNsX0I3ZDRQRDIyMkFBQSIsImtpZCI6Imluc18zNW1INUFPYU5ydmxqZFNRUVFibXZTZ2xJcG0iLCJ0eXAiOiJKV1QifQ.eyJlbWFpbCI6ImRhcnRobGV2aWVsbGlzQGdtYWlsLmNvbSIsImV4cCI6MTc2NTg0MDEwNSwiaWF0IjoxNzY1NzUzNzA1LCJpc3MiOiJodHRwczovL2NsZXJrLnRlbnNvcmZsZWV0Lm5ldCIsImp0aSI6IjQ5ZDkxZDUxZjM0YzY2M2UxMTZhIiwibmFtZSI6ImxldmkgZWxsaXMiLCJuYmYiOjE3NjU3NTM3MDAsInBpY3R1cmUiOiJodHRwczovL2ltZy5jbGVyay5jb20vZXlKMGVYQmxJam9pY0hKdmVIa2lMQ0p6Y21NaU9pSm9kSFJ3Y3pvdkwybHRZV2RsY3k1amJHVnlheTVrWlhZdmIyRjFkR2hmWjI5dloyeGxMMmx0WjE4ek5qVXdWa1pWV2pac2FsWlpTRmxYZVZWRFdEaE9aelpRYUVRaWZRIiwic3ViIjoidXNlcl8zNjUwVkNWS1JRZ0E4RDQ1Q1c4anFyUDRqYzYiLCJ1c2VySWQiOiJ1c2VyXzM2NTBWQ1ZLUlFnQThENDVDVzhqcXJQNGpjNiJ9.JFPgqhQWGCIhahuwCAqpiagHixAa55arPFOpZ2r3edMbxb_OFBxdW3J-nLTBJc_Vdig0qnIsRT3y8RYiyJayhW52eeh8DKGV-2J0c_xKpfMRN7WS3hCUDNDkDMFIQXWGf9NKXy6p36BWAYNEzrQi0ye4bRxZS873p73kZ1Nsf4kGBtVRH9AbChqLy2DZ6ZFxfW4hvUgS0R4y4mIDqSPZ7CNF50L4oCATucibyhWV8RbJsUlkhSU6HdhQHSY-eyBIX32Qg1J8naxSMFjyqKOpkgcCtAMaindjyeL0SL_T9EX7wcM4Gs5qFlx0SIo2WYPf1m3m5thYQpmzX9dHPZmQxQ&state=bcb6404412c1bfeaa1fe9e0c890bb2ddd7cb868bba392bce6f3cb7283d4a110a',
       targetPort: 8765,
+      useProxy: true,
     };
     setSettings(defaultSettings);
   };
@@ -134,6 +139,18 @@ export const ConnectionSettingsOverlay: React.FC<ConnectionSettingsOverlayProps>
               onChange={(e) => handleInputChange('targetPort', parseInt(e.target.value) || 8765)}
               placeholder="8765"
             />
+          </div>
+
+          <div className="setting-group">
+            <label htmlFor="useProxy">Use Proxy:</label>
+            <button
+              id="useProxy"
+              type="button"
+              className={`toggle-btn ${settings.useProxy ? 'active' : ''}`}
+              onClick={() => handleInputChange('useProxy', !settings.useProxy)}
+            >
+              {settings.useProxy ? 'Enabled' : 'Disabled'}
+            </button>
           </div>
 
           <div className="connection-settings-actions">
