@@ -9,6 +9,7 @@ import { JSONTree } from "react-json-tree";
 import { Subscription, ros2Bridge, type ImageMessage } from "../../ros2-bridge";
 import { getTopicSuggestions, type DiscoveredTopic } from "../../utils/discoveredTopics";
 import "./RawMessagesPanel.css";
+import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
 
 type RawPayloadMessage = {
   topic: string;
@@ -752,311 +753,320 @@ export function RawMessagesPanel() {
   }, []);
 
   return (
-    <div className="raw-messages-root">
-      <header
-        className={`raw-messages-header ${isHeaderExpanded ? "raw-messages-header--expanded" : "raw-messages-header--collapsed"}`}
-      >
-        <div className="raw-messages-header__top">
-          <div className="raw-messages-header__title-section">
-            <div className="raw-messages-title">Raw Messages</div>
-            <div className="raw-messages-header__status-row">
-              <span className={`connection-dot ${isConnected ? "connected" : "disconnected"}`} />
-              <span className="raw-messages-header__status-text">
-                {isConnected ? "Connected" : "Disconnected"}
-              </span>
+    <ConnectionSettingsProvider onSettingsChange={(settings) => {
+      // Handle connection settings changes - could trigger reconnection
+      console.log('Connection settings changed:', settings);
+      // TODO: Implement reconnection logic if needed
+    }}>
+      <div className="raw-messages-root">
+        <header
+          className={`raw-messages-header ${isHeaderExpanded ? "raw-messages-header--expanded" : "raw-messages-header--collapsed"}`}
+        >
+          <div className="raw-messages-header__top">
+            <div className="raw-messages-header__title-section">
+              <div className="raw-messages-title">Raw Messages</div>
+              <div className="raw-messages-header__actions-row">
+                <ConnectionSettingsTrigger />
+              </div>
+              <div className="raw-messages-header__status-row">
+                <span className={`connection-dot ${isConnected ? "connected" : "disconnected"}`} />
+                <span className="raw-messages-header__status-text">
+                  {isConnected ? "Connected" : "Disconnected"}
+                </span>
+                {isSubscribed && (
+                  <>
+                    <span className="raw-messages-header__separator">•</span>
+                    <span className="raw-messages-header__live-indicator">
+                      <span className="raw-messages-header__live-dot" />
+                      Live
+                    </span>
+                    <span className="raw-messages-header__rate">{messageRate} msg/s</span>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="raw-messages-header__actions">
               {isSubscribed && (
+                <button
+                  className="raw-messages-header__control-button raw-messages-header__control-button--danger"
+                  type="button"
+                  onClick={handleUnsubscribe}
+                >
+                  Unsubscribe
+                </button>
+              )}
+              <button
+                className="raw-messages-header__toggle"
+                type="button"
+                onClick={() => setIsHeaderExpanded(!isHeaderExpanded)}
+                aria-expanded={isHeaderExpanded}
+              >
+                {isHeaderExpanded ? "Hide controls ▴" : "Show controls ▾"}
+              </button>
+            </div>
+          </div>
+
+          {isHeaderExpanded && (
+            <div className="raw-messages-header__controls">
+              <div className="raw-messages-header__info">
+                <div className="raw-messages-header__info-item">
+                  <span className="raw-messages-header__info-label">Topic</span>
+                  <strong className="raw-messages-header__info-value">
+                    {isSubscribed ? activeTopic : selectedTopic || "Not selected"}
+                  </strong>
+                </div>
+                {selectedSuggestion && (
+                  <div className="raw-messages-header__info-item">
+                    <span className="raw-messages-header__info-label">Type</span>
+                    <span className="raw-messages-header__info-value">{selectedSuggestion.type}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="raw-messages-header__form">
+                <label className="raw-messages-header__form-group">
+                  <span className="raw-messages-header__form-label">Select Topic</span>
+                  <select
+                    className="raw-messages-header__select"
+                    value={selectedTopic}
+                    onChange={handleTopicDropdownChange}
+                    disabled={isSubscribed}
+                  >
+                    <option value="">Choose a topic...</option>
+                    {discoveredTopics.map((topic) => (
+                      <option key={topic.topic} value={topic.topic}>
+                        {topic.topic} — {topic.type}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {!isSubscribed && (
+                  <button
+                    className="raw-messages-header__subscribe-button"
+                    type="button"
+                    onClick={handleSubscribe}
+                    disabled={!selectedTopic || !isConnected}
+                  >
+                    <span className="raw-messages-header__subscribe-icon">📡</span>
+                    Subscribe
+                  </button>
+                )}
+              </div>
+
+              <div className="raw-messages-header__diff-controls">
+                <div className="raw-messages-header__diff-mode">
+                  <span className="raw-messages-header__form-label">Diff Mode</span>
+                  <button
+                    className={`raw-messages-header__diff-toggle ${diffMode === 'previous' ? 'raw-messages-header__diff-toggle--active' : ''}`}
+                    type="button"
+                    onClick={() => setDiffMode(diffMode === 'off' ? 'previous' : 'off')}
+                    disabled={!isSubscribed}
+                    title="Compare current message with previous message"
+                  >
+                    {diffMode === 'off' ? '🔀 Enable Diff' : '✓ Diff Active'}
+                  </button>
+                </div>
+
+                {diffMode !== 'off' && diffData && (
+                  <div className="raw-messages-header__diff-legend">
+                    <span className="raw-messages-header__diff-legend-item">
+                      <span className="raw-messages-header__diff-legend-color raw-messages-header__diff-legend-color--added" />
+                      Added
+                    </span>
+                    <span className="raw-messages-header__diff-legend-item">
+                      <span className="raw-messages-header__diff-legend-color raw-messages-header__diff-legend-color--removed" />
+                      Removed
+                    </span>
+                    <span className="raw-messages-header__diff-legend-item">
+                      <span className="raw-messages-header__diff-legend-color raw-messages-header__diff-legend-color--modified" />
+                      Modified
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </header>
+
+        <section className="raw-messages-content">
+          <div className="raw-messages-content__toolbar">
+            <div className="raw-messages-content__latest">
+              <span className="raw-messages-content__label">Topic</span>
+              <strong>{activeTopic || "—"}</strong>
+              {isSubscribed && currentMessage && (
                 <>
-                  <span className="raw-messages-header__separator">•</span>
-                  <span className="raw-messages-header__live-indicator">
-                    <span className="raw-messages-header__live-dot" />
-                    Live
-                  </span>
-                  <span className="raw-messages-header__rate">{messageRate} msg/s</span>
+                  {messageRate > 0 && (
+                    <>
+                      <span className="raw-messages-content__separator">•</span>
+                      <span className="raw-messages-content__detail">{messageRate} msg/s</span>
+                    </>
+                  )}
                 </>
               )}
             </div>
           </div>
-          <div className="raw-messages-header__actions">
-            {isSubscribed && (
-              <button
-                className="raw-messages-header__control-button raw-messages-header__control-button--danger"
-                type="button"
-                onClick={handleUnsubscribe}
-              >
-                Unsubscribe
-              </button>
-            )}
-            <button
-              className="raw-messages-header__toggle"
-              type="button"
-              onClick={() => setIsHeaderExpanded(!isHeaderExpanded)}
-              aria-expanded={isHeaderExpanded}
-            >
-              {isHeaderExpanded ? "Hide controls ▴" : "Show controls ▾"}
-            </button>
-          </div>
-        </div>
-        
-        {isHeaderExpanded && (
-          <div className="raw-messages-header__controls">
-            <div className="raw-messages-header__info">
-              <div className="raw-messages-header__info-item">
-                <span className="raw-messages-header__info-label">Topic</span>
-                <strong className="raw-messages-header__info-value">
-                  {isSubscribed ? activeTopic : selectedTopic || "Not selected"}
-                </strong>
+
+          <div className="raw-messages-content__main">
+            {!currentMessage ? (
+              <div className="raw-messages-empty">
+                {isSubscribed ? "Waiting for messages..." : "Subscribe to a topic to see messages"}
               </div>
-              {selectedSuggestion && (
-                <div className="raw-messages-header__info-item">
-                  <span className="raw-messages-header__info-label">Type</span>
-                  <span className="raw-messages-header__info-value">{selectedSuggestion.type}</span>
-                </div>
-              )}
-            </div>
-            
-            <div className="raw-messages-header__form">
-              <label className="raw-messages-header__form-group">
-                <span className="raw-messages-header__form-label">Select Topic</span>
-                <select
-                  className="raw-messages-header__select"
-                  value={selectedTopic}
-                  onChange={handleTopicDropdownChange}
-                  disabled={isSubscribed}
-                >
-                  <option value="">Choose a topic...</option>
-                  {discoveredTopics.map((topic) => (
-                    <option key={topic.topic} value={topic.topic}>
-                      {topic.topic} — {topic.type}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              
-              {!isSubscribed && (
-                <button
-                  className="raw-messages-header__subscribe-button"
-                  type="button"
-                  onClick={handleSubscribe}
-                  disabled={!selectedTopic || !isConnected}
-                >
-                  <span className="raw-messages-header__subscribe-icon">📡</span>
-                  Subscribe
-                </button>
-              )}
-            </div>
-
-            <div className="raw-messages-header__diff-controls">
-              <div className="raw-messages-header__diff-mode">
-                <span className="raw-messages-header__form-label">Diff Mode</span>
-                <button
-                  className={`raw-messages-header__diff-toggle ${diffMode === 'previous' ? 'raw-messages-header__diff-toggle--active' : ''}`}
-                  type="button"
-                  onClick={() => setDiffMode(diffMode === 'off' ? 'previous' : 'off')}
-                  disabled={!isSubscribed}
-                  title="Compare current message with previous message"
-                >
-                  {diffMode === 'off' ? '🔀 Enable Diff' : '✓ Diff Active'}
-                </button>
+            ) : diffMode !== 'off' && !diffData ? (
+              <div className="raw-messages-empty">
+                No previous message available for comparison
               </div>
-
-              {diffMode !== 'off' && diffData && (
-                <div className="raw-messages-header__diff-legend">
-                  <span className="raw-messages-header__diff-legend-item">
-                    <span className="raw-messages-header__diff-legend-color raw-messages-header__diff-legend-color--added" />
-                    Added
-                  </span>
-                  <span className="raw-messages-header__diff-legend-item">
-                    <span className="raw-messages-header__diff-legend-color raw-messages-header__diff-legend-color--removed" />
-                    Removed
-                  </span>
-                  <span className="raw-messages-header__diff-legend-item">
-                    <span className="raw-messages-header__diff-legend-color raw-messages-header__diff-legend-color--modified" />
-                    Modified
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </header>
-
-      <section className="raw-messages-content">
-        <div className="raw-messages-content__toolbar">
-          <div className="raw-messages-content__latest">
-            <span className="raw-messages-content__label">Topic</span>
-            <strong>{activeTopic || "—"}</strong>
-            {isSubscribed && currentMessage && (
+            ) : (
               <>
-                {messageRate > 0 && (
-                  <>
-                    <span className="raw-messages-content__separator">•</span>
-                    <span className="raw-messages-content__detail">{messageRate} msg/s</span>
-                  </>
+                {/* Diff mode info */}
+                {diffMode !== 'off' && diffData && (
+                  <div className="raw-messages-diff-info">
+                    <div className="raw-messages-diff-info__item">
+                      <span className="raw-messages-diff-info__label">Comparing:</span>
+                      <span className="raw-messages-diff-info__value">
+                        {previousMessage?.payload.topic} (previous) vs {currentMessage.payload.topic} (current)
+                      </span>
+                    </div>
+                  </div>
                 )}
+
+                {/* Single large message card */}
+                {(() => {
+                  const body = currentMessage.payload.msg ?? currentMessage.payload.payload ?? {};
+                  const hasObjectPayload = body && typeof body === "object";
+                  const transformCount = getTransformCount(body);
+                  const isImage = isImageMessage(body);
+                  const imageDataUri = isImage ? getImageDataUri(body) : null;
+                  const imageBody = body as Record<string, unknown>;
+
+                  return (
+                    <article className="raw-message-card raw-message-card--large">
+                      <header className="raw-message-card__header">
+                        <div className="raw-message-card__topic-row">
+                          <span className="raw-message-card__topic-icon" aria-hidden="true">
+                            {isImage ? "🖼️" : diffMode !== 'off' ? "🔀" : "🔷"}
+                          </span>
+                          <div className="raw-message-card__topic-info">
+                            <div className="raw-message-card__topic">{currentMessage.payload.topic}</div>
+                            <div className="raw-message-card__meta">
+                              <span>{currentMessage.payload.type}</span>
+                              {isImage && (
+                                <>
+                                  <span className="raw-message-card__image-info">
+                                    {imageBody.width}×{imageBody.height} • {imageBody.encoding}
+                                  </span>
+                                </>
+                              )}
+                              {diffMode !== 'off' && (
+                                <span className="raw-message-card__diff-badge">
+                                  Diff: Previous
+                                </span>
+                              )}
+                              <span className="raw-message-card__timestamp">
+                                {formatRelativeTime(currentMessage.receivedAt)}
+                              </span>
+                              <span className="raw-message-card__absolute-time">
+                                {formatAbsoluteTime(currentMessage.receivedAt)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="raw-message-card__actions">
+                          {transformCount > 0 && (
+                            <span className="raw-message-card__badge">{transformCount} transforms</span>
+                          )}
+                          {diffMode !== 'off' && diffData && (
+                            <button
+                              className="raw-message-card__copy-button raw-message-card__copy-button--diff"
+                              type="button"
+                              onClick={handleCopyDiff}
+                              title="Copy diff report"
+                              style={{
+                                backgroundColor: diffCopied ? 'rgba(34, 197, 94, 0.2)' : undefined,
+                                borderColor: diffCopied ? 'rgba(34, 197, 94, 0.4)' : undefined,
+                              }}
+                            >
+                              {diffCopied ? '✓ Diff Copied!' : '📊 Copy Diff'}
+                            </button>
+                          )}
+                          <button
+                            className="raw-message-card__copy-button"
+                            type="button"
+                            onClick={() => handleCopyMessage(currentMessage)}
+                            data-message-id={currentMessage.id}
+                            title="Copy message as JSON"
+                          >
+                            📋 Copy
+                          </button>
+                        </div>
+                      </header>
+                      <div className="raw-message-card__details">
+                        {isImage && imageDataUri ? (
+                          <div className="raw-message-card__image-container">
+                            <img
+                              src={imageDataUri}
+                              alt={`${currentMessage.payload.topic} image`}
+                              className="raw-message-card__image"
+                            />
+                            <div className="raw-message-card__image-metadata">
+                              <div className="raw-message-card__image-metadata-item">
+                                <span className="raw-message-card__image-metadata-label">Dimensions:</span>
+                                <span>{imageBody.width} × {imageBody.height} pixels</span>
+                              </div>
+                              <div className="raw-message-card__image-metadata-item">
+                                <span className="raw-message-card__image-metadata-label">Encoding:</span>
+                                <span>{imageBody.encoding}</span>
+                              </div>
+                              {imageBody.header && typeof imageBody.header === "object" && (
+                                <div className="raw-message-card__image-metadata-item">
+                                  <span className="raw-message-card__image-metadata-label">Frame ID:</span>
+                                  <span>{(imageBody.header as Record<string, unknown>).frame_id as string || "N/A"}</span>
+                                </div>
+                              )}
+                            </div>
+                            <details className="raw-message-card__image-raw-data">
+                              <summary className="raw-message-card__image-raw-data-summary">
+                                Show raw message data
+                              </summary>
+                              <div className="raw-message-card__image-raw-data-content">
+                                {hasObjectPayload ? (
+                                  <JSONTree
+                                    data={body as object}
+                                    theme={jsonTreeTheme}
+                                    invertTheme={false}
+                                    hideRoot
+                                    shouldExpandNode={() => false}
+                                    labelRenderer={diffMode !== 'off' ? labelRenderer : undefined}
+                                    valueRenderer={diffMode !== 'off' ? valueRenderer : undefined}
+                                  />
+                                ) : (
+                                  <pre className="raw-message-card__plaintext">{String(body)}</pre>
+                                )}
+                              </div>
+                            </details>
+                          </div>
+                        ) : hasObjectPayload ? (
+                          <JSONTree
+                            data={body as object}
+                            theme={jsonTreeTheme}
+                            invertTheme={false}
+                            hideRoot
+                            labelRenderer={diffMode !== 'off' ? labelRenderer : undefined}
+                            valueRenderer={diffMode !== 'off' ? valueRenderer : undefined}
+                          />
+                        ) : (
+                          <pre className="raw-message-card__plaintext">{String(body)}</pre>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })()}
               </>
             )}
           </div>
-        </div>
-        
-        <div className="raw-messages-content__main">
-          {!currentMessage ? (
-            <div className="raw-messages-empty">
-              {isSubscribed ? "Waiting for messages..." : "Subscribe to a topic to see messages"}
-            </div>
-          ) : diffMode !== 'off' && !diffData ? (
-            <div className="raw-messages-empty">
-              No previous message available for comparison
-            </div>
-          ) : (
-            <>
-              {/* Diff mode info */}
-              {diffMode !== 'off' && diffData && (
-                <div className="raw-messages-diff-info">
-                  <div className="raw-messages-diff-info__item">
-                    <span className="raw-messages-diff-info__label">Comparing:</span>
-                    <span className="raw-messages-diff-info__value">
-                      {previousMessage?.payload.topic} (previous) vs {currentMessage.payload.topic} (current)
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Single large message card */}
-              {(() => {
-                const body = currentMessage.payload.msg ?? currentMessage.payload.payload ?? {};
-                const hasObjectPayload = body && typeof body === "object";
-                const transformCount = getTransformCount(body);
-                const isImage = isImageMessage(body);
-                const imageDataUri = isImage ? getImageDataUri(body) : null;
-                const imageBody = body as Record<string, unknown>;
-                
-                return (
-                  <article className="raw-message-card raw-message-card--large">
-                    <header className="raw-message-card__header">
-                      <div className="raw-message-card__topic-row">
-                        <span className="raw-message-card__topic-icon" aria-hidden="true">
-                          {isImage ? "🖼️" : diffMode !== 'off' ? "🔀" : "🔷"}
-                        </span>
-                        <div className="raw-message-card__topic-info">
-                          <div className="raw-message-card__topic">{currentMessage.payload.topic}</div>
-                          <div className="raw-message-card__meta">
-                            <span>{currentMessage.payload.type}</span>
-                            {isImage && (
-                              <>
-                                <span className="raw-message-card__image-info">
-                                  {imageBody.width}×{imageBody.height} • {imageBody.encoding}
-                                </span>
-                              </>
-                            )}
-                            {diffMode !== 'off' && (
-                              <span className="raw-message-card__diff-badge">
-                                Diff: Previous
-                              </span>
-                            )}
-                            <span className="raw-message-card__timestamp">
-                              {formatRelativeTime(currentMessage.receivedAt)}
-                            </span>
-                            <span className="raw-message-card__absolute-time">
-                              {formatAbsoluteTime(currentMessage.receivedAt)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="raw-message-card__actions">
-                        {transformCount > 0 && (
-                          <span className="raw-message-card__badge">{transformCount} transforms</span>
-                        )}
-                        {diffMode !== 'off' && diffData && (
-                          <button
-                            className="raw-message-card__copy-button raw-message-card__copy-button--diff"
-                            type="button"
-                            onClick={handleCopyDiff}
-                            title="Copy diff report"
-                            style={{
-                              backgroundColor: diffCopied ? 'rgba(34, 197, 94, 0.2)' : undefined,
-                              borderColor: diffCopied ? 'rgba(34, 197, 94, 0.4)' : undefined,
-                            }}
-                          >
-                            {diffCopied ? '✓ Diff Copied!' : '📊 Copy Diff'}
-                          </button>
-                        )}
-                        <button
-                          className="raw-message-card__copy-button"
-                          type="button"
-                          onClick={() => handleCopyMessage(currentMessage)}
-                          data-message-id={currentMessage.id}
-                          title="Copy message as JSON"
-                        >
-                          📋 Copy
-                        </button>
-                      </div>
-                    </header>
-                    <div className="raw-message-card__details">
-                      {isImage && imageDataUri ? (
-                        <div className="raw-message-card__image-container">
-                          <img 
-                            src={imageDataUri} 
-                            alt={`${currentMessage.payload.topic} image`}
-                            className="raw-message-card__image"
-                          />
-                          <div className="raw-message-card__image-metadata">
-                            <div className="raw-message-card__image-metadata-item">
-                              <span className="raw-message-card__image-metadata-label">Dimensions:</span>
-                              <span>{imageBody.width} × {imageBody.height} pixels</span>
-                            </div>
-                            <div className="raw-message-card__image-metadata-item">
-                              <span className="raw-message-card__image-metadata-label">Encoding:</span>
-                              <span>{imageBody.encoding}</span>
-                            </div>
-                            {imageBody.header && typeof imageBody.header === "object" && (
-                              <div className="raw-message-card__image-metadata-item">
-                                <span className="raw-message-card__image-metadata-label">Frame ID:</span>
-                                <span>{(imageBody.header as Record<string, unknown>).frame_id as string || "N/A"}</span>
-                              </div>
-                            )}
-                          </div>
-                          <details className="raw-message-card__image-raw-data">
-                            <summary className="raw-message-card__image-raw-data-summary">
-                              Show raw message data
-                            </summary>
-                            <div className="raw-message-card__image-raw-data-content">
-                              {hasObjectPayload ? (
-                                <JSONTree 
-                                  data={body as object} 
-                                  theme={jsonTreeTheme} 
-                                  invertTheme={false} 
-                                  hideRoot 
-                                  shouldExpandNode={() => false}
-                                  labelRenderer={diffMode !== 'off' ? labelRenderer : undefined}
-                                  valueRenderer={diffMode !== 'off' ? valueRenderer : undefined}
-                                />
-                              ) : (
-                                <pre className="raw-message-card__plaintext">{String(body)}</pre>
-                              )}
-                            </div>
-                          </details>
-                        </div>
-                      ) : hasObjectPayload ? (
-                        <JSONTree 
-                          data={body as object} 
-                          theme={jsonTreeTheme} 
-                          invertTheme={false} 
-                          hideRoot 
-                          labelRenderer={diffMode !== 'off' ? labelRenderer : undefined}
-                          valueRenderer={diffMode !== 'off' ? valueRenderer : undefined}
-                        />
-                      ) : (
-                        <pre className="raw-message-card__plaintext">{String(body)}</pre>
-                      )}
-                    </div>
-                  </article>
-                );
-              })()}
-            </>
-          )}
-        </div>
-      </section>
-    </div>
+        </section>
+      </div>
+    </ConnectionSettingsProvider>
   );
 }
 

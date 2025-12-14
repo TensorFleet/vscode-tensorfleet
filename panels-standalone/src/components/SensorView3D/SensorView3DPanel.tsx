@@ -34,6 +34,7 @@ import type { Asset } from "@lichtblick/suite-base/components/PanelExtensionAdap
 
 import { ros2Bridge } from "@/ros2-bridge";
 import type { Subscription as Ros2BridgeSubscription } from "@/ros2-bridge";
+import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
 
 export type Sensor3DViewPanelProps = {
   className?: string;
@@ -475,156 +476,165 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
   const { className, style } = props;
 
   return (
-    <ThemeProvider isDark={false}>
-      <div
-        className={className}
-        style={{ ...PANEL_STYLE, ...(style ?? {}) }}
-        onKeyDown={onKeyDown}
-      >
-        <canvas
-          ref={setCanvas}
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: "100%",
-            height: "100%",
-            ...(measureActive && { cursor: "crosshair" }),
-          }}
-        />
-
-        {/* Small control panel in top-left */}
+    <ConnectionSettingsProvider onSettingsChange={(settings) => {
+      // Handle connection settings changes - could trigger reconnection
+      console.log('Connection settings changed:', settings);
+      // TODO: Implement reconnection logic if needed
+    }}>
+      <ThemeProvider isDark={false}>
         <div
-          style={{
-            position: "absolute",
-            top: 8,
-            left: 8,
-            zIndex: 10,
-            pointerEvents: "auto",
-            background: "rgba(0,0,0,0.7)",
-            color: "#fff",
-            padding: 8,
-            borderRadius: 6,
-            fontSize: 12,
-            maxWidth: 360,
-            maxHeight: "60%",
-            overflow: "auto",
-          }}
+          className={className}
+          style={{ ...PANEL_STYLE, ...(style ?? {}) }}
+          onKeyDown={onKeyDown}
         >
-          <div style={{ marginBottom: 8, fontWeight: 600 }}>3D Controls</div>
+          <canvas
+            ref={setCanvas}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              ...(measureActive && { cursor: "crosshair" }),
+            }}
+          />
 
-          {frames.length > 0 && (
-            <div style={{ marginBottom: 8 }}>
-              <label>
-                Frame:{" "}
-                <select
-                  value={displayFrame ?? ""}
-                  onChange={(e) =>
-                    setDisplayFrame(e.target.value || undefined)
-                  }
-                  style={{ marginLeft: 4, maxWidth: 260 }}
-                >
-                  {frames.map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
-                  ))}
-                </select>
-              </label>
+          {/* Small control panel in top-left */}
+          <div
+            style={{
+              position: "absolute",
+              top: 8,
+              left: 8,
+              zIndex: 10,
+              pointerEvents: "auto",
+              background: "rgba(0,0,0,0.7)",
+              color: "#fff",
+              padding: 8,
+              borderRadius: 6,
+              fontSize: 12,
+              maxWidth: 360,
+              maxHeight: "60%",
+              overflow: "auto",
+            }}
+          >
+            <div style={{ marginBottom: 8, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              3D Controls
+              <ConnectionSettingsTrigger />
             </div>
-          )}
 
-          <div style={{ marginBottom: 8 }}>
-            <label style={{ display: "block", marginBottom: 4 }}>
-              Point size: <strong>{pointSize}</strong>
-            </label>
-            <input
-              type="range"
-              min={1}
-              max={10}
-              step={1}
-              value={pointSize}
-              onChange={(e) => setPointSize(Number(e.target.value))}
-              style={{ width: "100%" }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 8 }}>
-            <label>
-              Decay (s):{" "}
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={decayTime}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setDecayTime(Number.isFinite(v) && v >= 0 ? v : 0);
-                }}
-                style={{ width: 70, marginLeft: 4 }}
-              />
-            </label>
-          </div>
-
-          <div>
-            <div style={{ marginBottom: 4, fontWeight: 500 }}>Topics</div>
-            {topics.length === 0 && (
-              <div style={{ fontStyle: "italic", opacity: 0.7 }}>
-                No topics yet…
+            {frames.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <label>
+                  Frame:{" "}
+                  <select
+                    value={displayFrame ?? ""}
+                    onChange={(e) =>
+                      setDisplayFrame(e.target.value || undefined)
+                    }
+                    style={{ marginLeft: 4, maxWidth: 260 }}
+                  >
+                    {frames.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
             )}
-            {topics.map((t) => (
-              <label
-                key={t.name}
-                style={{ display: "flex", alignItems: "center", marginBottom: 2 }}
-              >
-                <input
-                  type="checkbox"
-                  checked={isTopicVisible(t.name)}
-                  onChange={() => toggleTopicVisibility(t.name)}
-                  style={{ marginRight: 6 }}
-                />
-                <span
-                  style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {t.name}
-                </span>
-              </label>
-            ))}
-          </div>
-        </div>
 
-        <RendererContext.Provider value={renderer}>
-          <RendererOverlay
-            interfaceMode={interfaceMode}
-            canvas={canvas}
-            addPanel={addPanel as any}
-            enableStats={false}
-            perspective={perspective}
-            onTogglePerspective={onTogglePerspective}
-            measureActive={measureActive}
-            onClickMeasure={onClickMeasure}
-            canPublish={false}
-            publishActive={false}
-            onClickPublish={() => {
-              /* publishing disabled in this standalone view */
-            }}
-            onShowTopicSettings={() => {
-              /* no settings sidebar here */
-            }}
-            publishClickType={"point"}
-            onChangePublishClickType={() => {
-              /* publishing disabled */
-            }}
-            timezone={undefined}
-          />
-        </RendererContext.Provider>
-      </div>
-    </ThemeProvider>
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ display: "block", marginBottom: 4 }}>
+                Point size: <strong>{pointSize}</strong>
+              </label>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                step={1}
+                value={pointSize}
+                onChange={(e) => setPointSize(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 8 }}>
+              <label>
+                Decay (s):{" "}
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={decayTime}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setDecayTime(Number.isFinite(v) && v >= 0 ? v : 0);
+                  }}
+                  style={{ width: 70, marginLeft: 4 }}
+                />
+              </label>
+            </div>
+
+            <div>
+              <div style={{ marginBottom: 4, fontWeight: 500 }}>Topics</div>
+              {topics.length === 0 && (
+                <div style={{ fontStyle: "italic", opacity: 0.7 }}>
+                  No topics yet…
+                </div>
+              )}
+              {topics.map((t) => (
+                <label
+                  key={t.name}
+                  style={{ display: "flex", alignItems: "center", marginBottom: 2 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isTopicVisible(t.name)}
+                    onChange={() => toggleTopicVisibility(t.name)}
+                    style={{ marginRight: 6 }}
+                  />
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {t.name}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <RendererContext.Provider value={renderer}>
+            <RendererOverlay
+              interfaceMode={interfaceMode}
+              canvas={canvas}
+              addPanel={addPanel as any}
+              enableStats={false}
+              perspective={perspective}
+              onTogglePerspective={onTogglePerspective}
+              measureActive={measureActive}
+              onClickMeasure={onClickMeasure}
+              canPublish={false}
+              publishActive={false}
+              onClickPublish={() => {
+                /* publishing disabled in this standalone view */
+              }}
+              onShowTopicSettings={() => {
+                /* no settings sidebar here */
+              }}
+              publishClickType={"point"}
+              onChangePublishClickType={() => {
+                /* publishing disabled */
+              }}
+              timezone={undefined}
+            />
+          </RendererContext.Provider>
+        </div>
+      </ThemeProvider>
+    </ConnectionSettingsProvider>
   );
 };
 

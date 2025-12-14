@@ -8,6 +8,7 @@ import { DroneController } from '@/mission-control/drone-controller';
 import MissionControlBridge from './drone/MissionControlBridge';
 import SimulationControlBridge from '../SimulationControl/SimulationControlBridge';
 import { SimulationController } from '@/simulation/simulation_controller';
+import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
 
 const droneState = new DroneStateModel();
 const droneController = new DroneController(droneState);
@@ -37,7 +38,15 @@ export const MissionControlPanel: React.FC = () => {
       }, []);
 
       return (
-    <div className="mission-control-panel">
+    <ConnectionSettingsProvider onSettingsChange={(settings) => {
+      // Handle connection settings changes - could trigger reconnection
+      console.log('Connection settings changed:', settings);
+      // TODO: Implement reconnection logic if needed
+    }}>
+      <div className="mission-control-panel">
+        <div className="mission-control-header">
+          <ConnectionSettingsTrigger />
+        </div>
         <MissionControlBridge controller={droneController} />
         <SimulationControlBridge controller={simulationController} />
         <DroneMap
@@ -47,5 +56,6 @@ export const MissionControlPanel: React.FC = () => {
         <DroneStatusPanel
           model = {droneState}>
         </DroneStatusPanel>
-    </div>);
+      </div>
+    </ConnectionSettingsProvider>);
 }

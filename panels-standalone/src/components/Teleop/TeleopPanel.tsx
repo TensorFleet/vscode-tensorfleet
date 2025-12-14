@@ -16,6 +16,7 @@ import { DirectionalPad } from './DirectionalPad';
 import { geometryMsgOptions } from './constants';
 import { DirectionalPadAction, TeleopConfig } from './types';
 import './TeleopPanel.css';
+import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
 
 const DEFAULT_CONFIG: TeleopConfig = {
   topic: '/cmd_vel',
@@ -276,238 +277,247 @@ export function TeleopPanel(): React.JSX.Element {
   };
 
   return (
-    <div className="teleop-panel">
-      <div className="teleop-header-panel">
-        <div className="header-top">
-          <div className="header-title-section">
-            <h2 className="panel-title">Teleop Control</h2>
-            <div className={`connection-indicator ${isConnected ? 'connected' : 'disconnected'}`}>
-              <span className="status-dot"></span>
-              <span className="status-text">{isConnected ? 'Connected' : 'Disconnected'}</span>
+    <ConnectionSettingsProvider onSettingsChange={(settings) => {
+      // Handle connection settings changes - could trigger reconnection
+      console.log('Connection settings changed:', settings);
+      // TODO: Implement reconnection logic if needed
+    }}>
+      <div className="teleop-panel">
+        <div className="teleop-header-panel">
+          <div className="header-top">
+            <div className="header-title-section">
+              <h2 className="panel-title">Teleop Control</h2>
+              <div className="header-actions">
+                <ConnectionSettingsTrigger />
+              </div>
+              <div className={`connection-indicator ${isConnected ? 'connected' : 'disconnected'}`}>
+                <span className="status-dot"></span>
+                <span className="status-text">{isConnected ? 'Connected' : 'Disconnected'}</span>
+              </div>
             </div>
           </div>
-        </div>
-        
-        <div className="header-settings">
-          <div className="settings-inline">
-            <div className="setting-item">
-              <label className="setting-label">
-                <span className="label-text">Topic</span>
-              </label>
-              {availableTopics.length > 0 ? (
-                <select
-                  className="setting-input setting-select"
-                  value={config.topic ?? ''}
-                  onChange={(e) => setConfig({ ...config, topic: e.target.value })}
-                >
-                  {availableTopics.map((topic) => (
-                    <option key={topic} value={topic}>
-                      {topic}
-                    </option>
-                  ))}
-                </select>
-              ) : (
+
+          <div className="header-settings">
+            <div className="settings-inline">
+              <div className="setting-item">
+                <label className="setting-label">
+                  <span className="label-text">Topic</span>
+                </label>
+                {availableTopics.length > 0 ? (
+                  <select
+                    className="setting-input setting-select"
+                    value={config.topic ?? ''}
+                    onChange={(e) => setConfig({ ...config, topic: e.target.value })}
+                  >
+                    {availableTopics.map((topic) => (
+                      <option key={topic} value={topic}>
+                        {topic}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    className="setting-input"
+                    type="text"
+                    value={config.topic ?? ''}
+                    onChange={(e) => setConfig({ ...config, topic: e.target.value })}
+                    placeholder="/cmd_vel"
+                  />
+                )}
+              </div>
+              <div className="setting-item setting-item-narrow">
+                <label className="setting-label">
+                  <span className="label-text">Rate</span>
+                  <span className="label-unit">Hz</span>
+                </label>
                 <input
-                  className="setting-input"
-                  type="text"
-                  value={config.topic ?? ''}
-                  onChange={(e) => setConfig({ ...config, topic: e.target.value })}
-                  placeholder="/cmd_vel"
+                  className="setting-input numeric-input"
+                  type="number"
+                  min="1"
+                  max="100"
+                  inputMode="numeric"
+                  value={config.publishRate}
+                  onChange={(e) => setConfig({ ...config, publishRate: Number(e.target.value) })}
                 />
-              )}
+              </div>
             </div>
-            <div className="setting-item setting-item-narrow">
-              <label className="setting-label">
-                <span className="label-text">Rate</span>
-                <span className="label-unit">Hz</span>
-              </label>
-              <input
-                className="setting-input numeric-input"
-                type="number"
-                min="1"
-                max="100"
-                inputMode="numeric"
-                value={config.publishRate}
-                onChange={(e) => setConfig({ ...config, publishRate: Number(e.target.value) })}
+          </div>
+
+          <details className="advanced-settings">
+            <summary>
+              <span>Button Mapping Configuration</span>
+            </summary>
+            <div className="button-config">
+              {/* Up Button */}
+              <div className="button-config-group">
+                <h4>Up Button</h4>
+                <div className="button-config-row">
+                  <div className="setting-group field-group">
+                    <label>Field</label>
+                    <select
+                      value={config.upButton.field}
+                      onChange={(e) => updateButton('upButton', 'field', e.target.value)}
+                    >
+                      {geometryMsgOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="setting-group value-group">
+                    <label>Value</label>
+                    <input
+                      className="numeric-input"
+                      type="number"
+                      step="0.1"
+                      inputMode="decimal"
+                      value={config.upButton.value}
+                      onChange={(e) => updateButton('upButton', 'value', Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Down Button */}
+              <div className="button-config-group">
+                <h4>Down Button</h4>
+                <div className="button-config-row">
+                  <div className="setting-group field-group">
+                    <label>Field</label>
+                    <select
+                      value={config.downButton.field}
+                      onChange={(e) => updateButton('downButton', 'field', e.target.value)}
+                    >
+                      {geometryMsgOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="setting-group value-group">
+                    <label>Value</label>
+                    <input
+                      className="numeric-input"
+                      type="number"
+                      step="0.1"
+                      inputMode="decimal"
+                      value={config.downButton.value}
+                      onChange={(e) => updateButton('downButton', 'value', Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Left Button */}
+              <div className="button-config-group">
+                <h4>Left Button</h4>
+                <div className="button-config-row">
+                  <div className="setting-group field-group">
+                    <label>Field</label>
+                    <select
+                      value={config.leftButton.field}
+                      onChange={(e) => updateButton('leftButton', 'field', e.target.value)}
+                    >
+                      {geometryMsgOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="setting-group value-group">
+                    <label>Value</label>
+                    <input
+                      className="numeric-input"
+                      type="number"
+                      step="0.1"
+                      inputMode="decimal"
+                      value={config.leftButton.value}
+                      onChange={(e) => updateButton('leftButton', 'value', Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Button */}
+              <div className="button-config-group">
+                <h4>Right Button</h4>
+                <div className="button-config-row">
+                  <div className="setting-group field-group">
+                    <label>Field</label>
+                    <select
+                      value={config.rightButton.field}
+                      onChange={(e) => updateButton('rightButton', 'field', e.target.value)}
+                    >
+                      {geometryMsgOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="setting-group value-group">
+                    <label>Value</label>
+                    <input
+                      className="numeric-input"
+                      type="number"
+                      step="0.1"
+                      inputMode="decimal"
+                      value={config.rightButton.value}
+                      onChange={(e) => updateButton('rightButton', 'value', Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <div className="control-section">
+          {!canPublish && (
+            <div className="empty-state">
+              {!isConnected && <p>Connect to a ROS data source to enable control</p>}
+              {isConnected && config.publishRate <= 0 && <p>Invalid publish rate configuration</p>}
+            </div>
+          )}
+          {canPublish && !hasTopic && (
+            <div className="empty-state">
+              <p>Select a publish topic in the settings above</p>
+            </div>
+          )}
+          {enabled && (
+            <div className="directional-pad-wrapper">
+              <DirectionalPad
+                onAction={setPadAction}
+                disabled={!enabled}
+                activeAction={activeAction}
               />
             </div>
-          </div>
+          )}
         </div>
 
-        <details className="advanced-settings">
-          <summary>
-            <span>Button Mapping Configuration</span>
-          </summary>
-          <div className="button-config">
-            {/* Up Button */}
-            <div className="button-config-group">
-              <h4>Up Button</h4>
-              <div className="button-config-row">
-                <div className="setting-group field-group">
-                  <label>Field</label>
-                  <select
-                    value={config.upButton.field}
-                    onChange={(e) => updateButton('upButton', 'field', e.target.value)}
-                  >
-                    {geometryMsgOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="setting-group value-group">
-                  <label>Value</label>
-                  <input
-                    className="numeric-input"
-                    type="number"
-                    step="0.1"
-                    inputMode="decimal"
-                    value={config.upButton.value}
-                    onChange={(e) => updateButton('upButton', 'value', Number(e.target.value))}
-                  />
-                </div>
+        {lastMessage && enabled && (
+          <div className="status-panel">
+            <h3>Last Published Message</h3>
+            <div className="twist-display">
+              <div>
+                <span className="field-name">linear:</span> x=
+                {(lastMessage.linear as { x: number }).x.toFixed(2)}, y=
+                {(lastMessage.linear as { y: number }).y.toFixed(2)}, z=
+                {(lastMessage.linear as { z: number }).z.toFixed(2)}
+              </div>
+              <div>
+                <span className="field-name">angular:</span> x=
+                {(lastMessage.angular as { x: number }).x.toFixed(2)}, y=
+                {(lastMessage.angular as { y: number }).y.toFixed(2)}, z=
+                {(lastMessage.angular as { z: number }).z.toFixed(2)}
               </div>
             </div>
-
-            {/* Down Button */}
-            <div className="button-config-group">
-              <h4>Down Button</h4>
-              <div className="button-config-row">
-                <div className="setting-group field-group">
-                  <label>Field</label>
-                  <select
-                    value={config.downButton.field}
-                    onChange={(e) => updateButton('downButton', 'field', e.target.value)}
-                  >
-                    {geometryMsgOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="setting-group value-group">
-                  <label>Value</label>
-                  <input
-                    className="numeric-input"
-                    type="number"
-                    step="0.1"
-                    inputMode="decimal"
-                    value={config.downButton.value}
-                    onChange={(e) => updateButton('downButton', 'value', Number(e.target.value))}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Left Button */}
-            <div className="button-config-group">
-              <h4>Left Button</h4>
-              <div className="button-config-row">
-                <div className="setting-group field-group">
-                  <label>Field</label>
-                  <select
-                    value={config.leftButton.field}
-                    onChange={(e) => updateButton('leftButton', 'field', e.target.value)}
-                  >
-                    {geometryMsgOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="setting-group value-group">
-                  <label>Value</label>
-                  <input
-                    className="numeric-input"
-                    type="number"
-                    step="0.1"
-                    inputMode="decimal"
-                    value={config.leftButton.value}
-                    onChange={(e) => updateButton('leftButton', 'value', Number(e.target.value))}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Right Button */}
-            <div className="button-config-group">
-              <h4>Right Button</h4>
-              <div className="button-config-row">
-                <div className="setting-group field-group">
-                  <label>Field</label>
-                  <select
-                    value={config.rightButton.field}
-                    onChange={(e) => updateButton('rightButton', 'field', e.target.value)}
-                  >
-                    {geometryMsgOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="setting-group value-group">
-                  <label>Value</label>
-                  <input
-                    className="numeric-input"
-                    type="number"
-                    step="0.1"
-                    inputMode="decimal"
-                    value={config.rightButton.value}
-                    onChange={(e) => updateButton('rightButton', 'value', Number(e.target.value))}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </details>
-      </div>
-
-      <div className="control-section">
-        {!canPublish && (
-          <div className="empty-state">
-            {!isConnected && <p>Connect to a ROS data source to enable control</p>}
-            {isConnected && config.publishRate <= 0 && <p>Invalid publish rate configuration</p>}
-          </div>
-        )}
-        {canPublish && !hasTopic && (
-          <div className="empty-state">
-            <p>Select a publish topic in the settings above</p>
-          </div>
-        )}
-        {enabled && (
-          <div className="directional-pad-wrapper">
-            <DirectionalPad
-              onAction={setPadAction}
-              disabled={!enabled}
-              activeAction={activeAction}
-            />
           </div>
         )}
       </div>
-
-      {lastMessage && enabled && (
-        <div className="status-panel">
-          <h3>Last Published Message</h3>
-          <div className="twist-display">
-            <div>
-              <span className="field-name">linear:</span> x=
-              {(lastMessage.linear as { x: number }).x.toFixed(2)}, y=
-              {(lastMessage.linear as { y: number }).y.toFixed(2)}, z=
-              {(lastMessage.linear as { z: number }).z.toFixed(2)}
-            </div>
-            <div>
-              <span className="field-name">angular:</span> x=
-              {(lastMessage.angular as { x: number }).x.toFixed(2)}, y=
-              {(lastMessage.angular as { y: number }).y.toFixed(2)}, z=
-              {(lastMessage.angular as { z: number }).z.toFixed(2)}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </ConnectionSettingsProvider>
   );
 }
