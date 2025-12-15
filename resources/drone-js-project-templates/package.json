@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "description": "TensorFleet drone starter using JavaScript and roslib over rosbridge.",
+  "workspaces": ["packages/*"],
   "engines": {
     "node": ">=14.0.0",
     "bun": ">=1.0.0"

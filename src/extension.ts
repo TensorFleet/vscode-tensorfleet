@@ -1671,6 +1671,14 @@ type NewProjectOptions = {
   templateSubdir?: string;
 };
 
+/**
+ * Check if the project template is for JavaScript-based projects
+ */
+function isJavaScriptProject(templateSubdir?: string): boolean {
+  const resolved = templateSubdir ?? 'drone-js-project-templates';
+  return resolved === 'drone-js-project-templates' || resolved === 'robotic-js-project-templates';
+}
+
 
 /**
  * Check if the current workspace is a tensorfleet project.
@@ -2162,6 +2170,17 @@ async function createNewProjectInternal(
       async (progress) => {
         progress.report({ message: 'Setting up project structure…' });
         await copyDirectory(templateFolder, projectFolder);
+
+        // For JS projects, copy tensorfleet-util package
+        if (isJavaScriptProject(options.templateSubdir)) {
+          progress.report({ message: 'Including TensorFleet utilities…' });
+          const packagesFolder = vscode.Uri.joinPath(projectFolder, 'packages');
+          await vscode.workspace.fs.createDirectory(packagesFolder);
+          const tensorfleetUtilSource = vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'packages', 'tensorfleet-util');
+          const tensorfleetUtilDest = vscode.Uri.joinPath(packagesFolder, 'tensorfleet-util');
+
+          await copyDirectory(tensorfleetUtilSource, tensorfleetUtilDest);
+        }
 
         try {
           await refreshTensorfleetEnvFiles(context, 'project-create', [projectFolder]);
