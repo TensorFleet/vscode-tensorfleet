@@ -1,16 +1,28 @@
 #!/usr/bin/env -S bun run
 /**
- * Tutorial 01: Basic Connection
+ * Tutorial 01: Basic Connection and State Monitoring
  *
- * Learn: How to connect to rosbridge and read drone state
+ * This tutorial demonstrates fundamental concepts for connecting to a drone via ROS Bridge
+ * and monitoring its state in real-time. It covers both direct ROS topic subscriptions
+ * for raw data access and the use of a managed state model for simplified state management.
  *
- * This script demonstrates:
- * - Connecting to rosbridge WebSocket using ROSLibBridgeWrapper
- * - Subscribing to /mavros/state topic directly (raw ROS processing)
- * - Using DroneStateModel for managed state (shows utility of the library)
- * - Reading basic telemetry (connected, armed, mode) from both approaches
+ * Learning Objectives:
+ * - Establish a WebSocket connection to ROS Bridge using ROSLibBridgeWrapper
+ * - Subscribe directly to MAVROS ROS topics for low-level state monitoring
+ * - Utilize DroneStateModel for aggregated, managed drone state handling
+ * - Compare raw ROS processing vs. managed state utilities
+ * - Monitor key drone parameters: connection status, arming state, flight mode, and guided mode
  *
- * Run: bun src/tutorials/01_connect.js
+ * Key Concepts:
+ * - ROS Bridge: Enables remote WebSocket-based communication with ROS systems
+ * - MAVROS: MAVLink extendable communication library for ROS drone integration
+ * - State Aggregation: Combining multiple ROS topics into a unified state representation
+ *
+ * Prerequisites:
+ * - Active TensorFleet VM with ROS Bridge running
+ * - Simulation restarted (as described in TUTORIAL.md)
+ *
+ * Usage: bun run src/tutorials/01_connect.js
  */
 
 import "dotenv/config";
@@ -26,17 +38,43 @@ async function main() {
     console.log("\n[INFO] Listening to drone state...\n");
     console.log("[INFO] Showing both raw ROS subscription via wrapper and managed DroneStateModel\n");
 
+    // Variables to track previous state for change detection
+    let previousConnected = null;
+    let previousArmed = null;
+    let previousMode = null;
+    let previousGuided = null;
+
     // Subscribe to state topic via wrapper (educational: raw ROS processing)
     const unsubscribeRaw = bridge.subscribe(
         { topic: "/mavros/state", type: "mavros_msgs/State" },
         (msg) => {
-            console.log("=== RAW ROS SUBSCRIPTION VIA WRAPPER ===");
-            console.log("Drone State:");
-            console.log(`  Connected: ${msg.connected}`);
-            console.log(`  Armed:     ${msg.armed}`);
-            console.log(`  Mode:      ${msg.mode}`);
-            console.log(`  Guided:    ${msg.guided}`);
-            console.log("");
+            const currentConnected = msg.connected;
+            const currentArmed = msg.armed;
+            const currentMode = msg.mode;
+            const currentGuided = msg.guided;
+
+            // Only print on change or first time
+            if (
+                previousConnected !== currentConnected ||
+                previousArmed !== currentArmed ||
+                previousMode !== currentMode ||
+                previousGuided !== currentGuided ||
+                previousConnected === null
+            ) {
+                console.log("=== RAW ROS SUBSCRIPTION RECEIVED CHANGED DATA ===");
+                console.log("Drone State:");
+                console.log(`  Connected: ${currentConnected}`);
+                console.log(`  Armed:     ${currentArmed}`);
+                console.log(`  Mode:      ${currentMode}`);
+                console.log(`  Guided:    ${currentGuided}`);
+                console.log("");
+
+                // Update previous values
+                previousConnected = currentConnected;
+                previousArmed = currentArmed;
+                previousMode = currentMode;
+                previousGuided = currentGuided;
+            }
         }
     );
 
@@ -44,16 +82,14 @@ async function main() {
     const droneState = new DroneStateModel();
     droneState.connect(bridge);
 
-    droneState.onUpdate((state) => {
+    droneState.onStatusUpdate((state) => {
+        console.log("=== MANAGED DRONE STATE MODEL UPDATE ===");
         if (state.vehicle) {
-            console.log("=== MANAGED DRONE STATE MODEL ===");
-            console.log("Drone State:");
-            console.log(`  Connected: ${state.vehicle.connected}`);
-            console.log(`  Armed:     ${state.vehicle.armed}`);
-            console.log(`  Mode:      ${state.vehicle.mode}`);
-            console.log(`  Guided:    ${state.vehicle.guided}`);
-            console.log("Note: DroneStateModel provides unified state management and automatic health monitoring");
-            console.log("");
+            console.log("vehicle :\n", state.vehicle);
+        }
+
+        if (state.status) {
+            console.log("status: \n", state.status);
         }
     });
 
@@ -62,7 +98,7 @@ async function main() {
 
     process.on("SIGINT", () => {
         console.log("\n[EXIT] Shutting down...");
-        stateSub.unsubscribe();
+        unsubscribeRaw.unsubscribe();
         droneState.disconnect();
         process.exit(0);
     });
