@@ -5,7 +5,24 @@ JavaScript/Node.js template for robot control over rosbridge using `roslib`. Inc
 ## Quick Start
 
 1. **Start your VM**: Click the **TensorFleet** status bar at the bottom of VS Code and select **Start VM**.
-2. Install dependencies: `bun install` (or `npm install`)
+2. **Install runtime and dependencies**:
+
+   **Recommended: [Bun](https://bun.sh)** (v1.0.0+)
+   ```bash
+   # Install Bun (macOS, Linux, WSL)
+   curl -fsSL https://bun.sh/install | bash
+   
+   # Install dependencies
+   bun install
+   ```
+
+   **Alternative: Node.js** (v14.0.0+)
+   - This project uses modern JavaScript syntax (optional chaining `?.`)
+   - If you see `SyntaxError: Unexpected token '.'`, upgrade Node.js to v14+ or switch to Bun
+   - Run `npm run check` to verify your runtime compatibility
+   ```bash
+   npm install
+   ```
 3. Open **Simulation View** and **Image Panel** from the sidebar.
 4. Run any of the example scripts:
    - `bun robot:mover` - Drive forward, backward, turn left/right sequence
