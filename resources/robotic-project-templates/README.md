@@ -41,7 +41,8 @@ uv venv
 uv pip install -r requirements.txt
 ```
 
-5. Run any of the example scripts:
+3. Open **Simulation View** and **Image Panel** from the sidebar. 
+4. Run any of the example scripts:
 
 ```bash
 # Basic movement demo
