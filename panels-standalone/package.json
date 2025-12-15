@@ -72,8 +72,7 @@
     "react-use": "^17.6.0",
     "three": "^0.181.2",
     "tinycolor2": "^1.6.0",
-    "tss-react": "^4.9.19",
-    "tensorfleet-util": "workspace:*"
+    "tss-react": "^4.9.19"
   },
   "devDependencies": {
     "@foxglove/wasm-bz2": "^0.1.1",

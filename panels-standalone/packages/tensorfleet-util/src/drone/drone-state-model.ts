@@ -10,7 +10,7 @@ import type {
   SensorMsgsImu,
   MavrosMsgsAltitude,
   MavrosMsgsHomePosition,
-} from '../../packages/tensorfleet-util/src/ros-util/ros-types';
+} from '../ros/ros-types';
 
 /**
  * Unified drone state assembled from MAVROS topics.

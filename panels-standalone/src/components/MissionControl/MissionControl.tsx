@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
-import { DroneStateModel } from '../../mission-control/drone-state-model';
+import { DroneStateModel } from '../../../packages/tensorfleet-util/src/drone/drone-state-model';
 import { DroneMap } from './map/DroneMap';
 import './MissionControl.css';
 import { DroneStatusPanel } from './drone/DroneStatusPanel';
@@ -11,7 +11,7 @@ import { SimulationController } from '@/simulation/simulation_controller';
 import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
 
 const droneState = new DroneStateModel();
-const droneController = new DroneController(droneState);
+const droneController = new DroneController(droneState, ros2Bridge);
 const simulationController = new SimulationController();
 
 export const MissionControlPanel: React.FC = () => {

@@ -6,9 +6,9 @@
  *  - No direct subscriptions here (per constraint). No rosbridge.
  */
 
-import { ros2Bridge } from "@/ros2-bridge";
-import * as RosTypes from "tensorfleet-util/ros-util/ros-types"
-import type { DroneStateModel } from "./drone-state-model";
+import * as RosTypes from "tensorfleet-util/ros/ros-types"
+import type { DroneStateModel } from "../../packages/tensorfleet-util/src/drone/drone-state-model";
+import type { ROS2BridgeApi } from "tensorfleet-util/ros/ros-bridge-api";
 
 export enum LandedState {
   UNDEFINED = 0,
@@ -26,15 +26,12 @@ export interface DroneControllerOptions {
 
 export class DroneController {
   private model: DroneStateModel;
+  private ros2Bridge: ROS2BridgeApi;
   private opts: Required<DroneControllerOptions>;
 
-  private static readonly T_POSE = "/mavros/setpoint_position/local";
-  private static readonly T_TWIST = "/mavros/setpoint_velocity/cmd_vel";
-  private static readonly MSG_POSE = "geometry_msgs/msg/PoseStamped";
-  private static readonly MSG_TWIST = "geometry_msgs/msg/TwistStamped";
-
-  constructor(model: DroneStateModel, opts: DroneControllerOptions = {}) {
+  constructor(model: DroneStateModel, ros2Bridge: ROS2BridgeApi, opts: DroneControllerOptions = {}) {
     this.model = model;
+    this.ros2Bridge = ros2Bridge;
     this.opts = {
       localFrameId: opts.localFrameId ?? "map",
       offboardWarmup: opts.offboardWarmup ?? { count: 20, hz: 20 },
@@ -46,17 +43,17 @@ export class DroneController {
 
   async arm(): Promise<void> {
     this._requireConnected();
-    await ros2Bridge.mavrosArmDisarm(true);
+    await this.mavrosArmDisarm(true);
   }
 
   async disarm(): Promise<void> {
     this._requireConnected();
-    await ros2Bridge.mavrosArmDisarm(false);
+    await this.mavrosArmDisarm(false);
   }
 
   async setMode(mode: string, base = 0): Promise<void> {
     this._requireConnected();
-    await ros2Bridge.mavrosSetMode(mode, base);
+    await this.mavrosSetMode(mode, base);
   }
 
   async takeoff(altMeters: number, yawRad = 0): Promise<void> {
@@ -68,7 +65,7 @@ export class DroneController {
   const lon_deg = gp.lon;
   const yaw_deg = yawRad * 180 / Math.PI;
 
-  await ros2Bridge.mavrosCommandLong({
+  await this.mavrosCommandLong({
       command: 22,        // MAV_CMD_NAV_TAKEOFF
       param1: 0,          // min_pitch (fixed-wing); 0 for multirotor
       param2: 0,
@@ -109,68 +106,64 @@ export class DroneController {
 
   async land(): Promise<void> {
     this._requireConnected();
-    await ros2Bridge.mavrosLand();
+    await this.mavrosLand();
   }
 
-  // -------- Setpoints --------
+  // -------- MAVROS service helpers --------
 
-  async setPositionLocal(x: number, y: number, z: number, yawRad: number) {
-    const header = this._header(this.opts.localFrameId);
-    const q = this._yawToQuat(yawRad);
-    ros2Bridge.publish(DroneController.T_POSE, DroneController.MSG_POSE, {
-      header,
-      pose: { position: { x, y, z }, orientation: q },
-    });
+  async mavrosCommandLong(req: RosTypes.CommandLong_Request): Promise<RosTypes.CommandLong_Response> {
+    return await this.ros2Bridge.callService<RosTypes.CommandLong_Response>("/mavros/cmd/command", req);
   }
 
-  async setVelocityENU(vx: number, vy: number, vz: number, yawRate = 0) {
-    const header = this._header(this.opts.localFrameId);
-    ros2Bridge.publish(DroneController.T_TWIST, DroneController.MSG_TWIST, {
-      header,
-      twist: { linear: { x: vx, y: vy, z: vz }, angular: { x: 0, y: 0, z: yawRate } },
-    });
+  async mavrosArmDisarm(value: boolean): Promise<RosTypes.CommandBool_Response> {
+    const req: RosTypes.CommandBool_Request = { value };
+    return await this.ros2Bridge.callService<RosTypes.CommandBool_Response>("/mavros/cmd/arming", req);
   }
 
-  async stop() {
-    await this.setVelocityENU(0, 0, 0, 0);
+  async mavrosSetMode(custom_mode: string, base_mode = 0): Promise<RosTypes.SetMode_Response> {
+    const req: RosTypes.SetMode_Request = { base_mode, custom_mode };
+    return await this.ros2Bridge.callService<RosTypes.SetMode_Response>("/mavros/set_mode", req);
+  }
+
+  async mavrosTakeoff(args: {
+    altitude: number;
+    min_pitch?: number;
+    yaw?: number;
+    latitude?: number;
+    longitude?: number;
+  }): Promise<RosTypes.CommandTOL_Response> {
+    const req: RosTypes.CommandTOL_Request = {
+      altitude: args.altitude,
+      min_pitch: args.min_pitch ?? 0.0,
+      yaw: args.yaw ?? 0.0,
+      latitude: args.latitude ?? 0.0,
+      longitude: args.longitude ?? 0.0,
+    };
+    return await this.ros2Bridge.callService<RosTypes.CommandTOL_Response>("/mavros/cmd/takeoff", req);
+  }
+
+  async mavrosLand(args: {
+    altitude?: number;
+    yaw?: number;
+    latitude?: number;
+    longitude?: number;
+  } = {}): Promise<RosTypes.CommandTOL_Response> {
+    const req: RosTypes.CommandTOL_Request = {
+      altitude: args.altitude ?? 0.0,
+      min_pitch: 0.0,
+      yaw: args.yaw ?? 0.0,
+      latitude: args.latitude ?? 0.0,
+      longitude: args.longitude ?? 0.0,
+    };
+    return await this.ros2Bridge.callService<RosTypes.CommandTOL_Response>("/mavros/cmd/land", req);
+  }
+
+  async mavrosParamSet(param_id: string, value: RosTypes.ParamValue): Promise<RosTypes.ParamSet_Response> {
+    const req: RosTypes.ParamSet_Request = { param_id, value };
+    return await this.ros2Bridge.callService<RosTypes.ParamSet_Response>("/mavros/param/set", req);
   }
 
   // -------- Helpers --------
-
-  private async _warmupOffboard(pose: { x: number; y: number; z: number; yaw: number }) {
-    const header = this._header(this.opts.localFrameId);
-    const q = this._yawToQuat(pose.yaw);
-    const warmupCycles = this.opts.offboardWarmup.count;
-    const hz = this.opts.offboardWarmup.hz;
-    const periodMs = 1000 / hz;
-
-    // 1. Pre-stream REQUIRED setpoints BEFORE OFFBOARD
-    for (let i = 0; i < 5; i++) {
-      ros2Bridge.publish(DroneController.T_POSE, DroneController.MSG_POSE, {
-        header: { ...header, stamp: this._now() },
-        pose: {
-          position: { x: pose.x, y: pose.y, z: pose.z },
-          orientation: q,
-        },
-      });
-      await this._sleep(periodMs);
-    }
-
-    // 2. Switch to OFFBOARD mode
-    await this.setMode("OFFBOARD");
-
-    // 3. Maintain the flow after OFFBOARD switch
-    for (let i = 0; i < warmupCycles; i++) {
-      ros2Bridge.publish(DroneController.T_POSE, DroneController.MSG_POSE, {
-        header: { ...header, stamp: this._now() },
-        pose: {
-          position: { x: pose.x, y: pose.y, z: pose.z },
-          orientation: q,
-        },
-      });
-      await this._sleep(periodMs);
-    }
-  }
 
   private async _waitForArmed(timeoutMs = 3000): Promise<void> {
     const t0 = Date.now();

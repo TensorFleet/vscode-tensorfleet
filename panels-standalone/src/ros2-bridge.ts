@@ -11,8 +11,8 @@
 
 import { FoxgloveWsClient } from "./foxglove-networking";
 import { ROS_PORTS } from "./ws-proxy-client";
-import * as RosTypes from "tensorfleet-util/ros-util/ros-types";
-import { ROS2BridgeApi } from "packages/tensorfleet-util/src/ros-util/ros-bridge-api";
+import * as RosTypes from "tensorfleet-util/ros/ros-types";
+import { ROS2BridgeApi } from "tensorfleet-util/ros/ros-bridge-api";
 
 export type ConnectionMode = "foxglove";
 
@@ -357,62 +357,7 @@ export class ROS2Bridge {
     }) as T;
   }
 
-  // ---------- MAVROS service helpers ----------
 
-  async mavrosCommandLong(req: RosTypes.CommandLong_Request): Promise<RosTypes.CommandLong_Response> {
-    return await this.callService<RosTypes.CommandLong_Response>("/mavros/cmd/command", req);
-  }
-
-  async mavrosArmDisarm(value: boolean): Promise<RosTypes.CommandBool_Response> {
-    // eslint-disable-next-line no-console
-    console.log("[ROS2Bridge] calling mavrosArmDisarm with", value);
-    const req: RosTypes.CommandBool_Request = { value };
-    return await this.callService<RosTypes.CommandBool_Response>("/mavros/cmd/arming", req);
-  }
-
-  async mavrosSetMode(custom_mode: string, base_mode = 0): Promise<RosTypes.SetMode_Response> {
-    const req: RosTypes.SetMode_Request = { base_mode, custom_mode };
-    return await this.callService<RosTypes.SetMode_Response>("/mavros/set_mode", req);
-  }
-
-  async mavrosTakeoff(args: {
-    altitude: number;
-    min_pitch?: number;
-    yaw?: number;
-    latitude?: number;
-    longitude?: number;
-  }): Promise<RosTypes.CommandTOL_Response> {
-    const req: RosTypes.CommandTOL_Request = {
-      altitude: args.altitude,
-      min_pitch: args.min_pitch ?? 0.0,
-      yaw: args.yaw ?? 0.0,
-      latitude: args.latitude ?? 0.0,
-      longitude: args.longitude ?? 0.0,
-    };
-    return await this.callService<RosTypes.CommandTOL_Response>("/mavros/cmd/takeoff", req);
-  }
-
-  async mavrosLand(args: {
-    altitude?: number;
-    yaw?: number;
-    latitude?: number;
-    longitude?: number;
-  } = {}): Promise<RosTypes.CommandTOL_Response> {
-    const req: RosTypes.CommandTOL_Request = {
-      altitude: args.altitude ?? 0.0,
-      min_pitch: 0.0,
-      yaw: args.yaw ?? 0.0,
-      latitude: args.latitude ?? 0.0,
-      longitude: args.longitude ?? 0.0,
-    };
-    return await this.callService<RosTypes.CommandTOL_Response>("/mavros/cmd/land", req);
-  }
-
-    /** /mavros/param/set (mavros_msgs/srv/ParamSet) */
-  async mavrosParamSet(param_id: string, value: RosTypes.ParamValue): Promise<RosTypes.ParamSet_Response> {
-    const req: RosTypes.ParamSet_Request = { param_id, value };
-    return await this.callService<RosTypes.ParamSet_Response>("/mavros/param/set", req);
-  }
   // ---------- RawImage normalization helper ----------
 
   /**

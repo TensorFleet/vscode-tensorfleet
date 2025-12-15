@@ -1,4 +1,4 @@
-import { DroneStateModel, LANDED } from "@/mission-control/drone-state-model";
+import { DroneStateModel, LANDED } from "tensorfleet-util/drone/drone-state-model";
 import React, { useEffect, useState } from "react";
 import MissionControlPanel from "./MissionControlButtons";
 import "./DroneStatusPanel.css";

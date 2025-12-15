@@ -47,39 +47,7 @@ export interface ROS2BridgeApi {
   /** Generic service call API (Foxglove-backed) */
   callService<T = any>(name: string, request: any): Promise<T>;
 
-  /** MAVROS service helpers */
-  mavrosCommandLong(
-    req: RosTypes.CommandLong_Request,
-  ): Promise<RosTypes.CommandLong_Response>;
 
-  mavrosArmDisarm(
-    value: boolean,
-  ): Promise<RosTypes.CommandBool_Response>;
-
-  mavrosSetMode(
-    custom_mode: string,
-    base_mode?: number,
-  ): Promise<RosTypes.SetMode_Response>;
-
-  mavrosTakeoff(args: {
-    altitude: number;
-    min_pitch?: number;
-    yaw?: number;
-    latitude?: number;
-    longitude?: number;
-  }): Promise<RosTypes.CommandTOL_Response>;
-
-  mavrosLand(args?: {
-    altitude?: number;
-    yaw?: number;
-    latitude?: number;
-    longitude?: number;
-  }): Promise<RosTypes.CommandTOL_Response>;
-
-  mavrosParamSet(
-    param_id: string,
-    value: RosTypes.ParamValue,
-  ): Promise<RosTypes.ParamSet_Response>;
 
   /** Frame/introspection helpers */
   getKnownFrames(): string[];
