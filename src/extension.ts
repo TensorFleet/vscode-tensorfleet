@@ -639,6 +639,10 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.createNewRoboticPythonProject', () => createNewRoboticPythonProject(context))
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
   );
 
@@ -1246,6 +1250,8 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand('tensorfleet.createNewProject');
       } else if (message?.command === 'newRoboticProject') {
         vscode.commands.executeCommand('tensorfleet.createNewRoboticProject');
+      } else if (message?.command === 'newRoboticPythonProject') {
+        vscode.commands.executeCommand('tensorfleet.createNewRoboticPythonProject');
       } else if (message?.command === 'installTools') {
         getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'installTools' });
         vscode.commands.executeCommand('tensorfleet.installTools');
@@ -1659,8 +1665,17 @@ async function createNewRoboticProject(context: vscode.ExtensionContext, openNew
   await createNewProjectInternal(context, {
     kindLabel: 'robotic',
     defaultName: 'my-robotic-project',
-    commandLabel: 'TensorFleet Robotic Project',
+    commandLabel: 'TensorFleet Robotic Project (JavaScript)',
     templateSubdir: 'robotic-js-project-templates'
+  }, openNew);
+}
+
+async function createNewRoboticPythonProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  await createNewProjectInternal(context, {
+    kindLabel: 'robotic',
+    defaultName: 'my-robotic-project',
+    commandLabel: 'TensorFleet Robotic Project (Python)',
+    templateSubdir: 'robotic-project-templates'
   }, openNew);
 }
 

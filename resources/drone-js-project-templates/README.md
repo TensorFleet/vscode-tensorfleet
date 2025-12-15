@@ -15,12 +15,12 @@ curl -fsSL https://bun.sh/install | bash
 - If you see `SyntaxError: Unexpected token '.'`, upgrade Node.js to v14+ or switch to Bun
 - Run `npm run check` to verify your runtime compatibility
 
+## Quick Start
 
-## Quick start
-1) Install deps: `bun install` (or `npm install`)
-2) **Check compatibility**: `bun run check` (verifies your runtime supports modern JavaScript)
-3) Open `Simulation view` and `Map View`. 
-4) Start your VM, then run:
+1. **Start your VM**: Click the **TensorFleet** status bar at the bottom of VS Code and select **Start VM**.
+2. Install dependencies: `bun install` (or `npm install`)
+3. Open **Simulation View** and **Map View** from the sidebar.
+4. Run any of the example scripts:
    - `bun run restart` - Restart the simulation (resets drone state)
    - `bun drone:mover` - ARM → TAKEOFF → OFFBOARD waypoint mission → LAND
 

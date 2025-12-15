@@ -3,7 +3,7 @@
  * Simple movement example using roslib and rosbridge.
  *
  * This script:
- *   - Connects to the rosbridge WebSocket server
+ *   - Connects to the rosbridge WebSocket server (via proxy or direct)
  *   - Publishes geometry_msgs/Twist messages on /cmd_vel_raw
  *   - Runs a short movement sequence (forward, backward, left, right, stop)
  *
@@ -11,17 +11,19 @@
  *   bun src/robot_mover.js
  *
  * Environment overrides:
- *   ROS_HOST, ROS_PORT, CMD_VEL_TOPIC, LINEAR_SPEED, ANGULAR_SPEED
+ *   - TENSORFLEET_BASE_URL, TENSORFLEET_JWT (for proxy connection)
+ *   - ROS_HOST, ROS_PORT, ROSBRIDGE_URL (for direct connection)
+ *   - CMD_VEL_TOPIC, LINEAR_SPEED, ANGULAR_SPEED
  */
 
+require("dotenv").config();
 const ROSLIB = require("roslib");
 const {
-  getRosConnectionDetails,
   getCmdVelTopic,
   getMovementSpeeds
 } = require("./config");
+const { connectToRobot } = require("./lib/robotic_utils");
 
-const { url: ROSBRIDGE_URL } = getRosConnectionDetails();
 const CMD_VEL_TOPIC = getCmdVelTopic();
 const { linearSpeed: LINEAR_SPEED, angularSpeed: ANGULAR_SPEED } =
   getMovementSpeeds();
@@ -104,39 +106,25 @@ async function runMovement(ros) {
   }
 }
 
-function main() {
-  console.log(
-    `Connecting to rosbridge at ${ROSBRIDGE_URL} using roslib ...`
-  );
-
-  const ros = new ROSLIB.Ros({ url: ROSBRIDGE_URL });
-
-  ros.on("connection", async () => {
+async function main() {
+  let ros;
+  try {
+    ros = await connectToRobot();
     console.log("roslib connection established successfully.");
-    try {
-      await runMovement(ros);
-    } catch (err) {
-      console.error("Error during movement sequence:", err);
-    } finally {
+    await runMovement(ros);
+  } catch (err) {
+    console.error("Error during movement sequence:", err);
+  } finally {
+    if (ros) {
       ros.close();
       console.log("Connection closed.");
     }
-  });
-
-  ros.on("error", (err) => {
-    console.error("rosbridge error:", err);
-  });
-
-  ros.on("close", () => {
-    console.log("rosbridge connection closed.");
-  });
-
-  process.on("SIGINT", () => {
-    console.log("Caught SIGINT, shutting down.");
-    ros.close();
-  });
+  }
 }
 
 if (require.main === module) {
-  main();
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
 }
