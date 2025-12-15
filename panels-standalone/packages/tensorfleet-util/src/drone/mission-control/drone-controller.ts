@@ -6,9 +6,9 @@
  *  - No direct subscriptions here (per constraint). No rosbridge.
  */
 
-import * as RosTypes from "tensorfleet-util/ros/ros-types"
+import * as RosTypes from "../../ros/ros-types"
 import type { DroneStateModel } from "../drone-state-model";
-import type { ROS2BridgeApi } from "tensorfleet-util/ros/ros-bridge-api";
+import type { ROS2BridgeApi } from "../../ros/ros-bridge-api";
 
 export enum LandedState {
   UNDEFINED = 0,
