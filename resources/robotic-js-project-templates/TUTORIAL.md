@@ -15,6 +15,7 @@
 | [00_preparation](tutorials/00_preparation.md) | Environment setup & simulation | ✅ Complete |
 | [01_connection](tutorials/01_connection.md) | ROS Bridge connection & state monitoring | ✅ Complete |
 | [02_telemetry](tutorials/02_telemetry.md) | Comprehensive telemetry collection | ✅ Complete |
+| [03_arm](tutorials/03_arm.md) | Arm/disarm drone control | ✅ Complete |
 
 ## Getting Started
 

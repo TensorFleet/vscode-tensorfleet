@@ -204,7 +204,7 @@ The tutorial displays both raw and managed data side-by-side, updating every sec
 ## Navigation
 
 - **Previous**: [Tutorial 01: Connection](01_connection.md)
-- **Next**: Future tutorials...
+- **Next**: [Tutorial 03: Arm/Disarm](03_arm.md)
 
 ---
 
