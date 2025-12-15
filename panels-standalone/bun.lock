@@ -61,7 +61,6 @@
         "react-i18next": "^16.3.5",
         "react-json-tree": "^0.20.0",
         "react-use": "^17.6.0",
-        "tensorfleet-util": "workspace:*",
         "three": "^0.181.2",
         "tinycolor2": "^1.6.0",
         "tss-react": "^4.9.19",
@@ -376,10 +375,10 @@
     },
     "packages/tensorfleet-util": {
       "name": "tensorfleet-util",
-      "version": "0.0.0",
+      "version": "1.0.0",
       "devDependencies": {
         "tsup": "^8.0.0",
-        "typescript": "^5.0.0",
+        "typescript": "^5.5.3",
       },
     },
     "packages/theme": {

@@ -99,6 +99,7 @@ export interface MavrosMsgsAltitude {
   relative: number;
   terrain: number;
   bottom_clearance: number;
+  agl?: number;
 }
 
 export interface MavrosMsgsHomePosition {

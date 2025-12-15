@@ -248,7 +248,7 @@ export class DroneStateModel extends Emitter {
   }
 
   /** Subscribes to required MAVROS topics via the bridge. */
-  public connect(bridge: ROS2Bridge = ros2Bridge): void {
+  public connect(bridge: ROS2BridgeApi): void {
     this.disconnect();
     this.bridge = bridge;
 
