@@ -1,116 +1,170 @@
-# TensorFleet Robotic JS Project
+# TensorFleet Drone JS Project
 
-This template is the JavaScript/Node.js sibling of the Python-based `robotic-project-templates`. It targets the same ROS graph and topics, but uses `roslib` over rosbridge instead of `roslibpy`.
+JavaScript/Node.js template for drone control over rosbridge using `roslib`. Includes an OFFBOARD velocity guided mover driven by a mission plan.
 
-The examples assume:
+## Requirements
 
-- A TensorFleet VM running ROS 2, Gazebo, PX4, rosbridge, and the Foxglove bridge.
-- rosbridge is reachable at `ws://172.16.0.10:9091` (or the URL configured in `config/robot_config.yaml`).
-
-## Project Structure
-
-```
-.
-├── src/
-│   ├── robot_mover.js        # Timed movement sequence over /cmd_vel_raw
-│   ├── obstacle_avoider.js   # LiDAR-based obstacle avoidance state machine
-│   └── vision_yolo.js        # Image subscribe/republish helper over rosbridge
-├── config/
-│   └── robot_config.yaml     # Robot & network configuration (VM IP, rosbridge URL, topics)
-├── launch/                   # (Optional) ROS 2 launch files
-├── package.json              # Node.js project definition (roslib dependency)
-└── README.md                 # This guide
-```
-
-## Setup
-
-From the project root (the directory containing this README and `package.json`):
-
+**Recommended: [Bun](https://bun.sh)** (v1.0.0+)
 ```bash
-bun install
+# Install Bun (macOS, Linux, WSL)
+curl -fsSL https://bun.sh/install | bash
 ```
 
-You do not need ROS 2 installed locally; the scripts talk to rosbridge running in your VM.
+**Alternative: Node.js** (v14.0.0+)
+- This project uses modern JavaScript syntax (optional chaining `?.`)
+- If you see `SyntaxError: Unexpected token '.'`, upgrade Node.js to v14+ or switch to Bun
+- Run `npm run check` to verify your runtime compatibility
+
+
+## Quick start
+1) Install deps: `bun install` (or `npm install`)
+2) **Check compatibility**: `bun run check` (verifies your runtime supports modern JavaScript)
+3) Open `Simulation view` and `Map View`. 
+4) Start your VM, then run:
+   - `bun run restart` - Restart the simulation (resets drone state)
+   - `bun drone:mover` - ARM → TAKEOFF → OFFBOARD waypoint mission → LAND
+
+
+## Scripts
+- **`check-runtime.js`**: Runtime compatibility checker. Verifies your JavaScript runtime (Bun or Node.js) supports modern syntax features like optional chaining. Run `bun run check` or `npm run check` if you encounter syntax errors. Provides specific troubleshooting steps if issues are detected.
+- `src/restart_sim.js`: Restart the PX4 simulation via `/simulation_manager/start_simulation` service. Useful for resetting drone state between test runs.
+- `src/drone_mover.js`: Complete autonomous mission: ARM → TAKEOFF → OFFBOARD → fly waypoints from `missions/example_mission.plan` → return home → LAND. Falls back to 8-point circle pattern if mission plan is missing. Uses env or `config/drone_config.yaml` (`offboard` section) for tuning.
+
+
+## Tutorials
+
+Learn drone control step-by-step with focused examples:
+
+**Beginner** (getting started):
+1. `bun run tutorial:01` - Connect to rosbridge and read drone state
+2. `bun run tutorial:02` - Display all telemetry (position, GPS, battery)
+3. `bun run tutorial:03` - Send ARM/DISARM command
+
+**Intermediate** (basic flight):
+4. `bun run tutorial:04` - Takeoff to altitude and land (complete flight cycle)
+5. `bun run tutorial:05` - Enter OFFBOARD mode and hover
+
+**Advanced** (autonomous navigation):
+6. `bun run tutorial:06` - Move forward using velocity control
+7. `bun run tutorial:07` - Navigate to waypoint with position feedback
+
+Each tutorial is ~50-100 lines and demonstrates one concept clearly. See `src/tutorials/` for source code.
+
+## Documentation
+
+- **[Tutorials Overview](tutorials/README.md)** - Complete tutorial index and navigation
+- **[Technical Reference](TECHNICAL.md)** - Detailed technical implementation details, ROS/MAVROS internals, and API documentation
+- **[Configuration Guide](CONFIGURATION.md)** - Comprehensive setup guide for connection methods, proxy configuration, and troubleshooting
+- **[Simulation Guide](SIMULATION.md)** - PX4 simulation setup and management
+- **[TensorFleet Util](TENSORFLEET_UTIL.md)** - tensorfleet-util package documentation and API reference
 
 ## Configuration
+Edit `config/drone_config.yaml` or override via env vars:
+- `TENSORFLEET_BASE_URL` + `TENSORFLEET_JWT` - primary TensorFleet connection (other URLs are derived automatically when blank)
+- `ROSBRIDGE_URL` - rosbridge WebSocket URL
+- `SETPOINT_FRAME_ID` - frame for setpoints (default `map`)
+- `ALT_TARGET`, `EDGE_M`, `V_FAST`, `V_MIN`, `WAYPOINT_RADIUS`, `SLOW_RADIUS`, `SETPOINT_HZ`, `R2B_HOST`, `R2B_PORT` - OFFBOARD tuning for `drone_mover.js` (defaults favor a small world: ~1m alt, ~5m hop, gentle velocities)
+- `MISSION_PLAN_PATH` - override the plan file used by `drone_mover.js` (defaults to `missions/example_mission.plan`)
+The `offboard` section in the YAML mirrors the environment overrides for `drone_mover.js`.
 
-The default network and topic configuration lives in `config/robot_config.yaml`:
-
-```yaml
-network:
-  vm_ip: "172.16.0.10"
-  rosbridge_url: "ws://172.16.0.10:9091"
-  foxglove_bridge_url: "ws://172.16.0.10:8765"
-
-motion:
-  cmd_vel_topic: "/cmd_vel_raw"
+## Layout
+```
+.
+|-- src/
+|   |-- tutorials/          # Step-by-step learning scripts
+|   |-- lib/                # Shared utilities
+|   |-- drone_mover.js      # Advanced mission example
+|   `-- restart_sim.js      # Simulation restart utility
+|-- config/                 # Network + flight config
+|-- missions/               # Example mission plans
+|-- launch/                 # Optional ROS 2 launch files
+|-- package.json
+`-- README.md
 ```
 
-Each script reads from this YAML file for its defaults and also accepts environment variables so you can override settings without editing code:
+## Tips
+- **New to drone control?** Start with the tutorials (`bun run tutorial:01` through `tutorial:07`)
+- rosbridge runs in the VM; no local ROS 2 binaries needed
+- Use `bun run restart` to reset simulation between test runs
+- Verify connectivity with `src/drone_mover.js` for full autonomous mission
 
-- `ROSBRIDGE_URL` – full rosbridge WebSocket URL, e.g. `ws://172.16.0.10:9091`
-- `ROS_HOST` / `ROS_PORT` – rosbridge host and port (fallback if `ROSBRIDGE_URL` is not set)
-- `CMD_VEL_TOPIC` – velocity command topic (default from `motion.cmd_vel_topic`)
-- `SCAN_TOPIC` – LiDAR scan topic for obstacle avoidance (default `/scan`)
-- `LINEAR_SPEED`, `ANGULAR_SPEED` – motion tuning
-- `OBSTACLE_DISTANCE`, `CLEAR_DISTANCE` – avoidance thresholds
-- `IMAGE_TOPIC`, `ANNOTATED_IMAGE_TOPIC` – image passthrough topics
+## Troubleshooting
 
-## Example: Basic Motion (`robot_mover.js`)
+### `SyntaxError: Unexpected token '.'`
+This error means you're using an older Node.js version that doesn't support optional chaining (`?.`).
 
-Run a simple movement sequence (forward, stop, backward, stop, turn left/right, stop):
+**Solutions:**
+1. **Switch to Bun** (recommended):
+   ```bash
+   curl -fsSL https://bun.sh/install | bash
+   bun install
+   bun run restart
+   ```
 
+2. **Upgrade Node.js** to v14.0.0 or higher:
+   ```bash
+   # Check your version
+   node --version
+   
+   # Upgrade via nvm (recommended)
+   nvm install 18
+   nvm use 18
+   ```
+
+3. **Check compatibility**:
+   ```bash
+   npm run check
+   ```
+
+### "I'm using Bun but still getting the error!"
+If you run `bun run restart` but still see `SyntaxError: Unexpected token '.'`, **Node.js is actually running your script**, not Bun.
+
+**How to verify:**
 ```bash
-bun src/robot_mover.js
+# This should show Bun version
+bun --version
+
+# Run the check script
+npm run check
+# or
+bun run check
 ```
 
-This script:
+**Common causes:**
+1. **Bun not in PATH**: Bun is installed but your shell can't find it
+   ```bash
+   # Add to ~/.bashrc or ~/.zshrc
+   export PATH="$HOME/.bun/bin:$PATH"
+   source ~/.bashrc  # or ~/.zshrc
+   ```
 
-- Connects to rosbridge via `roslib`
-- Publishes `geometry_msgs/Twist` messages on `/cmd_vel_raw`
-- Uses a promise-based helper to publish at 20 Hz for a given duration
+2. **Using npm instead of bun**: Make sure you're using `bun` commands
+   ```bash
+   # ❌ Wrong (uses Node.js)
+   npm run restart
+   
+   # ✅ Correct (uses Bun)
+   bun run restart
+   ```
 
-You can adjust speed and topics via environment variables, for example:
+3. **Shebang issues**: If running scripts directly (e.g., `./src/restart_sim.js`), ensure they have the correct shebang
+   - Scripts should start with `#!/usr/bin/env -S bun run`
+   - Make them executable: `chmod +x src/restart_sim.js`
 
+**Quick fix:**
 ```bash
-ROS_HOST=172.16.0.10 ROS_PORT=9091 CMD_VEL_TOPIC=/cmd_vel_raw LINEAR_SPEED=0.3 node src/robot_mover.js
+# Verify Bun is installed and working
+which bun
+bun --version
+
+# If not found, reinstall Bun
+curl -fsSL https://bun.sh/install | bash
+
+# Restart your terminal, then try again
+bun run restart
 ```
 
-## Example: Obstacle Avoidance (`obstacle_avoider.js`)
-
-Run a LiDAR-based obstacle avoidance state machine:
-
-```bash
-bun src/obstacle_avoider.js
-```
-
-Behavior:
-
-- Moves forward by default
-- Monitors a `sensor_msgs/LaserScan` on `/scan`
-- When an obstacle is closer than `OBSTACLE_DISTANCE` in front, chooses the best escape direction (left, right, or back)
-- Resumes forward motion once the path ahead is clear beyond `CLEAR_DISTANCE`
-
-Logs are printed to the terminal to mirror the Python sample, and velocity commands are sent to the same `/cmd_vel_raw` topic.
-
-## Example: Image Passthrough (`vision_yolo.js`)
-
-This script demonstrates a lightweight image pipeline suitable for pairing with a Python YOLO node:
-
-```bash
-bun src/vision_yolo.js
-```
-
-By default it:
-
-- Subscribes to `sensor_msgs/Image` on `/camera/image_raw`
-- Republishes the same messages on `/camera/image_annotated`
-
-Use this pattern as a starting point for building web-based or Node-based visualization tools that sit alongside a heavier Python perception stack (for example, YOLO in `vision_yolo.py` from the Python template).
-
-## Notes on Python → JS Port
-
-- The ROS design and message types are unchanged: `/cmd_vel_raw` (`geometry_msgs/Twist`), `/scan` (`sensor_msgs/LaserScan`), and camera topics (`sensor_msgs/Image`).
-- `rclpy` and `roslibpy` are replaced by `roslib` over a WebSocket connection to rosbridge.
-- Blocking loops with `time.sleep` are replaced with `setInterval` and `Promise`-based helpers.
-- Python classes and methods are ported to JavaScript classes using the same state-machine logic and topic names.
+### Connection Issues
+- Ensure your VM is running and connected
+- Check that `TENSORFLEET_VM_MANAGER_URL`, `TENSORFLEET_NODE_ID`, and `TENSORFLEET_JWT` are set in `.env`
+- Verify rosbridge is accessible (default port: 9091)
