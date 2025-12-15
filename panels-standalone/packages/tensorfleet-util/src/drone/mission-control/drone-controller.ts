@@ -7,7 +7,7 @@
  */
 
 import * as RosTypes from "tensorfleet-util/ros/ros-types"
-import type { DroneStateModel } from "../../packages/tensorfleet-util/src/drone/drone-state-model";
+import type { DroneStateModel } from "../drone-state-model";
 import type { ROS2BridgeApi } from "tensorfleet-util/ros/ros-bridge-api";
 
 export enum LandedState {

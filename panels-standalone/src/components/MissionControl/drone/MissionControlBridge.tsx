@@ -1,6 +1,6 @@
 // MissionControlBridge.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DroneController } from "@/mission-control/drone-controller";
+import { DroneController } from "tensorfleet-util/drone/mission-control/drone-controller";
 
 /** Keep this in sync with the UI emitter */
 type MissionAction = "arm" | "disarm" | "takeoff" | "land" | "rtl" | "goto";

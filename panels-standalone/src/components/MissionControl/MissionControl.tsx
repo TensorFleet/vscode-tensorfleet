@@ -4,7 +4,7 @@ import { DroneStateModel } from '../../../packages/tensorfleet-util/src/drone/dr
 import { DroneMap } from './map/DroneMap';
 import './MissionControl.css';
 import { DroneStatusPanel } from './drone/DroneStatusPanel';
-import { DroneController } from '@/mission-control/drone-controller';
+import { DroneController } from 'tensorfleet-util/drone/mission-control/drone-controller';
 import MissionControlBridge from './drone/MissionControlBridge';
 import SimulationControlBridge from '../SimulationControl/SimulationControlBridge';
 import { SimulationController } from '@/simulation/simulation_controller';
