@@ -1,3 +1,4 @@
+import { ROS2BridgeApi } from '../ros/ros-bridge-api';
 import type {
   SensorMsgsNavSatFix,
   StdMsgsFloat64,
@@ -205,7 +206,7 @@ export class DroneStateModel extends Emitter {
   private updateInterval: number | null = null;
   private updated = false;
   private updateFps: number;
-  private bridge: ROS2Bridge | null = null;
+  private bridge: ROS2BridgeApi | null = null;
 
   private lastSeen: Record<string, number> = {};
 
