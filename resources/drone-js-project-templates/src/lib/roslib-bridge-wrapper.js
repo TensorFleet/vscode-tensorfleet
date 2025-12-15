@@ -8,9 +8,6 @@ const { getTensorfleetSettings } = require("./tensorfleet_config");
 const { createProxyWebSocket } = require("./proxy_ws_client");
 const socketAdapter = require("roslib/src/core/SocketAdapter.js");
 
-// Import the interface - assuming it's available
-// const { ROS2BridgeApi } = require("../../../../panels-standalone/packages/tensorfleet-util/src/ros/ros-bridge-api");
-
 class ROSLibBridgeWrapper {
   constructor() {
     this.ros = null;
@@ -223,6 +220,22 @@ class ROSLibBridgeWrapper {
     return () => {
       this.topicsChangedHandlers.delete(cb);
     };
+  }
+
+  async waitForConnection(timeoutMs = 10000) {
+    if (this.isConnected()) return;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Connection timeout")), timeoutMs);
+      const check = () => {
+        if (this.isConnected()) {
+          clearTimeout(timer);
+          resolve();
+        } else {
+          setTimeout(check, 100);
+        }
+      };
+      check();
+    });
   }
 }
 

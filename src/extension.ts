@@ -2179,7 +2179,7 @@ async function createNewProjectInternal(
           const tensorfleetUtilSource = vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'packages', 'tensorfleet-util');
           const tensorfleetUtilDest = vscode.Uri.joinPath(packagesFolder, 'tensorfleet-util');
 
-          await copyDirectory(tensorfleetUtilSource, tensorfleetUtilDest);
+          await copyDirectory(tensorfleetUtilSource, tensorfleetUtilDest, ['dist']);
         }
 
         try {
@@ -2264,16 +2264,21 @@ async function installBundledTools(context: vscode.ExtensionContext) {
   }
 }
 
-async function copyDirectory(source: vscode.Uri, destination: vscode.Uri) {
+async function copyDirectory(source: vscode.Uri, destination: vscode.Uri, excludeDirs: string[] = []) {
   await vscode.workspace.fs.createDirectory(destination);
   const entries = await vscode.workspace.fs.readDirectory(source);
 
   for (const [name, fileType] of entries) {
+    // Skip excluded directories
+    if (fileType === vscode.FileType.Directory && excludeDirs.includes(name)) {
+      continue;
+    }
+
     const sourceEntry = vscode.Uri.joinPath(source, name);
     const destinationEntry = vscode.Uri.joinPath(destination, name);
 
     if (fileType === vscode.FileType.Directory) {
-      await copyDirectory(sourceEntry, destinationEntry);
+      await copyDirectory(sourceEntry, destinationEntry, excludeDirs);
     } else {
       await vscode.workspace.fs.copy(sourceEntry, destinationEntry, { overwrite: true });
     }

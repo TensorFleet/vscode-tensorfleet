@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "description": "TensorFleet drone starter using JavaScript and roslib over rosbridge.",
+  "type": "module",
   "workspaces": ["packages/*"],
   "engines": {
     "node": ">=14.0.0",
@@ -18,7 +19,8 @@
     "tutorial:04": "bun src/tutorials/04_takeoff_land.js",
     "tutorial:05": "bun src/tutorials/05_offboard_hover.js",
     "tutorial:06": "bun src/tutorials/06_move_forward.js",
-    "tutorial:07": "bun src/tutorials/07_goto_waypoint.js"
+    "tutorial:07": "bun src/tutorials/07_goto_waypoint.js",
+    "postinstall": "cd packages/tensorfleet-util && bun run build"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
