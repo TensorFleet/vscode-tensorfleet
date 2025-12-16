@@ -5,7 +5,6 @@ import type {
   MavrosMsgsState,
   MavrosMsgsExtendedState,
   SensorMsgsBatteryState,
-  MavrosMsgsVFRHUD,
   GeometryMsgsPoseStamped,
   GeometryMsgsTwistStamped,
   SensorMsgsImu,
@@ -70,15 +69,7 @@ export type DroneState = {
     temperature?: number | null;
   };
 
-  /** Airspeed/groundspeed/throttle/climb. */
-  vfr_hud?: {
-    time_boot_ms: number;
-    airspeed?: number;
-    groundspeed?: number;
-    heading?: number;
-    throttle?: number;
-    climb?: number;
-  };
+
 
   /** Local pose/velocity in ENU. */
   local?: {
@@ -140,7 +131,6 @@ type RosFrame =
       | MavrosMsgsState
       | MavrosMsgsExtendedState
       | SensorMsgsBatteryState
-      | MavrosMsgsVFRHUD
       | GeometryMsgsPoseStamped
       | GeometryMsgsTwistStamped
       | SensorMsgsImu
@@ -150,6 +140,8 @@ type RosFrame =
   | Record<string, unknown>;
 
 type EventMap = { update: (state: Partial<DroneState>) => void; statusUpdate: (state: Partial<DroneState>) => void };
+
+type SectionChangeListener<T = any> = (oldVal: T, newVal: T) => void;
 
 /** MAV_LANDED_STATE mapping used for status logic. */
 export const LANDED = {
@@ -184,7 +176,6 @@ function isFloat64(x: any): x is StdMsgsFloat64 { return x && typeof x.data === 
 function isState(x: any): x is MavrosMsgsState { return x && typeof x.mode === 'string' && typeof x.armed === 'boolean'; }
 function isExtendedState(x: any): x is MavrosMsgsExtendedState { return x && ('landed_state' in x || 'vtol_state' in x); }
 function isBattery(x: any): x is SensorMsgsBatteryState { return x && ('voltage' in x || 'percentage' in x || 'current' in x); }
-function isVfrHud(x: any): x is MavrosMsgsVFRHUD { return x && ('groundspeed' in x || 'airspeed' in x || 'throttle' in x); }
 function isPoseStamped(x: any): x is GeometryMsgsPoseStamped { return x && x.pose && x.pose.position && x.pose.orientation; }
 function isTwistStamped(x: any): x is GeometryMsgsTwistStamped { return x && x.twist && x.twist.linear && x.twist.angular; }
 function isImu(x: any): x is SensorMsgsImu { return x && x.orientation && x.angular_velocity && x.linear_acceleration; }
@@ -203,6 +194,8 @@ export class DroneStateModel extends Emitter {
   private state: Partial<DroneState> = {};
   private updateListeners = new Set<DroneStateUpdateListener>();
   private statusUpdateListeners = new Set<DroneStateUpdateListener>();
+  private sectionChangeListeners = new Map<keyof DroneState, Set<SectionChangeListener>>();
+  private prevSectionJsons = new Map<keyof DroneState, string>();
   private prevNonNumericalJson: string | null = null;
 
   private updateInterval: any = null;
@@ -213,13 +206,18 @@ export class DroneStateModel extends Emitter {
 
   private lastSeen: Record<string, number> = {};
 
+  private allTopics: Set<string>;
+  private seenTopics: Set<string> = new Set();
+  private allSeenPromise: Promise<void> | null = null;
+  private resolveAllSeen: (() => void) | null = null;
+  private debugInterval: any = null;
+
   // Topics
   private static readonly T_FIX = '/mavros/global_position/raw/fix';
   private static readonly T_HDG = '/mavros/global_position/compass_hdg';
   private static readonly T_STATE = '/mavros/state';
   private static readonly T_EXT_STATE = '/mavros/extended_state';
   private static readonly T_BATT = '/mavros/battery';
-  private static readonly T_VFR = '/mavros/vfr_hud';
   private static readonly T_POSE = '/mavros/local_position/pose';
   private static readonly T_VEL = '/mavros/local_position/velocity_local';
   private static readonly T_IMU = '/mavros/imu/data';
@@ -239,13 +237,14 @@ export class DroneStateModel extends Emitter {
       [DroneStateModel.T_STATE]: this.handleVehicleState,
       [DroneStateModel.T_EXT_STATE]: this.handleExtendedState,
       [DroneStateModel.T_BATT]: this.handleBattery,
-      [DroneStateModel.T_VFR]: this.handleVfrHud,
       [DroneStateModel.T_POSE]: this.handleLocalPose,
       [DroneStateModel.T_VEL]: this.handleLocalVelocity,
       [DroneStateModel.T_IMU]: this.handleImu,
       [DroneStateModel.T_ALT]: this.handleAltitude,
       [DroneStateModel.T_HOME]: this.handleHomePosition,
     };
+
+    this.allTopics = new Set(Object.keys(this.handlers));
   }
 
   /** Subscribes to required MAVROS topics via the bridge. */
@@ -254,13 +253,15 @@ export class DroneStateModel extends Emitter {
     this.disconnect();
     this.bridge = bridge;
 
+    this.seenTopics = new Set();
+    this.allSeenPromise = new Promise(resolve => this.resolveAllSeen = resolve);
+
     const subs: Array<{ topic: string; type: string }> = [
       { topic: DroneStateModel.T_FIX, type: 'sensor_msgs/msg/NavSatFix' },
       { topic: DroneStateModel.T_HDG, type: 'std_msgs/msg/Float64' },
       { topic: DroneStateModel.T_STATE, type: 'mavros_msgs/msg/State' },
       { topic: DroneStateModel.T_EXT_STATE, type: 'mavros_msgs/msg/ExtendedState' },
       { topic: DroneStateModel.T_BATT, type: 'sensor_msgs/msg/BatteryState' },
-      { topic: DroneStateModel.T_VFR, type: 'mavros_msgs/msg/VFR_HUD' },
       { topic: DroneStateModel.T_POSE, type: 'geometry_msgs/msg/PoseStamped' },
       { topic: DroneStateModel.T_VEL, type: 'geometry_msgs/msg/TwistStamped' },
       { topic: DroneStateModel.T_IMU, type: 'sensor_msgs/msg/Imu' },
@@ -275,6 +276,12 @@ export class DroneStateModel extends Emitter {
     });
     console.log('[DEBUG] DroneStateModel.connect() completed');
     this.startUpdateLoop();
+    this.debugInterval = setInterval(() => {
+      if (this.seenTopics.size < this.allTopics.size) {
+        const missing = Array.from(this.allTopics).filter(t => !this.seenTopics.has(t));
+        console.log(`[DEBUG] Waiting for topics: ${missing.join(', ')}`);
+      }
+    }, 6000);
   }
 
   /** Unsubscribes from all topics. */
@@ -282,6 +289,10 @@ export class DroneStateModel extends Emitter {
     if (this.updateInterval !== null) {
       clearInterval(this.updateInterval);
       this.updateInterval = null;
+    }
+    if (this.debugInterval !== null) {
+      clearInterval(this.debugInterval);
+      this.debugInterval = null;
     }
     // Call all stored unsubscribe functions
     this.unsubscribers.forEach(unsubscribe => unsubscribe());
@@ -301,8 +312,18 @@ export class DroneStateModel extends Emitter {
     return () => this.statusUpdateListeners.delete(listener);
   }
 
+  /** Registers a listener for changes in a specific state section (excluding time_boot_ms). */
+  public onSectionChange<K extends keyof DroneState>(section: K, listener: SectionChangeListener<Partial<DroneState>[K]>) {
+    if (!this.sectionChangeListeners.has(section)) this.sectionChangeListeners.set(section, new Set());
+    this.sectionChangeListeners.get(section)!.add(listener as SectionChangeListener);
+    return () => this.sectionChangeListeners.get(section)!.delete(listener as SectionChangeListener);
+  }
+
   /** Returns a shallow copy of the current state. */
-  public getState(): Partial<DroneState> {
+  public async getState(): Promise<Partial<DroneState>> {
+    if (this.allSeenPromise) {
+      await this.allSeenPromise;
+    }
     return { ...this.state };
   }
 
@@ -318,6 +339,13 @@ export class DroneStateModel extends Emitter {
       // Handle both frame formats: {topic, type, msg} or direct message
       const rosMsg = innerMsg && typeof innerMsg === 'object' && 'msg' in innerMsg ? innerMsg.msg : innerMsg;
       handler.call(this, rosMsg, now);
+
+      this.seenTopics.add(topic);
+      if (this.seenTopics.size === this.allTopics.size) {
+        this.resolveAllSeen?.();
+        this.resolveAllSeen = null;
+        this.allSeenPromise = Promise.resolve();
+      }
     } else {
       console.log('[DEBUG] No handler found for topic:', topic);
     }
@@ -328,20 +356,24 @@ export class DroneStateModel extends Emitter {
   private handleGlobalFix(msg: any, now: number) {
     if (!isNavSatFix(msg)) return;
     this.ensureGlobal();
+    const oldGlobal = { ...this.state.global_position_int! };
     Object.assign(this.state.global_position_int!, {
       time_boot_ms: now,
       lat: msg.latitude,
       lon: msg.longitude,
       alt: msg.altitude,
     });
+    this.checkAndEmitChange('global_position_int', oldGlobal, this.state.global_position_int);
     this.updated = true;
   }
 
   private handleCompassHdg(msg: unknown, now: number) {
     if (!isFloat64(msg)) return;
     this.ensureGlobal();
+    const oldGlobal = { ...this.state.global_position_int! };
     this.state.global_position_int!.hdg = msg.data;
     this.state.global_position_int!.time_boot_ms = now;
+    this.checkAndEmitChange('global_position_int', oldGlobal, this.state.global_position_int);
     this.updateRotationFromHeading();
     this.updated = true;
   }
@@ -352,6 +384,7 @@ export class DroneStateModel extends Emitter {
       return;
     }
     this.ensureVehicle();
+    const oldVehicle = { ...this.state.vehicle! };
     Object.assign(this.state.vehicle!, {
       time_boot_ms: now,
       connected: !!msg.connected,
@@ -361,23 +394,27 @@ export class DroneStateModel extends Emitter {
       mode: msg.mode,
       system_status: msg.system_status,
     });
+    this.checkAndEmitChange('vehicle', oldVehicle, this.state.vehicle);
     this.updated = true;
   }
 
   private handleExtendedState(msg: unknown, now: number) {
     if (!isExtendedState(msg)) return;
     this.ensureExtended();
+    const oldExtended = { ...this.state.extended! };
     Object.assign(this.state.extended!, {
       time_boot_ms: now,
       landed_state: msg.landed_state,
       vtol_state: msg.vtol_state,
     });
+    this.checkAndEmitChange('extended', oldExtended, this.state.extended);
     this.updated = true;
   }
 
   private handleBattery(msg: unknown, now: number) {
     if (!isBattery(msg)) return;
     this.ensureBattery();
+    const oldBattery = { ...this.state.battery! };
     Object.assign(this.state.battery!, {
       time_boot_ms: now,
       percentage: msg.percentage,
@@ -385,26 +422,16 @@ export class DroneStateModel extends Emitter {
       current: msg.current,
       temperature: msg.temperature ?? null,
     });
+    this.checkAndEmitChange('battery', oldBattery, this.state.battery);
     this.updated = true;
   }
 
-  private handleVfrHud(msg: unknown, now: number) {
-    if (!isVfrHud(msg)) return;
-    this.ensureVfrHud();
-    Object.assign(this.state.vfr_hud!, {
-      time_boot_ms: now,
-      airspeed: msg.airspeed,
-      groundspeed: msg.groundspeed,
-      heading: msg.heading,
-      throttle: msg.throttle,
-      climb: msg.climb,
-    });
-    this.updated = true;
-  }
+
 
   private handleLocalPose(msg: unknown, now: number) {
     if (!isPoseStamped(msg)) return;
     this.ensureLocal();
+    const oldLocal = { ...this.state.local! };
     const p = msg.pose.position;
     const q = msg.pose.orientation;
     Object.assign(this.state.local!, {
@@ -412,12 +439,14 @@ export class DroneStateModel extends Emitter {
       position: { x: p.x, y: p.y, z: p.z },
       orientation: { x: q.x, y: q.y, z: q.z, w: q.w },
     });
+    this.checkAndEmitChange('local', oldLocal, this.state.local);
     this.updated = true;
   }
 
   private handleLocalVelocity(msg: unknown, now: number) {
     if (!isTwistStamped(msg)) return;
     this.ensureLocal();
+    const oldLocal = { ...this.state.local! };
     const lin = msg.twist.linear;
     const ang = msg.twist.angular;
     Object.assign(this.state.local!, {
@@ -425,24 +454,28 @@ export class DroneStateModel extends Emitter {
       linear: { x: lin.x, y: lin.y, z: lin.z },
       angular: { x: ang.x, y: ang.y, z: ang.z },
     });
+    this.checkAndEmitChange('local', oldLocal, this.state.local);
     this.updated = true;
   }
 
   private handleImu(msg: unknown, now: number) {
     if (!isImu(msg)) return;
     this.ensureImu();
+    const oldImu = { ...this.state.imu! };
     Object.assign(this.state.imu!, {
       time_boot_ms: now,
       orientation: msg.orientation,
       angular_velocity: msg.angular_velocity,
       linear_acceleration: msg.linear_acceleration,
     });
+    this.checkAndEmitChange('imu', oldImu, this.state.imu);
     this.updated = true;
   }
 
   private handleAltitude(msg: unknown, now: number) {
     if (!isAltitude(msg)) return;
     this.ensureAltitude();
+    const oldAltitude = { ...this.state.altitude! };
     Object.assign(this.state.altitude!, {
       time_boot_ms: now,
       amsl: msg.amsl,
@@ -452,6 +485,7 @@ export class DroneStateModel extends Emitter {
       terrain: msg.terrain,
       bottom_clearance: msg.bottom_clearance,
     });
+    this.checkAndEmitChange('altitude', oldAltitude, this.state.altitude);
     this.ensureGlobal();
     if (typeof msg.relative === 'number') {
       this.state.global_position_int!.relative_alt = msg.relative;
@@ -462,6 +496,7 @@ export class DroneStateModel extends Emitter {
   private handleHomePosition(msg: unknown, now: number) {
     if (!isHomePosition(msg)) return;
     this.ensureHome();
+    const oldHome = { ...this.state.home! };
     Object.assign(this.state.home!, {
       time_boot_ms: now,
       lat: msg.geo.latitude,
@@ -469,6 +504,7 @@ export class DroneStateModel extends Emitter {
       alt: msg.geo.altitude,
       orientation: msg.orientation,
     });
+    this.checkAndEmitChange('home', oldHome, this.state.home);
     this.updated = true;
   }
 
@@ -497,7 +533,7 @@ export class DroneStateModel extends Emitter {
   }
   private ensureExtended() { if (!this.state.extended) this.state.extended = { time_boot_ms: Date.now() }; }
   private ensureBattery() { if (!this.state.battery) this.state.battery = { time_boot_ms: Date.now(), temperature: null }; }
-  private ensureVfrHud() { if (!this.state.vfr_hud) this.state.vfr_hud = { time_boot_ms: Date.now() }; }
+
   private ensureLocal() {
     if (!this.state.local) {
       this.state.local = {
@@ -532,6 +568,40 @@ export class DroneStateModel extends Emitter {
     }
   }
 
+  // -------- Helpers --------
+
+  private omitTime(obj: any): any {
+    if (obj == null || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(item => this.omitTime(item));
+    const result: any = {};
+    for (const key in obj) {
+      if (key !== 'time_boot_ms') {
+        result[key] = this.omitTime(obj[key]);
+      }
+    }
+    return result;
+  }
+
+  private checkAndEmitChange<K extends keyof DroneState>(section: K, oldVal: Partial<DroneState>[K], newVal: Partial<DroneState>[K]) {
+    const jsonNew = JSON.stringify(this.omitTime(newVal));
+    const prevJson = this.prevSectionJsons.get(section);
+    if (prevJson && prevJson !== jsonNew) {
+      this.prevSectionJsons.set(section, jsonNew);
+      const listeners = this.sectionChangeListeners.get(section);
+      if (listeners) {
+        listeners.forEach(listener => {
+          try {
+            listener(oldVal, newVal);
+          } catch (e) {
+            // ignore
+          }
+        });
+      }
+    } else if (!prevJson) {
+      this.prevSectionJsons.set(section, jsonNew);
+    }
+  }
+
   // -------- Computed helpers --------
 
   private updateRotationFromHeading() {
@@ -553,7 +623,7 @@ export class DroneStateModel extends Emitter {
   /** Periodically recomputes health and emits updates when state changed. */
   private startUpdateLoop() {
     if (this.updateInterval !== null) return;
-    const intervalMs = 1000 / this.updateFps;
+    const intervalMs = 100 / this.updateFps;
     this.updateInterval = setInterval(() => {
       this.refreshStatus();
       if (this.updated) {

@@ -42,22 +42,22 @@ export class DroneController {
   // -------- Basic services --------
 
   async arm(): Promise<void> {
-    this._requireConnected();
+    await this._requireConnected();
     await this.mavrosArmDisarm(true);
   }
 
   async disarm(): Promise<void> {
-    this._requireConnected();
+    await this._requireConnected();
     await this.mavrosArmDisarm(false);
   }
 
   async setMode(mode: string, base = 0): Promise<void> {
-    this._requireConnected();
+    await this._requireConnected();
     await this.mavrosSetMode(mode, base);
   }
 
   async takeoff(altMeters: number, yawRad = 0): Promise<void> {
-  const gp = this.model.getState().global_position_int;
+  const gp = (await this.model.getState()).global_position_int;
   if (!gp) throw new Error("No GPS fix");
 
   // Your DroneStateModel populates degrees from NavSatFix, so use them directly.
@@ -84,7 +84,7 @@ export class DroneController {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      const st = this.model.getState();
+      const st = await this.model.getState();
       const landed = st.extended?.landed_state;
 
       if (landed === LandedState.IN_AIR) {
@@ -105,7 +105,7 @@ export class DroneController {
 
 
   async land(): Promise<void> {
-    this._requireConnected();
+    await this._requireConnected();
     await this.mavrosLand();
   }
 
@@ -168,21 +168,21 @@ export class DroneController {
   private async _waitForArmed(timeoutMs = 3000): Promise<void> {
     const t0 = Date.now();
     while (Date.now() - t0 < timeoutMs) {
-      if (this.model.getState().vehicle?.armed) return;
+      if ((await this.model.getState()).vehicle?.armed) return;
       await this._sleep(10);
     }
     throw new Error("Timed out waiting for ARMED");
   }
 
-  private _requireConnected() {
-    const s = this.model.getState();
+  private async _requireConnected() {
+    const s = await this.model.getState();
     if (!s?.vehicle?.connected) {
       throw new Error("FCU not connected");
     }
   }
 
-  private _requireBattery(min: number, action: string) {
-    const pct = this.model.getState().battery?.percentage;
+  private async _requireBattery(min: number, action: string) {
+    const pct = (await this.model.getState()).battery?.percentage;
     if (typeof pct === "number" && pct < min) {
       throw new Error(`Battery ${(pct * 100).toFixed(0)}% < ${(min * 100).toFixed(0)}% required to ${action}`);
     }

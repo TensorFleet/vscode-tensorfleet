@@ -265,6 +265,7 @@ function computeDiff(oldObj: unknown, newObj: unknown): DiffObject {
 
 export function RawMessagesPanel() {
   const [selectedTopic, setSelectedTopic] = useState("/clock");
+  const [searchTerm, setSearchTerm] = useState("");
   const [currentMessage, setCurrentMessage] = useState<ReceivedMessage | null>(null);
   const [previousMessage, setPreviousMessage] = useState<ReceivedMessage | null>(null);
   const [activeTopic, setActiveTopic] = useState("");
@@ -300,6 +301,17 @@ export function RawMessagesPanel() {
   const selectedSuggestion = useMemo(() => {
     return discoveredTopics.find((s) => s.topic === selectedTopic);
   }, [selectedTopic, discoveredTopics]);
+
+  const filteredTopics = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return discoveredTopics;
+    }
+    const term = searchTerm.toLowerCase();
+    return discoveredTopics.filter((topic) =>
+      topic.topic.toLowerCase().includes(term) ||
+      topic.type.toLowerCase().includes(term)
+    );
+  }, [discoveredTopics, searchTerm]);
   
   // Calculate message rate over the last second
   useEffect(() => {
@@ -825,6 +837,17 @@ export function RawMessagesPanel() {
 
               <div className="raw-messages-header__form">
                 <label className="raw-messages-header__form-group">
+                  <span className="raw-messages-header__form-label">Search Topics</span>
+                  <input
+                    type="text"
+                    className="raw-messages-header__search"
+                    placeholder="Search by topic name or type..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    disabled={isSubscribed}
+                  />
+                </label>
+                <label className="raw-messages-header__form-group">
                   <span className="raw-messages-header__form-label">Select Topic</span>
                   <select
                     className="raw-messages-header__select"
@@ -833,7 +856,7 @@ export function RawMessagesPanel() {
                     disabled={isSubscribed}
                   >
                     <option value="">Choose a topic...</option>
-                    {discoveredTopics.map((topic) => (
+                    {filteredTopics.map((topic) => (
                       <option key={topic.topic} value={topic.topic}>
                         {topic.topic} — {topic.type}
                       </option>
