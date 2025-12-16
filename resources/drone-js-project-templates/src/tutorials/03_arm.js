@@ -2,30 +2,17 @@
 /**
  * Tutorial 03: Arm / Disarm the Drone
  *
- * This tutorial demonstrates fundamental drone safety and control operations using MAVROS services.
- * It showcases the use of our ROSLibBridgeWrapper and DroneController from tensorfleet-util
- * to safely arm and disarm the drone, with proper state monitoring and error handling.
+ * Demonstrates drone arming/disarming with the new low-latency selective change listener system.
+ * Instead of periodic polling, this uses immediate notifications when vehicle state changes,
+ * providing real-time responsiveness for critical safety operations.
  *
- * Learning Objectives:
- * - Use ROSLibBridgeWrapper for ROS Bridge communication
- * - Utilize DroneController for high-level arm/disarm operations
- * - Monitor drone state changes during arming/disarming
- * - Understand MAVROS service calls and their internal workings
- * - Learn about automatic arming/disarming behavior during flight operations
- * - Understand safety mechanisms that prevent unsafe disarming
+ * Key Features:
+ * - MAVROS service calls for arm/disarm operations
+ * - Low-latency state monitoring using onSectionChange('vehicle')
+ * - Immediate notification of arming state changes
+ * - Safety mechanisms and automatic transitions
  *
- * Key Concepts:
- * - MAVROS Services: ROS service calls for drone control commands
- * - Arming State: Critical safety state that enables motor control
- * - Service Calls: Synchronous communication pattern vs. topic publishing
- * - Safety Mechanisms: Built-in protections against unsafe operations
- * - Automatic Transitions: How takeoff and landing affect arming state
- *
- * Prerequisites:
- * - Active TensorFleet VM with MAVROS running
- * - Simulation restarted (as described in TUTORIAL.md)
- * - Understanding of connection and telemetry from Tutorials 01-02
- *
+ * Prerequisites: Active TensorFleet VM, Tutorials 01-02 completed
  * Usage: bun run src/tutorials/03_arm.js
  */
 
@@ -48,9 +35,9 @@ async function main() {
 
     // Wait for initial state
     console.log("[INFO] Waiting for drone state...");
-    await new Promise(resolve => {
-        const checkState = () => {
-            const state = droneState.getState();
+    await new Promise(async resolve => {
+        const checkState = async () => {
+            const state = await droneState.getState();
             if (state.vehicle?.connected) {
                 console.log(`[INFO] Drone connected. Current state: armed=${state.vehicle.armed}, mode=${state.vehicle.mode}\n`);
                 resolve();
@@ -61,7 +48,7 @@ async function main() {
         checkState();
     });
 
-    const currentState = droneState.getState();
+    const currentState = await droneState.getState();
 
     // Toggle arm/disarm based on current state
     if (!currentState.vehicle?.armed) {
@@ -73,20 +60,23 @@ async function main() {
         console.log("[SUCCESS] Drone arm command sent successfully!");
         console.log("Waiting for arm confirmation...");
 
-        // Wait for armed state
-        await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error("Timeout waiting for armed state")), 5000);
-            const checkArmed = () => {
-                const state = droneState.getState();
-                if (state.vehicle?.armed) {
+        // Use low-latency selective change listener for immediate notification
+        // This provides real-time responsiveness instead of polling every 100ms
+        await new Promise(async (resolve, reject) => {
+            const timeout = setTimeout(() => {
+                unsubscribe(); // Clean up listener on timeout
+                reject(new Error("Timeout waiting for armed state"));
+            }, 5000);
+
+            // Listen for changes in vehicle state section (armed, mode, etc.)
+            const unsubscribe = droneState.onSectionChange('vehicle', (oldVal, newVal) => {
+                if (newVal.armed && !oldVal.armed) {
                     clearTimeout(timeout);
+                    unsubscribe();
                     console.log("[SUCCESS] Drone is now armed!\n");
                     resolve();
-                } else {
-                    setTimeout(checkArmed, 100);
                 }
-            };
-            checkArmed();
+            });
         });
 
     } else {
@@ -98,20 +88,22 @@ async function main() {
         console.log("[SUCCESS] Drone disarm command sent successfully!");
         console.log("Waiting for disarm confirmation...");
 
-        // Wait for disarmed state
-        await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error("Timeout waiting for disarmed state")), 5000);
-            const checkDisarmed = () => {
-                const state = droneState.getState();
-                if (!state.vehicle?.armed) {
+        // Use low-latency selective change listener for immediate notification
+        await new Promise(async (resolve, reject) => {
+            const timeout = setTimeout(() => {
+                unsubscribe(); // Clean up listener on timeout
+                reject(new Error("Timeout waiting for disarmed state"));
+            }, 5000);
+
+            // Listen for changes in vehicle state section (armed, mode, etc.)
+            const unsubscribe = droneState.onSectionChange('vehicle', (oldVal, newVal) => {
+                if (!newVal.armed && oldVal.armed) {
                     clearTimeout(timeout);
+                    unsubscribe();
                     console.log("[SUCCESS] Drone is now disarmed!\n");
                     resolve();
-                } else {
-                    setTimeout(checkDisarmed, 100);
                 }
-            };
-            checkDisarmed();
+            });
         });
     }
 

@@ -120,17 +120,36 @@ if (!state.vehicle?.armed) {
     // Arm the drone
     await droneController.arm();
 
-    // Wait for confirmation
-    // (polling loop ensures command succeeded)
+    // Wait for confirmation using low-latency listener
+    await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Timeout")), 5000);
+
+        // Listen for vehicle state changes (armed, mode, etc.)
+        const unsubscribe = droneState.onSectionChange('vehicle', (oldVal, newVal) => {
+            if (newVal.armed && !oldVal.armed) {
+                clearTimeout(timeout);
+                unsubscribe();
+                resolve();
+            }
+        });
+    });
 }
 ```
 
-### Verification
+### Low-Latency State Monitoring
+
+Instead of polling every 100ms, this tutorial uses the new `onSectionChange()` API:
+
+- **`onSectionChange(section, listener)`**: Registers a listener for changes in a specific state section
+- **Immediate notifications**: Fires when ROS messages update state, not on a timer
+- **Selective listening**: Only listens to relevant state sections (excludes time updates)
+- **Automatic cleanup**: Listeners are unsubscribed when no longer needed
 
 The code waits for state confirmation because:
 - Commands are sent asynchronously
 - Network delays may occur
 - Verifies the flight controller accepted the command
+- Provides immediate feedback when state actually changes
 
 ## Expected Behavior
 
