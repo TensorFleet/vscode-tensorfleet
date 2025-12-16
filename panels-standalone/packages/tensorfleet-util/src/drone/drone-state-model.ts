@@ -1,3 +1,4 @@
+// drone-state-model.ts
 import { ROS2BridgeApi, UnsubscribeFn } from '../ros/ros-bridge-api';
 import type {
   SensorMsgsNavSatFix,
@@ -68,8 +69,6 @@ export type DroneState = {
     current?: number;
     temperature?: number | null;
   };
-
-
 
   /** Local pose/velocity in ENU. */
   local?: {
@@ -184,6 +183,9 @@ function isHomePosition(x: any): x is MavrosMsgsHomePosition {
   return x && x.geo && typeof x.geo.latitude === 'number' && typeof x.geo.longitude === 'number';
 }
 
+type RosStamp = { sec: number; nanosec: number };
+type HasHeaderStamp = { header?: { stamp?: RosStamp } };
+
 /**
  * Maintains a unified drone state from MAVROS topics.
  * No heartbeat or parameter setting is performed here.
@@ -224,7 +226,21 @@ export class DroneStateModel extends Emitter {
   private static readonly T_ALT = '/mavros/altitude';
   private static readonly T_HOME = '/mavros/home_position/home';
 
-  private handlers: Record<string, (msg: any, now: number) => void>;
+  private handlers: Record<string, (msg: any) => void>;
+
+  private rosStampToMs(stamp: RosStamp): number {
+    // Deterministic conversion: ROS time -> ms
+    return stamp.sec * 1000 + Math.floor(stamp.nanosec / 1e6);
+  }
+
+  private msgTimeMs(msg: any): number | null {
+    const stamp = (msg as HasHeaderStamp)?.header?.stamp;
+    if (stamp && typeof stamp.sec === 'number' && typeof stamp.nanosec === 'number') {
+      return this.rosStampToMs(stamp);
+    }
+    // No fallback
+    return null;
+  }
 
   constructor(updateFps = 10) {
     super();
@@ -298,6 +314,17 @@ export class DroneStateModel extends Emitter {
     this.unsubscribers.forEach(unsubscribe => unsubscribe());
     this.unsubscribers.clear();
     this.bridge = null;
+    // Clear all data
+    this.state = {};
+    this.lastSeen = {};
+    this.seenTopics.clear();
+    this.allSeenPromise = null;
+    this.resolveAllSeen = null;
+    this.prevSectionJsons.clear();
+    this.prevNonNumericalJson = null;
+    this.updateListeners.clear();
+    this.statusUpdateListeners.clear();
+    this.sectionChangeListeners.clear();
   }
 
   /** Registers a state update listener. */
@@ -327,18 +354,53 @@ export class DroneStateModel extends Emitter {
     return { ...this.state };
   }
 
+  private async waitForTopics(topics: string[]): Promise<void> {
+    const unseen = topics.filter(t => !this.seenTopics.has(t));
+    if (unseen.length === 0) return;
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        const stillUnseen = topics.filter(t => !this.seenTopics.has(t));
+        if (stillUnseen.length === 0) {
+          resolve();
+        } else {
+          setTimeout(check, 100);
+        }
+      };
+      check();
+    });
+  }
+
+  /** Returns true if the drone is in a landed state. */
+  public async isLanded(): Promise<boolean> {
+    await this.waitForTopics([DroneStateModel.T_EXT_STATE, DroneStateModel.T_STATE, DroneStateModel.T_ALT, DroneStateModel.T_POSE, DroneStateModel.T_VEL]);
+    const now = Date.now();
+    const extSeenMs = now - (this.lastSeen[DroneStateModel.T_EXT_STATE] || 0);
+    const extFresh = extSeenMs <= 1000;
+    let landedEff = extFresh ? this.state.extended?.landed_state : undefined;
+
+    if (landedEff === undefined || landedEff === LANDED.UNDEFINED) {
+      const armed = !!this.state.vehicle?.armed;
+      const rel = this.state.global_position_int?.relative_alt ?? Number.POSITIVE_INFINITY;
+      const vz = this.state.local?.linear?.z ?? 0;
+      const almostOnGround = Number.isFinite(rel) && Math.abs(rel) < 0.25 && Math.abs(vz) < 0.3;
+      if (!armed && almostOnGround) landedEff = LANDED.ON_GROUND;
+    }
+
+    return landedEff === LANDED.ON_GROUND;
+  }
+
   /** Subscribed callback: dispatches to per-topic handlers. */
   public ingest = (frame: RosFrame) => {
     const topic = (frame as any).topic as string;
     const innerMsg = (frame as any).msg;
-    const now = Date.now();
+    const wallNow = Date.now();
 
     const handler = this.handlers[topic];
     if (handler) {
-      this.lastSeen[topic] = now;
+      this.lastSeen[topic] = wallNow;
       // Handle both frame formats: {topic, type, msg} or direct message
       const rosMsg = innerMsg && typeof innerMsg === 'object' && 'msg' in innerMsg ? innerMsg.msg : innerMsg;
-      handler.call(this, rosMsg, now);
+      handler.call(this, rosMsg);
 
       this.seenTopics.add(topic);
       if (this.seenTopics.size === this.allTopics.size) {
@@ -353,137 +415,151 @@ export class DroneStateModel extends Emitter {
 
   // -------- Topic handlers --------
 
-  private handleGlobalFix(msg: any, now: number) {
+  private handleGlobalFix(msg: any) {
     if (!isNavSatFix(msg)) return;
+    const t = this.msgTimeMs(msg);
     this.ensureGlobal();
     const oldGlobal = { ...this.state.global_position_int! };
     Object.assign(this.state.global_position_int!, {
-      time_boot_ms: now,
       lat: msg.latitude,
       lon: msg.longitude,
       alt: msg.altitude,
     });
+    if (t !== null) this.state.global_position_int!.time_boot_ms = t;
     this.checkAndEmitChange('global_position_int', oldGlobal, this.state.global_position_int);
     this.updated = true;
   }
 
-  private handleCompassHdg(msg: unknown, now: number) {
+  private handleCompassHdg(msg: unknown) {
     if (!isFloat64(msg)) return;
+    const t = this.msgTimeMs(msg);
     this.ensureGlobal();
     const oldGlobal = { ...this.state.global_position_int! };
     this.state.global_position_int!.hdg = msg.data;
-    this.state.global_position_int!.time_boot_ms = now;
+    if (t !== null) this.state.global_position_int!.time_boot_ms = t;
     this.checkAndEmitChange('global_position_int', oldGlobal, this.state.global_position_int);
     this.updateRotationFromHeading();
     this.updated = true;
   }
 
-  private handleVehicleState(msg: unknown, now: number) {
+  private handleVehicleState(msg: unknown) {
     if (!isState(msg)) {
       console.log('[DEBUG] handleVehicleState: ', msg ,' msg failed isState check');
       return;
     }
+    const t = this.msgTimeMs(msg);
+    const tEff = (t !== null) ? t : Date.now();
     this.ensureVehicle();
     const oldVehicle = { ...this.state.vehicle! };
     Object.assign(this.state.vehicle!, {
-      time_boot_ms: now,
       connected: !!msg.connected,
       armed: !!msg.armed,
       guided: !!msg.guided,
       manual_input: !!msg.manual_input,
       mode: msg.mode,
       system_status: msg.system_status,
+      time_boot_ms: tEff,
     });
     this.checkAndEmitChange('vehicle', oldVehicle, this.state.vehicle);
     this.updated = true;
   }
 
-  private handleExtendedState(msg: unknown, now: number) {
+  private handleExtendedState(msg: unknown) {
     if (!isExtendedState(msg)) return;
+    const t = this.msgTimeMs(msg);
+    const tEff = (t !== null) ? t : Date.now();
     this.ensureExtended();
     const oldExtended = { ...this.state.extended! };
     Object.assign(this.state.extended!, {
-      time_boot_ms: now,
       landed_state: msg.landed_state,
       vtol_state: msg.vtol_state,
+      time_boot_ms: tEff,
     });
     this.checkAndEmitChange('extended', oldExtended, this.state.extended);
     this.updated = true;
   }
 
-  private handleBattery(msg: unknown, now: number) {
+  private handleBattery(msg: unknown) {
     if (!isBattery(msg)) return;
+    const t = this.msgTimeMs(msg);
+    const tEff = (t !== null) ? t : Date.now();
     this.ensureBattery();
     const oldBattery = { ...this.state.battery! };
     Object.assign(this.state.battery!, {
-      time_boot_ms: now,
       percentage: msg.percentage,
       voltage: msg.voltage,
       current: msg.current,
       temperature: msg.temperature ?? null,
+      time_boot_ms: tEff,
     });
     this.checkAndEmitChange('battery', oldBattery, this.state.battery);
     this.updated = true;
   }
 
-
-
-  private handleLocalPose(msg: unknown, now: number) {
+  private handleLocalPose(msg: unknown) {
     if (!isPoseStamped(msg)) return;
+    const t = this.msgTimeMs(msg);
+    const tEff = (t !== null) ? t : Date.now();
     this.ensureLocal();
     const oldLocal = { ...this.state.local! };
     const p = msg.pose.position;
     const q = msg.pose.orientation;
     Object.assign(this.state.local!, {
-      time_boot_ms: now,
       position: { x: p.x, y: p.y, z: p.z },
       orientation: { x: q.x, y: q.y, z: q.z, w: q.w },
+      time_boot_ms: tEff,
     });
     this.checkAndEmitChange('local', oldLocal, this.state.local);
     this.updated = true;
   }
 
-  private handleLocalVelocity(msg: unknown, now: number) {
+  private handleLocalVelocity(msg: unknown) {
     if (!isTwistStamped(msg)) return;
+    const t = this.msgTimeMs(msg);
+    const tEff = (t !== null) ? t : Date.now();
     this.ensureLocal();
     const oldLocal = { ...this.state.local! };
     const lin = msg.twist.linear;
     const ang = msg.twist.angular;
     Object.assign(this.state.local!, {
-      time_boot_ms: now,
       linear: { x: lin.x, y: lin.y, z: lin.z },
       angular: { x: ang.x, y: ang.y, z: ang.z },
+      time_boot_ms: tEff,
     });
     this.checkAndEmitChange('local', oldLocal, this.state.local);
     this.updated = true;
   }
 
-  private handleImu(msg: unknown, now: number) {
+  private handleImu(msg: unknown) {
     if (!isImu(msg)) return;
+    const t = this.msgTimeMs(msg);
+    const tEff = (t !== null) ? t : Date.now();
     this.ensureImu();
     const oldImu = { ...this.state.imu! };
     Object.assign(this.state.imu!, {
-      time_boot_ms: now,
       orientation: msg.orientation,
       angular_velocity: msg.angular_velocity,
       linear_acceleration: msg.linear_acceleration,
+      time_boot_ms: tEff,
     });
     this.checkAndEmitChange('imu', oldImu, this.state.imu);
     this.updated = true;
   }
 
-  private handleAltitude(msg: unknown, now: number) {
+  private handleAltitude(msg: unknown) {
     if (!isAltitude(msg)) return;
+    const t = this.msgTimeMs(msg);
+    const tEff = (t !== null) ? t : Date.now();
     this.ensureAltitude();
     const oldAltitude = { ...this.state.altitude! };
     Object.assign(this.state.altitude!, {
-      time_boot_ms: now,
       amsl: msg.amsl,
       agl: msg.agl,
       local: msg.local,
       relative: msg.relative,
       terrain: msg.terrain,
       bottom_clearance: msg.bottom_clearance,
+      time_boot_ms: tEff,
     });
     this.checkAndEmitChange('altitude', oldAltitude, this.state.altitude);
     this.ensureGlobal();
@@ -493,16 +569,18 @@ export class DroneStateModel extends Emitter {
     this.updated = true;
   }
 
-  private handleHomePosition(msg: unknown, now: number) {
+  private handleHomePosition(msg: unknown) {
     if (!isHomePosition(msg)) return;
+    const t = this.msgTimeMs(msg);
+    const tEff = (t !== null) ? t : Date.now();
     this.ensureHome();
     const oldHome = { ...this.state.home! };
     Object.assign(this.state.home!, {
-      time_boot_ms: now,
       lat: msg.geo.latitude,
       lon: msg.geo.longitude,
       alt: msg.geo.altitude,
       orientation: msg.orientation,
+      time_boot_ms: tEff,
     });
     this.checkAndEmitChange('home', oldHome, this.state.home);
     this.updated = true;
