@@ -322,9 +322,6 @@ export class DroneStateModel extends Emitter {
     this.resolveAllSeen = null;
     this.prevSectionJsons.clear();
     this.prevNonNumericalJson = null;
-    this.updateListeners.clear();
-    this.statusUpdateListeners.clear();
-    this.sectionChangeListeners.clear();
   }
 
   /** Registers a state update listener. */

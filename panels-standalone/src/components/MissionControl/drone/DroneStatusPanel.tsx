@@ -7,12 +7,24 @@ import "./DroneStatusPanel.css";
 // No new enums/types defined here. No external UI libs.
 
 function useDroneState(model: DroneStateModel) {
-  const [state, setState] = useState(() => (model && model.getState ? model.getState() : {}));
+  const [state, setState] = useState({});
   useEffect(() => {
     if (!model || !model.onUpdate) return;
-    setState(model.getState ? model.getState() : {});
+    // Initialize state asynchronously
+    const initState = async () => {
+      try {
+        const initialState = await model.getState();
+        setState(initialState);
+      } catch (error) {
+        console.error('Failed to get initial drone state:', error);
+        setState({});
+      }
+    };
+    initState();
     const off = model.onUpdate((s) => setState({ ...s }));
-    return () => (typeof off === "function" ? off() : undefined);
+    return () => {
+      if (typeof off === "function") off();
+    };
   }, [model]);
   return state || {};
 }
