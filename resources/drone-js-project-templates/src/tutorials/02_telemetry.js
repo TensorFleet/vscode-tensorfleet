@@ -30,7 +30,6 @@
  * Usage: bun run src/tutorials/02_telemetry.js
  */
 
-import "dotenv/config";
 import { DroneStateModel } from "tensorfleet-util";
 import { ROSLibBridgeWrapper } from "../lib/roslib-bridge-wrapper.js";
 

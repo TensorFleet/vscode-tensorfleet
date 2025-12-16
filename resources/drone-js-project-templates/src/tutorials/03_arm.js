@@ -1,122 +1,164 @@
 #!/usr/bin/env -S bun run
 /**
- * Tutorial 03: Arm / Disarm the Drone
+ * Tutorial 03: Arm / Disarm the Drone with Auto State Management
  *
- * Demonstrates drone arming/disarming with the new low-latency selective change listener system.
- * Instead of periodic polling, this uses immediate notifications when vehicle state changes,
- * providing real-time responsiveness for critical safety operations.
+ * This tutorial demonstrates:
+ * - Manual arming and disarming operations
+ * - Enabling automatic state management that maintains target states
+ * - Using setRequestedState() with auto-enforcement
+ * - Proper waiting for state transitions to complete
  *
- * Key Features:
- * - MAVROS service calls for arm/disarm operations
- * - Low-latency state monitoring using onSectionChange('vehicle')
- * - Immediate notification of arming state changes
- * - Safety mechanisms and automatic transitions
- *
- * Prerequisites: Active TensorFleet VM, Tutorials 01-02 completed
- * Usage: bun run src/tutorials/03_arm.js
+ * Sequence:
+ * 1. Arm the drone if not already armed
+ * 2. Wait 6 seconds to observe armed state
+ * 3. Disarm the drone
+ * 4. Wait 5 seconds to observe disarmed state
+ * 5. Enable automatic state management (maintains target state automatically)
+ * 6. Command drone to become airborne at 3m altitude
+ * 7. Wait 10 seconds while drone maintains altitude
+ * 8. Command drone to land and disarm
+ * 9. Wait for landing and disarming to complete
+ * 10. Disable auto state management and clean up
  */
 
 import { DroneStateModel, DroneController } from "tensorfleet-util";
 import { ROSLibBridgeWrapper } from "../lib/roslib-bridge-wrapper.js";
 
-async function main() {
-    // Create ROS bridge using our wrapper
-    const bridge = new ROSLibBridgeWrapper();
-    await bridge.waitForConnection();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    console.log("\n[INFO] Connected to ROS Bridge - initializing drone control...\n");
-
-    // Create managed state model for state monitoring
-    const droneState = new DroneStateModel();
-    droneState.connect(bridge);
-
-    // Create drone controller for high-level operations
-    const droneController = new DroneController(droneState, bridge);
-
-    // Wait for initial state
-    console.log("[INFO] Waiting for drone state...");
-    await new Promise(async resolve => {
-        const checkState = async () => {
-            const state = await droneState.getState();
-            if (state.vehicle?.connected) {
-                console.log(`[INFO] Drone connected. Current state: armed=${state.vehicle.armed}, mode=${state.vehicle.mode}\n`);
-                resolve();
-            } else {
-                setTimeout(checkState, 100);
-            }
-        };
-        checkState();
-    });
-
-    const currentState = await droneState.getState();
-
-    // Toggle arm/disarm based on current state
-    if (!currentState.vehicle?.armed) {
-        console.log("[INFO] Drone is currently disarmed. Arming...\n");
-
-        // Arm the drone using DroneController
-        await droneController.arm();
-
-        console.log("[SUCCESS] Drone arm command sent successfully!");
-        console.log("Waiting for arm confirmation...");
-
-        // Use low-latency selective change listener for immediate notification
-        // This provides real-time responsiveness instead of polling every 100ms
-        await new Promise(async (resolve, reject) => {
-            const timeout = setTimeout(() => {
-                unsubscribe(); // Clean up listener on timeout
-                reject(new Error("Timeout waiting for armed state"));
-            }, 5000);
-
-            // Listen for changes in vehicle state section (armed, mode, etc.)
-            const unsubscribe = droneState.onSectionChange('vehicle', (oldVal, newVal) => {
-                if (newVal.armed && !oldVal.armed) {
-                    clearTimeout(timeout);
-                    unsubscribe();
-                    console.log("[SUCCESS] Drone is now armed!\n");
-                    resolve();
-                }
-            });
-        });
-
-    } else {
-        console.log("[INFO] Drone is currently armed. Disarming...\n");
-
-        // Disarm the drone using DroneController
-        await droneController.disarm();
-
-        console.log("[SUCCESS] Drone disarm command sent successfully!");
-        console.log("Waiting for disarm confirmation...");
-
-        // Use low-latency selective change listener for immediate notification
-        await new Promise(async (resolve, reject) => {
-            const timeout = setTimeout(() => {
-                unsubscribe(); // Clean up listener on timeout
-                reject(new Error("Timeout waiting for disarmed state"));
-            }, 5000);
-
-            // Listen for changes in vehicle state section (armed, mode, etc.)
-            const unsubscribe = droneState.onSectionChange('vehicle', (oldVal, newVal) => {
-                if (!newVal.armed && oldVal.armed) {
-                    clearTimeout(timeout);
-                    unsubscribe();
-                    console.log("[SUCCESS] Drone is now disarmed!\n");
-                    resolve();
-                }
-            });
-        });
+/**
+ * Waits for the drone to establish connection with the flight controller
+ * @param {DroneStateModel} droneState - The drone state model instance
+ */
+async function waitUntilConnected(droneState) {
+  console.log("[INFO] Waiting for drone state connection...");
+  while (true) {
+    const state = await droneState.getState();
+    if (state.vehicle?.connected) {
+      console.log(`[INFO] Drone connected. Current state: armed=${state.vehicle.armed}, mode=${state.vehicle.mode}\n`);
+      return;
     }
+    await sleep(100);
+  }
+}
 
-    console.log("[INFO] Arming/Disarming operation completed successfully!\n");
+/**
+ * Main tutorial execution function
+ * Demonstrates the complete arm/disarm cycle with automatic state management
+ */
+async function main() {
+  // Initialize ROS bridge connection
+  const bridge = new ROSLibBridgeWrapper();
+  await bridge.waitForConnection();
 
-    // Clean up
-    droneState.disconnect();
-    console.log("[EXIT] Disconnected from drone state monitoring.");
+  console.log("\n[INFO] Connected to ROS Bridge - initializing drone control...\n");
+
+  // Create drone state model for monitoring vehicle state
+  const droneState = new DroneStateModel();
+  droneState.connect(bridge);
+
+  // Create drone controller for high-level commands
+  const droneController = new DroneController(droneState, bridge);
+  await droneController.initialize();
+
+  // Wait for drone to be connected and ready
+  await waitUntilConnected(droneState);
+
+  // Step 1: Arm the drone if it's not already armed
+  // This prepares the drone for flight operations
+  {
+    const st = await droneState.getState();
+    console.log(`[STEP 1] Current state before arming: armed=${st.vehicle?.armed}, mode=${st.vehicle?.mode}`);
+    if (!st.vehicle?.armed) {
+      console.log("[STEP 1] Arming drone...");
+      await droneController.arm();
+      console.log("[STEP 1] Arm command sent successfully");
+    } else {
+      console.log("[STEP 1] Drone already armed - skipping arm command");
+    }
+  }
+
+  // Step 2: Wait to observe the armed state
+  console.log("[STEP 2] Waiting 6 seconds to observe armed state...");
+  await sleep(6000);
+  const armedState = await droneState.getState();
+  console.log(`[STEP 2] State after 6 seconds: armed=${armedState.vehicle?.armed}, mode=${armedState.vehicle?.mode}`);
+
+  // Step 3: Disarm the drone
+  // Returns drone to safe state on ground
+  console.log("[STEP 3] Disarming drone...");
+  await droneController.disarm();
+  console.log("[STEP 3] Disarm command sent successfully");
+
+  // Step 4: Wait to observe the disarmed state
+  console.log("[STEP 4] Waiting 5 seconds to observe disarmed state...");
+  await sleep(5000);
+  const disarmedState = await droneState.getState();
+  console.log(`[STEP 4] State after 5 seconds: armed=${disarmedState.vehicle?.armed}, mode=${disarmedState.vehicle?.mode}`);
+
+  // Step 5: Enable automatic state management
+  // This enables the controller to automatically maintain target states
+  // The system will derive initial target from current drone state
+  console.log("[STEP 5] Enabling automatic state management...");
+  await droneController.enableAutoStateManagement(true);
+  console.log("[STEP 5] Auto state management enabled - controller will now maintain target states automatically");
+
+  // Step 6: Command drone to become airborne at 3m altitude
+  // Auto state management will arm, takeoff, and maintain altitude
+  console.log("[STEP 6] Setting target state: airborne at 3m altitude...");
+  droneController.setRequestedState({ kind: "airborne", altMeters: 3 });
+  console.log("[STEP 6] Target state set to", droneController.requestedState , " - auto management will handle arming and takeoff");
+
+  // Step 7: Wait while drone maintains altitude
+  console.log("[STEP 7] Waiting while drone transitions to and maintains altitude...");
+  const startTime = Date.now();
+  while (true) {
+    
+    const currentState = await droneState.getState();
+    const alt = currentState.altitude?.relative || 0;
+    if (await droneController.isInRequestedState()) {
+      console.log('[STEP 7] target state reached reached');
+      break
+    }
+    await sleep(1000); // Note : if we don't sleep here we may block the process any further processing of the websocket packets and never get a state change.
+  }
+
+  let currentState = await droneState.getState();
+  const alt = currentState.altitude?.relative || 0;
+
+  console.log(`[STEP 7] FINISHED. Current altitude: ${alt.toFixed(2)}m, armed=${currentState.vehicle?.armed}, mode=${currentState.vehicle?.mode}`);
+
+  // Step 8: Command drone to land and disarm
+  // Auto state management will land the drone and then disarm it
+  console.log("[STEP 8] Setting target state: landed and disarmed...");
+  droneController.setRequestedState({ kind: "landed", armed: false });
+  console.log("[STEP 8] Target state set - auto management will handle landing and disarming");
+
+  // Step 9: Wait for the landing and disarming process to complete
+  // This ensures the script doesn't exit prematurely
+  console.log("[STEP 9] Waiting for landing and disarming to complete...");
+  await droneController.waitForRequestedState();
+  console.log("[STEP 9] Landing and disarming completed successfully");
+  console.log("\n[SUCCESS] Drone has landed and disarmed!");
+
+  // Step 10: Disable auto state management
+  // Clean shutdown of automatic control systems
+  console.log("[STEP 10] Disabling auto state management...");
+  await droneController.enableAutoStateManagement(false);
+  console.log("[STEP 10] Auto state management disabled");
+
+  console.log("\n[INFO] Sequence completed successfully.\n");
+
+  // Clean up connections
+  currentState = await droneState.getState();
+  console.log(`[EXIT] Final drone state : armed=${currentState.vehicle?.armed}, mode=${currentState.vehicle?.mode}`);
+  droneState.disconnect();
+  console.log("[EXIT] Disconnected from drone state monitoring.");
 }
 
 if (require.main === module) {
-    main().catch((err) => {
-        console.error("[ERROR]", err.message || err);
-        process.exit(1);
-    });
+  main().catch((err) => {
+    console.error("[ERROR]", err.message || err);
+    process.exit(1);
+  });
 }

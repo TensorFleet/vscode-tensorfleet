@@ -354,6 +354,11 @@ export class DroneStateModel extends Emitter {
     return { ...this.state };
   }
 
+  /** Non async state  */
+  public getCurrentState(): DroneState {
+    return {...this.state};
+  }
+
   private async waitForTopics(topics: string[]): Promise<void> {
     const unseen = topics.filter(t => !this.seenTopics.has(t));
     if (unseen.length === 0) return;
@@ -370,24 +375,98 @@ export class DroneStateModel extends Emitter {
     });
   }
 
-  /** Returns true if the drone is in a landed state. */
-  public async isLanded(): Promise<boolean> {
-    await this.waitForTopics([DroneStateModel.T_EXT_STATE, DroneStateModel.T_STATE, DroneStateModel.T_ALT, DroneStateModel.T_POSE, DroneStateModel.T_VEL]);
-    const now = Date.now();
-    const extSeenMs = now - (this.lastSeen[DroneStateModel.T_EXT_STATE] || 0);
-    const extFresh = extSeenMs <= 1000;
-    let landedEff = extFresh ? this.state.extended?.landed_state : undefined;
-
-    if (landedEff === undefined || landedEff === LANDED.UNDEFINED) {
-      const armed = !!this.state.vehicle?.armed;
-      const rel = this.state.global_position_int?.relative_alt ?? Number.POSITIVE_INFINITY;
-      const vz = this.state.local?.linear?.z ?? 0;
-      const almostOnGround = Number.isFinite(rel) && Math.abs(rel) < 0.25 && Math.abs(vz) < 0.3;
-      if (!armed && almostOnGround) landedEff = LANDED.ON_GROUND;
-    }
-
-    return landedEff === LANDED.ON_GROUND;
+  public isDroneConnected(): boolean {
+    return DroneStateModel.isStateConnected(this.state)
   }
+
+
+  public async isArmed(): Promise<boolean> {
+    await this.waitForTopics([DroneStateModel.T_STATE]);
+    return DroneStateModel.isStateArmed(this.state);
+  }
+
+  public async isTakingOff(): Promise<boolean> {
+    await this.waitForTopics([DroneStateModel.T_STATE]);
+
+    return DroneStateModel.isStateTakingOff(this.state);
+  }
+
+  public async isLanding(): Promise<boolean> {
+    await this.waitForTopics([DroneStateModel.T_EXT_STATE]);
+
+    return DroneStateModel.isStateLanding(this.state);
+  }
+
+  /**
+   * Checks whether the drone is disarmed or is on ground.
+   */
+  public async isLanded(): Promise<boolean> {
+    await this.waitForTopics([DroneStateModel.T_STATE, DroneStateModel.T_EXT_STATE]);
+
+    return DroneStateModel.isStateLanded(this.state);
+  }
+
+  public async isOffboard(): Promise<boolean> {
+    await this.waitForTopics([DroneStateModel.T_STATE]);
+    return DroneStateModel.isStateOffboard(this.state);
+  }
+
+  public async isAirborne(): Promise<boolean> {
+    await this.waitForTopics([DroneStateModel.T_STATE, DroneStateModel.T_EXT_STATE]);
+    return DroneStateModel.isStateAirborne(this.state);
+  }
+
+  // Static utility functions for synchronous state checks
+
+  /**
+   * Checks if state is connected
+   */
+  public static isStateConnected(state: DroneState | Partial<DroneState>): boolean {
+    return state.vehicle?.connected ?? false;
+  }
+
+  /**
+   * Checks if the drone is armed in the given state.
+   */
+  public static isStateArmed(state: DroneState | Partial<DroneState>): boolean {
+    return state.vehicle?.armed ?? false;
+  }
+
+  /**
+   * Checks if the drone is taking off in the given state.
+   */
+  public static isStateTakingOff(state: DroneState | Partial<DroneState>): boolean {
+    return (state.vehicle?.armed && state.vehicle?.mode === "AUTO.TAKEOFF") ?? false;
+  }
+
+  /**
+   * Checks if the drone is landing in the given state.
+   */
+  public static isStateLanding(state: DroneState | Partial<DroneState>): boolean {
+    return (state.vehicle?.armed && state.vehicle?.mode === "AUTO.LAND") ?? false;
+  }
+
+  /**
+   * Checks if the drone is landed (disarmed or on ground or in AUTO.LAND mode) in the given state.
+   */
+  public static isStateLanded(state: DroneState | Partial<DroneState>): boolean {
+    return (!state.vehicle?.armed || (state.extended?.landed_state === LANDED.ON_GROUND && state.vehicle?.mode != "AUTO.TAKEOFF")) ?? false;
+  }
+
+  public static isStateOffboard(state: DroneState | Partial<DroneState>): boolean {
+    return state.vehicle?.mode === "OFFBOARD";
+  }
+
+  public static isStateAirborne(state: DroneState | Partial<DroneState>): boolean {
+    
+    const armed = state.vehicle?.armed ?? false;
+    const landed = DroneStateModel.isStateLanded(state);
+    const landing = DroneStateModel.isStateLanding(state);
+    const takingOff = DroneStateModel.isStateTakingOff(state);
+
+    return (armed && !(landed || landing || takingOff)) ?? false;
+  }
+
 
   /** Subscribed callback: dispatches to per-topic handlers. */
   public ingest = (frame: RosFrame) => {

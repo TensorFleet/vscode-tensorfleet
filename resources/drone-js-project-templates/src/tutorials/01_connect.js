@@ -25,7 +25,6 @@
  * Usage: bun run src/tutorials/01_connect.js
  */
 
-import "dotenv/config";
 import { DroneStateModel } from "tensorfleet-util";
 import { ROSLibBridgeWrapper } from "../lib/roslib-bridge-wrapper.js";
 import ROSLIB from "roslib";
@@ -98,7 +97,7 @@ async function main() {
 
     process.on("SIGINT", () => {
         console.log("\n[EXIT] Shutting down...");
-        unsubscribeRaw.unsubscribe();
+        unsubscribeRaw();
         droneState.disconnect();
         process.exit(0);
     });

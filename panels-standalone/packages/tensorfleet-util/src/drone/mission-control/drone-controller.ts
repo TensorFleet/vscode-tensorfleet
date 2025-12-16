@@ -8,7 +8,7 @@
  */
 
 import * as RosTypes from "../../ros/ros-types"
-import type { DroneStateModel } from "../drone-state-model";
+import { DroneStateModel, LANDED } from "../drone-state-model";
 import type { ROS2BridgeApi } from "../../ros/ros-bridge-api";
 
 export enum LandedState {
@@ -23,11 +23,31 @@ export type RequestedState =
   | { kind: "none" }
   | { kind: "landed"; armed: boolean | null }
   | { kind: "airborne"; altMeters: number; yawRad?: number }
-  | { kind: "hold_altitude"; altMeters: number; yawRad?: number };
+
+export type OffboardTarget =
+  | { kind: "position_local"; x: number; y: number; z: number; yawRad?: number }
+  | { kind: "velocity_local"; vx: number; vy: number; vz: number; yawRate?: number }
+  | {
+      kind: "raw_local";
+      coordinate_frame: number;
+      type_mask: number;
+      position?: { x: number; y: number; z: number };
+      velocity?: { x: number; y: number; z: number };
+      acceleration_or_force?: { x: number; y: number; z: number };
+      yaw?: number;
+      yaw_rate?: number;
+    }
+  | {
+      kind: "raw_attitude";
+      type_mask: number;
+      orientation?: { x: number; y: number; z: number; w: number };
+      body_rate?: { x: number; y: number; z: number };
+      thrust?: number;
+    }
 
 export interface DroneControllerOptions {
   localFrameId?: string;                // default "map"
-  offboardWarmup?: { count: number; hz: number }; // default {20,20}
+  offboardAutoTakeoff?: boolean;        // default false
   minBatteryForFlight?: number;         // default 0.15
   autoStateManagement?: boolean;        // default false
   stateManagementIntervalMs?: number;   // default 1000
@@ -55,12 +75,27 @@ export class DroneController {
   private static readonly T_SETPOINT_POS = "/mavros/setpoint_position/local";
   private static readonly TYPE_POSE_STAMPED = "geometry_msgs/msg/PoseStamped";
 
+  private static readonly T_SETPOINT_VEL = "/mavros/setpoint_velocity/cmd_vel";
+  private static readonly TYPE_TWIST_STAMPED = "geometry_msgs/msg/TwistStamped";
+
+  private static readonly T_SETPOINT_RAW_LOCAL = "/mavros/setpoint_raw/local";
+  private static readonly TYPE_POSITION_TARGET = "mavros_msgs/msg/PositionTarget";
+
+  private static readonly T_SETPOINT_RAW_ATT = "/mavros/setpoint_raw/attitude";
+  private static readonly TYPE_ATTITUDE_TARGET = "mavros_msgs/msg/AttitudeTarget";
+
+  private offboardTarget: OffboardTarget | null = null;
+  private offboardInterval: any = null;
+  private offboardTickRunning = false;
+  private lastOffboardModeAttemptMs = 0;
+  private lastOffboardTakeoffAttemptMs = 0;
+
   constructor(model: DroneStateModel, ros2Bridge: ROS2BridgeApi, opts: DroneControllerOptions = {}) {
     this.model = model;
     this.ros2Bridge = ros2Bridge;
     this.opts = {
       localFrameId: opts.localFrameId ?? "map",
-      offboardWarmup: opts.offboardWarmup ?? { count: 20, hz: 20 },
+      offboardAutoTakeoff: opts.offboardAutoTakeoff ?? false,
       minBatteryForFlight: opts.minBatteryForFlight ?? 0.15,
       autoStateManagement: opts.autoStateManagement ?? false,
       stateManagementIntervalMs: opts.stateManagementIntervalMs ?? 1000,
@@ -73,13 +108,26 @@ export class DroneController {
     if (this.opts.autoStateManagement) {
       await this.enableAutoStateManagement(true);
     }
+
+    this.startOffboardLoop();
   }
 
   // -------- Basic services --------
 
   async arm(): Promise<void> {
     await this._requireConnected();
+
+    if (await this.model.isArmed()) {
+      return;
+    }
+
     console.log("[DRONE_CONTROLLER] Sending arm command...");
+
+    // Workaround. arm might fail due to unsupported state for arm.
+    if (await this.model.isLanded() || await this.model.isLanding()) {
+      this.setMode("AUTO.TAKEOFF");  
+    }
+
     const result = await this.mavrosArmDisarm(true);
     console.log("[DRONE_CONTROLLER] Arm command result:", result);
   }
@@ -98,7 +146,9 @@ export class DroneController {
     console.log("[DRONE_CONTROLLER] Set mode result:", result);
   }
 
-  async takeoff(altMeters: number, yawRad = 0): Promise<void> {
+  async takeoff(altMeters: number = 3, yawRad = 0): Promise<void> {
+    await this.arm();
+
     const gp = (await this.model.getState()).global_position_int;
     if (!gp) throw new Error("No GPS fix");
 
@@ -141,39 +191,26 @@ export class DroneController {
     this.setRequestedState({ kind: "none" });
   }
 
-  public async isInRequestedState(debug: boolean = false): Promise<boolean> {
-    const st = await this.model.getState();
-    if (!st?.vehicle?.connected) return false;
+  public isInRequestedState(debug: boolean = false): boolean {
+    let currentState = this.model.getCurrentState();
+
+      const landed = DroneStateModel.isStateLanded(currentState);
+      const landing = DroneStateModel.isStateLanding(currentState);
+      const takingOff = DroneStateModel.isStateTakingOff(currentState);
+      const onGround = currentState.extended?.landed_state === LANDED.ON_GROUND;
 
     if(debug) {
-      console.log("Requested :", this.requestedState, "\nCurrent state :", { extended: st.extended, vehicle: st.vehicle});
+      console.log("[AUTO_STATE] Requested :", this.requestedState, "\nCurrent state :", { extended: currentState.extended, vehicle: currentState.vehicle});
     }
 
     switch (this.requestedState.kind) {
       case "none":
         return true;
       case "landed": {
-        const landed = st.extended?.landed_state;
-        const onGround = landed === LandedState.ON_GROUND;
-        if (this.requestedState.armed === null) {
-          return onGround;
-        } else {
-          return onGround && (st.vehicle?.armed === this.requestedState.armed);
-        }
+        return landed;
       }
       case "airborne": {
-        const landed = st.extended?.landed_state;
-        const inAir = landed === LandedState.IN_AIR || landed === LandedState.TAKEOFF;
-        const relAlt = st.global_position_int?.relative_alt;
-        const close = relAlt !== undefined && Math.abs(relAlt - this.requestedState.altMeters) < 0.5;
-        return inAir && close;
-      }
-      case "hold_altitude": {
-        const landed = st.extended?.landed_state;
-        const inAir = landed === LandedState.IN_AIR || landed === LandedState.TAKEOFF;
-        const relAlt = st.global_position_int?.relative_alt;
-        const close = relAlt !== undefined && Math.abs(relAlt - this.requestedState.altMeters) < 0.5;
-        return inAir && close;
+        return (currentState.vehicle?.armed && !( landed || landing || takingOff || onGround)) ?? false;
       }
     }
 
@@ -259,13 +296,18 @@ export class DroneController {
     console.log(`[AUTO_STATE] Tick: requestedState=${JSON.stringify(this.requestedState)}`);
 
     try {
-      const st = await this.model.getState();
-      if (!st?.vehicle?.connected) {
+      let currentState = this.model.getCurrentState();
+      if (!DroneStateModel.isStateConnected(currentState)) {
         console.log("[AUTO_STATE] Drone not connected, skipping tick");
         return;
       }
 
-      console.log(`[AUTO_STATE] Current state: armed=${st.vehicle?.armed}, mode=${st.vehicle?.mode}, landed=${st.extended?.landed_state}`);
+      const landed = DroneStateModel.isStateLanded(currentState);
+      const landing = DroneStateModel.isStateLanding(currentState);
+      const takingOff = DroneStateModel.isStateTakingOff(currentState);
+      const onGround = currentState.extended?.landed_state === LANDED.ON_GROUND;
+
+      console.log(`[AUTO_STATE] Current state: armed=${currentState.vehicle?.armed}, mode=${currentState.vehicle?.mode}, landed=${currentState.extended?.landed_state}`);
 
       switch (this.requestedState.kind) {
         case "none":
@@ -273,127 +315,53 @@ export class DroneController {
           return;
 
         case "landed": {
-          const landed = st.extended?.landed_state;
-          const onGround = landed === LandedState.ON_GROUND;
-          const landing = landed === LandedState.LANDING;
+          // We need the drone landed.
+          if (landing) {
+            return;
+          }
+
+          if(landed) {
+            // Do we want to disarm?
+            if(this.requestedState.armed != currentState.vehicle?.armed) {
+              // We need to change the arm state.
+              if(this.requestedState.armed) {
+                console.log('[AUTO_STATE] Requesting drone arm');
+                await this.arm();
+              } else {
+                console.log('[AUTO_STATE] Requesting drone disarm');
+                await this.disarm();
+              }
+            }
+
+            return;
+          }
+
 
           console.log(`[AUTO_STATE] Landed state check: landed=${landed}, onGround=${onGround}, landing=${landing}`);
 
-          if (!onGround && !landing) {
-            console.log("[AUTO_STATE] Not on ground and not landing, checking if armed for landing");
-            // PX4 generally needs to be armed to execute land; if disarmed mid-air, fail-safe is on the FCU.
-            if (st.vehicle?.armed) {
-              console.log("[AUTO_STATE] Sending land command");
-              await this.mavrosLand();
-            } else {
-              console.log("[AUTO_STATE] Drone disarmed, cannot send land command");
-            }
-            return;
+          if (!landing) {
+            console.log("[AUTO_STATE] vehicle not landing. Requesting land");
+            await this.land();
+            return
           }
-
-          // on ground: enforce arming preference
-          if (this.requestedState.armed === true && !st.vehicle?.armed) {
-            console.log("[AUTO_STATE] Arming drone as requested");
-            await this.mavrosArmDisarm(true);
-            return;
-          }
-          if (this.requestedState.armed === false && st.vehicle?.armed) {
-            console.log("[AUTO_STATE] Disarming drone as requested");
-            await this.mavrosArmDisarm(false);
-            return;
-          }
-          console.log("[AUTO_STATE] Landed state achieved, no action needed");
           return;
         }
 
         case "airborne": {
-          console.log("[AUTO_STATE] Processing airborne state");
+          let requestedAltitude = this.requestedState.altMeters;
 
-          try {
-            await this._requireBattery(this.opts.minBatteryForFlight, "takeoff");
-            console.log("[AUTO_STATE] Battery check passed");
-          } catch (e) {
-            console.log(`[AUTO_STATE] Battery check failed: ${e instanceof Error ? e.message : String(e)}`);
+          if(landed) {
+            console.log("[AUTO_STATE] Processing airborne state [landed = true]. Requesting takeoff");
+            await this.takeoff(requestedAltitude);
             return;
           }
 
-          if (!st.vehicle?.armed) {
-            console.log("[AUTO_STATE] Drone not armed, sending arm command");
-            await this.mavrosArmDisarm(true);
+          if(landing) {
+            console.log("[AUTO_STATE] Processing airborne state [landing = true]. Requesting takeoff");
+            await this.takeoff(requestedAltitude);
             return;
           }
-
-          const landed = st.extended?.landed_state;
-          console.log(`[AUTO_STATE] Checking landed state for takeoff: landed=${landed}`);
-
-          if (landed === LandedState.IN_AIR || landed === LandedState.TAKEOFF) {
-            console.log("[AUTO_STATE] Already in air or taking off, no action needed");
-            return;
-          }
-
-          if (landed === LandedState.ON_GROUND || landed === LandedState.UNDEFINED || landed === LandedState.LANDING) {
-            console.log(`[AUTO_STATE] Initiating takeoff to ${this.requestedState.altMeters}m`);
-            await this.takeoff(this.requestedState.altMeters, this.requestedState.yawRad ?? 0);
-          } else {
-            console.log(`[AUTO_STATE] Unknown landed state ${landed}, skipping takeoff`);
-          }
-          return;
-        }
-
-        case "hold_altitude": {
-          console.log("[AUTO_STATE] Processing hold_altitude state");
-
-          try {
-            await this._requireBattery(this.opts.minBatteryForFlight, "hold altitude");
-            console.log("[AUTO_STATE] Battery check passed");
-          } catch (e) {
-            console.log(`[AUTO_STATE] Battery check failed: ${e instanceof Error ? e.message : String(e)}`);
-            return;
-          }
-
-          if (!st.vehicle?.armed) {
-            console.log("[AUTO_STATE] Drone not armed, sending arm command");
-            await this.mavrosArmDisarm(true);
-            return;
-          }
-
-          const landed = st.extended?.landed_state;
-          console.log(`[AUTO_STATE] Checking landed state for hold_altitude: landed=${landed}`);
-
-          if (landed === LandedState.ON_GROUND || landed === LandedState.UNDEFINED) {
-            console.log(`[AUTO_STATE] On ground, initiating takeoff to ${this.requestedState.altMeters}m`);
-            await this.takeoff(this.requestedState.altMeters, this.requestedState.yawRad ?? 0);
-            return;
-          }
-
-          if (st.vehicle?.mode !== "OFFBOARD") {
-            console.log("[AUTO_STATE] Switching to OFFBOARD mode");
-            await this.mavrosSetMode("OFFBOARD", 0);
-          }
-
-          const pos = this.latestState?.local?.position;
-          if (!pos) return;
-
-          const z = this.requestedState.altMeters;
-          const yawRad = this.requestedState.yawRad ?? null;
-          const orientation = yawRad !== null ? this._yawToQuat(yawRad) : (this.latestState?.local?.orientation ?? this._yawToQuat(0));
-
-          const msg: any = {
-            header: this._header(this.opts.localFrameId),
-            pose: {
-              position: { x: pos.x, y: pos.y, z },
-              orientation,
-            },
-          };
-
-          this.ros2Bridge.publish(
-            DroneController.T_SETPOINT_POS,
-            DroneController.TYPE_POSE_STAMPED,
-            msg
-          );
-
-          console.log("[AUTO_STATE] Published setpoint for hold_altitude");
-
+          
           return;
         }
       }
@@ -401,6 +369,152 @@ export class DroneController {
       console.log(`[AUTO_STATE] Error in tick: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       this.stateManagerTickRunning = false;
+    }
+  }
+
+  // -------- OFFBOARD --------
+
+  public setOffboardTarget(target: OffboardTarget | null): void {
+    this.offboardTarget = target;
+
+    if(target) {
+      void this._tickOffboard();
+    }
+  }
+
+  public clearOffboardTarget(): void {
+    this.setOffboardTarget(null);
+  }
+
+  private startOffboardLoop(): void {
+    if (this.offboardInterval !== null) return;
+
+    this.offboardInterval = setInterval(() => {
+      void this._tickOffboard();
+    }, 250);
+  }
+
+  private async _tickOffboard(): Promise<void> {
+    if (this.offboardTarget === null) return;
+    if (this.offboardTickRunning) return;
+    this.offboardTickRunning = true;
+
+    try {
+      await this._requireConnected();
+
+      const currentState = this.model.getCurrentState();
+      if (!DroneStateModel.isStateConnected(currentState)) {
+        return;
+      }
+
+      const takingOff = DroneStateModel.isStateTakingOff(currentState);
+      const landing = DroneStateModel.isStateLanding(currentState);
+      const landed = DroneStateModel.isStateLanded(currentState);
+      const isOffboard = DroneStateModel.isStateOffboard(currentState);
+
+      // Must only broadcast OFFBOARD setpoints when we're not taking off, landing, or landed.
+      if (takingOff || landing || landed) {
+        // Optional auto takeoff (ignored when auto state management is enabled)
+        if (!this.autoStateEnabled && this.opts.offboardAutoTakeoff) {
+          if (!takingOff) {
+            await this.takeoff();
+            return;
+          }
+        }
+        return;
+      }
+
+      if (!isOffboard) {
+        await this.setMode("OFFBOARD");
+      }
+
+      // Broadcast setpoint at 250ms cadence while airborne and not busy with takeoff/landing/landed.
+      this.publishOffboardTarget(this.offboardTarget);
+    } finally {
+      this.offboardTickRunning = false;
+    }
+  }
+
+  private publishOffboardTarget(target: OffboardTarget): void {
+    switch (target.kind) {
+      case "position_local": {
+        const yaw = (typeof target.yawRad === "number" && Number.isFinite(target.yawRad))
+          ? target.yawRad
+          : (typeof (this.latestState as any)?.yaw === "number" ? (this.latestState as any).yaw : 0);
+
+        const msg = {
+          header: this._header(this.opts.localFrameId),
+          pose: {
+            position: { x: target.x, y: target.y, z: target.z },
+            orientation: this._yawToQuat(yaw),
+          },
+        };
+
+        this._publish(DroneController.T_SETPOINT_POS, DroneController.TYPE_POSE_STAMPED, msg);
+        return;
+      }
+
+      case "velocity_local": {
+        const yawRate = (typeof target.yawRate === "number" && Number.isFinite(target.yawRate)) ? target.yawRate : 0;
+
+        const msg = {
+          header: this._header(this.opts.localFrameId),
+          twist: {
+            linear: { x: target.vx, y: target.vy, z: target.vz },
+            angular: { x: 0, y: 0, z: yawRate },
+          },
+        };
+
+        this._publish(DroneController.T_SETPOINT_VEL, DroneController.TYPE_TWIST_STAMPED, msg);
+        return;
+      }
+
+      case "raw_local": {
+        const pos = target.position ?? { x: 0, y: 0, z: 0 };
+        const vel = target.velocity ?? { x: 0, y: 0, z: 0 };
+        const acc = target.acceleration_or_force ?? { x: 0, y: 0, z: 0 };
+
+        const msg = {
+          header: this._header(this.opts.localFrameId),
+          coordinate_frame: target.coordinate_frame,
+          type_mask: target.type_mask,
+          position: { x: pos.x, y: pos.y, z: pos.z },
+          velocity: { x: vel.x, y: vel.y, z: vel.z },
+          acceleration_or_force: { x: acc.x, y: acc.y, z: acc.z },
+          yaw: (typeof target.yaw === "number" && Number.isFinite(target.yaw)) ? target.yaw : 0,
+          yaw_rate: (typeof target.yaw_rate === "number" && Number.isFinite(target.yaw_rate)) ? target.yaw_rate : 0,
+        };
+
+        this._publish(DroneController.T_SETPOINT_RAW_LOCAL, DroneController.TYPE_POSITION_TARGET, msg);
+        return;
+      }
+
+      case "raw_attitude": {
+        const msg = {
+          header: this._header(this.opts.localFrameId),
+          type_mask: target.type_mask,
+          orientation: target.orientation ?? { x: 0, y: 0, z: 0, w: 1 },
+          body_rate: target.body_rate ?? { x: 0, y: 0, z: 0 },
+          thrust: (typeof target.thrust === "number" && Number.isFinite(target.thrust)) ? target.thrust : 0,
+        };
+
+        this._publish(DroneController.T_SETPOINT_RAW_ATT, DroneController.TYPE_ATTITUDE_TARGET, msg);
+        return;
+      }
+    }
+  }
+
+  private _publish(topic: string, type: string, msg: any): void {
+    const b: any = this.ros2Bridge as any;
+
+    if (typeof b.publish === "function") {
+      try { b.publish({ topic, type }, msg); return; } catch {}
+      try { b.publish(topic, type, msg); return; } catch {}
+      try { b.publish({ op: "publish", topic, msg }); return; } catch {}
+    }
+
+    if (typeof b.send === "function") {
+      try { b.send({ op: "publish", topic, msg }); return; } catch {}
     }
   }
 
