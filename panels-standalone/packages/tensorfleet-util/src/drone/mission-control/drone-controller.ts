@@ -124,8 +124,9 @@ export class DroneController {
     console.log("[DRONE_CONTROLLER] Sending arm command...");
 
     // Workaround. arm might fail due to unsupported state for arm.
-    if (await this.model.isLanded() || await this.model.isLanding()) {
-      this.setMode("AUTO.TAKEOFF");  
+    if (await this.model.isLanded()) {
+      console.log("[DRONE_CONTROLLER] Is in landed state while trying to arm");
+      await this.setMode("AUTO.LOITER");  
     }
 
     const result = await this.mavrosArmDisarm(true);
