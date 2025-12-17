@@ -179,7 +179,7 @@ class ROSLibBridgeWrapper {
     return undefined;
   }
 
-  async callService(name, request) {
+  async callService(name, request, timeout = 5000) {
     if (!this.ros) {
       throw new Error('ROS not connected');
     }
@@ -191,7 +191,7 @@ class ROSLibBridgeWrapper {
     });
 
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Service call timeout")), 5000);
+      const timer = setTimeout(() => reject(new Error("Service call timeout")), timeout);
 
       service.callService(
         new ROSLIB.ServiceRequest(request),

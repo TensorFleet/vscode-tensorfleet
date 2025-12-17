@@ -125,7 +125,7 @@ export class DroneController {
 
     // Workaround. arm might fail due to unsupported state for arm.
     if (await this.model.isLanded()) {
-      console.log("[DRONE_CONTROLLER] Is in landed state while trying to arm");
+      console.log("[DRONE_CONTROLLER] Is in landed state while trying to arm. Switching vehicle mode to AUTO.LOITER");
       await this.setMode("AUTO.LOITER");  
     }
 
