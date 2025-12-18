@@ -3029,11 +3029,6 @@ function buildMenuForState(
       primaryActions.push({
         label: '$(debug-stop) Stop VM'
       });
-      if (ipAddress) {
-        primaryActions.push({
-          label: '$(terminal) Connect via SSH'
-        });
-      }
       break;
 
     case 'stopped':
@@ -3359,14 +3354,6 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       await vmManagerIntegration.startVm();
     } else if (selection.label.includes('Retry Start') && vmManagerIntegration) {
       await vmManagerIntegration.startVm();
-    } else if (selection.label.includes('Connect via SSH') && ipAddress) {
-      // Open terminal with SSH command
-      const terminal = vscode.window.createTerminal({
-        name: `SSH to ${ipAddress}`,
-        shellPath: 'ssh',
-        shellArgs: [`root@${ipAddress}`]
-      });
-      terminal.show();
     } else if (selection.label.includes('Refresh Status') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
     } else if (selection.label.includes('Change Region')) {
