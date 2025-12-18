@@ -54,8 +54,10 @@ async function performManualSequence(droneState, droneController, TARGET_ALTITUD
 
     console.log("[INFO] Takeoff command sent, waiting for altitude...");
 
-    // this.state.vehicle?.armed && this.state.vehicle?.mode === "AUTO.TAKEOFF"
-    while(await droneState.isTakingOff()) {
+    // This is a combined check. It checks if the drone is armed and is neither landed, landing or taking off.
+    // Why is this needed? "AUTO.LOITER" flight mode is possible while being on ground.
+    // We also have a delayed state. So when you send the takeoff request, there is no guarantee that the state we have will reflect that.
+    while(!await droneState.isAirborne()) {
         console.log("[INFO] waiting for takeoff to finish...");
         await sleep(1500);
     }
@@ -71,8 +73,8 @@ async function performManualSequence(droneState, droneController, TARGET_ALTITUD
     console.log("\n[SUCCESS] Takeoff complete! Drone is hovering at altitude.");
 
     // Wait a moment before landing
-    console.log("[INFO] Waiting 2 seconds before landing...\n");
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log("[INFO] Waiting 5 seconds before landing...\n");
+    await sleep(5000);
 
     // Land
     console.log("[INFO] Landing drone...\n");
@@ -183,7 +185,10 @@ async function main() {
     
     console.log(`[INFO] Drone connected. Current state: armed=${currentState.vehicle.armed}, mode=${currentState.vehicle.mode}, landed=${currentState.extended?.landed_state}\n`);
 
-    // await performManualSequence(droneState, droneController, TARGET_ALTITUDE);
+    await performManualSequence(droneState, droneController, TARGET_ALTITUDE);
+
+    console.log("[INFO] Manual sequence finished.\nNow, we will try out the automatic sequence after 5 seconds...");
+    await sleep(5000);
 
     await performAutomaticSequence(droneState, droneController, TARGET_ALTITUDE);
 

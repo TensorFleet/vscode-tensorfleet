@@ -118,6 +118,7 @@ export class DroneController {
     await this._requireConnected();
 
     if (await this.model.isArmed()) {
+      console.log("[DRONE_CONTROLLER] Drone already armed. Skipping arm command");
       return;
     }
 
@@ -182,10 +183,10 @@ export class DroneController {
 
   // -------- Requested state / auto state management --------
 
-  public setRequestedState(state: RequestedState): void {
+  public async setRequestedState(state: RequestedState): Promise<void> {
     this._requestedState = state;
 
-    void this._tickRequestedState();
+    await this._tickRequestedState();
   }
 
   public clearRequestedState(): void {

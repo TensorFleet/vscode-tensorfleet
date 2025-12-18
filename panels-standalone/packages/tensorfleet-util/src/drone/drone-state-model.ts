@@ -214,6 +214,9 @@ export class DroneStateModel extends Emitter {
   private resolveAllSeen: (() => void) | null = null;
   private debugInterval: any = null;
 
+  private buggyTopics: string[] = [];
+  private connectTime: number = 0;
+
   // Topics
   private static readonly T_FIX = '/mavros/global_position/raw/fix';
   private static readonly T_HDG = '/mavros/global_position/compass_hdg';
@@ -261,12 +264,14 @@ export class DroneStateModel extends Emitter {
     };
 
     this.allTopics = new Set(Object.keys(this.handlers));
+    this.buggyTopics = [DroneStateModel.T_BATT];
   }
 
   /** Subscribes to required MAVROS topics via the bridge. */
   public connect(bridge: ROS2BridgeApi): void {
     console.log('[DEBUG] DroneStateModel.connect() called');
     this.disconnect();
+    this.connectTime = Date.now();
     this.bridge = bridge;
 
     this.seenTopics = new Set();
@@ -296,6 +301,14 @@ export class DroneStateModel extends Emitter {
       if (this.seenTopics.size < this.allTopics.size) {
         const missing = Array.from(this.allTopics).filter(t => !this.seenTopics.has(t));
         console.log(`[DEBUG] Waiting for topics: ${missing.join(', ')}`);
+      }
+      const now = Date.now();
+      if (now - this.connectTime > 10000) {
+        this.buggyTopics.forEach(topic => {
+          if (!this.seenTopics.has(topic)) {
+            console.error(`simulation restart might be needed, topic ${topic} is not broadcasted`);
+          }
+        });
       }
     }, 6000);
   }

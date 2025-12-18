@@ -254,7 +254,7 @@ async function main() {
         console.log("\n[EXIT] Shutting down telemetry monitoring...");
 
         // Unsubscribe from all raw topics
-        rawSubscriptions.forEach(unsub => unsub.unsubscribe());
+        rawSubscriptions.forEach(unsub => unsub());
 
         // Disconnect managed state model
         droneState.disconnect();

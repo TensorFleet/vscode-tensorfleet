@@ -293,6 +293,11 @@ export class ROS2Bridge {
     }
   }
 
+  async setROSParameter(name: string, value: any): Promise<void> {
+    this.client?.setParameter(name, value);
+    return Promise.resolve();
+  }
+
   /** Arrange for a service call to run once on every (re)connect before normal ops. */
   registerSetupServiceCall(name: string, request: any) {
     this.setupServiceCalls.push({

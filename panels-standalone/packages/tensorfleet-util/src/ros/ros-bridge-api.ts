@@ -39,6 +39,9 @@ export interface ROS2BridgeApi {
    */
   registerSetupROSParameterSet(name: string, value: any): void;
 
+  /** ROS parameter set API (immediate) */
+  setROSParameter(name: string, value: any): Promise<void>;
+
   /** Topic discovery & helpers */
   getAvailableTopics(): Subscription[];
   getTopicType(topic: string): string | undefined;
@@ -46,8 +49,6 @@ export interface ROS2BridgeApi {
 
   /** Generic service call API (Foxglove-backed) */
   callService<T = any>(name: string, request: any): Promise<T>;
-
-
 
   /** Frame/introspection helpers */
   getKnownFrames(): string[];
