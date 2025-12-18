@@ -10,10 +10,9 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import { URL } from 'url';
+import type { AddressInfo } from 'net';
 import { getBackendUrl as getRegionBackendUrl } from './regions';
 
-// Configuration
-const CALLBACK_PORT = 3456; // Local server port for OAuth callback
 
 // Type definitions for API responses
 interface InitiateAuthResponse {
@@ -34,11 +33,51 @@ function getBackendUrl(): string {
     return getRegionBackendUrl().replace(/\/+$/, '');
 }
 
+// Single-flight login guard to prevent concurrent authenticate() calls
+let loginInProgress = false;
+
+// Active login state for cancellation support
+let activeLoginState: {
+    server: http.Server;
+    timeoutId: NodeJS.Timeout;
+    reject: (error: Error) => void;
+} | null = null;
+
+/**
+ * Cancel any in-progress login attempt
+ * Called when user logs out or explicitly cancels
+ */
+export function cancelLogin(): void {
+    if (activeLoginState) {
+        console.log('[Auth] Cancelling in-progress login');
+        clearTimeout(activeLoginState.timeoutId);
+        activeLoginState.server.close();
+        activeLoginState.reject(new Error('Login cancelled'));
+        activeLoginState = null;
+    }
+    loginInProgress = false;
+}
+
+/**
+ * Check if login is currently in progress
+ */
+export function isLoginInProgress(): boolean {
+    return loginInProgress;
+}
+
 /**
  * Main authentication function
  * Opens browser for login and waits for callback
  */
 export async function authenticate(context: vscode.ExtensionContext): Promise<string> {
+    // Single-flight guard: prevent concurrent login attempts
+    if (loginInProgress) {
+        vscode.window.showWarningMessage('Login already in progress. Please complete the current login first.');
+        throw new Error('Login already in progress');
+    }
+
+    loginInProgress = true;
+
     try {
         // Step 1: Initiate OAuth flow
         const { state, authUrl } = await initiateAuth();
@@ -47,18 +86,52 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
             'Opening browser for authentication...'
         );
 
-        // Step 2: Start local server to receive callback
+        // Step 2: Start local server with ephemeral port to receive callback
         const token = await new Promise<string>((resolve, reject) => {
-            const server = createCallbackServer(state, resolve, reject);
+            const server = http.createServer();
+            let timeoutId: NodeJS.Timeout;
 
-            // Step 3: Open browser
-            vscode.env.openExternal(vscode.Uri.parse(authUrl));
+            // Store for cancellation
+            activeLoginState = { server, timeoutId: null as any, reject };
+
+            // Set up the callback handler once we know the port
+            server.on('listening', () => {
+                const addressInfo = server.address() as AddressInfo;
+                const port = addressInfo.port;
+                const callbackBaseUrl = `http://127.0.0.1:${port}/callback`;
+
+                // Attach request handler with the known callbackBaseUrl
+                server.on('request', (req, res) => {
+                    handleCallbackRequest(req, res, state, callbackBaseUrl, server, resolve, reject, () => {
+                        clearTimeout(timeoutId);
+                        activeLoginState = null;
+                    });
+                });
+
+                // Step 3: Open browser with callbackBaseUrl appended
+                const finalAuthUrl = `${authUrl}&callbackBaseUrl=${encodeURIComponent(callbackBaseUrl)}`;
+                vscode.env.openExternal(vscode.Uri.parse(finalAuthUrl));
+            });
+
+            server.on('error', (err) => {
+                activeLoginState = null;
+                reject(new Error(`Failed to start callback server: ${err.message}`));
+            });
+
+            // Listen on ephemeral port (0) bound to localhost
+            server.listen(0, '127.0.0.1');
 
             // Timeout after 5 minutes
-            setTimeout(() => {
+            timeoutId = setTimeout(() => {
+                activeLoginState = null;
                 server.close();
                 reject(new Error('Authentication timeout'));
             }, 5 * 60 * 1000);
+
+            // Update stored reference with actual timeoutId
+            if (activeLoginState) {
+                activeLoginState.timeoutId = timeoutId;
+            }
         });
 
         // Step 4: Store token securely
@@ -69,8 +142,14 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
         return token;
     } catch (error) {
         console.error('[Auth] authenticate() error:', error);
-        vscode.window.showErrorMessage(`Authentication failed: ${error instanceof Error ? error.message : String(error)}`);
+        // Don't show error message for cancellation
+        if (error instanceof Error && error.message !== 'Login cancelled') {
+            vscode.window.showErrorMessage(`Authentication failed: ${error.message}`);
+        }
         throw error;
+    } finally {
+        loginInProgress = false;
+        activeLoginState = null;
     }
 }
 
@@ -100,60 +179,105 @@ async function initiateAuth(): Promise<{ state: string; authUrl: string }> {
 }
 
 /**
- * Create local HTTP server to receive OAuth callback
+ * Handle incoming callback requests
+ * Separated from server creation to support ephemeral port flow
  */
-function createCallbackServer(
+function handleCallbackRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
     expectedState: string,
+    callbackBaseUrl: string,
+    server: http.Server,
     resolve: (token: string) => void,
-    reject: (error: Error) => void
-): http.Server {
-    const server = http.createServer((req, res) => {
-        const url = new URL(req.url || '/', `http://localhost:${CALLBACK_PORT}`); //TODO: implement dynamic port finder in the future
+    reject: (error: Error) => void,
+    clearTimeout: () => void
+): void {
+    // Parse URL using the dynamic callbackBaseUrl
+    const baseOrigin = new URL(callbackBaseUrl).origin;
+    const url = new URL(req.url || '/', baseOrigin);
 
-        if (url.pathname === '/callback') {
-            const token = url.searchParams.get('token');
-            const state = url.searchParams.get('state');
-            const error = url.searchParams.get('error');
+    if (url.pathname === '/callback') {
+        const token = url.searchParams.get('token');
+        const state = url.searchParams.get('state');
+        const error = url.searchParams.get('error');
 
-            if (error) {
-                res.writeHead(200, { 'Content-Type': 'text/html' });
-                res.end(`
-                    <html>
-                        <body style="font-family: Arial; text-align: center; padding: 50px;">
-                            <h1>❌ Authentication Failed</h1>
-                            <p>${error}</p>
-                            <p>You can close this window.</p>
-                        </body>
-                    </html>
-                `);
-                server.close();
-                console.error('[Auth] Callback error from query parameter:', error);
-                reject(new Error(error));
-                return;
-            }
-
-            if (!token || state !== expectedState) {
-                console.error('[Auth] Invalid callback - token missing or state mismatch:', {
-                    hasToken: !!token,
-                    stateMatches: state === expectedState,
-                });
-                res.writeHead(400, { 'Content-Type': 'text/html' });
-                res.end(`
-                    <html>
-                        <body style="font-family: Arial; text-align: center; padding: 50px;">
-                            <h1>❌ Invalid Callback</h1>
-                            <p>You can close this window.</p>
-                        </body>
-                    </html>
-                `);
-                server.close();
-                reject(new Error('Invalid callback'));
-                return;
-            }
-            //TODO: move this HTML to a separate file for better maintainability
-            // Success!
+        if (error) {
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(`
+                <html>
+                    <body style="font-family: Arial; text-align: center; padding: 50px;">
+                        <h1>❌ Authentication Failed</h1>
+                        <p>${error}</p>
+                        <p>You can close this window.</p>
+                    </body>
+                </html>
+            `);
+            clearTimeout();
+            server.close();
+            console.error('[Auth] Callback error from query parameter:', error);
+            reject(new Error(error));
+            return;
+        }
+
+        // Check for state mismatch - but handle gracefully (don't close server)
+        if (state !== expectedState) {
+            console.warn('[Auth] State mismatch - likely stale redirect, ignoring:', {
+                hasToken: !!token,
+                expectedState: expectedState.substring(0, 8) + '...',
+                receivedState: state ? state.substring(0, 8) + '...' : 'null',
+            });
+            // Respond with "stale attempt" HTML but do NOT close server or reject
+            // This allows the correct request to still come through
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(`
+                <html>
+                    <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a1a; color: #fff;">
+                        <h1>⚠️ Stale Login Attempt</h1>
+                        <p>This appears to be from an old login session.</p>
+                        <p>If you're trying to log in, please use the most recent browser tab.</p>
+                        <p style="color: #888; margin-top: 2rem;">You can close this window.</p>
+                    </body>
+                </html>
+            `);
+            return; // Continue waiting for the correct request
+        }
+
+        if (!token) {
+            console.error('[Auth] Invalid callback - token missing');
+            res.writeHead(400, { 'Content-Type': 'text/html' });
+            res.end(`
+                <html>
+                    <body style="font-family: Arial; text-align: center; padding: 50px;">
+                        <h1>❌ Invalid Callback</h1>
+                        <p>Token was not provided.</p>
+                        <p>You can close this window.</p>
+                    </body>
+                </html>
+            `);
+            clearTimeout();
+            server.close();
+            reject(new Error('Invalid callback - token missing'));
+            return;
+        }
+
+        // Success!
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(getSuccessHtml());
+
+        clearTimeout();
+        server.close();
+        resolve(token);
+    } else {
+        res.writeHead(404);
+        res.end('Not found');
+    }
+}
+
+/**
+ * Get the success HTML page content
+ */
+function getSuccessHtml(): string {
+    return `
 <!DOCTYPE html>
 <html>
 
@@ -324,9 +448,9 @@ function createCallbackServer(
                     <path class="cls-2" d="m255.11,535.92c0-14.83.06-29.67-.05-44.5-.03-3.72,1.36-5.25,5.12-5.07,4.6.21,9.21.11,13.82.05,1.9-.02,3.23.55,3.53,2.58.39,2.59,1.64,2.39,3.62,1.46,7.93-3.73,15.94-7.45,25.07-6.2,21.65,2.96,35.64,13.63,36.59,37.17.75,18.79,1.04,37.61,1.21,56.41.08,8.55-.74,9.08-9.33,9.22-14.87.25-13.06,1.5-13.16-12.73-.12-16.79-.04-33.58-.37-50.36-.14-7.14-2.64-13.45-9.1-17.5-7.56-4.74-27.58-4.44-31.82,6.99-2.15,5.81-2.94,11.77-3.09,17.89-.38,16.08-.6,32.16-.19,48.24.17,6.9-.8,7.67-7.71,7.51-3.12-.07-6.23-.41-9.34-.61-3.36-.21-4.78-1.99-4.77-5.34.06-15.07.03-30.13.03-45.2-.02,0-.04,0-.06,0Z"/>
                     <path class="cls-2" d="m105.18,524.17c0-19.59-.02-39.18.02-58.76,0-3.09-1.53-4.02-4.38-4.02-9.68-.02-19.36-.13-29.04-.27-6.8-.1-7.47-.81-7.5-7.52-.01-2.97-.06-5.93.03-8.9.08-2.53,1.47-3.81,4.05-3.81,32.72-.01,65.43-.03,98.15-.07,2.74,0,4.14,1.55,4.24,4,.18,4.51.2,9.05-.02,13.56-.12,2.54-2.15,3.08-4.41,3.09-11.08.06-22.17-.66-33.25.1-2.98.2-4.1,1.61-4.38,4.33-.57,5.46-.18,10.91-.16,16.37.1,32.63.07,65.26.19,97.9.02,4.66-1.78,7.05-6.57,6.94-3.66-.08-7.33-.18-11-.09-4.18.1-5.54-1.99-5.53-5.93.05-15.69-.06-31.38-.1-47.07,0-3.28,0-6.56,0-9.84h-.31Z"/>
                     <path class="cls-2" d="m385.33,484.18c10.13.59,19.66,3.11,28.02,9.13,2.29,1.65,2.76,3.89,1.6,6.63-3.18,7.55-8.67,9.57-15.98,6.02-6.17-3-12.77-3.07-19.37-1.87-4.38.8-6.37,3.98-6.8,8.12-.46,4.39,1.71,7.36,5.5,9.45,6.24,3.45,13.23,5.1,19.57,8.26,10.87,5.41,18.66,13.43,21.19,25.73,1.44,6.99-5.09,20.91-11.58,25.42-7.58,5.27-16.16,7.71-25.07,7.6-11.42-.15-22.07-3.62-30.95-11.32-2.19-1.9-2.47-3.95-.83-6.39,1.43-2.13,2.69-4.39,3.97-6.62,1.86-3.25,4.41-3.65,7.51-1.88,6.36,3.63,12.51,7.69,20.26,7.83,6.43.11,11.19-2.24,13.02-6.78,2.56-6.32.6-11.3-5.65-14.18-6.37-2.93-13.09-5.26-19.08-8.81-10.06-5.96-19.28-12.89-18.95-26.54.3-12.37,8.81-23.59,21-27.56,4.13-1.34,8.24-2.37,12.64-2.23Z"/>
-                    <path class="cls-1" d="m978.81,531.31c.34,7.63-.65,15.69.48,23.69,1.15,8.21,8.61,15.75,17.74,16.35,4.25.2,6.57-.05,9.55-.29,1.36-.11,2.29.88,2.27,2.43,0,6.69,1.2,11.48-1.31,12.92-3.97,1.85-16.35.81-23.38-.99-13.95-3.44-21.06-10.39-25.54-24.35-2.36-7.35-2.7-16.13-2.64-23.76.07-9.21.02-18.42.09-27.64,0-4.91-.42-5.21-5.1-5.21-4.01-.12-7.98-.01-12.32-.01s-2.84-8.55-2.84-13.78c0-2.69,1.55-3.73,5.04-3.58,3.81.15,7.63,0,11.45.03,3.87,0,4.28-.98,4.32-4.81.04-3.83-.14-8.9-.19-13.85-.03-3.08.3-4.46,3.66-4.31,5.34.24,10.69.17,16.04.1,2.2-.03,2.84.95,2.83,2.97-.04,5.38.16,10.77.03,16.15-.09,3.46,2.03,3.94,4.61,3.95,8.04.03,16.09.1,24.13-.05,4.49-.09,6.29,1.9,6.26,6.29-.1,11.79.65,10.89-10.94,10.92-6.32.01-12.65-.11-18.97-.11-5.14,0-5.25.79-5.25,5.24.03,7.1,0,14.21,0,21.72Z"/>
-                    <path class="cls-2" d="m718.89,500.04c0,16.93.05,33.87-.02,50.8-.03,7.47,2.92,13.24,9.03,17.48,4.87,3.38,7.36,12.55,5,18.02-.72,1.68-2.2,1.61-3.56,1.58-17.57-.48-32.22-11.9-33.34-30.86-.86-14.66-.34-29.34-.28-44.01.09-20.2.46-40.4,0-60.61-.3-13.43-.96-11.65,11.31-11.86,11.86-.21,11.81-.06,11.77,11.93-.05,15.84-.01,31.69-.01,47.53h.1Z"/>
-                    <path class="cls-2" d="m534.96,536.41c0-14.99.09-29.99-.06-44.98-.04-4.28,1.62-5.72,5.76-5.34,4.27.39,8.57.39,12.86.53,2.43.08,4.06.8,4.56,3.62.49,2.77,2.03,3.59,4.63,1.56,6.13-4.8,13.29-6.69,20.97-6.87,3.22-.07,5,1.54,5.1,4.77.1,3.19.1,6.39.11,9.59,0,3.43-1.76,5-5.15,5.37-5.91.64-12.07.35-16.92,4.94-7.97,7.56-9.86,17.24-9.9,27.57-.05,14.91-.09,29.83.07,44.74.04,3.72-1.26,5.34-5,5.21-4.13-.15-8.28-.08-12.42-.11-3.09-.02-4.7-1.32-4.69-4.68.08-15.3.04-30.61.04-45.91h.02Z"/>
+                    <path class="cls-1" d="m978.81,531.31c.34,7.63-.65,15.69.48,23.69,1.15,8.21,8.61,15.75,17.74,16.35,4.25.2,6.57-.05,9.55-.29,1.36-.11,2.29.88,2.27,2.43,0,6.69,1.2,11.48-1.31,12.92-3.97,1.85-16.35.81-23.38-.99-13.95-3.44-21.06-10.39-25.54-24.35-2.36-7.35-2.70-16.13-2.64-23.76.07-9.21.02-18.42.09-27.64,0-4.91-.42-5.21-5.10-5.21-4.01-.12-7.98-.01-12.32-.01s-2.84-8.55-2.84-13.78c0-2.69,1.55-3.73,5.04-3.58,3.81.15,7.63,0,11.45.03,3.87,0,4.28-.98,4.32-4.81.04-3.83-.14-8.9-.19-13.85-.03-3.08.30-4.46,3.66-4.31,5.34.24,10.69.17,16.04.1,2.20-.03,2.84.95,2.83,2.97-.04,5.38.16,10.77.03,16.15-.09,3.46,2.03,3.94,4.61,3.95,8.04.03,16.09.10,24.13-.05,4.49-.09,6.29,1.90,6.26,6.29-.10,11.79.65,10.89-10.94,10.92-6.32.01-12.65-.11-18.97-.11-5.14,0-5.25.79-5.25,5.24.03,7.10,0,14.21,0,21.72Z"/>
+                    <path class="cls-2" d="m718.89,500.04c0,16.93.05,33.87-.02,50.8-.03,7.47,2.92,13.24,9.03,17.48,4.87,3.38,7.36,12.55,5,18.02-.72,1.68-2.20,1.61-3.56,1.58-17.57-.48-32.22-11.90-33.34-30.86-.86-14.66-.34-29.34-.28-44.01.09-20.20.46-40.40,0-60.61-.30-13.43-.96-11.65,11.31-11.86,11.86-.21,11.81-.06,11.77,11.93-.05,15.84-.01,31.69-.01,47.53h.10Z"/>
+                    <path class="cls-2" d="m534.96,536.41c0-14.99.09-29.99-.06-44.98-.04-4.28,1.62-5.72,5.76-5.34,4.27.39,8.57.39,12.86.53,2.43.08,4.06.80,4.56,3.62.49,2.77,2.03,3.59,4.63,1.56,6.13-4.80,13.29-6.69,20.97-6.87,3.22-.07,5,1.54,5.10,4.77.10,3.19.10,6.39.11,9.59,0,3.43-1.76,5-5.15,5.37-5.91.64-12.07.35-16.92,4.94-7.97,7.56-9.86,17.24-9.90,27.57-.05,14.91-.09,29.83.07,44.74.04,3.72-1.26,5.34-5,5.21-4.13-.15-8.28-.08-12.42-.11-3.09-.02-4.70-1.32-4.69-4.68.08-15.30.04-30.61.04-45.91h.02Z"/>
                 </g></g>
                 </svg>
             </div>
@@ -344,19 +468,7 @@ function createCallbackServer(
     </div>
 </body>
 </html>
-            `);
-
-            server.close();
-            resolve(token);
-        } else {
-            res.writeHead(404);
-            res.end('Not found');
-        }
-    });
-
-    server.listen(CALLBACK_PORT);
-
-    return server;
+`;
 }
 
 // ============================================================================
@@ -364,9 +476,31 @@ function createCallbackServer(
 // ============================================================================
 
 /**
+ * Validate that a token has valid JWT shape (3 dot-separated segments, base64-decodable payload)
+ */
+function isValidJwtShape(token: string): boolean {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+        return false;
+    }
+    try {
+        const payload = Buffer.from(parts[1], 'base64').toString();
+        JSON.parse(payload);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Store token securely in VSCode secret storage
+ * Validates JWT shape before storing to prevent malformed tokens
  */
 export async function storeToken(context: vscode.ExtensionContext, token: string): Promise<void> {
+    if (!isValidJwtShape(token)) {
+        console.error('[Auth] Refusing to store invalid JWT-shaped token');
+        throw new Error('Invalid token format - not a valid JWT');
+    }
     await context.secrets.store('tensorfleet-auth-token', token);
     // Clear verification cache so next isAuthenticated() call will verify with backend
     verificationCache = null;
@@ -382,8 +516,11 @@ export async function getToken(context: vscode.ExtensionContext): Promise<string
 
 /**
  * Clear stored token (logout)
+ * Also cancels any in-progress login attempt
  */
 export async function clearToken(context: vscode.ExtensionContext): Promise<void> {
+    // Cancel any in-progress login when user logs out
+    cancelLogin();
     await context.secrets.delete('tensorfleet-auth-token');
     verificationCache = null; // Clear cache on logout
 }
@@ -430,6 +567,11 @@ const VERIFICATION_CACHE_TTL = 30000; // 30 seconds
 /**
  * Check if user is authenticated
  * Verifies token with backend and caches result
+ * 
+ * HTTP status handling:
+ * - 401: Definitive invalidation → clear token
+ * - 200: Parse JSON and use data.valid
+ * - 5xx/other: Fall back to JWT expiry check, do NOT clear token
  */
 export async function isAuthenticated(context: vscode.ExtensionContext): Promise<boolean> {
     const token = await getToken(context);
@@ -454,16 +596,30 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
             body: JSON.stringify({ token }),
         });
 
+        // Handle based on HTTP status
+        if (response.status === 401) {
+            // Definitive invalidation - clear token
+            console.log('[Auth] Token definitively invalid (401), clearing');
+            await clearToken(context);
+            verificationCache = { valid: false, timestamp: Date.now() };
+            return false;
+        }
+
+        if (!response.ok) {
+            // Backend error (500, 503, etc.) - do NOT clear token
+            // Fall through to JWT expiry check
+            console.warn('[Auth] Backend error during verify:', response.status, '- falling back to JWT check');
+            throw new Error(`Backend returned ${response.status}`);
+        }
+
+        // 200 OK - parse response
         const data = await response.json() as VerifyTokenResponse;
         const valid = data.valid === true;
 
-        // Update cache
-        verificationCache = {
-            valid,
-            timestamp: Date.now()
-        };
+        verificationCache = { valid, timestamp: Date.now() };
 
         if (!valid) {
+            // Backend says invalid with 200 OK - trust it
             await clearToken(context);
         }
 
@@ -471,21 +627,23 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
     } catch (error) {
         console.error('[Auth] Token verification error:', error);
 
-        // Fallback to basic JWT validation if backend is unreachable
+        // Fallback to basic JWT validation if backend is unreachable or returned error
         try {
             const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
             const now = Math.floor(Date.now() / 1000);
 
             if (payload.exp && payload.exp < now) {
+                // Token actually expired - clear it
+                console.log('[Auth] JWT expired, clearing token');
                 await clearToken(context);
                 return false;
             }
 
-            // Token format is valid but couldn't verify with backend
+            // Token format is valid and not expired, but couldn't verify with backend
             // Return true but don't cache (so we retry next time)
             return true;
         } catch (parseError) {
-            // Invalid token format
+            // Invalid token format - this shouldn't happen with JWT validation on store
             console.error('[Auth] Invalid token format:', parseError);
             await clearToken(context);
             return false;
