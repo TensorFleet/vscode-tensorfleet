@@ -13,8 +13,6 @@ import { URL } from 'url';
 import type { AddressInfo } from 'net';
 import { getBackendUrl as getRegionBackendUrl } from './regions';
 
-// Single-flight login guard to prevent concurrent authenticate() calls
-let loginInProgress = false;
 
 // Type definitions for API responses
 interface InitiateAuthResponse {
@@ -33,6 +31,38 @@ interface VerifyTokenResponse {
 function getBackendUrl(): string {
     // Get URL from region configuration (single source of truth)
     return getRegionBackendUrl().replace(/\/+$/, '');
+}
+
+// Single-flight login guard to prevent concurrent authenticate() calls
+let loginInProgress = false;
+
+// Active login state for cancellation support
+let activeLoginState: {
+    server: http.Server;
+    timeoutId: NodeJS.Timeout;
+    reject: (error: Error) => void;
+} | null = null;
+
+/**
+ * Cancel any in-progress login attempt
+ * Called when user logs out or explicitly cancels
+ */
+export function cancelLogin(): void {
+    if (activeLoginState) {
+        console.log('[Auth] Cancelling in-progress login');
+        clearTimeout(activeLoginState.timeoutId);
+        activeLoginState.server.close();
+        activeLoginState.reject(new Error('Login cancelled'));
+        activeLoginState = null;
+    }
+    loginInProgress = false;
+}
+
+/**
+ * Check if login is currently in progress
+ */
+export function isLoginInProgress(): boolean {
+    return loginInProgress;
 }
 
 /**
@@ -61,6 +91,9 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
             const server = http.createServer();
             let timeoutId: NodeJS.Timeout;
 
+            // Store for cancellation
+            activeLoginState = { server, timeoutId: null as any, reject };
+
             // Set up the callback handler once we know the port
             server.on('listening', () => {
                 const addressInfo = server.address() as AddressInfo;
@@ -71,6 +104,7 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
                 server.on('request', (req, res) => {
                     handleCallbackRequest(req, res, state, callbackBaseUrl, server, resolve, reject, () => {
                         clearTimeout(timeoutId);
+                        activeLoginState = null;
                     });
                 });
 
@@ -80,6 +114,7 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
             });
 
             server.on('error', (err) => {
+                activeLoginState = null;
                 reject(new Error(`Failed to start callback server: ${err.message}`));
             });
 
@@ -88,9 +123,15 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
 
             // Timeout after 5 minutes
             timeoutId = setTimeout(() => {
+                activeLoginState = null;
                 server.close();
                 reject(new Error('Authentication timeout'));
             }, 5 * 60 * 1000);
+
+            // Update stored reference with actual timeoutId
+            if (activeLoginState) {
+                activeLoginState.timeoutId = timeoutId;
+            }
         });
 
         // Step 4: Store token securely
@@ -101,10 +142,14 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
         return token;
     } catch (error) {
         console.error('[Auth] authenticate() error:', error);
-        vscode.window.showErrorMessage(`Authentication failed: ${error instanceof Error ? error.message : String(error)}`);
+        // Don't show error message for cancellation
+        if (error instanceof Error && error.message !== 'Login cancelled') {
+            vscode.window.showErrorMessage(`Authentication failed: ${error.message}`);
+        }
         throw error;
     } finally {
         loginInProgress = false;
+        activeLoginState = null;
     }
 }
 
@@ -431,9 +476,31 @@ function getSuccessHtml(): string {
 // ============================================================================
 
 /**
+ * Validate that a token has valid JWT shape (3 dot-separated segments, base64-decodable payload)
+ */
+function isValidJwtShape(token: string): boolean {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+        return false;
+    }
+    try {
+        const payload = Buffer.from(parts[1], 'base64').toString();
+        JSON.parse(payload);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Store token securely in VSCode secret storage
+ * Validates JWT shape before storing to prevent malformed tokens
  */
 export async function storeToken(context: vscode.ExtensionContext, token: string): Promise<void> {
+    if (!isValidJwtShape(token)) {
+        console.error('[Auth] Refusing to store invalid JWT-shaped token');
+        throw new Error('Invalid token format - not a valid JWT');
+    }
     await context.secrets.store('tensorfleet-auth-token', token);
     // Clear verification cache so next isAuthenticated() call will verify with backend
     verificationCache = null;
@@ -449,8 +516,11 @@ export async function getToken(context: vscode.ExtensionContext): Promise<string
 
 /**
  * Clear stored token (logout)
+ * Also cancels any in-progress login attempt
  */
 export async function clearToken(context: vscode.ExtensionContext): Promise<void> {
+    // Cancel any in-progress login when user logs out
+    cancelLogin();
     await context.secrets.delete('tensorfleet-auth-token');
     verificationCache = null; // Clear cache on logout
 }
@@ -497,6 +567,11 @@ const VERIFICATION_CACHE_TTL = 30000; // 30 seconds
 /**
  * Check if user is authenticated
  * Verifies token with backend and caches result
+ * 
+ * HTTP status handling:
+ * - 401: Definitive invalidation → clear token
+ * - 200: Parse JSON and use data.valid
+ * - 5xx/other: Fall back to JWT expiry check, do NOT clear token
  */
 export async function isAuthenticated(context: vscode.ExtensionContext): Promise<boolean> {
     const token = await getToken(context);
@@ -521,16 +596,30 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
             body: JSON.stringify({ token }),
         });
 
+        // Handle based on HTTP status
+        if (response.status === 401) {
+            // Definitive invalidation - clear token
+            console.log('[Auth] Token definitively invalid (401), clearing');
+            await clearToken(context);
+            verificationCache = { valid: false, timestamp: Date.now() };
+            return false;
+        }
+
+        if (!response.ok) {
+            // Backend error (500, 503, etc.) - do NOT clear token
+            // Fall through to JWT expiry check
+            console.warn('[Auth] Backend error during verify:', response.status, '- falling back to JWT check');
+            throw new Error(`Backend returned ${response.status}`);
+        }
+
+        // 200 OK - parse response
         const data = await response.json() as VerifyTokenResponse;
         const valid = data.valid === true;
 
-        // Update cache
-        verificationCache = {
-            valid,
-            timestamp: Date.now()
-        };
+        verificationCache = { valid, timestamp: Date.now() };
 
         if (!valid) {
+            // Backend says invalid with 200 OK - trust it
             await clearToken(context);
         }
 
@@ -538,21 +627,23 @@ export async function isAuthenticated(context: vscode.ExtensionContext): Promise
     } catch (error) {
         console.error('[Auth] Token verification error:', error);
 
-        // Fallback to basic JWT validation if backend is unreachable
+        // Fallback to basic JWT validation if backend is unreachable or returned error
         try {
             const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
             const now = Math.floor(Date.now() / 1000);
 
             if (payload.exp && payload.exp < now) {
+                // Token actually expired - clear it
+                console.log('[Auth] JWT expired, clearing token');
                 await clearToken(context);
                 return false;
             }
 
-            // Token format is valid but couldn't verify with backend
+            // Token format is valid and not expired, but couldn't verify with backend
             // Return true but don't cache (so we retry next time)
             return true;
         } catch (parseError) {
-            // Invalid token format
+            // Invalid token format - this shouldn't happen with JWT validation on store
             console.error('[Auth] Invalid token format:', parseError);
             await clearToken(context);
             return false;
