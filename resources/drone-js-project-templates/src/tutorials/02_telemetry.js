@@ -1,33 +1,14 @@
 #!/usr/bin/env -S bun run
 /**
- * Tutorial 02: Comprehensive Telemetry Monitoring
+ * Tutorial 02: Telemetry Monitoring
  *
- * This tutorial demonstrates advanced telemetry data collection and processing using MAVROS ROS topics.
- * It showcases both raw ROS topic subscriptions for fine-grained control and the managed DroneStateModel
- * for simplified, aggregated state handling. You'll learn about key telemetry sources, data formats,
- * and real-time monitoring techniques essential for drone applications.
+ * This tutorial shows how to monitor drone telemetry data.
  *
- * Learning Objectives:
- * - Subscribe to multiple MAVROS ROS topics for comprehensive telemetry data
- * - Process raw ROS messages from state, position, GPS, altitude, and battery topics
- * - Utilize DroneStateModel for unified, managed telemetry aggregation
- * - Understand MAVROS data structures and update frequencies
- * - Compare raw vs. managed telemetry processing approaches
- * - Monitor critical flight parameters in real-time
+ * Telemetry includes information like position, altitude, battery level, and flight status.
  *
- * Key Concepts:
- * - MAVROS Telemetry: MAVLink protocol extension providing drone sensor and state data via ROS
- * - ROS Topics: Publish-subscribe messaging system for real-time data distribution
- * - Data Aggregation: Combining multiple raw topics into a coherent state representation
- * - Update Frequencies: Different sensors publish at varying rates (GPS: 1-10Hz, IMU: 50-400Hz)
- * - Coordinate Systems: Understanding local (ENU) vs global (GPS) positioning
+ * We access this data by subscribing to various ROS topics published by MAVROS.
  *
- * Prerequisites:
- * - Active TensorFleet VM with MAVROS running
- * - Simulation restarted (as described in TUTORIAL.md)
- * - Understanding of basic ROS Bridge connection from Tutorial 01
- *
- * Usage: bun run src/tutorials/02_telemetry.js
+ * Run: bun src/tutorials/02_telemetry.js
  */
 
 import { DroneStateModel } from "tensorfleet-util";

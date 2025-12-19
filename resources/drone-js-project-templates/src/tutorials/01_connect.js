@@ -1,28 +1,14 @@
 #!/usr/bin/env -S bun run
 /**
- * Tutorial 01: Basic Connection and State Monitoring
+ * Tutorial 01: Connecting to the Drone
  *
- * This tutorial demonstrates fundamental concepts for connecting to a drone via ROS Bridge
- * and monitoring its state in real-time. It covers both direct ROS topic subscriptions
- * for raw data access and the use of a managed state model for simplified state management.
+ * This tutorial shows how to connect to a drone.
  *
- * Learning Objectives:
- * - Establish a WebSocket connection to ROS Bridge using ROSLibBridgeWrapper
- * - Subscribe directly to MAVROS ROS topics for low-level state monitoring
- * - Utilize DroneStateModel for aggregated, managed drone state handling
- * - Compare raw ROS processing vs. managed state utilities
- * - Monitor key drone parameters: connection status, arming state, flight mode, and guided mode
+ * First, we need to connect to the ROS environment using rosbridge (websocket) or direct ROS connection.
  *
- * Key Concepts:
- * - ROS Bridge: Enables remote WebSocket-based communication with ROS systems
- * - MAVROS: MAVLink extendable communication library for ROS drone integration
- * - State Aggregation: Combining multiple ROS topics into a unified state representation
+ * Then, we can access drone information by subscribing to ROS topics and control the drone by ROS service calls and publishing to specific ROS topics.
  *
- * Prerequisites:
- * - Active TensorFleet VM with ROS Bridge running
- * - Simulation restarted (as described in TUTORIAL.md)
- *
- * Usage: bun run src/tutorials/01_connect.js
+ * Run: bun src/tutorials/01_connect.js
  */
 
 import { DroneStateModel } from "tensorfleet-util";

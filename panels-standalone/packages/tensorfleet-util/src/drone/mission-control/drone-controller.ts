@@ -59,6 +59,10 @@ export class DroneController {
   private ros2Bridge: ROS2BridgeApi;
   private opts: Required<DroneControllerOptions>;
 
+  private offboard_state_distance: number = 0.5;
+  private offboard_angle_distance: number = 5 * Math.PI / 180;
+  private max_offboard_velocity_diff: number = 0.1;
+
   private _targetAutoState: TargetAutoState = null;
 
   public get targetAutoState(): TargetAutoState {
@@ -232,10 +236,58 @@ export class DroneController {
 
         const offboardTarget = this.targetAutoState.target;
         switch(offboardTarget.kind) {
-          case "velocity_local":
+          case "position_local": {
+            const currPos = currentState.local?.position;
+            if (!currPos) {
+              console.warn("[AUTO_STATE] No current position available for position_local check");
+              return false;
+            }
+
+            const dx = currPos.x - offboardTarget.x;
+            const dy = currPos.y - offboardTarget.y;
+            const dz = currPos.z - offboardTarget.z;
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+            if (dist > this.offboard_state_distance) {
+              return false;
+            }
+
+            if (offboardTarget.yawRad !== undefined) {
+              const currOrient = currentState.local?.orientation;
+              if (!currOrient) {
+                console.warn("[AUTO_STATE] No current orientation available for yaw check");
+                return false;
+              }
+
+              const currYaw = this._quatToYaw(currOrient);
+              let yawDiff = currYaw - offboardTarget.yawRad;
+
+              // Normalize yaw difference to [-pi, pi]
+              yawDiff = ((yawDiff + Math.PI) % (2 * Math.PI)) - Math.PI;
+
+              if (Math.abs(yawDiff) > this.offboard_angle_distance) {
+                return false;
+              }
+            }
+
             return true;
+          }
+          case "velocity_local": {
+            const currVel = currentState.local?.linear;
+            if (!currVel) {
+              console.warn("[AUTO_STATE] No current velocity available for velocity_local check");
+              return false;
+            }
+
+            const dvx = currVel.x - offboardTarget.vx;
+            const dvy = currVel.y - offboardTarget.vy;
+            const dvz = currVel.z - offboardTarget.vz;
+            const velDiff = Math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz);
+
+            return velDiff <= this.max_offboard_velocity_diff;
+          }
           default:
-            console.warn("[INFO] requested state check for non-velocity offboard target not fully supported yet");
+            console.warn("[INFO] requested state check of type 'offboardTarget.kind' not supported yet");
             return true;
         }
       }
@@ -382,7 +434,7 @@ export class DroneController {
     }
   }
 
-  private publishOffboardTarget(target: OffboardTarget): void {
+  public publishOffboardTarget(target: OffboardTarget): void {
     switch (target.kind) {
       case "position_local": {
         const yaw = (typeof target.yawRad === "number" && Number.isFinite(target.yawRad))
@@ -529,5 +581,10 @@ export class DroneController {
   private _yawToQuat(yaw: number): RosTypes.GeometryQuaternion {
     const half = yaw / 2;
     return { x: 0, y: 0, z: Math.sin(half), w: Math.cos(half) };
+  }
+
+  private _quatToYaw(quat: RosTypes.GeometryQuaternion): number {
+    const { x, y, z, w } = quat;
+    return Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
   }
 }

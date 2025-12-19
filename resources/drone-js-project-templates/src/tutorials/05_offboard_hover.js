@@ -1,19 +1,25 @@
 #!/usr/bin/env -S bun run
 /**
- * Tutorial 05: OFFBOARD Hover with Manual Control
+ * Tutorial 05: OFFBOARD Hover with Manual and Automated Control
  *
  * Learn: OFFBOARD mode basics using DroneController
  *
  * This tutorial demonstrates:
  * - Manual takeoff and landing operations
- * - Using DroneController for offboard operations
- * - Setting velocity targets for hovering (zero velocity = hover)
+ * - Manual OFFBOARD mode switching and setpoint streaming (no auto state management)
  * - Automatic OFFBOARD mode switching and setpoint streaming
- * - Manual sequence without automatic state management
+ * - Setting velocity targets for hovering (zero velocity = hover)
  *
- * Sequence:
+ * Manual Sequence:
  * 1. Manual arm and takeoff to target altitude
- * 2. Enter OFFBOARD mode by setting zero velocity target (hover)
+ * 2. Manually set mode to OFFBOARD and broadcast zero velocity target continuously
+ * 3. Maintain hover for specified duration with status monitoring
+ * 4. Stop broadcasting target to exit OFFBOARD mode (returns to POSCTL)
+ * 5. Manual landing and disarm
+ *
+ * Automated Sequence:
+ * 1. Manual arm and takeoff to target altitude
+ * 2. Use requestAutoState() to enter OFFBOARD mode with zero velocity target
  * 3. Maintain hover for specified duration with status monitoring
  * 4. Clear offboard target to exit OFFBOARD mode
  * 5. Manual landing and disarm
@@ -22,7 +28,7 @@
  */
 
 import { DroneStateModel, DroneController } from "tensorfleet-util";
-import { ROSLibBridgeWrapper } from "../lib/roslib-bridge-wrapper.js";
+import { initializeDroneControl } from "../lib/drone_utils.js";
 
 const TARGET_ALTITUDE = 3.0; // meters
 const HOVER_DURATION = 10.0; // seconds
@@ -30,20 +36,36 @@ const HOVER_DURATION = 10.0; // seconds
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Waits for the drone to establish connection with the flight controller
- * @param {DroneStateModel} droneState - The drone state model instance
+ * Main tutorial execution function
  */
-async function waitUntilConnected(droneState) {
-  console.log("[INFO] Waiting for drone state connection...");
-  while (true) {
-    const state = await droneState.getState();
-    if (state.vehicle?.connected) {
-      console.log(`[INFO] Drone connected. Current state: armed=${state.vehicle.armed}, mode=${state.vehicle.mode}\n`);
-      return;
-    }
-    await sleep(100);
-  }
+async function main() {
+  // Create ROS bridge using the wrapper
+  let { bridge, droneState, droneController, currentState } = await initializeDroneControl();
+
+  // Execute manual OFFBOARD hover sequence
+  await manualOffboardHoverSequence(droneController, droneState);
+
+  console.log("\n[INFO] Manual sequence finished.\nNow, we will try out the automated sequence after 5 seconds...");
+  await sleep(5000);
+
+  // Execute automated OFFBOARD hover sequence
+  await automatedOffboardHoverSequence(droneController, droneState);
+
+  // Clean up connections
+  console.log("[EXIT] Cleaning up connections...");
+  droneState.disconnect();
+  console.log("[EXIT] Disconnected from drone state monitoring.");
+
+  console.log("\n[SUCCESS] OFFBOARD hover tutorial completed successfully!");
 }
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("[ERROR]", err.message || err);
+    process.exit(1);
+  });
+}
+
 
 /**
  * Manual arm and takeoff sequence
@@ -82,25 +104,111 @@ async function manualArmAndTakeoff(droneController, droneState, targetAltitude) 
 }
 
 /**
- * Main tutorial execution function
+ * Manual OFFBOARD hover sequence
+ * Demonstrates manual OFFBOARD mode switching and setpoint streaming
+ * @param {DroneController} droneController - The drone controller instance
+ * @param {DroneStateModel} droneState - The drone state model instance
  */
-async function main() {
-  // Create ROS bridge using the wrapper
-  const bridge = new ROSLibBridgeWrapper();
-  await bridge.waitForConnection();
+async function manualOffboardHoverSequence(droneController, droneState) {
+  console.log("[INFO] Executing Manual OFFBOARD hover sequence...\n");
 
-  console.log(`\n[INFO] Target altitude: ${TARGET_ALTITUDE}m, hover duration: ${HOVER_DURATION}s\n`);
+  // Step 1: Manual arm and takeoff
+  await manualArmAndTakeoff(droneController, droneState, TARGET_ALTITUDE);
 
-  // Create managed state model for state monitoring
-  const droneState = new DroneStateModel();
-  droneState.connect(bridge);
+  // Step 2: Continuously send OFFBOARD mode command and broadcast targets
+  console.log("[STEP 2] Starting continuous OFFBOARD mode commands and setpoint broadcast...");
 
-  // Create drone controller for high-level operations
-  const droneController = new DroneController(droneState, bridge);
-  await droneController.initialize();
+  const hoverStart = Date.now();
+  let setpointInterval = setInterval(async () => {
+    // Continuously send OFFBOARD mode command
+    await droneController.setMode("OFFBOARD", 0, false); // Silent mode setting
 
-  // Wait for drone to be connected and ready
-  await waitUntilConnected(droneState);
+    // Broadcast zero velocity target
+    droneController.publishOffboardTarget({
+      kind: "velocity_local",
+      vx: 0.0,
+      vy: 0.0,
+      vz: 0.0
+    });
+  }, 50); // Broadcast at 20Hz as per PX4 requirements
+
+  // Wait for OFFBOARD mode to be active
+  while (!(await droneState.isOffboard())) {
+    console.log("[STEP 2] Waiting for OFFBOARD mode to activate...");
+    await sleep(500);
+  }
+  console.log("[STEP 2] OFFBOARD mode active - continuing continuous commands and setpoints\n");
+
+  // Step 3: Maintain hover for specified duration
+  console.log(`[STEP 3] Maintaining continuous OFFBOARD commands and hover setpoints for ${HOVER_DURATION} seconds...`);
+
+  while (Date.now() - hoverStart < HOVER_DURATION * 1000) {
+    const currentState = await droneState.getState();
+    const currentAlt = currentState.altitude?.relative || 0;
+    const currentMode = currentState.vehicle?.mode || "unknown";
+    const isOffboard = await droneState.isOffboard();
+
+    // Log status every 2 seconds
+    if (Math.floor((Date.now() - hoverStart) / 2000) > Math.floor((Date.now() - hoverStart - 2000) / 2000)) {
+      const elapsed = ((Date.now() - hoverStart) / 1000).toFixed(1);
+      console.log(`[HOVER] t=${elapsed}s: alt=${currentAlt.toFixed(2)}m, mode=${currentMode}, offboard=${isOffboard}`);
+    }
+
+    await sleep(1000);
+  }
+
+  // Step 4: Stop broadcasting setpoints
+  console.log("[STEP 4] Stopping setpoint broadcast to exit OFFBOARD mode...");
+  clearInterval(setpointInterval);
+  console.log("[STEP 4] Setpoint broadcast stopped\n");
+
+  // Wait for exit from OFFBOARD mode (should return to POSCTL)
+  while (await droneState.isOffboard()) {
+    console.log("[STEP 4] Waiting for exit from OFFBOARD mode due to timeout...");
+    await sleep(500);
+  }
+
+  const exitState = await droneState.getState();
+  console.log(`[STEP 4] Exited OFFBOARD mode. Current mode (POSCTL expected): ${exitState.vehicle?.mode}\n`);
+
+  // Step 5: Manual landing and disarm
+  console.log("[STEP 5] Landing drone...");
+  await droneController.land();
+  console.log("[STEP 5] Land command sent");
+
+  // Wait for landing to complete
+  while (!(await droneState.isLanded())) {
+    console.log("[STEP 5] Waiting for landing to complete...");
+    await sleep(1000);
+  }
+
+  // Disarm if still armed
+  if (await droneState.isArmed()) {
+    console.log("[STEP 5] Disarming drone...");
+    await droneController.disarm();
+    console.log("[STEP 5] Disarm command sent");
+
+    // Wait for disarming
+    while (await droneState.isArmed()) {
+      console.log("[STEP 5] Waiting for disarm...");
+      await sleep(1000);
+    }
+  }
+
+  const finalState = await droneState.getState();
+  console.log(`[STEP 5] Landing and disarming complete. armed=${finalState.vehicle?.armed}, mode=${finalState.vehicle?.mode}\n`);
+
+  console.log("\n[SUCCESS] Manual OFFBOARD hover sequence finished!");
+}
+
+/**
+ * Automated OFFBOARD hover sequence
+ * Demonstrates automatic OFFBOARD mode switching and setpoint streaming
+ * @param {DroneController} droneController - The drone controller instance
+ * @param {DroneStateModel} droneState - The drone state model instance
+ */
+async function automatedOffboardHoverSequence(droneController, droneState) {
+  console.log("[INFO] Executing Automated OFFBOARD hover sequence...\n");
 
   // Step 1: Manual arm and takeoff
   await manualArmAndTakeoff(droneController, droneState, TARGET_ALTITUDE);
@@ -136,7 +244,7 @@ async function main() {
       console.log(`[HOVER] t=${elapsed}s: alt=${currentAlt.toFixed(2)}m, mode=${currentMode}, offboard=${isOffboard}`);
     }
 
-    await sleep(1000); // Check status every 500ms
+    await sleep(1000);
   }
 
   console.log(`[STEP 3] Hover duration complete\n`);
@@ -148,14 +256,12 @@ async function main() {
 
   // Wait for exit from OFFBOARD mode
   while (await droneState.isOffboard()) {
-    console.log("[STEP 4] OFFBOARD target boradcast has ended.\n[STEP 4] Waiting for exit from OFFBOARD mode due to timeout...");
+    console.log("[STEP 4] OFFBOARD target broadcast has ended.\n[STEP 4] Waiting for exit from OFFBOARD mode due to timeout...");
     await sleep(500);
   }
 
   const exitState = await droneState.getState();
-  console.log(`[STEP 4] Exited OFFBOARD mode. Current mode( POSCTL expected): ${exitState.vehicle?.mode}\n`);
-  // Note : if we leave the drone in POSCTL with no manual input given (not covered in tutorials yet) then the drone will automatically land.
-  // In this case when drone is disarmed after land it will switch to a disarmed OFFBOARD mode.
+  console.log(`[STEP 4] Exited OFFBOARD mode. Current mode (POSCTL expected): ${exitState.vehicle?.mode}\n`);
 
   // Step 5: Manual landing and disarm
   console.log("[STEP 5] Landing drone...");
@@ -184,17 +290,5 @@ async function main() {
   const finalState = await droneState.getState();
   console.log(`[STEP 5] Landing and disarming complete. armed=${finalState.vehicle?.armed}, mode=${finalState.vehicle?.mode}\n`);
 
-  // Clean up connections
-  console.log("[EXIT] Cleaning up connections...");
-  droneState.disconnect();
-  console.log("[EXIT] Disconnected from drone state monitoring.");
-
-  console.log("\n[SUCCESS] OFFBOARD hover tutorial completed successfully!");
-}
-
-if (require.main === module) {
-  main().catch((err) => {
-    console.error("[ERROR]", err.message || err);
-    process.exit(1);
-  });
+  console.log("\n[SUCCESS] Automated OFFBOARD hover sequence finished!");
 }
