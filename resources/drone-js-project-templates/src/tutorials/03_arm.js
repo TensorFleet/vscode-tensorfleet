@@ -4,44 +4,26 @@
  *
  * This tutorial demonstrates:
  * - Manual arming and disarming operations in landed state
- * - Enabling automatic state management that maintains target states
- * - Using setRequestedState() with auto-enforcement
- * - Proper waiting for state transitions to complete
+ * - Automatic state management that maintains target states
+ * - Using requestAutoState() with auto-enforcement and built-in waiting
+ * - Proper state transitions with automatic completion detection
  * - No takeoff operations - drone remains landed throughout
  *
- * Sequence:
+ * Manual Sequence:
  * 1. Arm the drone if not already armed (in landed state)
- * 2. Wait 6 seconds to observe armed state
+ * 2. Wait 6 seconds to observe armed state. Retry if needed.
  * 3. Disarm the drone (returns to landed disarmed state)
- * 4. Wait 5 seconds to observe disarmed state
- * 5. Enable automatic state management (maintains target state automatically)
- * 6. Command drone to landed armed state
- * 7. Wait while drone transitions to landed armed state
- * 8. Command drone to landed disarmed state
- * 9. Wait for transition to landed disarmed state to complete
- * 10. Disable auto state management and clean up
+ * 4. Wait 0.5 seconds to observe disarmed state. Retry if needed.
+ * 
+ * Automated Sequence (full async):
+ * 1. Command drone to landed armed state (auto-waits for completion)
+ * 2. Command drone to landed disarmed state (auto-waits for completion)
  */
 
 import { DroneStateModel, DroneController } from "tensorfleet-util";
-import { ROSLibBridgeWrapper } from "../lib/roslib-bridge-wrapper.js";
+import { initializeDroneControl } from "../lib/drone_utils.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * Waits for the drone to establish connection with the flight controller
- * @param {DroneStateModel} droneState - The drone state model instance
- */
-async function waitUntilConnected(droneState) {
-  console.log("[INFO] Waiting for drone state connection...");
-  while (true) {
-    const state = await droneState.getState();
-    if (state.vehicle?.connected) {
-      console.log(`[INFO] Drone connected. Current state: armed=${state.vehicle.armed}, mode=${state.vehicle.mode}\n`);
-      return;
-    }
-    await sleep(100);
-  }
-}
 
 /**
  * Manual arm and disarm sequence
@@ -72,7 +54,7 @@ async function manualArmDisarmSequence(droneController, droneState) {
   while(!armedState.vehicle?.armed) {
     console.log("[STEP 2] Retrying. drone not armed...");
     await droneController.arm();
-    await sleep(6000);
+    await sleep(1000);
   }
 
   console.log(`[STEP 2] State after arming : armed=${armedState.vehicle?.armed}, mode=${armedState.vehicle?.mode}`);
@@ -98,63 +80,34 @@ async function manualArmDisarmSequence(droneController, droneState) {
  * @param {DroneStateModel} droneState - The drone state model instance
  */
 async function automatedStateManagementSequence(droneController, droneState) {
-  // Step 5: Enable automatic state management
-  // This enables the controller to automatically maintain target states
-  // The system will derive initial target from current drone state
-  console.log("[STEP 5] Enabling automatic state management...");
-  await droneController.enableAutoStateManagement(true);
-  console.log("[STEP 5] Auto state management enabled - controller will now maintain target states automatically");
+  // Step 5: Automatic state management is running
+  // The controller will automatically maintain target states once we set one
+  console.log("[STEP 1] Automatic state management is running - will activate once we set a target state");
 
-  console.log("[STEP 6] Waiting 5 seconds before setting target state to landed and armed...");
-  await sleep(5000);
+  console.log("[STEP 1] Waiting 5 seconds before setting target state to landed and armed...");
+  await sleep(5000)
 
-  // Step 6: Command drone to become airborne at 3m altitude
-  // Auto state management will arm, takeoff, and maintain altitude
-  console.log("[STEP 6] Setting target state: landed and armed...");
-  await droneController.setRequestedState({ kind: "landed", armed: true });
-  console.log("[STEP 6] Target state set to", droneController.requestedState , " - auto management will handle arming and takeoff");
+  // Step 6: Command drone to landed armed state
+  // Auto state management will handle the transition and wait for completion
+  console.log("[STEP 1] Setting target state: landed and armed...");
+  await droneController.requestAutoState({ kind: "landed", armed: true });
+  console.log("[STEP 1] Target state reached - drone is now landed and armed");
 
-  // Step 7: Wait while drone maintains altitude
-  console.log("[STEP 7] Waiting while drone transitions to landed armed state...");
-  const startTime = Date.now();
-  while (true) {
-
-    const currentState = await droneState.getState();
-    const alt = currentState.altitude?.relative || 0;
-    if (await droneController.isInRequestedState()) {
-      console.log('[STEP 7] target state reached reached');
-      break
-    }
-    await sleep(1000); // Note : if we don't sleep here we may block the process any further processing of the websocket packets and never get a state change.
-  }
-
+  // Step 7: Observe the final state
   let currentState = await droneState.getState();
   const alt = currentState.altitude?.relative || 0;
+  console.log(`[STEP 1] Current state: altitude=${alt.toFixed(2)}m, armed=${currentState.vehicle?.armed}, mode=${currentState.vehicle?.mode}`);
 
-  console.log(`[STEP 7] FINISHED. Current altitude: ${alt.toFixed(2)}m, armed=${currentState.vehicle?.armed}, mode=${currentState.vehicle?.mode}`);
-
-  console.log("[STEP 8] Waiting 6 seconds before setting target state: landed and disarmed...");
+  console.log("[STEP 2] Waiting 6 seconds before setting target state: landed and disarmed...");
 
   await sleep(6000);
 
-  // Step 8: Command drone to land and disarm
-  // Auto state management will land the drone and then disarm it
-  console.log("[STEP 8] Setting target state: landed and disarmed...");
-  await droneController.setRequestedState({ kind: "landed", armed: false });
-  console.log("[STEP 8] Target state set - auto management will handle landing and disarming");
-
-  // Step 9: Wait for the landing and disarming process to complete
-  // This ensures the script doesn't exit prematurely
-  console.log("[STEP 9] Waiting for landing and disarming to complete...");
-  await droneController.waitForRequestedState();
-  console.log("[STEP 9] Landing and disarming completed successfully");
+  // Step 8: Command drone to landed and disarmed state
+  // Auto state management will handle the transition and wait for completion
+  console.log("[STEP 2] Setting target state: landed and disarmed...");
+  await droneController.requestAutoState({ kind: "landed", armed: false });
+  console.log("[STEP 2] Target state reached - drone is now landed and disarmed");
   console.log("\n[SUCCESS] Drone has landed and disarmed!");
-
-  // Step 10: Disable auto state management
-  // Clean shutdown of automatic control systems
-  console.log("[STEP 10] Disabling auto state management...");
-  await droneController.enableAutoStateManagement(false);
-  console.log("[STEP 10] Auto state management disabled");
 }
 
 /**
@@ -162,22 +115,7 @@ async function automatedStateManagementSequence(droneController, droneState) {
  * Demonstrates the complete arm/disarm cycle with automatic state management
  */
 async function main() {
-  // Initialize ROS bridge connection
-  const bridge = new ROSLibBridgeWrapper();
-  await bridge.waitForConnection();
-
-  console.log("\n[INFO] Connected to ROS Bridge - initializing drone control...\n");
-
-  // Create drone state model for monitoring vehicle state
-  const droneState = new DroneStateModel();
-  droneState.connect(bridge);
-
-  // Create drone controller for high-level commands
-  const droneController = new DroneController(droneState, bridge);
-  await droneController.initialize();
-
-  // Wait for drone to be connected and ready
-  await waitUntilConnected(droneState);
+  const { bridge, droneState, droneController } = await initializeDroneControl();
 
   // Execute manual arm/disarm sequence
   // This will only work if the drone is on land.

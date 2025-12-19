@@ -10,6 +10,7 @@
 import * as RosTypes from "../../ros/ros-types"
 import { DroneStateModel, LANDED } from "../drone-state-model";
 import type { ROS2BridgeApi } from "../../ros/ros-bridge-api";
+import deepEqual from "fast-deep-equal";
 
 export enum LandedState {
   UNDEFINED = 0,
@@ -19,10 +20,11 @@ export enum LandedState {
   LANDING = 4,
 }
 
-export type RequestedState =
-  | { kind: "none" }
+export type TargetAutoState =
+  | null
   | { kind: "landed"; armed: boolean | null }
   | { kind: "airborne"; altMeters: number; yawRad?: number }
+  | { kind: "offboard"; target: OffboardTarget}
 
 export type OffboardTarget =
   | { kind: "position_local"; x: number; y: number; z: number; yawRad?: number }
@@ -47,7 +49,6 @@ export type OffboardTarget =
 
 export interface DroneControllerOptions {
   localFrameId?: string;                // default "map"
-  offboardAutoTakeoff?: boolean;        // default false
   minBatteryForFlight?: number;         // default 0.15
   autoStateManagement?: boolean;        // default false
   stateManagementIntervalMs?: number;   // default 1000
@@ -58,10 +59,10 @@ export class DroneController {
   private ros2Bridge: ROS2BridgeApi;
   private opts: Required<DroneControllerOptions>;
 
-  private _requestedState: RequestedState = { kind: "none" };
+  private _targetAutoState: TargetAutoState = null;
 
-  public get requestedState(): RequestedState {
-    return this._requestedState;
+  public get targetAutoState(): TargetAutoState {
+    return this._targetAutoState;
   }
 
   private autoStateEnabled = false;
@@ -84,7 +85,6 @@ export class DroneController {
   private static readonly T_SETPOINT_RAW_ATT = "/mavros/setpoint_raw/attitude";
   private static readonly TYPE_ATTITUDE_TARGET = "mavros_msgs/msg/AttitudeTarget";
 
-  private offboardTarget: OffboardTarget | null = null;
   private offboardInterval: any = null;
   private offboardTickRunning = false;
   private lastOffboardModeAttemptMs = 0;
@@ -95,7 +95,6 @@ export class DroneController {
     this.ros2Bridge = ros2Bridge;
     this.opts = {
       localFrameId: opts.localFrameId ?? "map",
-      offboardAutoTakeoff: opts.offboardAutoTakeoff ?? false,
       minBatteryForFlight: opts.minBatteryForFlight ?? 0.15,
       autoStateManagement: opts.autoStateManagement ?? false,
       stateManagementIntervalMs: opts.stateManagementIntervalMs ?? 1000,
@@ -105,11 +104,8 @@ export class DroneController {
   }
 
   async initialize(): Promise<void> {
-    if (this.opts.autoStateManagement) {
-      await this.enableAutoStateManagement(true);
-    }
-
     this.startOffboardLoop();
+    this.startAutoStateLoop();
   }
 
   // -------- Basic services --------
@@ -141,11 +137,15 @@ export class DroneController {
     console.log("[DRONE_CONTROLLER] Disarm command result:", result);
   }
 
-  async setMode(mode: string, base = 0): Promise<void> {
+  async setMode(mode: string, base = 0, debug = true): Promise<void> {
     await this._requireConnected();
-    console.log(`[DRONE_CONTROLLER] Setting mode to ${mode} (base=${base})...`);
+    if(debug) {
+      console.log(`[DRONE_CONTROLLER] Setting mode to ${mode} (base=${base})...`);
+    }
     const result = await this.mavrosSetMode(mode, base);
-    console.log("[DRONE_CONTROLLER] Set mode result:", result);
+    if(debug) {
+      console.log("[DRONE_CONTROLLER] Set mode result:", result);
+    }
   }
 
   async takeoff(altMeters: number = 3, yawRad = 0): Promise<void> {
@@ -183,30 +183,40 @@ export class DroneController {
 
   // -------- Requested state / auto state management --------
 
-  public async setRequestedState(state: RequestedState): Promise<void> {
-    this._requestedState = state;
+  public async requestAutoState(state: TargetAutoState): Promise<void> {
+    this._targetAutoState = structuredClone(state);
 
-    await this._tickRequestedState();
+    if(state) {
+      await this._tickAutoState();
+      while(deepEqual(this._targetAutoState,state) && !this.isInRequestedAutoState()) {
+        await this.sleep(100);
+      }
+
+      console.log("[DRONE_CONTROLLER] Target auto state reached:\n", state);
+    } else {
+      console.log("[DRONE_CONTROLLER] Target auto state cleared");
+    }
   }
 
-  public clearRequestedState(): void {
-    this.setRequestedState({ kind: "none" });
+  public clearAutoState(): void {
+    this.requestAutoState(null);
   }
 
-  public isInRequestedState(debug: boolean = false): boolean {
+  public isInRequestedAutoState(debug: boolean = false): boolean {
     let currentState = this.model.getCurrentState();
 
       const landed = DroneStateModel.isStateLanded(currentState);
       const landing = DroneStateModel.isStateLanding(currentState);
       const takingOff = DroneStateModel.isStateTakingOff(currentState);
+      const offboard = DroneStateModel.isStateOffboard(currentState);
       const onGround = currentState.extended?.landed_state === LANDED.ON_GROUND;
 
     if(debug) {
-      console.log("[AUTO_STATE] Requested :", this.requestedState, "\nCurrent state :", { extended: currentState.extended, vehicle: currentState.vehicle});
+      console.log("[AUTO_STATE] Requested :", this.targetAutoState, "\nCurrent state :", { extended: currentState.extended, vehicle: currentState.vehicle});
     }
 
-    switch (this.requestedState.kind) {
-      case "none":
+    switch (this.targetAutoState?.kind) {
+      case undefined:
         return true;
       case "landed": {
         return landed;
@@ -214,88 +224,40 @@ export class DroneController {
       case "airborne": {
         return (currentState.vehicle?.armed && !( landed || landing || takingOff || onGround)) ?? false;
       }
-    }
-
-    console.log("Vehicle not in target state");
-    return false;
-  }
-
-  public async waitForRequestedState(timeoutMs: number = 60000): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const startTime = Date.now();
-      const check = async () => {
-        if (!this.autoStateEnabled) {
-          resolve();
-          return;
+      case "offboard": {
+        // TODO : add offboard target checks
+        if (!(currentState.vehicle?.armed && offboard)) {
+          return false;
         }
 
-        const achieved = await this.isInRequestedState();
-
-        if (achieved) {
-          resolve();
-        } else if (Date.now() - startTime > timeoutMs) {
-          reject(new Error(`Timeout waiting for requested state: ${JSON.stringify(this.requestedState)}`));
-        } else {
-          setTimeout(check, 500);
+        const offboardTarget = this.targetAutoState.target;
+        switch(offboardTarget.kind) {
+          case "velocity_local":
+            return true;
+          default:
+            console.warn("[INFO] requested state check for non-velocity offboard target not fully supported yet");
+            return true;
         }
-      };
-      check();
-    });
+      }
+    }
   }
 
-
-
-  public async enableAutoStateManagement(enabled: boolean): Promise<void> {
-    const wasEnabled = this.autoStateEnabled;
-    this.autoStateEnabled = enabled;
-
-    if (!enabled) {
-      if (this.stateManagerInterval !== null) {
-        clearInterval(this.stateManagerInterval);
-        this.stateManagerInterval = null;
-      }
-      return;
-    }
-
-    // Only derive initial target state if auto management was previously disabled
-    // and no explicit state has been set yet
-    if (!wasEnabled && this.requestedState.kind === "none") {
-      console.log("[AUTO_STATE] Deriving initial target state from current drone state");
-      // Derive target state from the drone state RIGHT NOW
-      const st = await this.model.getState();
-      if (!st?.vehicle?.connected) return;
-
-      const landed = st.extended?.landed_state;
-      if (landed === LandedState.ON_GROUND) {
-        this._requestedState = { kind: "landed", armed: !!st.vehicle.armed };
-        console.log(`[AUTO_STATE] Derived initial state: landed, armed=${!!st.vehicle.armed}`);
-      } else if (landed === LandedState.IN_AIR || landed === LandedState.TAKEOFF || landed === LandedState.LANDING) {
-        const rel = st.global_position_int?.relative_alt;
-        const alt = (typeof rel === "number" && Number.isFinite(rel) && rel > 0) ? rel : 2;
-        this._requestedState = { kind: "airborne", altMeters: alt };
-        console.log(`[AUTO_STATE] Derived initial state: airborne at ${alt}m`);
-      } else {
-        // Unknown: keep current arming preference but don't force motion
-        this._requestedState = { kind: "none" };
-        console.log("[AUTO_STATE] Derived initial state: none (unknown state)");
-      }
-    } else {
-      console.log(`[AUTO_STATE] Keeping existing requested state: ${JSON.stringify(this.requestedState)}`);
-    }
-
-    if (this.stateManagerInterval !== null) return;
-
+  private startAutoStateLoop(): void {
     this.stateManagerInterval = setInterval(() => {
-      void this._tickRequestedState();
+      void this._tickAutoState();
     }, this.opts.stateManagementIntervalMs);
   }
 
-  private async _tickRequestedState(): Promise<void> {
-    if (!this.autoStateEnabled) return;
+  private async _tickAutoState(): Promise<void> {
+    if (!this.targetAutoState) return;
+    if (this.targetAutoState.kind === "offboard") {
+      // Offboard has it's own ticker.
+      return;
+    }
     if (this.stateManagerTickRunning) return;
     this.stateManagerTickRunning = true;
 
-    console.log(`[AUTO_STATE] Tick: requestedState=${JSON.stringify(this.requestedState)}`);
+    console.log(`[AUTO_STATE] Tick: targetAutoState=${JSON.stringify(this.targetAutoState)}`);
 
     try {
       let currentState = this.model.getCurrentState();
@@ -311,11 +273,7 @@ export class DroneController {
 
       console.log(`[AUTO_STATE] Current state: armed=${currentState.vehicle?.armed}, mode=${currentState.vehicle?.mode}, landed=${currentState.extended?.landed_state}`);
 
-      switch (this.requestedState.kind) {
-        case "none":
-          console.log("[AUTO_STATE] Requested state is 'none', no action needed");
-          return;
-
+      switch (this.targetAutoState.kind) {
         case "landed": {
           // We need the drone landed.
           if (landing) {
@@ -324,9 +282,9 @@ export class DroneController {
 
           if(landed) {
             // Do we want to disarm?
-            if(this.requestedState.armed != currentState.vehicle?.armed) {
+            if(this.targetAutoState.armed != currentState.vehicle?.armed) {
               // We need to change the arm state.
-              if(this.requestedState.armed) {
+              if(this.targetAutoState.armed) {
                 console.log('[AUTO_STATE] Requesting drone arm');
                 await this.arm();
               } else {
@@ -350,7 +308,7 @@ export class DroneController {
         }
 
         case "airborne": {
-          let requestedAltitude = this.requestedState.altMeters;
+          let requestedAltitude = this.targetAutoState.altMeters;
 
           if(landed) {
             console.log("[AUTO_STATE] Processing airborne state [landed = true]. Requesting takeoff");
@@ -362,6 +320,11 @@ export class DroneController {
             console.log("[AUTO_STATE] Processing airborne state [landing = true]. Requesting takeoff");
             await this.takeoff(requestedAltitude);
             return;
+          }
+
+          if(currentState.vehicle?.mode != "AUTO.LOITER") {
+            // TODO : add more checks.
+            await this.setMode("AUTO.LOITER");
           }
           
           return;
@@ -375,29 +338,18 @@ export class DroneController {
   }
 
   // -------- OFFBOARD --------
-
-  public setOffboardTarget(target: OffboardTarget | null): void {
-    this.offboardTarget = target;
-
-    if(target) {
-      void this._tickOffboard();
-    }
-  }
-
-  public clearOffboardTarget(): void {
-    this.setOffboardTarget(null);
-  }
-
   private startOffboardLoop(): void {
     if (this.offboardInterval !== null) return;
 
     this.offboardInterval = setInterval(() => {
       void this._tickOffboard();
-    }, 250);
+    }, 50);
   }
 
   private async _tickOffboard(): Promise<void> {
-    if (this.offboardTarget === null) return;
+    const offboardTarget = this.targetAutoState?.kind === "offboard" ? this.targetAutoState.target : undefined;
+
+    if (!offboardTarget) return;
     if (this.offboardTickRunning) return;
     this.offboardTickRunning = true;
 
@@ -413,25 +365,18 @@ export class DroneController {
       const landing = DroneStateModel.isStateLanding(currentState);
       const landed = DroneStateModel.isStateLanded(currentState);
       const isOffboard = DroneStateModel.isStateOffboard(currentState);
+      const armed = DroneStateModel.isStateArmed(currentState);
 
-      // Must only broadcast OFFBOARD setpoints when we're not taking off, landing, or landed.
-      if (takingOff || landing || landed) {
-        // Optional auto takeoff (ignored when auto state management is enabled)
-        if (!this.autoStateEnabled && this.opts.offboardAutoTakeoff) {
-          if (!takingOff) {
-            await this.takeoff();
-            return;
-          }
-        }
-        return;
+      if (!armed) {
+        await this.arm();
       }
+
 
       if (!isOffboard) {
-        await this.setMode("OFFBOARD");
+        await this.setMode("OFFBOARD", 0, false);
       }
 
-      // Broadcast setpoint at 250ms cadence while airborne and not busy with takeoff/landing/landed.
-      this.publishOffboardTarget(this.offboardTarget);
+      this.publishOffboardTarget(offboardTarget);
     } finally {
       this.offboardTickRunning = false;
     }
@@ -507,19 +452,15 @@ export class DroneController {
   }
 
   private _publish(topic: string, type: string, msg: any): void {
-    const b: any = this.ros2Bridge as any;
+  const b: any = this.ros2Bridge as any;
 
-    if (typeof b.publish === "function") {
-      try { b.publish({ topic, type }, msg); return; } catch {}
-      try { b.publish(topic, type, msg); return; } catch {}
-      try { b.publish({ op: "publish", topic, msg }); return; } catch {}
+    if (!b || typeof b.publish !== "function") {
+      throw new Error("ros2Bridge.publish is missing");
     }
 
-    if (typeof b.send === "function") {
-      try { b.send({ op: "publish", topic, msg }); return; } catch {}
-    }
+    // Call the wrapper exactly as implemented:
+    b.publish(topic, type, msg);
   }
-
 
 
   // -------- MAVROS service helpers --------
@@ -579,6 +520,10 @@ export class DroneController {
     const sec = Math.floor(now / 1000);
     const nanosec = (now - sec * 1000) * 1_000_000;
     return { sec, nanosec };
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   private _yawToQuat(yaw: number): RosTypes.GeometryQuaternion {
