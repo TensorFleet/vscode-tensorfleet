@@ -374,8 +374,14 @@ export class DroneController {
             return;
           }
 
+          if(takingOff) {
+            console.log("[AUTO_STATE] Processing airborne state [takingoff = true]. Doing nothing");
+            return;
+          }
+
           if(currentState.vehicle?.mode != "AUTO.LOITER") {
             // TODO : add more checks.
+            console.log("[AUTO_STATE] airborne requested. vehicle mode not in AUTO.LOTIER mode. Setting it to AUTO.LOTIER");
             await this.setMode("AUTO.LOITER");
           }
           

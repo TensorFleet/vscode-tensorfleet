@@ -19,11 +19,11 @@
  * 5. Manual landing and disarm
  *
  * Automated Sequence:
- * 1. Manual arm and takeoff to target altitude
+ * 1. Use requestAutoState() for automated arm and takeoff to target altitude
  * 2. Use requestAutoState() to enter OFFBOARD mode with forward velocity target
  * 3. Maintain forward movement for specified duration with status monitoring
  * 4. Clear offboard target to exit OFFBOARD mode
- * 5. Manual landing and disarm
+ * 5. Use requestAutoState() for automated landing and disarm
  *
  * Run: bun src/tutorials/06_move_forward.js
  */
@@ -32,7 +32,7 @@ import { DroneStateModel, DroneController } from "tensorfleet-util";
 import { initializeDroneControl } from "../lib/drone_utils.js";
 
 const TARGET_ALTITUDE = 3.0; // meters
-const FORWARD_VELOCITY = 1.0; // m/s
+const FORWARD_VELOCITY = 3.0; // m/s
 const MOVE_DURATION = 5.0; // seconds
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -50,8 +50,8 @@ async function main() {
   console.log("\n[INFO] Manual sequence finished.\nNow, we will try out the automated sequence after 5 seconds...");
   await sleep(5000);
 
-  // Execute automated OFFBOARD move forward sequence
-  await automatedOffboardMoveForwardSequence(droneController, droneState);
+  // // Execute automated OFFBOARD move forward sequence
+  await automatedOffboardMoveBackwardsSequence(droneController, droneState);
 
   // Clean up connections
   console.log("[EXIT] Cleaning up connections...");
@@ -146,20 +146,7 @@ async function manualOffboardMoveForwardSequence(droneController, droneState) {
   // Step 3: Maintain forward movement for specified duration
   console.log(`[STEP 3] Maintaining continuous OFFBOARD commands and forward velocity setpoints for ${MOVE_DURATION} seconds...`);
 
-  while (Date.now() - moveStart < MOVE_DURATION * 1000) {
-    const currentState = await droneState.getState();
-    const currentAlt = currentState.altitude?.relative || 0;
-    const currentMode = currentState.vehicle?.mode || "unknown";
-    const isOffboard = await droneState.isOffboard();
-
-    // Log status every 1 second
-    if (Math.floor((Date.now() - moveStart) / 1000) > Math.floor((Date.now() - moveStart - 1000) / 1000)) {
-      const elapsed = ((Date.now() - moveStart) / 1000).toFixed(1);
-      console.log(`[MOVE] t=${elapsed}s: alt=${currentAlt.toFixed(2)}m, mode=${currentMode}, offboard=${isOffboard}, vx=${FORWARD_VELOCITY}`);
-    }
-
-    await sleep(500);
-  }
+  await sleep(MOVE_DURATION * 1000);
 
   // Step 4: Stop - broadcast zero velocity to stop movement
   console.log("[STEP 4] Stopping movement by broadcasting zero velocity...");
@@ -179,21 +166,7 @@ async function manualOffboardMoveForwardSequence(droneController, droneState) {
   }, 50);
 
   // Stop for 2 seconds to ensure complete stop
-  const stopStart = Date.now();
-  while (Date.now() - stopStart < 2000) {
-    const currentState = await droneState.getState();
-    const currentAlt = currentState.altitude?.relative || 0;
-    const currentMode = currentState.vehicle?.mode || "unknown";
-    const isOffboard = await droneState.isOffboard();
-
-    // Log status every 0.5 seconds
-    if (Math.floor((Date.now() - stopStart) / 500) > Math.floor((Date.now() - stopStart - 500) / 500)) {
-      const elapsed = ((Date.now() - stopStart) / 1000).toFixed(1);
-      console.log(`[STOP] t=${elapsed}s: alt=${currentAlt.toFixed(2)}m, mode=${currentMode}, offboard=${isOffboard}, vx=0.0`);
-    }
-
-    await sleep(250);
-  }
+  await sleep(2000);
 
   // Step 5: Stop broadcasting setpoints
   console.log("[STEP 5] Stopping setpoint broadcast to exit OFFBOARD mode...");
@@ -245,22 +218,28 @@ async function manualOffboardMoveForwardSequence(droneController, droneState) {
  * @param {DroneController} droneController - The drone controller instance
  * @param {DroneStateModel} droneState - The drone state model instance
  */
-async function automatedOffboardMoveForwardSequence(droneController, droneState) {
+async function automatedOffboardMoveBackwardsSequence(droneController, droneState) {
   console.log("[INFO] Executing Automated OFFBOARD move forward sequence...\n");
 
-  // Step 1: Manual arm and takeoff
-  await manualArmAndTakeoff(droneController, droneState, TARGET_ALTITUDE);
+  // Step 1: Automated arm and takeoff using requestAutoState
+  console.log("[STEP 1] Requesting automated takeoff to target altitude...");
+  await droneController.requestAutoState({
+    kind: "airborne",
+    altMeters: TARGET_ALTITUDE
+  });
+  console.log("[STEP 1] Automated takeoff requested - controller will handle arming and takeoff\n");
 
   // Step 2: Enter OFFBOARD mode by setting forward velocity target
   console.log("[STEP 2] Entering OFFBOARD mode with forward velocity...");
   console.log(`[STEP 2] Moving forward at ${FORWARD_VELOCITY} m/s for ${MOVE_DURATION} seconds`);
   console.log(`[STEP 2] Expected distance: ~${FORWARD_VELOCITY * MOVE_DURATION} meters`);
 
-  await droneController.requestAutoState({
+  // No await. In this tutorial we want to count the acceleration time as time passed. In the real world it's wrong to do this but we just want to demonstrate it.
+  droneController.requestAutoState({
     kind: "offboard",
     target: {
       kind: "velocity_local",
-      vx: FORWARD_VELOCITY,
+      vx: -FORWARD_VELOCITY,
       vy: 0.0,
       vz: 0.0
     }
@@ -272,53 +251,19 @@ async function automatedOffboardMoveForwardSequence(droneController, droneState)
   // Step 3: Maintain forward movement for specified duration
   console.log(`[STEP 3] Moving forward for ${MOVE_DURATION} seconds...`);
 
-  const moveStart = Date.now();
-  while (Date.now() - moveStart < MOVE_DURATION * 1000) {
-    const currentState = await droneState.getState();
-    const currentAlt = currentState.altitude?.relative || 0;
-    const currentMode = currentState.vehicle?.mode || "unknown";
-    const isOffboard = await droneState.isOffboard();
-
-    // Log status every 1 second
-    if (Math.floor((Date.now() - moveStart) / 1000) > Math.floor((Date.now() - moveStart - 1000) / 1000)) {
-      const elapsed = ((Date.now() - moveStart) / 1000).toFixed(1);
-      console.log(`[MOVE] t=${elapsed}s: alt=${currentAlt.toFixed(2)}m, mode=${currentMode}, offboard=${isOffboard}, vx=${FORWARD_VELOCITY}`);
-    }
-
-    await sleep(500);
-  }
-
+  await sleep(MOVE_DURATION*1000);
   console.log(`[STEP 3] Forward movement duration complete\n`);
 
   // Step 4: Stop by setting zero velocity target
   console.log("[STEP 4] Stopping movement by setting zero velocity target...");
   await droneController.requestAutoState({
-    kind: "offboard",
-    target: {
-      kind: "velocity_local",
-      vx: 0.0,
-      vy: 0.0,
-      vz: 0.0
-    }
+    kind: "airborne",
+    altMeters: TARGET_ALTITUDE
   });
   console.log("[STEP 4] Offboard target set to zero velocity\n");
 
   // Maintain zero velocity for 2 seconds to ensure complete stop
-  const stopStart = Date.now();
-  while (Date.now() - stopStart < 2000) {
-    const currentState = await droneState.getState();
-    const currentAlt = currentState.altitude?.relative || 0;
-    const currentMode = currentState.vehicle?.mode || "unknown";
-    const isOffboard = await droneState.isOffboard();
-
-    // Log status every 0.5 seconds
-    if (Math.floor((Date.now() - stopStart) / 500) > Math.floor((Date.now() - stopStart - 500) / 500)) {
-      const elapsed = ((Date.now() - stopStart) / 1000).toFixed(1);
-      console.log(`[STOP] t=${elapsed}s: alt=${currentAlt.toFixed(2)}m, mode=${currentMode}, offboard=${isOffboard}, vx=0.0`);
-    }
-
-    await sleep(250);
-  }
+  await sleep(2000);
 
   // Step 5: Clear offboard target to exit OFFBOARD mode
   console.log("[STEP 5] Clearing offboard target to exit OFFBOARD mode...");
@@ -334,32 +279,13 @@ async function automatedOffboardMoveForwardSequence(droneController, droneState)
   const exitState = await droneState.getState();
   console.log(`[STEP 5] Exited OFFBOARD mode. Current mode (POSCTL expected): ${exitState.vehicle?.mode}\n`);
 
-  // Step 6: Manual landing and disarm
-  console.log("[STEP 6] Landing drone...");
-  await droneController.land();
-  console.log("[STEP 6] Land command sent");
-
-  // Wait for landing to complete
-  while (!(await droneState.isLanded())) {
-    console.log("[STEP 6] Waiting for landing to complete...");
-    await sleep(1000);
-  }
-
-  // Disarm if still armed
-  if (await droneState.isArmed()) {
-    console.log("[STEP 6] Disarming drone...");
-    await droneController.disarm();
-    console.log("[STEP 6] Disarm command sent");
-
-    // Wait for disarming
-    while (await droneState.isArmed()) {
-      console.log("[STEP 6] Waiting for disarm...");
-      await sleep(1000);
-    }
-  }
-
-  const finalState = await droneState.getState();
-  console.log(`[STEP 6] Landing and disarming complete. armed=${finalState.vehicle?.armed}, mode=${finalState.vehicle?.mode}\n`);
+  // Step 6: Automated landing and disarm using requestAutoState
+  console.log("[STEP 6] Requesting automated landing and disarm...");
+  await droneController.requestAutoState({
+    kind: "landed",
+    armed: false
+  });
+  console.log("[STEP 6] Automated landing and disarm requested - controller will handle landing and disarming\n");
 
   console.log("\n[SUCCESS] Automated OFFBOARD move forward sequence finished!");
 }
