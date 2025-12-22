@@ -623,6 +623,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openToolsPanel', () => {
+      vscode.commands.executeCommand('tensorfleet-tooling-view.focus');
+    })
+  );
+
+  context.subscriptions.push(
     registerTensorFleetCommand('tensorfleet.createNewProject', () => createNewProject(context), {
       feature: 'projects'
     })
