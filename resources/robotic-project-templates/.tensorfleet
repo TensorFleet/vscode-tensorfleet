@@ -1,0 +1,5 @@
+{
+  "template": "robotic",
+  "version": 1,
+  "managedEnv": true
+}

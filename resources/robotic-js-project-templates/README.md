@@ -1,116 +1,82 @@
 # TensorFleet Robotic JS Project
 
-This template is the JavaScript/Node.js sibling of the Python-based `robotic-project-templates`. It targets the same ROS graph and topics, but uses `roslib` over rosbridge instead of `roslibpy`.
+JavaScript/Node.js template for robot control over rosbridge using `roslib`. Includes obstacle avoidance and vision examples.
 
-The examples assume:
+## Quick Start
 
-- A TensorFleet VM running ROS 2, Gazebo, PX4, rosbridge, and the Foxglove bridge.
-- rosbridge is reachable at `ws://172.16.0.10:9091` (or the URL configured in `config/robot_config.yaml`).
+1. **Start your VM**: Click the **TensorFleet** status bar at the bottom of VS Code and select **Start VM**.
+2. **Install runtime and dependencies**:
 
-## Project Structure
+   **Recommended: [Bun](https://bun.sh)** (v1.0.0+)
+   ```bash
+   # Install Bun (macOS, Linux, WSL)
+   curl -fsSL https://bun.sh/install | bash
+   
+   # Install dependencies
+   bun install
+   ```
 
-```
-.
-├── src/
-│   ├── robot_mover.js        # Timed movement sequence over /cmd_vel_raw
-│   ├── obstacle_avoider.js   # LiDAR-based obstacle avoidance state machine
-│   └── vision_yolo.js        # Image subscribe/republish helper over rosbridge
-├── config/
-│   └── robot_config.yaml     # Robot & network configuration (VM IP, rosbridge URL, topics)
-├── launch/                   # (Optional) ROS 2 launch files
-├── package.json              # Node.js project definition (roslib dependency)
-└── README.md                 # This guide
-```
+   **Alternative: Node.js** (v14.0.0+)
+   - This project uses modern JavaScript syntax (optional chaining `?.`)
+   - If you see `SyntaxError: Unexpected token '.'`, upgrade Node.js to v14+ or switch to Bun
+   - Run `npm run check` to verify your runtime compatibility
+   ```bash
+   npm install
+   ```
+3. Open **Simulation View** and **Image Panel** from the sidebar.
+4. Run any of the example scripts:
+   - `bun robot:mover` - Drive forward, backward, turn left/right sequence
+   - `bun robot:obstacle` - LiDAR-based obstacle avoidance
+   - `bun robot:vision` - YOLO object detection on camera feed
+   - `bun robot:vision:colors` - Color-based detection (best for simulation)
 
-## Setup
+## Scripts
 
-From the project root (the directory containing this README and `package.json`):
+### Movement Scripts
+- `src/robot_mover.js` - Timed movement sequence (forward, stop, backward, stop, turn left/right).
+- `src/obstacle_avoider.js` - LiDAR-based obstacle avoidance state machine. Moves forward by default, escapes when obstacles detected.
 
-```bash
-bun install
-```
+### Vision Scripts
 
-You do not need ROS 2 installed locally; the scripts talk to rosbridge running in your VM.
+**Setup:**
+1. Open **Image Panel** from the sidebar
+2. Open **Teleops Panel** to manually drive the robot around
+3. In the Image Panel dropdown, select `/camera/image_raw` to see the robot's camera feed
+
+**Running vision detection:**
+1. Run one of the vision scripts:
+   - `bun robot:vision` - YOLO detection (80 real-world object classes like people, cars, animals)
+   - `bun robot:vision:colors` - Color-based detection (best for simulation with solid-colored shapes)
+2. Switch the Image Panel dropdown to `/camera/image_annotated` to see the detection output with bounding boxes and labels
+3. Use the Teleops Panel to drive the robot and see detections update in real-time
 
 ## Configuration
+Edit `config/robot_config.yaml` or override via env vars:
+- `TENSORFLEET_BASE_URL` + `TENSORFLEET_JWT` - primary TensorFleet connection (other URLs are derived automatically when blank)
+- `ROSBRIDGE_URL` - rosbridge WebSocket URL
+- `ROS_HOST` / `ROS_PORT` - rosbridge host and port (fallback if `ROSBRIDGE_URL` is not set)
+- `CMD_VEL_TOPIC` - velocity command topic (default `/cmd_vel_raw`)
+- `SCAN_TOPIC` - LiDAR scan topic for obstacle avoidance (default `/scan`)
+- `LINEAR_SPEED`, `ANGULAR_SPEED` - motion tuning
+- `OBSTACLE_DISTANCE`, `CLEAR_DISTANCE` - avoidance thresholds
+- `IMAGE_TOPIC`, `ANNOTATED_IMAGE_TOPIC` - camera topics
 
-The default network and topic configuration lives in `config/robot_config.yaml`:
-
-```yaml
-network:
-  vm_ip: "172.16.0.10"
-  rosbridge_url: "ws://172.16.0.10:9091"
-  foxglove_bridge_url: "ws://172.16.0.10:8765"
-
-motion:
-  cmd_vel_topic: "/cmd_vel_raw"
+## Layout
+```
+.
+|-- src/
+|   |-- lib/                # Shared utilities (proxy, config, connection)
+|   |-- robot_mover.js      # Basic movement example
+|   |-- obstacle_avoider.js # LiDAR avoidance state machine
+|   |-- vision_yolo.js      # YOLO detection pipeline (real-world objects)
+|   `-- vision_colors.js    # Color-based detection (simulation shapes)
+|-- config/                 # Network + robot config
+|-- launch/                 # Optional ROS 2 launch files
+|-- package.json
+`-- README.md
 ```
 
-Each script reads from this YAML file for its defaults and also accepts environment variables so you can override settings without editing code:
-
-- `ROSBRIDGE_URL` – full rosbridge WebSocket URL, e.g. `ws://172.16.0.10:9091`
-- `ROS_HOST` / `ROS_PORT` – rosbridge host and port (fallback if `ROSBRIDGE_URL` is not set)
-- `CMD_VEL_TOPIC` – velocity command topic (default from `motion.cmd_vel_topic`)
-- `SCAN_TOPIC` – LiDAR scan topic for obstacle avoidance (default `/scan`)
-- `LINEAR_SPEED`, `ANGULAR_SPEED` – motion tuning
-- `OBSTACLE_DISTANCE`, `CLEAR_DISTANCE` – avoidance thresholds
-- `IMAGE_TOPIC`, `ANNOTATED_IMAGE_TOPIC` – image passthrough topics
-
-## Example: Basic Motion (`robot_mover.js`)
-
-Run a simple movement sequence (forward, stop, backward, stop, turn left/right, stop):
-
-```bash
-bun src/robot_mover.js
-```
-
-This script:
-
-- Connects to rosbridge via `roslib`
-- Publishes `geometry_msgs/Twist` messages on `/cmd_vel_raw`
-- Uses a promise-based helper to publish at 20 Hz for a given duration
-
-You can adjust speed and topics via environment variables, for example:
-
-```bash
-ROS_HOST=172.16.0.10 ROS_PORT=9091 CMD_VEL_TOPIC=/cmd_vel_raw LINEAR_SPEED=0.3 node src/robot_mover.js
-```
-
-## Example: Obstacle Avoidance (`obstacle_avoider.js`)
-
-Run a LiDAR-based obstacle avoidance state machine:
-
-```bash
-bun src/obstacle_avoider.js
-```
-
-Behavior:
-
-- Moves forward by default
-- Monitors a `sensor_msgs/LaserScan` on `/scan`
-- When an obstacle is closer than `OBSTACLE_DISTANCE` in front, chooses the best escape direction (left, right, or back)
-- Resumes forward motion once the path ahead is clear beyond `CLEAR_DISTANCE`
-
-Logs are printed to the terminal to mirror the Python sample, and velocity commands are sent to the same `/cmd_vel_raw` topic.
-
-## Example: Image Passthrough (`vision_yolo.js`)
-
-This script demonstrates a lightweight image pipeline suitable for pairing with a Python YOLO node:
-
-```bash
-bun src/vision_yolo.js
-```
-
-By default it:
-
-- Subscribes to `sensor_msgs/Image` on `/camera/image_raw`
-- Republishes the same messages on `/camera/image_annotated`
-
-Use this pattern as a starting point for building web-based or Node-based visualization tools that sit alongside a heavier Python perception stack (for example, YOLO in `vision_yolo.py` from the Python template).
-
-## Notes on Python → JS Port
-
-- The ROS design and message types are unchanged: `/cmd_vel_raw` (`geometry_msgs/Twist`), `/scan` (`sensor_msgs/LaserScan`), and camera topics (`sensor_msgs/Image`).
-- `rclpy` and `roslibpy` are replaced by `roslib` over a WebSocket connection to rosbridge.
-- Blocking loops with `time.sleep` are replaced with `setInterval` and `Promise`-based helpers.
-- Python classes and methods are ported to JavaScript classes using the same state-machine logic and topic names.
+## Tips
+- rosbridge runs in the VM; no local ROS 2 binaries needed
+- Connection auto-selects: uses VM Manager proxy if TensorFleet credentials available, otherwise direct rosbridge
+- Adjust speeds and thresholds via environment variables for different robots/maps

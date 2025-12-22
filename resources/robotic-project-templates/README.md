@@ -2,10 +2,10 @@
 
 Welcome to your TensorFleet robotic workspace! 🤖
 
-This template is focused on ground robots and simple velocity control instead of drone flight. It is designed to let you:
+This template is focused on ground robots and simple velocity control. It is designed to let you:
 
 - Write Python code locally (no local ROS 2/PX4 install needed for most flows)
-- Connect to a VM that runs ROS 2 + Gazebo + PX4 + bridges
+- Connect to a VM that runs ROS 2 + Gazebo + bridges (via proxy or direct)
 - See results immediately in the TensorFleet VS Code panels (Image, Teleop, Raw Messages)
 
 ## Project Structure
@@ -13,19 +13,27 @@ This template is focused on ground robots and simple velocity control instead of
 ```
 .
 ├── src/
-│   ├── robot_mover.py      # Example ROS 2 velocity node (runs inside ROS 2 env)
-│   └── vision_yolo.py      # YOLO-based vision node via rosbridge (Python-only client)
+│   ├── lib/                    # Shared utilities for remote VM connectivity
+│   │   ├── proxy_ws_client.py  # WebSocket proxy client for VM Manager
+│   │   ├── tensorfleet_config.py  # Configuration management
+│   │   ├── robotic_utils.py    # connect_to_robot() and helpers
+│   │   └── url_utils.py        # URL conversion utilities
+│   ├── robot_mover.py          # Example ROS 2 velocity node
+│   ├── obstacle_avoider.py     # LiDAR-based obstacle avoidance
+│   └── vision_yolo.py          # YOLO-based vision node via rosbridge
 ├── config/
-│   └── robot_config.yaml   # Robot & network configuration (VM IP, rosbridge URL, topics)
-├── launch/                 # (Optional) ROS 2 launch files
-├── requirements.txt        # Python dependencies (cv2, ultralytics, roslibpy, etc.)
-└── README.md               # This guide (Quick Start + YOLO vision)
+│   └── robot_config.yaml       # Robot & network configuration
+├── launch/                     # (Optional) ROS 2 launch files
+├── .env.example                # Environment variable template
+├── .tensorfleet                # TensorFleet workspace marker
+├── requirements.txt            # Python dependencies
+└── README.md                   # This guide
 ```
 
-## Quick Start (Python Environment)
+## Quick Start
 
-1. Create a **Robotic Project** from the TensorFleet tooling view in VS Code.
-2. In the new project folder, install dependencies with `uv` on your **local machine**:
+1. **Start your VM**: Click the **TensorFleet** status bar at the bottom of VS Code and select **Start VM**.
+2. Install dependencies with `uv` .
 
 ```bash
 # If uv isn't installed: curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -33,106 +41,117 @@ uv venv
 uv pip install -r requirements.txt
 ```
 
-This installs only Python packages (OpenCV, ultralytics, roslibpy, etc.). You do **not** need ROS 2 or PX4 installed locally.
+3. Open **Simulation View** and **Image Panel** from the sidebar. 
+4. Run any of the example scripts:
+
+```bash
+# Basic movement demo
+uv run python src/robot_mover.py
+
+# Obstacle avoidance (requires LiDAR)
+uv run python src/obstacle_avoider.py
+
+# YOLO vision (requires camera)
+uv run python src/vision_yolo.py
+```
+
+## Remote VM Connection
+
+The scripts automatically connect through the TensorFleet VM Manager proxy when:
+- `TENSORFLEET_BASE_URL` and `TENSORFLEET_JWT` are set in `.env`
+- A VM is connected in the VS Code extension
+
+The extension manages your `.env` file automatically, updating connection parameters when:
+- You log in to TensorFleet
+- You connect/disconnect from a VM
+- You switch regions
+
+### Direct Connection (Fallback)
+
+If proxy settings are not available, scripts fall back to direct connection using:
+- `ROS_HOST` / `ROS_PORT` environment variables, or
+- Values from `config/robot_config.yaml`
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TENSORFLEET_BASE_URL` | VM Manager base URL (managed by extension) | - |
+| `TENSORFLEET_JWT` | Auth token (managed by extension) | - |
+| `ROS_HOST` | Direct rosbridge host | `172.16.0.10` |
+| `ROS_PORT` | Direct rosbridge port | `9091` |
+| `CMD_VEL_TOPIC` | Velocity command topic | `/cmd_vel_raw` |
+| `SCAN_TOPIC` | LiDAR scan topic | `/scan` |
+| `IMAGE_TOPIC` | Camera image topic | `/camera/image_raw` |
+| `LINEAR_SPEED` | Forward speed (m/s) | `0.2` |
+| `ANGULAR_SPEED` | Turning speed (rad/s) | `0.5` |
+
+## Example: Basic Motion (`robot_mover.py`)
+
+This script:
+- Connects to rosbridge (via proxy or direct)
+- Publishes `geometry_msgs/Twist` on `/cmd_vel_raw`
+- Executes a short sequence: forward, backward, turn left, turn right, stop
+
+```bash
+uv run python src/robot_mover.py
+```
+
+## Example: YOLO Vision (`vision_yolo.py`)
+
+This script:
+- Connects to rosbridge via `roslibpy` (Python-only client)
+- Subscribes to `sensor_msgs/Image` on `/camera/image_raw`
+- Runs YOLO object detection on CPU using `ultralytics` and OpenCV
+- Publishes annotated images on `/camera/image_annotated`
+
+**Setup:**
+1. Open **Simulation View** from the sidebar to see the robot in Gazebo
+2. Open **Image Panel** from the sidebar
+3. Open **Teleops Panel** to manually drive the robot around
+4. In the Image Panel dropdown, select `/camera/image_raw` to see the robot's camera feed
+
+**Running vision detection:**
+1. Run the vision script:
+   ```bash
+   uv run python src/vision_yolo.py
+   ```
+2. Switch the Image Panel dropdown to `/camera/image_annotated` to see the detection output with bounding boxes and labels
+3. Use the Teleops Panel to drive the robot and see detections update in real-time
+
+YOLO runs on **CPU only**; no GPU is required.
+
+## Example: Obstacle Avoidance (`obstacle_avoider.py`)
+
+This script combines motion and LiDAR data for autonomous navigation:
+- Moves forward by default
+- Turns or backs up when obstacles are detected
+- Adaptive speed based on clearance
+
+```bash
+uv run python src/obstacle_avoider.py
+```
 
 ## VM / Infrastructure Assumptions
 
 Your TensorFleet VM should be running:
 
 - ROS 2 (Humble or newer)
-- Gazebo and PX4 as appropriate for your robot
-- rosbridge on the URL configured in `config/robot_config.yaml` (default `ws://172.16.0.10:8080`)
+- Gazebo and controllers for your robot
+- rosbridge on port 9091
 - Foxglove bridge (for the TensorFleet Image/Teleop/Raw panels)
 
 The VM is responsible for:
-
-- Simulating the robot and publishing sensor topics (e.g. `/camera/image_raw`, `/cmd_vel_raw`)
-- Hosting all ROS 2 / PX4 binaries
+- Simulating the robot and publishing sensor topics
+- Hosting all ROS 2 binaries
 
 Your local machine just runs Python, talks to rosbridge, and uses the VS Code extension.
 
-## Configure Networking
+## Customization
 
-Open `config/robot_config.yaml` and confirm the network block matches your VM:
-
-```yaml
-network:
-  vm_ip: "172.16.0.10"
-  rosbridge_url: "ws://172.16.0.10:8080"
-  foxglove_bridge_url: "ws://172.16.0.10:8765"
-
-motion:
-  cmd_vel_topic: "/cmd_vel_raw"
-```
-
-- `rosbridge_url` is how local Python scripts (like `vision_yolo.py`) connect into the VM.
-- `cmd_vel_topic` is where velocity commands are expected.
-
-## Example: Basic Motion (`robot_mover.py`)
-
-If you are inside a ROS 2 Python environment (e.g. directly in the VM or a container with `rclpy` and `geometry_msgs` installed), you can run the simple movement node:
-
-```bash
-uv run python src/robot_mover.py
-```
-
-This will:
-
-- Initialize a ROS 2 node
-- Publish `geometry_msgs/msg/Twist` on `/cmd_vel_raw`
-- Execute a short sequence: move forward, rotate, then stop
-
-Use this when you want to prototype behavior **inside** the ROS 2 environment.
-
-In this mode, your VM is still responsible for publishing camera data (for example on `/camera/image_raw`) if you want to pair motion with vision.
-
-## Example: YOLO Vision (`vision_yolo.py`)
-
-For most developers, the more interesting path is running vision locally with no ROS 2 installed on the client. With your VM publishing a camera topic on `/camera/image_raw` and `rosbridge` running at the URL in `robot_config.yaml`, run:
-
-```bash
-uv run python src/vision_yolo.py
-```
-
-This script:
-
-- Connects to rosbridge via `roslibpy` (Python-only client)
-- Subscribes to `sensor_msgs/Image` on `/camera/image_raw` (or a compressed variant if you configure it that way)
-- Runs YOLO object detection on CPU using `ultralytics` and OpenCV
-- Publishes:
-  - Annotated images on an **annotated image topic** (by default `/camera/image_annotated`)
-
-Then, in VS Code (TensorFleet extension, using the existing panels):
-
-- Open the **Raw Message panel** and select `/camera/image_annotated`
-- Use the **Teleop panel** to move the robot while detections update
-
-If `ultralytics` is not installed, the node falls back to drawing a single demo bounding box so you can still validate:
-
-- Topic wiring from VM → local Python → VM
-- Panel integration (Image/Raw/Teleop)
-
-YOLO is run on **CPU only**; no GPU is required.
-
-## Example: Obstacle Avoidance (`obstacle_avoider.py`)
-
-The `obstacle_avoider.py` script shows how to combine motion and vision/laser data into a simple behavior loop. When running it, make sure that:
-
-- Your VM publishes raw camera images on `/camera/image_raw` (or the topic configured in `robot_config.yaml`).
-- Any perception pipeline (e.g. `vision_yolo.py`) publishes an **annotated image topic** if you want to visualize processed images alongside obstacle avoidance.
-- The node subscribes to the raw/annotated topics as configured and publishes velocity commands to the motion topic (for example `/cmd_vel_raw`), similar to `robot_mover.py`.
-
-In TensorFleet, you can:
-
-- Use the **Image panel** to view `/camera/image_raw` or your YOLO annotated topic.
-- Use the **Raw Messages panel** to inspect detections (e.g. `/camera/yolo/detections`).
-- Use the **Teleop panel** or your own logic in `obstacle_avoider.py`/`robot_mover.py` to command motion while observing obstacle avoidance behavior.
-
-## Customization Ideas
-
-- Adjust topics and model name in `vision_yolo.py` (or `robot_config.yaml`) to match your robot.
-- Replace the YOLO model with your own detector or segmentation network.
-- Extend `robot_mover.py` into keyboard teleop, state machines, or mission logic.
-- Add new Python nodes in `src/` that publish/subscribe via rosbridge, using this template as a reference.
+- Adjust topics and model in `vision_yolo.py` or via environment variables
+- Replace the YOLO model with your own detector
+- Extend `robot_mover.py` into keyboard teleop, state machines, or mission logic
+- Add new Python nodes in `src/` that publish/subscribe via rosbridge
 
 Happy hacking on robots! ✨

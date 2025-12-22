@@ -623,6 +623,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openToolsPanel', () => {
+      vscode.commands.executeCommand('tensorfleet-tooling-view.focus');
+    })
+  );
+
+  context.subscriptions.push(
     registerTensorFleetCommand('tensorfleet.createNewProject', () => createNewProject(context), {
       feature: 'projects'
     })
@@ -636,6 +642,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.createNewRoboticProject', () => createNewRoboticProject(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.createNewRoboticPythonProject', () => createNewRoboticPythonProject(context))
   );
 
   context.subscriptions.push(
@@ -1246,6 +1256,8 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand('tensorfleet.createNewProject');
       } else if (message?.command === 'newRoboticProject') {
         vscode.commands.executeCommand('tensorfleet.createNewRoboticProject');
+      } else if (message?.command === 'newRoboticPythonProject') {
+        vscode.commands.executeCommand('tensorfleet.createNewRoboticPythonProject');
       } else if (message?.command === 'installTools') {
         getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'installTools' });
         vscode.commands.executeCommand('tensorfleet.installTools');
@@ -1659,8 +1671,17 @@ async function createNewRoboticProject(context: vscode.ExtensionContext, openNew
   await createNewProjectInternal(context, {
     kindLabel: 'robotic',
     defaultName: 'my-robotic-project',
-    commandLabel: 'TensorFleet Robotic Project',
+    commandLabel: 'TensorFleet Robotic Project (JavaScript)',
     templateSubdir: 'robotic-js-project-templates'
+  }, openNew);
+}
+
+async function createNewRoboticPythonProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  await createNewProjectInternal(context, {
+    kindLabel: 'robotic',
+    defaultName: 'my-robotic-project',
+    commandLabel: 'TensorFleet Robotic Project (Python)',
+    templateSubdir: 'robotic-project-templates'
   }, openNew);
 }
 
@@ -3038,11 +3059,6 @@ function buildMenuForState(
       primaryActions.push({
         label: '$(debug-stop) Stop VM'
       });
-      if (ipAddress) {
-        primaryActions.push({
-          label: '$(terminal) Connect via SSH'
-        });
-      }
       break;
 
     case 'stopped':
@@ -3368,14 +3384,6 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
       await vmManagerIntegration.startVm();
     } else if (selection.label.includes('Retry Start') && vmManagerIntegration) {
       await vmManagerIntegration.startVm();
-    } else if (selection.label.includes('Connect via SSH') && ipAddress) {
-      // Open terminal with SSH command
-      const terminal = vscode.window.createTerminal({
-        name: `SSH to ${ipAddress}`,
-        shellPath: 'ssh',
-        shellArgs: [`root@${ipAddress}`]
-      });
-      terminal.show();
     } else if (selection.label.includes('Refresh Status') && vmManagerIntegration) {
       vmManagerIntegration.refreshStatus(false);
     } else if (selection.label.includes('Change Region')) {

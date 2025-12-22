@@ -336,6 +336,7 @@ export class ROS2Bridge {
     return [
       { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/image_raw", type: "sensor_msgs/msg/Image" },
+      { topic: "/camera/image_annotated", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
       { topic: "/camera/color/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/color/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
