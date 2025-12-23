@@ -82,18 +82,20 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
   const s: any = useDroneState(model);
 
   // Heading from VFR HUD first, then global HDG fallback
-  const heading =
-    (s?.vfr_hud?.heading ?? null) !== null
-      ? s.vfr_hud.heading
-      : (s?.global_position_int?.hdg ?? undefined);
+  // const heading = // not published
+  //   (s?.vfr_hud?.heading ?? null) !== null
+  //     ? s.vfr_hud.heading
+  //     : (s?.global_position_int?.hdg ?? undefined);
+  const heading = (s?.global_position_int?.hdg ?? undefined);
 
   // Throttle can be 0..1 or 0..100; render robustly
-  const throttleText = (() => {
-    const t = s?.vfr_hud?.throttle;
-    if (t === undefined || t === null || Number.isNaN(t)) return NDASH;
-    const val = t > 1.5 ? t : t * 100;
-    return `${Math.round(val)}%`;
-  })();
+  // const throttleText = (() => { // not published
+  //   const t = s?.vfr_hud?.throttle;
+  //   if (t === undefined || t === null || Number.isNaN(t)) return NDASH;
+  //   const val = t > 1.5 ? t : t * 100;
+  //   return `${Math.round(val)}%`;
+  // })();
+  const throttleText = NDASH;
 
   const faults: string[] = s?.status?.faults || [];
   const fcuOk = !!s?.vehicle?.connected;
@@ -142,12 +144,12 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
         <hr className="dsp-sep" />
 
         {/* Speeds */}
-        <Row label={<span>🏎️ Airspeed</span>} value={num(s?.vfr_hud?.airspeed, " m/s", 1)} />
-        <Row label={<span>Groundspeed</span>} value={num(s?.vfr_hud?.groundspeed, " m/s", 1)} />
-        <Row label={<span>Throttle</span>} value={throttleText} />
-        <Row label={<span>Climb</span>} value={num(s?.vfr_hud?.climb, " m/s", 1)} />
+        {/* <Row label={<span>🏎️ Airspeed</span>} value={num(s?.vfr_hud?.airspeed, " m/s", 1)} /> // not published */}
+        {/* <Row label={<span>Groundspeed</span>} value={num(s?.vfr_hud?.groundspeed, " m/s", 1)} /> // not published */}
+        {/* <Row label={<span>Throttle</span>} value={throttleText} /> // not published */}
+        {/* <Row label={<span>Climb</span>} value={num(s?.vfr_hud?.climb, " m/s", 1)} /> // not published */}
 
-        <hr className="dsp-sep" />
+        {/*<hr className="dsp-sep" />*/}
 
         {/* Battery */}
         <Row label={<span>🔋 Battery</span>} value={pctText(s?.battery?.percentage)} />

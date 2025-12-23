@@ -48,7 +48,6 @@ This service communicates directly with the flight controller (PX4/ArduPilot) to
 ### Sensor Topics
 
 - **`/mavros/battery`**: Battery voltage, current, percentage
-- **`/mavros/vfr_hud`**: Flight instruments (airspeed, groundspeed, heading)
 - **`/mavros/imu/data`**: Raw IMU accelerometer/gyroscope data
 
 ## Automatic State Transitions

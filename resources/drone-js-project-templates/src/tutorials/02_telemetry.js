@@ -29,7 +29,6 @@ async function main() {
         fix: null,
         altitude: null,
         battery: null,
-        vfr_hud: null,
     };
 
     // Raw MAVROS topic subscriptions for educational purposes
@@ -81,16 +80,6 @@ async function main() {
             { topic: "/mavros/battery", type: "sensor_msgs/BatteryState" },
             (msg) => {
                 rawTelemetry.battery = msg;
-            }
-        )
-    );
-
-    // Subscribe to VFR HUD (/mavros/vfr_hud) for additional flight data
-    rawSubscriptions.push(
-        bridge.subscribe(
-            { topic: "/mavros/vfr_hud", type: "mavros_msgs/VFR_HUD" },
-            (msg) => {
-                rawTelemetry.vfr_hud = msg;
             }
         )
     );
@@ -164,17 +153,6 @@ async function main() {
             console.log("");
         }
 
-        // VFR HUD (additional flight instruments)
-        if (rawTelemetry.vfr_hud) {
-            console.log("Flight Instruments (/mavros/vfr_hud):");
-            console.log(`  Airspeed:   ${rawTelemetry.vfr_hud.airspeed?.toFixed(2)} m/s`);
-            console.log(`  Groundspeed:${rawTelemetry.vfr_hud.groundspeed?.toFixed(2)} m/s`);
-            console.log(`  Heading:    ${rawTelemetry.vfr_hud.heading?.toFixed(1)}°`);
-            console.log(`  Throttle:   ${rawTelemetry.vfr_hud.throttle?.toFixed(1)}%`);
-            console.log(`  Climb Rate: ${rawTelemetry.vfr_hud.climb?.toFixed(2)} m/s`);
-            console.log("");
-        }
-
         // Managed State Model Data
         console.log("MANAGED STATE MODEL (Aggregated Data):");
         console.log("---------------------------------------");
@@ -215,14 +193,6 @@ async function main() {
             console.log("Battery:");
             console.log(`  Voltage:    ${managedState.battery.voltage?.toFixed(2)} V`);
             console.log(`  Percentage: ${managedState.battery.percentage?.toFixed(0)}%`);
-            console.log("");
-        }
-
-        if (managedState.vfr_hud) {
-            console.log("Flight Data:");
-            console.log(`  Airspeed:   ${managedState.vfr_hud.airspeed?.toFixed(2)} m/s`);
-            console.log(`  Groundspeed:${managedState.vfr_hud.groundspeed?.toFixed(2)} m/s`);
-            console.log(`  Heading:    ${managedState.vfr_hud.heading?.toFixed(1)}°`);
             console.log("");
         }
 
