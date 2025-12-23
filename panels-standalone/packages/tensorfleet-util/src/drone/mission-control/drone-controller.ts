@@ -185,6 +185,13 @@ export class DroneController {
     console.log("[DRONE_CONTROLLER] Land command result:", result);
   }
 
+  async rtl(): Promise<void> {
+    await this._requireConnected();
+    console.log("[DRONE_CONTROLLER] Sending return-to-launch (RTL) command...");
+    const result = await this.mavrosSetMode("AUTO.RTL", 0);
+    console.log("[DRONE_CONTROLLER] RTL command result:", result);
+  }
+
   // -------- Requested state / auto state management --------
 
   public async requestAutoState(state: TargetAutoState): Promise<void> {
