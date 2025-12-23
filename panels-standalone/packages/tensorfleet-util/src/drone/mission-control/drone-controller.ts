@@ -230,7 +230,7 @@ export class DroneController {
       case undefined:
         return true;
       case "landed": {
-        return landed;
+        return landed && (this.targetAutoState.armed === null || this.targetAutoState.armed === currentState.vehicle?.armed);
       }
       case "airborne": {
         return (currentState.vehicle?.armed && !( landed || landing || takingOff || onGround)) ?? false;
