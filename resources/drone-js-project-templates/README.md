@@ -1,81 +1,45 @@
-# TensorFleet Drone JS Project
+# TensorFleet Robotic JS Project
 
-JavaScript/Node.js template for drone control over rosbridge using `roslib`. Includes an OFFBOARD velocity guided mover driven by a mission plan.
+JavaScript/Node.js template for robot control over rosbridge using `roslib`. Includes obstacle avoidance and vision examples.
 
-## Requirements
+## Quick Start
 
-Install [Bun](https://bun.sh) (v1.0.0+)
-```bash
-curl -fsSL https://bun.sh/install | bash
-```
+1. **Start your VM**: Click the **TensorFleet** status bar at the bottom of VS Code and select **Start VM**.
+2. **Install runtime and dependencies**:
 
-## Quick start
-1) Install JavaScript dependencies: `bun install`
-2) Open `Simulation view` and `Map View`.
-3) Start your VM, then run:
-   - `bun run restart` - Restart the simulation (resets drone state)
-   - `bun drone:mover` - ARM → TAKEOFF → OFFBOARD waypoint mission → LAND
+   **Recommended: [Bun](https://bun.sh)** (v1.0.0+)
+   ```bash
+   # Install Bun (macOS, Linux, WSL)
+   curl -fsSL https://bun.sh/install | bash
+   
+   # Install dependencies
+   bun install
+   ```
 
+   **Alternative: Node.js** (v14.0.0+)
+   - This project uses modern JavaScript syntax (optional chaining `?.`)
+   - If you see `SyntaxError: Unexpected token '.'`, upgrade Node.js to v14+ or switch to Bun
+   - Run `npm run check` to verify your runtime compatibility
+   ```bash
+   npm install
+   ```
+3. Open **Simulation View** and **Image Panel** from the sidebar.
+4. Run any of the example scripts:
+   - `bun robot:mover` - Drive forward, backward, turn left/right sequence
+   - `bun robot:obstacle` - LiDAR-based obstacle avoidance
+   - `bun robot:vision` - YOLO object detection on camera feed
+   - `bun robot:vision:colors` - Color-based detection (best for simulation)
 
 ## Scripts
-- **`check-runtime.js`**: Runtime compatibility checker. Verifies your JavaScript runtime (Bun or Node.js) supports modern syntax features like optional chaining. Run `bun run check` or `npm run check` if you encounter syntax errors. Provides specific troubleshooting steps if issues are detected.
-- `src/restart_sim.js`: Restart the PX4 simulation via `/simulation_manager/start_simulation` service. Useful for resetting drone state between test runs.
-- `src/drone_mover.js`: Complete autonomous mission: ARM → TAKEOFF → OFFBOARD → fly waypoints from `missions/example_mission.plan` → return home → LAND. Falls back to 8-point circle pattern if mission plan is missing. Uses env or `config/drone_config.yaml` (`offboard` section) for tuning.
 
+### Simulation scripts
+- `src/restart_sim.js` - Restarts the simulation
 
-## Tutorials
+### Movement Scripts
+- `src/drone_mover.js` - Makes the drone Take off, follow an "R" flight pattern and then land.
 
-Learn drone control step-by-step with focused examples:
+### Vision Scripts
 
-**Beginner** (getting started):
-1. `bun run tutorial:01` - Connect to rosbridge and read drone state
-2. `bun run tutorial:02` - Display all telemetry (position, GPS, battery)
-3. `bun run tutorial:03` - Send ARM/DISARM command
-
-**Intermediate** (basic flight):
-4. `bun run tutorial:04` - Takeoff to altitude and land (complete flight cycle)
-5. `bun run tutorial:05` - Enter OFFBOARD mode and hover
-
-**Advanced** (autonomous navigation):
-6. `bun run tutorial:06` - Move forward using velocity control
-7. `bun run tutorial:07` - Navigate to waypoint with position feedback
-
-Each tutorial is ~50-100 lines and demonstrates one concept clearly. See `src/tutorials/` for source code.
-
-## Documentation
-
-- **[Tutorials Overview](tutorials/README.md)** - Complete tutorial index and navigation
-- **[Technical Reference](TECHNICAL.md)** - Detailed technical implementation details, ROS/MAVROS internals, and API documentation
-- **[Configuration Guide](CONFIGURATION.md)** - Comprehensive setup guide for connection methods, proxy configuration, and troubleshooting
-- **[Simulation Guide](SIMULATION.md)** - PX4 simulation setup and management
-- **[TensorFleet Util](TENSORFLEET_UTIL.md)** - tensorfleet-util package documentation and API reference
-
-## Configuration
-Edit `config/drone_config.yaml` or override via env vars:
-- `TENSORFLEET_BASE_URL` + `TENSORFLEET_JWT` - primary TensorFleet connection (other URLs are derived automatically when blank)
-- `ROSBRIDGE_URL` - rosbridge WebSocket URL
-- `SETPOINT_FRAME_ID` - frame for setpoints (default `map`)
-- `ALT_TARGET`, `EDGE_M`, `V_FAST`, `V_MIN`, `WAYPOINT_RADIUS`, `SLOW_RADIUS`, `SETPOINT_HZ`, `R2B_HOST`, `R2B_PORT` - OFFBOARD tuning for `drone_mover.js` (defaults favor a small world: ~1m alt, ~5m hop, gentle velocities)
-- `MISSION_PLAN_PATH` - override the plan file used by `drone_mover.js` (defaults to `missions/example_mission.plan`)
-The `offboard` section in the YAML mirrors the environment overrides for `drone_mover.js`.
-
-## Layout
-```
-.
-|-- src/
-|   |-- tutorials/          # Step-by-step learning scripts
-|   |-- lib/                # Shared utilities
-|   |-- drone_mover.js      # Advanced mission example
-|   `-- restart_sim.js      # Simulation restart utility
-|-- config/                 # Network + flight config
-|-- missions/               # Example mission plans
-|-- launch/                 # Optional ROS 2 launch files
-|-- package.json
-`-- README.md
-```
-
-## Tips
-- **New to drone control?** Start with the tutorials (`bun run tutorial:01` through `tutorial:07`)
-- rosbridge runs in the VM; no local ROS 2 binaries needed
-- Use `bun run restart` to reset simulation between test runs
-- Verify connectivity with `src/drone_mover.js` for full autonomous mission
+**Setup:**
+1. Open **Map Panel** from the sidebar
+2. Open **Simulation Panel** to view the drone's movement in 3D view.

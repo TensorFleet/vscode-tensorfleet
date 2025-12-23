@@ -49,12 +49,13 @@ async function manualArmDisarmSequence(droneController, droneState) {
   // Step 2: Wait to observe the armed state
   console.log("[STEP 2] Waiting 6 seconds to observe armed state...");
   await sleep(6000);
-  const armedState = await droneState.getState();
+  let armedState = await droneState.getState();
 
   while(!armedState.vehicle?.armed) {
     console.log("[STEP 2] Retrying. drone not armed...");
     await droneController.arm();
     await sleep(1000);
+    armedState = await droneState.getState();
   }
 
   console.log(`[STEP 2] State after arming : armed=${armedState.vehicle?.armed}, mode=${armedState.vehicle?.mode}`);
@@ -135,6 +136,8 @@ async function main() {
   console.log(`[EXIT] Final drone state : armed=${currentState.vehicle?.armed}, mode=${currentState.vehicle?.mode}`);
   droneState.disconnect();
   console.log("[EXIT] Disconnected from drone state monitoring.");
+
+  process.exit(0);
 }
 
 if (require.main === module) {

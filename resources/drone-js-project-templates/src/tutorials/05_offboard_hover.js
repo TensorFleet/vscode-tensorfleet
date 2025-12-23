@@ -57,6 +57,7 @@ async function main() {
   console.log("[EXIT] Disconnected from drone state monitoring.");
 
   console.log("\n[SUCCESS] OFFBOARD hover tutorial completed successfully!");
+  process.exit(0);
 }
 
 if (require.main === module) {
@@ -211,7 +212,7 @@ async function automatedOffboardHoverSequence(droneController, droneState) {
   console.log("[INFO] Executing Automated OFFBOARD hover sequence...\n");
 
   // Step 1: Manual arm and takeoff
-  await manualArmAndTakeoff(droneController, droneState, TARGET_ALTITUDE);
+  await droneController.requestAutoState({ kind: "airborne", altMeters: 6.0 });
 
   // Step 2: Enter OFFBOARD mode by setting zero velocity target (hover)
   console.log("[STEP 2] Entering OFFBOARD mode with zero velocity (hover)...");

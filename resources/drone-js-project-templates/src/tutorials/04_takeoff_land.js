@@ -50,6 +50,8 @@ async function main() {
     console.log(`[EXIT] Final drone state: armed=${currentState.vehicle?.armed}, mode=${currentState.vehicle?.mode}`);
     droneState.disconnect();
     console.log("[EXIT] Disconnected from drone state monitoring.");
+
+    process.exit(0);
 }
 
 if (require.main === module) {

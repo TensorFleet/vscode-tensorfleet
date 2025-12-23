@@ -62,6 +62,7 @@ async function main() {
   console.log("[EXIT] Disconnected from drone state monitoring.");
 
   console.log("\n[SUCCESS] Go to waypoint tutorial completed successfully!");
+  process.exit(0);
 }
 
 if (require.main === module) {
