@@ -270,7 +270,7 @@ export class DroneController {
               let yawDiff = currYaw - offboardTarget.yawRad;
 
               // Normalize yaw difference to [-pi, pi]
-              yawDiff = ((yawDiff + Math.PI) % (2 * Math.PI)) - Math.PI;
+              yawDiff = ((yawDiff + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
 
               if (Math.abs(yawDiff) > this.offboard_angle_distance) {
                 return false;
@@ -340,6 +340,9 @@ export class DroneController {
           }
 
           if(landed) {
+            // FIXME: TargetAutoState type allows armed: boolean | null for "landed" state, where null likely means "don't change arm state".
+            // However, when armed is null, the comparison this.targetAutoState.armed != currentState.vehicle?.armed is always true (since null != true and null != false),
+            // and the subsequent if(this.targetAutoState.armed) check treats null as falsy, causing an unintended disarm command regardless of current state.
             // Do we want to disarm?
             if(this.targetAutoState.armed != currentState.vehicle?.armed) {
               // We need to change the arm state.
