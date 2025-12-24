@@ -1692,6 +1692,14 @@ type NewProjectOptions = {
   templateSubdir?: string;
 };
 
+/**
+ * Check if the project template is for JavaScript-based projects
+ */
+function isJavaScriptProject(templateSubdir?: string): boolean {
+  const resolved = templateSubdir ?? 'drone-js-project-templates';
+  return resolved === 'drone-js-project-templates' || resolved === 'robotic-js-project-templates';
+}
+
 
 /**
  * Check if the current workspace is a tensorfleet project.
@@ -2184,6 +2192,17 @@ async function createNewProjectInternal(
         progress.report({ message: 'Setting up project structure…' });
         await copyDirectory(templateFolder, projectFolder);
 
+        // For JS projects, copy tensorfleet-util package
+        if (isJavaScriptProject(options.templateSubdir)) {
+          progress.report({ message: 'Including TensorFleet utilities…' });
+          const packagesFolder = vscode.Uri.joinPath(projectFolder, 'packages');
+          await vscode.workspace.fs.createDirectory(packagesFolder);
+          const tensorfleetUtilSource = vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'packages', 'tensorfleet-util');
+          const tensorfleetUtilDest = vscode.Uri.joinPath(packagesFolder, 'tensorfleet-util');
+
+          await copyDirectory(tensorfleetUtilSource, tensorfleetUtilDest, ['dist']);
+        }
+
         try {
           await refreshTensorfleetEnvFiles(context, 'project-create', [projectFolder]);
         } catch (err) {
@@ -2266,16 +2285,21 @@ async function installBundledTools(context: vscode.ExtensionContext) {
   }
 }
 
-async function copyDirectory(source: vscode.Uri, destination: vscode.Uri) {
+async function copyDirectory(source: vscode.Uri, destination: vscode.Uri, excludeDirs: string[] = []) {
   await vscode.workspace.fs.createDirectory(destination);
   const entries = await vscode.workspace.fs.readDirectory(source);
 
   for (const [name, fileType] of entries) {
+    // Skip excluded directories
+    if (fileType === vscode.FileType.Directory && excludeDirs.includes(name)) {
+      continue;
+    }
+
     const sourceEntry = vscode.Uri.joinPath(source, name);
     const destinationEntry = vscode.Uri.joinPath(destination, name);
 
     if (fileType === vscode.FileType.Directory) {
-      await copyDirectory(sourceEntry, destinationEntry);
+      await copyDirectory(sourceEntry, destinationEntry, excludeDirs);
     } else {
       await vscode.workspace.fs.copy(sourceEntry, destinationEntry, { overwrite: true });
     }

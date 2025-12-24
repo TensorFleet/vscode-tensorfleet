@@ -392,7 +392,7 @@ async function takeoffToAlt(ros, telemetry, targetAlt, timeoutSec = 60) {
 async function enterOffboard(ros, velPub, setpointHz = 20) {
     console.log("[OFFBOARD] Pre-streaming zero velocities...");
     const intervalMs = 1000 / setpointHz;
-    const end = Date.now() + 1500;
+    let end = Date.now() + 1500;
 
     const zeroVel = new ROSLIB.Message({
         header: { frame_id: "map" },
@@ -406,6 +406,8 @@ async function enterOffboard(ros, velPub, setpointHz = 20) {
         velPub.publish(zeroVel);
         await sleep(intervalMs);
     }
+
+    end = Date.now() + 15000;
 
     const modeSrv = new ROSLIB.Service({
         ros,
@@ -421,6 +423,11 @@ async function enterOffboard(ros, velPub, setpointHz = 20) {
 
     if (!resp?.mode_sent) {
         throw new Error("Failed to enter OFFBOARD mode");
+    }
+
+    while (Date.now() < end) {
+        velPub.publish(zeroVel);
+        await sleep(intervalMs);
     }
 
     console.log("[OFFBOARD] Entered OFFBOARD mode");
@@ -459,6 +466,55 @@ async function landDrone(ros, telemetry, setpointHz = 20, timeoutSec = 300) {
     console.warn("[LAND] Disarm not observed within timeout");
 }
 
+/**
+ * Initialize drone control components
+ * @returns {Promise<{bridge: any, droneState: any, droneController: any, currentState: any}>}
+ */
+async function initializeDroneControl() {
+    // Dynamic import for ES modules
+    const tensorfleet = await import('tensorfleet-util');
+    const { ROSLibBridgeWrapper } = require('./roslib-bridge-wrapper.js');
+
+    // Initialize ROS bridge connection
+    const bridge = new ROSLibBridgeWrapper();
+    await bridge.waitForConnection();
+
+    console.log("\n[INFO] Connected to ROS Bridge - initializing drone control...\n");
+
+    // Create drone state model for monitoring vehicle state
+    const droneState = new tensorfleet.DroneStateModel();
+    droneState.connect(bridge);
+
+    // Create drone controller for high-level commands
+    const droneController = new tensorfleet.DroneController(droneState, bridge);
+    await droneController.initialize();
+
+    // Wait for drone to be connected and ready
+    await waitUntilConnected(droneState);
+
+    console.log("[INFO] Drone connected. Waiting for full drone state...");
+
+    const currentState = await droneState.getState();
+
+    return { bridge, droneState, droneController, currentState };
+}
+
+/**
+ * Waits for the drone to establish connection with the flight controller
+ * @param {any} droneState - The drone state model instance
+ */
+async function waitUntilConnected(droneState) {
+    console.log("[INFO] Waiting for drone state connection...");
+    while (true) {
+        const state = await droneState.getState();
+        if (state.vehicle?.connected) {
+            console.log(`[INFO] Drone connected. Current state: armed=${state.vehicle.armed}, mode=${state.vehicle.mode}\n`);
+            return;
+        }
+        await sleep(100);
+    }
+}
+
 module.exports = {
     sleep,
     waitFor,
@@ -470,5 +526,7 @@ module.exports = {
     setMode,
     takeoffToAlt,
     enterOffboard,
-    landDrone
+    landDrone,
+    initializeDroneControl,
+    waitUntilConnected
 };

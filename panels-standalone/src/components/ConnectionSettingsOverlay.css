@@ -1,0 +1,153 @@
+.connection-overlay-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 999;
+}
+
+.connection-settings-overlay {
+  position: fixed;
+  top: 60px; /* Position below the top edge */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  min-width: 400px;
+  max-width: 500px;
+}
+
+.connection-settings-caret {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 8px solid var(--vscode-editor-background);
+  filter: drop-shadow(0 -1px 2px rgba(0, 0, 0, 0.2));
+}
+
+.connection-settings-content {
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 6px;
+  padding: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  color: var(--vscode-foreground);
+}
+
+.connection-settings-content h3 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.setting-group {
+  margin-bottom: 12px;
+}
+
+.setting-group label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.setting-group input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 3px;
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+}
+
+.setting-group input:focus {
+  outline: none;
+  border-color: var(--vscode-button-background);
+}
+
+.setting-group input[type="password"] {
+  font-family: monospace;
+}
+
+.connection-settings-actions {
+  display: flex;
+  align-items: center;
+  margin-top: 20px;
+  gap: 8px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.connection-settings-actions button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 3px;
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.reset-btn {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-input-border);
+}
+
+.reset-btn:hover {
+  background: var(--vscode-input-background);
+}
+
+.cancel-btn {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-input-border);
+}
+
+.cancel-btn:hover {
+  background: var(--vscode-input-background);
+}
+
+.apply-btn {
+  background: var(--vscode-button-background);
+  color: white;
+}
+
+.apply-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+/* Connection Settings Button */
+.connection-settings-button {
+  background: transparent;
+  border: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.connection-settings-button:hover {
+  background: var(--vscode-input-background);
+}
+
+.connection-settings-button:focus {
+  outline: 1px solid var(--vscode-button-background);
+}

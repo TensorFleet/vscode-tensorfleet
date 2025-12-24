@@ -11,265 +11,23 @@
 
 import { FoxgloveWsClient } from "./foxglove-networking";
 import { ROS_PORTS } from "./ws-proxy-client";
+import * as RosTypes from "tensorfleet-util/ros/ros-types";
+import { ROS2BridgeApi } from "tensorfleet-util/ros/ros-bridge-api";
 
 export type ConnectionMode = "foxglove";
+
+interface ConnectionSettings {
+  useProxy: boolean
+  proxyUrl: string;
+  vmManagerUrl: string;
+  nodeId: string;
+  token: string;
+  targetPort: number;
+}
 
 export interface Subscription {
   topic: string;
   type: string;
-}
-
-/** ---------- Common message structs ---------- */
-
-export interface BuiltinTime {
-  sec: number;
-  nanosec: number;
-}
-
-export interface StdHeader {
-  stamp: BuiltinTime;
-  frame_id: string;
-}
-
-export interface GeometryVector3 {
-  x: number;
-  y: number;
-  z: number;
-}
-
-export interface GeometryPoint {
-  x: number;
-  y: number;
-  z: number;
-}
-
-export interface GeometryQuaternion {
-  x: number;
-  y: number;
-  z: number;
-  w: number;
-}
-
-export interface GeometryPose {
-  position: GeometryPoint;
-  orientation: GeometryQuaternion;
-}
-
-export interface GeometryTwist {
-  linear: GeometryVector3;
-  angular: GeometryVector3;
-}
-
-export interface GeometryPoseWithCovariance {
-  pose: GeometryPose;
-  covariance: number[];
-}
-
-export interface GeometryTwistWithCovariance {
-  twist: GeometryTwist;
-  covariance: number[];
-}
-
-export interface GeometryPoseStamped {
-  header: StdHeader;
-  pose: GeometryPose;
-}
-
-export interface GeometryTwistStamped {
-  header: StdHeader;
-  twist: GeometryTwist;
-}
-
-export interface NavMsgsOdometry {
-  header: StdHeader;
-  child_frame_id: string;
-  pose: GeometryPoseWithCovariance;
-  twist: GeometryTwistWithCovariance;
-}
-
-export interface SensorMsgsNavSatStatus {
-  status: number;
-  service: number;
-}
-
-export interface SensorMsgsNavSatFix {
-  header: StdHeader;
-  status: SensorMsgsNavSatStatus;
-  latitude: number;
-  longitude: number;
-  altitude: number;
-  position_covariance: number[];
-  position_covariance_type: number;
-}
-
-export interface StdMsgsFloat64 {
-  data: number;
-}
-
-export interface GeographicMsgsGeoPoint {
-  latitude: number;
-  longitude: number;
-  altitude: number;
-}
-
-export interface MavrosMsgsAltitude {
-  header: StdHeader;
-  monotonic: number;
-  amsl: number;
-  local: number;
-  relative: number;
-  terrain: number;
-  bottom_clearance: number;
-}
-
-export interface MavrosMsgsHomePosition {
-  header: StdHeader;
-  geo: GeographicMsgsGeoPoint;
-  position: GeometryPoint;
-  orientation: GeometryQuaternion;
-  approach: GeometryVector3;
-}
-
-/** MAVROS State & ExtendedState */
-export interface MavrosMsgsState {
-  header?: StdHeader;
-  connected: boolean;
-  armed: boolean;
-  guided: boolean;
-  manual_input: boolean;
-  mode: string;
-  system_status: number;
-}
-
-export interface MavrosMsgsExtendedState {
-  header?: StdHeader;
-  landed_state: number;
-  vtol_state: number;
-}
-
-/** Battery & IMU */
-export interface SensorMsgsBatteryState {
-  header: StdHeader;
-  voltage: number;
-  temperature?: number | null;
-  current?: number;
-  charge?: number;
-  capacity?: number;
-  design_capacity?: number;
-  percentage?: number;
-  power_supply_status?: number;
-  power_supply_health?: number;
-  power_supply_technology?: number;
-  present?: boolean;
-  cell_voltage?: number[];
-  cell_temperature?: number[];
-  location?: string;
-  serial_number?: string;
-}
-
-export interface MavrosMsgsVFRHUD {
-  airspeed?: number;
-  groundspeed?: number;
-  heading?: number;
-  throttle?: number;
-  altitude?: number;
-  climb?: number;
-}
-
-export interface SensorMsgsImu {
-  header: StdHeader;
-  orientation: GeometryQuaternion;
-  orientation_covariance?: number[];
-  angular_velocity: GeometryVector3;
-  angular_velocity_covariance?: number[];
-  linear_acceleration: GeometryVector3;
-  linear_acceleration_covariance?: number[];
-}
-
-/** Aliases for geometry_msgs names used elsewhere */
-export type GeometryMsgsPoseStamped = GeometryPoseStamped;
-export type GeometryMsgsTwistStamped = GeometryTwistStamped;
-
-/** Convenience for consumers that expect decoded images */
-export interface ImageMessage {
-  topic: string;
-  timestamp: string;          // ISO string
-  timestampNanos?: number;    // nanoseconds since epoch
-  frameId: string;
-  encoding: string;
-  width: number;
-  height: number;
-  data: string;               // data URI
-  messageType: "raw" | "compressed";
-}
-
-export interface TwistMessage {
-  linear: { x: number; y: number; z: number };
-  angular: { x: number; y: number; z: number };
-}
-
-/** ---------- MAVROS service request/response types ---------- */
-/** mavros_msgs/srv/CommandBool */
-export interface CommandBool_Request {
-  value: boolean;
-}
-export interface CommandBool_Response {
-  success: boolean;
-  result: number;
-}
-
-/** mavros_msgs/srv/SetMode */
-export interface SetMode_Request {
-  base_mode: number;
-  custom_mode: string;
-}
-export interface SetMode_Response {
-  mode_sent: boolean;
-}
-
-/** mavros_msgs/srv/CommandTOL */
-export interface CommandTOL_Request {
-  min_pitch: number;
-  yaw: number;
-  latitude: number;
-  longitude: number;
-  altitude: number;
-}
-export interface CommandTOL_Response {
-  success: boolean;
-  result: number;
-}
-
-/** mavros_msgs/srv/ParamSet */
-export interface ParamValue {
-  integer: number;
-  real: number;
-}
-export interface ParamSet_Request {
-  param_id: string;
-  value: ParamValue;
-}
-export interface ParamSet_Response {
-  success: boolean;
-  value: ParamValue;
-}
-
-/** mavros_msgs/srv/CommandLong */
-export interface CommandLong_Request {
-  command: number;
-  confirmation?: number;
-  param1?: number;
-  param2?: number;
-  param3?: number;
-  param4?: number;
-  param5?: number;
-  param6?: number;
-  param7?: number;
-  broadcast?: boolean;
-}
-export interface CommandLong_Response {
-  success: boolean;
-  result: number;
 }
 
 /** ---------- Bridge Implementation ---------- */
@@ -304,36 +62,41 @@ export class ROS2Bridge {
   private topicsWatchTimer: number | null = null;
   private _lastTopicsSig: string | null = null;
 
+  // Stored connection settings (copy, not reference)
+  private connectionSettings: ConnectionSettings | null = null;
+
+  // Timer for checking settings changes
+  private settingsCheckTimer: number | null = null;
+
   constructor() {
     this._configureDefault();
+    this._startSettingsWatcher();
   }
 
-  connect(_mode: ConnectionMode = "foxglove", targetPort?: number) {
-    // @ts-ignore
-    const proxyUrl = (window as any).TENSORFLEET_PROXY_URL;
-    // @ts-ignore
-    const vmManagerUrl = (window as any).TENSORFLEET_VM_MANAGER_URL;
-    // @ts-ignore
-    const nodeId = (window as any).TENSORFLEET_NODE_ID;
-    // @ts-ignore
-    const token = (window as any).TENSORFLEET_JWT;
+  connect(_mode: ConnectionMode = "foxglove", targetPort?: number, settings?: ConnectionSettings) {
+    // Use provided settings or fall back to window globals
+    const proxyUrl = settings?.proxyUrl ?? (window as any).TENSORFLEET_PROXY_URL;
+    const vmManagerUrl = settings?.vmManagerUrl ?? (window as any).TENSORFLEET_VM_MANAGER_URL;
+    const nodeId = settings?.nodeId ?? (window as any).TENSORFLEET_NODE_ID;
+    const token = settings?.token ?? (window as any).TENSORFLEET_JWT;
+    const port = settings?.targetPort ?? targetPort ?? ROS_PORTS.FOXGLOVE_BRIDGE;
+    const useProxy = settings?.useProxy ?? (window as any).TENSORFLEET_USE_PROXY ?? true;
 
-    // Default to 8765 (Foxglove Bridge) if not specified
-    const port = targetPort ?? ROS_PORTS.FOXGLOVE_BRIDGE;
+    // Store a copy of the connection settings (not reference)
+    this.connectionSettings = {
+      useProxy: useProxy,
+      proxyUrl: proxyUrl || '',
+      vmManagerUrl: vmManagerUrl || '',
+      nodeId: nodeId || '',
+      token: token || '',
+      targetPort: port,
+    };
 
     if (!proxyUrl && !vmManagerUrl) {
       // eslint-disable-next-line no-console
       console.error("[ROS2Bridge] Missing proxy URL for vm-manager WebSocket proxy. Expected window.TENSORFLEET_PROXY_URL or window.TENSORFLEET_VM_MANAGER_URL to be set in the webview HTML.", {
         proxyUrl,
         vmManagerUrl,
-      });
-      return;
-    }
-    if (!nodeId || !token) {
-      // eslint-disable-next-line no-console
-      console.error("[ROS2Bridge] Missing nodeId or token for proxy connection. Expected window.TENSORFLEET_NODE_ID and window.TENSORFLEET_JWT to be set in the webview HTML.", {
-        hasNodeId: !!nodeId,
-        hasToken: !!token,
       });
       return;
     }
@@ -357,7 +120,7 @@ export class ROS2Bridge {
     });
 
     this.client = new FoxgloveWsClient({
-      useProxy: true,
+      useProxy,
       proxyUrl,
       vmManagerUrl,
       token,
@@ -450,6 +213,24 @@ export class ROS2Bridge {
     this.discoveredTopics.clear();
   }
 
+  /** Update connection settings and reconnect if they changed. */
+  updateConnectionSettings(settings: ConnectionSettings) {
+    const settingsChanged =
+      !this.connectionSettings ||
+      this.connectionSettings.proxyUrl !== settings.proxyUrl ||
+      this.connectionSettings.vmManagerUrl !== settings.vmManagerUrl ||
+      this.connectionSettings.nodeId !== settings.nodeId ||
+      this.connectionSettings.token !== settings.token ||
+      this.connectionSettings.targetPort !== settings.targetPort;
+
+    if (settingsChanged) {
+      // eslint-disable-next-line no-console
+      console.log("[ROS2Bridge] Connection settings changed, reconnecting...");
+      this.disconnect();
+      this.connect("foxglove", undefined, settings);
+    }
+  }
+
   /** Store a subscription and (re)apply it on connect. */
   subscribe(subscription: Subscription, handler: (message: any) => void): () => void {
     const { topic, type } = subscription;
@@ -510,6 +291,11 @@ export class ROS2Bridge {
     if (this.client) {
       this.client.publishSetup(topic, type, message);
     }
+  }
+
+  async setROSParameter(name: string, value: any): Promise<void> {
+    this.client?.setParameter(name, value);
+    return Promise.resolve();
   }
 
   /** Arrange for a service call to run once on every (re)connect before normal ops. */
@@ -577,70 +363,7 @@ export class ROS2Bridge {
     }) as T;
   }
 
-  // ---------- MAVROS service helpers ----------
 
-  async mavrosCommandLong(req: CommandLong_Request): Promise<CommandLong_Response> {
-    return await this.callService<CommandLong_Response>("/mavros/cmd/command", req);
-  }
-
-  async mavrosArmDisarm(value: boolean): Promise<CommandBool_Response> {
-    // eslint-disable-next-line no-console
-    console.log("[ROS2Bridge] calling mavrosArmDisarm with", value);
-    const req: CommandBool_Request = { value };
-    return await this.callService<CommandBool_Response>("/mavros/cmd/arming", req);
-  }
-
-  async mavrosSetMode(custom_mode: string, base_mode = 0): Promise<SetMode_Response> {
-    const req: SetMode_Request = { base_mode, custom_mode };
-    return await this.callService<SetMode_Response>("/mavros/set_mode", req);
-  }
-
-  async mavrosTakeoff(args: {
-    altitude: number;
-    min_pitch?: number;
-    yaw?: number;
-    latitude?: number;
-    longitude?: number;
-  }): Promise<CommandTOL_Response> {
-    const req: CommandTOL_Request = {
-      altitude: args.altitude,
-      min_pitch: args.min_pitch ?? 0.0,
-      yaw: args.yaw ?? 0.0,
-      latitude: args.latitude ?? 0.0,
-      longitude: args.longitude ?? 0.0,
-    };
-    return await this.callService<CommandTOL_Response>("/mavros/cmd/takeoff", req);
-  }
-
-  async mavrosLand(args: {
-    altitude?: number;
-    yaw?: number;
-    latitude?: number;
-    longitude?: number;
-  } = {}): Promise<CommandTOL_Response> {
-    const req: CommandTOL_Request = {
-      altitude: args.altitude ?? 0.0,
-      min_pitch: 0.0,
-      yaw: args.yaw ?? 0.0,
-      latitude: args.latitude ?? 0.0,
-      longitude: args.longitude ?? 0.0,
-    };
-    return await this.callService<CommandTOL_Response>("/mavros/cmd/land", req);
-  }
-
-  getAvailableTopics(): Subscription[] {
-    return Array.from(this.discoveredTopics.entries()).map(([topic, type]) => ({ topic, type }));
-  }
-
-  /** /mavros/param/set (mavros_msgs/srv/ParamSet) */
-  async mavrosParamSet(param_id: string, value: ParamValue): Promise<ParamSet_Response> {
-    const req: ParamSet_Request = { param_id, value };
-    return await this.callService<ParamSet_Response>("/mavros/param/set", req);
-  }
-
-  getTopicType(topic: string): string | undefined {
-    return this.discoveredTopics.get(topic);
-  }
   // ---------- RawImage normalization helper ----------
 
   /**
@@ -763,7 +486,7 @@ export class ROS2Bridge {
     if (type === "sensor_msgs/msg/Image") {
       try {
         const dataURI = this.convertRawImageToDataURI(msg);
-        const imageMsg: ImageMessage = {
+        const imageMsg: RosTypes.ImageMessage = {
           topic,
           timestamp,
           timestampNanos,
@@ -782,7 +505,7 @@ export class ROS2Bridge {
     } else if (type === "sensor_msgs/msg/CompressedImage") {
       try {
         this.convertCompressedImageToDataURI(msg, (dataURI, width, height) => {
-          const imageMsg: ImageMessage = {
+          const imageMsg: RosTypes.ImageMessage = {
             topic,
             timestamp,
             timestampNanos,
@@ -1025,9 +748,31 @@ export class ROS2Bridge {
     }
     this._lastTopicsSig = null;
   }
+
+  private _startSettingsWatcher() {
+    if (this.settingsCheckTimer) clearInterval(this.settingsCheckTimer);
+    this.settingsCheckTimer = window.setInterval(() => {
+      const currentSettings: ConnectionSettings = {
+        useProxy: (window as any).TENSORFLEET_USE_PROXY || '',
+        proxyUrl: (window as any).TENSORFLEET_PROXY_URL || '',
+        vmManagerUrl: (window as any).TENSORFLEET_VM_MANAGER_URL || '',
+        nodeId: (window as any).TENSORFLEET_NODE_ID || '',
+        token: (window as any).TENSORFLEET_JWT || '',
+        targetPort: (window as any).TENSORFLEET_TARGET_PORT || 8765,
+      };
+      this.updateConnectionSettings(currentSettings);
+    }, 1000); // check every second
+  }
+
+  private _stopSettingsWatcher() {
+    if (this.settingsCheckTimer) {
+      clearInterval(this.settingsCheckTimer);
+      this.settingsCheckTimer = null;
+    }
+  }
 }
 
-export const ros2Bridge = new ROS2Bridge();
+export const ros2Bridge: ROS2BridgeApi = new ROS2Bridge();
 
 // Auto-connect on load
-ros2Bridge.connect();
+(ros2Bridge as any).connect();

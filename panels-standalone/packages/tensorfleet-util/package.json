@@ -1,0 +1,37 @@
+{
+  "name": "tensorfleet-util",
+  "version": "1.0.0",
+  "description": "TensorFleet utilities for drone control and ROS integration",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TensorFleet/vscode-tensorfleet.git"
+  },
+  "keywords": ["drone", "ros", "tensorfleet", "mavros"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts src/**/*.ts --format esm --dts --outDir dist --clean",
+    "prepublishOnly": "bun run build"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.3"
+  },
+  "dependencies": {
+    "fast-deep-equal": "^3.1.3"
+  }
+}

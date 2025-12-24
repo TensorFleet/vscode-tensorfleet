@@ -1,96 +1,215 @@
 #!/usr/bin/env -S bun run
 /**
- * Tutorial 02: Read All Telemetry
- * 
- * Learn: Available topics and message formats
- * 
- * This script demonstrates:
- * - Subscribing to multiple telemetry topics
- * - Reading state, position, GPS, altitude, battery
- * - Formatting and displaying data
- * 
+ * Tutorial 02: Telemetry Monitoring
+ *
+ * This tutorial shows how to monitor drone telemetry data.
+ *
+ * Telemetry includes information like position, altitude, battery level, and flight status.
+ *
+ * We access this data by subscribing to various ROS topics published by MAVROS.
+ *
  * Run: bun src/tutorials/02_telemetry.js
  */
 
-require("dotenv").config();
-const { connectToDrone, waitForTelemetry } = require("../lib/drone_utils");
-const { getTensorfleetSettings } = require("../lib/tensorfleet_config");
-const ROSLIB = require("roslib");
-
-const { rosbridgeUrl } = getTensorfleetSettings();
+import { DroneStateModel } from "tensorfleet-util";
+import { ROSLibBridgeWrapper } from "../lib/roslib-bridge-wrapper.js";
 
 async function main() {
+    // Establish ROS Bridge connection using our wrapper
+    const bridge = new ROSLibBridgeWrapper();
+    await bridge.waitForConnection();
 
-    const ros = await connectToDrone(rosbridgeUrl);
-    const { telemetry, subscriptions } = await waitForTelemetry(ros);
+    console.log("\n[INFO] Connected to ROS Bridge - monitoring comprehensive telemetry...\n");
+    console.log("[INFO] Demonstrating both raw MAVROS topic subscriptions and managed DroneStateModel\n");
 
-    // Also subscribe to battery
-    const batterySub = new ROSLIB.Topic({
-        ros,
-        name: "/mavros/battery",
-        messageType: "sensor_msgs/BatteryState"
+    // Raw telemetry data storage
+    let rawTelemetry = {
+        state: null,
+        pose: null,
+        fix: null,
+        altitude: null,
+        battery: null,
+    };
+
+    // Raw MAVROS topic subscriptions for educational purposes
+    const rawSubscriptions = [];
+
+    // Subscribe to vehicle state (/mavros/state)
+    rawSubscriptions.push(
+        bridge.subscribe(
+            { topic: "/mavros/state", type: "mavros_msgs/State" },
+            (msg) => {
+                rawTelemetry.state = msg;
+            }
+        )
+    );
+
+    // Subscribe to local position (/mavros/local_position/pose)
+    rawSubscriptions.push(
+        bridge.subscribe(
+            { topic: "/mavros/local_position/pose", type: "geometry_msgs/PoseStamped" },
+            (msg) => {
+                rawTelemetry.pose = msg;
+            }
+        )
+    );
+
+    // Subscribe to GPS fix (/mavros/global_position/raw/fix)
+    rawSubscriptions.push(
+        bridge.subscribe(
+            { topic: "/mavros/global_position/raw/fix", type: "sensor_msgs/NavSatFix" },
+            (msg) => {
+                rawTelemetry.fix = msg;
+            }
+        )
+    );
+
+    // Subscribe to altitude (/mavros/altitude)
+    rawSubscriptions.push(
+        bridge.subscribe(
+            { topic: "/mavros/altitude", type: "mavros_msgs/Altitude" },
+            (msg) => {
+                rawTelemetry.altitude = msg;
+            }
+        )
+    );
+
+    // Subscribe to battery (/mavros/battery)
+    rawSubscriptions.push(
+        bridge.subscribe(
+            { topic: "/mavros/battery", type: "sensor_msgs/BatteryState" },
+            (msg) => {
+                rawTelemetry.battery = msg;
+            }
+        )
+    );
+
+    // Initialize managed state model for comparison
+    const droneState = new DroneStateModel();
+    droneState.connect(bridge);
+
+    // Variables to track managed state for display
+    let managedState = {};
+
+    droneState.onUpdate((state) => {
+        managedState = state;
     });
 
-    let battery = null;
-    batterySub.subscribe((msg) => {
-        battery = msg;
-    });
-
-    console.log("\n[INFO] Displaying telemetry (updates every 1 second)\n");
     console.log("Press Ctrl+C to exit\n");
 
-    const interval = setInterval(() => {
+    // Display telemetry updates every second
+    const displayInterval = setInterval(() => {
         console.clear();
-        console.log("=== DRONE TELEMETRY ===\n");
+        console.log("=== COMPREHENSIVE DRONE TELEMETRY ===\n");
 
-        // State
-        console.log("STATE:");
-        console.log(`  Connected: ${telemetry.state?.connected}`);
-        console.log(`  Armed:     ${telemetry.state?.armed}`);
-        console.log(`  Mode:      ${telemetry.state?.mode}`);
-        console.log("");
+        // Raw MAVROS Topic Data
+        console.log("RAW MAVROS TOPIC DATA:");
+        console.log("----------------------");
 
-        // Position (local)
-        const pos = telemetry.pose?.pose?.position;
-        console.log("LOCAL POSITION:");
-        console.log(`  X: ${pos?.x?.toFixed(2)} m`);
-        console.log(`  Y: ${pos?.y?.toFixed(2)} m`);
-        console.log(`  Z: ${pos?.z?.toFixed(2)} m`);
-        console.log("");
-
-        // GPS
-        console.log("GPS:");
-        console.log(`  Lat: ${telemetry.fix?.latitude?.toFixed(7)}°`);
-        console.log(`  Lon: ${telemetry.fix?.longitude?.toFixed(7)}°`);
-        console.log(`  Alt: ${telemetry.fix?.altitude?.toFixed(2)} m`);
-        console.log("");
-
-        // Altitude
-        console.log("ALTITUDE:");
-        console.log(`  Relative: ${telemetry.altitude?.relative?.toFixed(2)} m`);
-        console.log(`  AMSL:     ${telemetry.altitude?.amsl?.toFixed(2)} m`);
-        console.log("");
-
-        // Battery
-        if (battery) {
-            console.log("BATTERY:");
-            console.log(`  Voltage:    ${battery.voltage?.toFixed(2)} V`);
-            console.log(`  Percentage: ${battery.percentage?.toFixed(0)}%`);
+        // State information
+        if (rawTelemetry.state) {
+            console.log("Vehicle State (/mavros/state):");
+            console.log(`  Connected: ${rawTelemetry.state.connected}`);
+            console.log(`  Armed:     ${rawTelemetry.state.armed}`);
+            console.log(`  Mode:      ${rawTelemetry.state.mode}`);
+            console.log(`  Guided:    ${rawTelemetry.state.guided}`);
             console.log("");
         }
 
-        console.log("Press Ctrl+C to exit");
+        // Local position (ENU coordinates)
+        if (rawTelemetry.pose?.pose?.position) {
+            const pos = rawTelemetry.pose.pose.position;
+            console.log("Local Position (/mavros/local_position/pose) - ENU coordinates:");
+            console.log(`  East (X):  ${pos.x?.toFixed(2)} m`);
+            console.log(`  North (Y): ${pos.y?.toFixed(2)} m`);
+            console.log(`  Up (Z):    ${pos.z?.toFixed(2)} m`);
+            console.log("");
+        }
+
+        // GPS position
+        if (rawTelemetry.fix) {
+            console.log("GPS Position (/mavros/global_position/raw/fix):");
+            console.log(`  Latitude:  ${rawTelemetry.fix.latitude?.toFixed(7)}°`);
+            console.log(`  Longitude: ${rawTelemetry.fix.longitude?.toFixed(7)}°`);
+            console.log(`  Altitude:  ${rawTelemetry.fix.altitude?.toFixed(2)} m`);
+            console.log("");
+        }
+
+        // Altitude breakdown
+        if (rawTelemetry.altitude) {
+            console.log("Altitude Breakdown (/mavros/altitude):");
+            console.log(`  Above Mean Sea Level: ${rawTelemetry.altitude.amsl?.toFixed(2)} m`);
+            console.log(`  Relative to Home:     ${rawTelemetry.altitude.relative?.toFixed(2)} m`);
+            console.log(`  Above Ground Level:   ${rawTelemetry.altitude.agl?.toFixed(2)} m`);
+            console.log("");
+        }
+
+        // Battery status
+        if (rawTelemetry.battery) {
+            console.log("Battery Status (/mavros/battery):");
+            console.log(`  Voltage:    ${rawTelemetry.battery.voltage?.toFixed(2)} V`);
+            console.log(`  Current:    ${rawTelemetry.battery.current?.toFixed(2)} A`);
+            console.log(`  Percentage: ${rawTelemetry.battery.percentage?.toFixed(0)}%`);
+            console.log("");
+        }
+
+        // Managed State Model Data
+        console.log("MANAGED STATE MODEL (Aggregated Data):");
+        console.log("---------------------------------------");
+
+        if (managedState.vehicle) {
+            console.log("Vehicle State:");
+            console.log(`  Connected: ${managedState.vehicle.connected}`);
+            console.log(`  Armed:     ${managedState.vehicle.armed}`);
+            console.log(`  Mode:      ${managedState.vehicle.mode}`);
+            console.log(`  Guided:    ${managedState.vehicle.guided}`);
+            console.log("");
+        }
+
+        if (managedState.local?.position) {
+            console.log("Local Position (ENU):");
+            console.log(`  East:  ${managedState.local.position.x?.toFixed(2)} m`);
+            console.log(`  North: ${managedState.local.position.y?.toFixed(2)} m`);
+            console.log(`  Up:    ${managedState.local.position.z?.toFixed(2)} m`);
+            console.log("");
+        }
+
+        if (managedState.global_position_int) {
+            console.log("Global Position:");
+            console.log(`  Lat: ${managedState.global_position_int.lat?.toFixed(7)}°`);
+            console.log(`  Lon: ${managedState.global_position_int.lon?.toFixed(7)}°`);
+            console.log(`  Alt: ${managedState.global_position_int.alt?.toFixed(2)} m`);
+            console.log("");
+        }
+
+        if (managedState.altitude) {
+            console.log("Altitude:");
+            console.log(`  AMSL:     ${managedState.altitude.amsl?.toFixed(2)} m`);
+            console.log(`  Relative: ${managedState.altitude.relative?.toFixed(2)} m`);
+            console.log("");
+        }
+
+        if (managedState.battery) {
+            console.log("Battery:");
+            console.log(`  Voltage:    ${managedState.battery.voltage?.toFixed(2)} V`);
+            console.log(`  Percentage: ${managedState.battery.percentage?.toFixed(0)}%`);
+            console.log("");
+        }
+
+        console.log("Press Ctrl+C to exit - Updates every 1 second");
     }, 1000);
 
+    // Handle graceful shutdown
     process.on("SIGINT", () => {
-        clearInterval(interval);
-        console.log("\n[EXIT] Shutting down...");
-        subscriptions.stateSub.unsubscribe();
-        subscriptions.poseSub.unsubscribe();
-        subscriptions.fixSub.unsubscribe();
-        subscriptions.altSub.unsubscribe();
-        batterySub.unsubscribe();
-        ros.close();
+        clearInterval(displayInterval);
+        console.log("\n[EXIT] Shutting down telemetry monitoring...");
+
+        // Unsubscribe from all raw topics
+        rawSubscriptions.forEach(unsub => unsub());
+
+        // Disconnect managed state model
+        droneState.disconnect();
+
         process.exit(0);
     });
 }
