@@ -552,12 +552,18 @@ export class VMManagerIntegration implements vscode.Disposable {
   /**
    * Public method to start VM
    */
-  async startVm() {
+  async startVm(actionData?: any) {
     try {
       this.userInitiatedAction = 'start';
       this.trackVmEvent('vm.start', { phase: 'start' });
       this.setOptimisticState('starting');
-      await this.apiRequest<{ status: string }>('POST', '/vms/self/start', { sim_config: { config_version: "0.0.1" } });
+
+      // Merge actionData with default config
+      const requestBody = {
+        sim_config: { config_version: "0.0.1", ...actionData },
+      };
+
+      await this.apiRequest<{ status: string }>('POST', '/vms/self/start', requestBody);
       await this.refresh(true);
       this.outputChannel.appendLine('[VM Manager] VM start initiated');
       this.trackVmEvent('vm.start', { phase: 'success' });
@@ -606,7 +612,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         this.setOptimisticState('starting');
       }
 
-      await this.apiRequest<{ status: string; message?: string }>('POST', '/vms/self/restart', { sim_config: { config_version: "0.0.1" } });
+      await this.apiRequest<{ status: string; message?: string }>('POST', '/vms/self/restart', { sim_config: { config_version: "0.0.1", world_components: {} } });
       await this.refresh(true);
       this.outputChannel.appendLine('[VM Manager] VM restart initiated');
     } catch (error) {
@@ -648,7 +654,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         .then((choice) => {
           if (choice === 'Retry') {
             if (action === 'start') {
-              void this.startVm();
+              void this.startVm({ world_components: "static_bodies_01" });
             } else if (action === 'stop') {
               void this.stopVm();
             } else if (action === 'restart') {

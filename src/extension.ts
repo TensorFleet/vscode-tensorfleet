@@ -17,6 +17,25 @@ import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
+// Menu action types for deterministic option handling
+type MenuAction =
+  | 'auth.login'
+  | 'auth.logout'
+  | 'vm.retryStatus'
+  | 'vm.start'
+  | 'vm.stop'
+  | 'vm.retryStart'
+  | 'vm.refresh'
+  | 'region.change'
+  | 'onboarding.reset'
+  | 'noop.header';
+
+type ActionItem = vscode.QuickPickItem & { action: MenuAction; actionData?: any };
+
+function item(label: string, action: MenuAction, detail?: string, kind?: vscode.QuickPickItemKind, actionData?: any): ActionItem {
+  return { label, detail, kind, action, actionData };
+}
+
 type DroneViewport = {
   id: string;
   title: string;
@@ -3170,52 +3189,42 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   }
 
   const state = unifiedStatusCoordinator.getState();
-  const items: vscode.QuickPickItem[] = [];
+  const items: ActionItem[] = [];
 
   // Auth check in progress
   if (state.auth === 'checking') {
-    items.push({
-      label: '$(sync~spin) Checking authentication...',
-      detail: 'Verifying your TensorFleet login',
-      kind: vscode.QuickPickItemKind.Default
-    });
+    items.push(item('$(sync~spin) Checking authentication...', 'noop.header', 'Verifying your TensorFleet login', vscode.QuickPickItemKind.Default));
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator } as any);
+    items.push(item('$(sign-out) Cancel and Logout', 'auth.logout'));
 
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
-
-    items.push({
-      label: '$(sign-out) Cancel and Logout'
-    });
-
-    const selection = await vscode.window.showQuickPick(items, {
+    const selection = await vscode.window.showQuickPick(items as ActionItem[], {
       placeHolder: 'Checking authentication…',
       ignoreFocusOut: true
     });
 
-    if (selection?.label.includes('Logout')) {
-      await handleLogout(context);
+    if (!selection) return;
+    switch (selection.action) {
+      case 'auth.logout':
+        await handleLogout(context);
+        return;
     }
     return;
   }
 
   // User not authenticated at all
   if (state.auth === 'not_authenticated') {
-    // Primary action - only login available before authentication
-    items.push({
-      label: '$(key) Login',
-      detail: 'Authenticate with TensorFleet',
-      kind: vscode.QuickPickItemKind.Default
-    });
+    items.push(item('$(key) Login', 'auth.login', 'Authenticate with TensorFleet', vscode.QuickPickItemKind.Default));
 
-    const selection = await vscode.window.showQuickPick(items, {
+    const selection = await vscode.window.showQuickPick(items as ActionItem[], {
       placeHolder: 'Not Logged In',
       ignoreFocusOut: true
     });
 
-    if (selection?.label.includes('Login')) {
-      await handleLogin(context);
+    if (!selection) return;
+    switch (selection.action) {
+      case 'auth.login':
+        await handleLogin(context);
+        return;
     }
     return;
   }
@@ -3224,46 +3233,34 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   if (state.connection === 'not_authenticated') {
     const currentRegion = regions.getSelectedRegion();
 
-    items.push({
-      label: '$(warning) VM Manager unavailable',
-      detail: state.error || 'Service may not be deployed in this region',
-      kind: vscode.QuickPickItemKind.Default
-    });
-
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
+    items.push(item('$(warning) VM Manager unavailable', 'noop.header', state.error || 'Service may not be deployed in this region', vscode.QuickPickItemKind.Default));
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator } as any);
 
     if (vmManagerIntegration) {
-      items.push({
-        label: '$(refresh) Retry VM Status',
-        detail: 'Retry with current authentication'
-      });
+      items.push(item('$(refresh) Retry VM Status', 'vm.retryStatus', 'Retry with current authentication'));
     }
 
-    items.push(
-      {
-        label: `$(globe) Change Region`,
-        detail: `Current: ${currentRegion.name}`
-      },
-      {
-        label: '$(sign-out) Logout',
-        detail: 'Logout from TensorFleet'
-      }
-    );
+    items.push(item(`$(globe) Change Region`, 'region.change', `Current: ${currentRegion.name}`));
+    items.push(item('$(sign-out) Logout', 'auth.logout', 'Logout from TensorFleet'));
 
-    const selection = await vscode.window.showQuickPick(items, {
+    const selection = await vscode.window.showQuickPick(items as ActionItem[], {
       placeHolder: 'VM Manager unavailable',
       ignoreFocusOut: true
     });
 
-    if (selection?.label.includes('Retry') && vmManagerIntegration) {
-      vmManagerIntegration.refreshStatus(false);
-    } else if (selection?.label.includes('Change Region')) {
-      await selectRegion(context);
-    } else if (selection?.label.includes('Logout')) {
-      await handleLogout(context);
+    if (!selection) return;
+    switch (selection.action) {
+      case 'vm.retryStatus':
+        if (vmManagerIntegration) {
+          vmManagerIntegration.refreshStatus(false);
+        }
+        return;
+      case 'region.change':
+        await selectRegion(context);
+        return;
+      case 'auth.logout':
+        await handleLogout(context);
+        return;
     }
     return;
   }
@@ -3272,48 +3269,35 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   if (state.connection === 'disconnected') {
     const currentRegion = regions.getSelectedRegion();
 
-    // Primary action
-    items.push({
-      label: '$(refresh) Retry Connection',
-      detail: state.error || 'Attempt to reconnect'
-    });
+    items.push(item('$(refresh) Retry Connection', 'vm.refresh', state.error || 'Attempt to reconnect'));
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator } as any);
+    items.push(item(`$(globe) Change Region`, 'region.change', `Current: ${currentRegion.name}`));
+    items.push(item('$(sign-out) Logout', 'auth.logout', 'Logout from TensorFleet'));
 
-    // Separator
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
-
-    // Secondary actions (always available while authenticated)
-    items.push(
-      {
-        label: `$(globe) Change Region`,
-        detail: `Current: ${currentRegion.name}`
-      },
-      {
-        label: '$(sign-out) Logout',
-        detail: 'Logout from TensorFleet'
-      }
-    );
-
-    const selection = await vscode.window.showQuickPick(items, {
+    const selection = await vscode.window.showQuickPick(items as ActionItem[], {
       placeHolder: 'API Disconnected',
       ignoreFocusOut: true
     });
 
-    if (selection?.label.includes('Retry') && vmManagerIntegration) {
-      vmManagerIntegration.refreshStatus(false);
-    } else if (selection?.label.includes('Change Region')) {
-      await selectRegion(context);
-    } else if (selection?.label.includes('Logout')) {
-      await handleLogout(context);
+    if (!selection) return;
+    switch (selection.action) {
+      case 'vm.refresh':
+        if (vmManagerIntegration) {
+          vmManagerIntegration.refreshStatus(false);
+        }
+        return;
+      case 'region.change':
+        await selectRegion(context);
+        return;
+      case 'auth.logout':
+        await handleLogout(context);
+        return;
     }
     return;
   }
 
   // Authenticated and connected - show VM-specific menu
   const vmState = state.vmState;
-  const ipAddress = state.ipAddress;
   const uptime = formatUptime(state.uptimeSeconds);
 
   // Format header using helper function
@@ -3327,71 +3311,71 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   });
 
   // Header as regular item (separators don't render icons)
-  items.push({
-    label: headerLabel,
-    detail: headerDetail,
-    kind: vscode.QuickPickItemKind.Default
-  });
+  items.push(item(headerLabel, 'noop.header', headerDetail, vscode.QuickPickItemKind.Default));
 
-  // Build menu with visual grouping (primary actions, separator, secondary actions)
-  const menuItems = buildMenuForState(vmState, ipAddress);
-  items.push(...menuItems);
-
-  const developmentActions: vscode.QuickPickItem[] = [
-    {
-      label: '$(question) Reset Onboarding'
-    }
-  ];
-  if (context.extensionMode === vscode.ExtensionMode.Development) {
-    if (developmentActions) {
-      items.push(...developmentActions);
-    }
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
+  // Add primary actions based on VM state
+  switch (vmState) {
+    case 'running':
+      items.push(item('$(debug-stop) Stop VM', 'vm.stop'));
+      break;
+    case 'stopped':
+    case 'pending':
+    case 'unknown':
+      items.push(item('$(play) Start VM', 'vm.start'));
+      break;
+    case 'failed':
+      items.push(item('$(refresh) Retry Start', 'vm.retryStart'));
+      break;
   }
 
+  // Add separator after primary actions if any exist
+  if (vmState !== 'starting' && vmState !== 'stopping') {
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator } as any);
+  }
 
+  // Secondary actions (always shown)
+  const currentRegion = regions.getSelectedRegion();
+  items.push(item('$(refresh) Refresh Status', 'vm.refresh'));
+  items.push(item(`$(globe) Change Region`, 'region.change', `Current: ${currentRegion.name}`));
+  items.push(item('$(sign-out) Logout', 'auth.logout', 'Logout from TensorFleet'));
 
-  const selection = await vscode.window.showQuickPick(items, {
+  // Development actions
+  if (context.extensionMode === vscode.ExtensionMode.Development) {
+    items.push(item('$(question) Reset Onboarding', 'onboarding.reset'));
+  }
+
+  const selection = await vscode.window.showQuickPick(items as ActionItem[], {
     placeHolder: headerLabel.replace(/\$\([^)]+\)\s*/, ''),
     ignoreFocusOut: true
   });
 
-  if (!selection) {
-    return;
-  }
-
-  // Ignore header selection (it's just for display)
-  const headerPatterns = [
-    '$(circle-filled) Running',
-    '$(circle-outline) Stopped',
-    '$(loading~spin) Starting',
-    '$(loading~spin) Stopping',
-    '$(error) Failed',
-    '$(sync~spin) Pending',
-    '$(sync~spin) Checking...'
-  ];
-  if (headerPatterns.some(pattern => selection.label.startsWith(pattern))) {
-    return;
-  }
+  if (!selection) return;
 
   try {
-    if (selection.label.includes('Stop VM') && vmManagerIntegration) {
-      await vmManagerIntegration.stopVm();
-    } else if (selection.label.includes('Start VM') && vmManagerIntegration) {
-      await vmManagerIntegration.startVm();
-    } else if (selection.label.includes('Retry Start') && vmManagerIntegration) {
-      await vmManagerIntegration.startVm();
-    } else if (selection.label.includes('Refresh Status') && vmManagerIntegration) {
-      vmManagerIntegration.refreshStatus(false);
-    } else if (selection.label.includes('Change Region')) {
-      await selectRegion(context);
-    } else if (selection.label.includes('Logout')) {
-      await handleLogout(context);
-    } else if (selection.label.includes("Reset Onboarding")) {
-      await resetOnboarding(context);
+    switch (selection.action) {
+      case 'noop.header':
+        return; // Ignore header selection
+      case 'vm.start':
+        if (vmManagerIntegration) await vmManagerIntegration.startVm(selection.actionData);
+        return;
+      case 'vm.stop':
+        if (vmManagerIntegration) await vmManagerIntegration.stopVm();
+        return;
+      case 'vm.retryStart':
+        if (vmManagerIntegration) await vmManagerIntegration.startVm();
+        return;
+      case 'vm.refresh':
+        if (vmManagerIntegration) vmManagerIntegration.refreshStatus(false);
+        return;
+      case 'region.change':
+        await selectRegion(context);
+        return;
+      case 'auth.logout':
+        await handleLogout(context);
+        return;
+      case 'onboarding.reset':
+        await resetOnboarding(context);
+        return;
     }
   } catch (error) {
     void vscode.window.showErrorMessage(
