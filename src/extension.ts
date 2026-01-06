@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
-import { VMManagerIntegration } from './vm-manager';
+import { VMManagerIntegration, VMConfig } from './vm-manager';
 import * as auth from './auth';
 import * as help from './help';
 import { UnifiedStatusCoordinator } from './unified-status';
@@ -26,6 +26,7 @@ type MenuAction =
   | 'vm.stop'
   | 'vm.retryStart'
   | 'vm.refresh'
+  | 'vm.chooseConfig'
   | 'region.change'
   | 'onboarding.reset'
   | 'noop.header';
@@ -795,7 +796,7 @@ export function activate(context: vscode.ExtensionContext) {
   } else {
     // If onboarding hasn't ended show it
     const lastStep = help.loadOnboardingProgress(context).lastCompletedStep;
-    if (lastStep == 'none' || lastStep == 'project') {
+    if (lastStep === 'none' || lastStep === 'project') {
       showWelcomePage(context);
     }
   }
@@ -1133,8 +1134,8 @@ async function showWelcomePage(context: vscode.ExtensionContext) {
     lastState.lastCompletedStep = 'account';
     help.saveOnboardingProgress(context, lastState);
   }
-  let lastStep = lastState.lastCompletedStep;
-  if (lastStep == 'end') {
+  let lastStep: 'none' | 'account' | 'project' | 'panels' | 'end' = lastState.lastCompletedStep;
+  if (lastStep === 'end') {
     lastStep = 'panels';
   }
 
@@ -1580,12 +1581,16 @@ async function sendVmManagerInfoToWebview(
   }
 
   try {
-    const requestedVmBase = typeof payload?.vmBase === 'string' ? payload.vmBase : undefined;
-    const requestedToken = typeof payload?.token === 'string' ? payload.token : undefined;
-    const info = await vmManagerIntegration.fetchVmManagerInfo({
-      vmBase: requestedVmBase,
-      token: requestedToken
-    });
+    // Get basic VM info from snapshot
+    const snapshot = vmManagerIntegration.snapshot;
+    const info = {
+      vmState: snapshot.vmState,
+      ipAddress: snapshot.ipAddress,
+      nodeId: snapshot.nodeId,
+      provider: snapshot.provider,
+      region: snapshot.region,
+      uptimeSeconds: snapshot.uptimeSeconds
+    };
     webview.postMessage({ command: 'tensorfleet.vmManagerInfo', payload: info });
   } catch (error) {
     webview.postMessage({
@@ -3321,7 +3326,8 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
     case 'stopped':
     case 'pending':
     case 'unknown':
-      items.push(item('$(play) Start VM', 'vm.start'));
+      items.push(item('$(play) Start VM', 'vm.start', 'Uses last selected configuration'));
+      items.push(item('$(gear) Choose Configuration', 'vm.chooseConfig', 'Select VM configuration before starting'));
       break;
     case 'failed':
       items.push(item('$(refresh) Retry Start', 'vm.retryStart'));
@@ -3357,6 +3363,9 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
         return; // Ignore header selection
       case 'vm.start':
         if (vmManagerIntegration) await vmManagerIntegration.startVm(selection.actionData);
+        return;
+      case 'vm.chooseConfig':
+        await chooseVMConfiguration(context);
         return;
       case 'vm.stop':
         if (vmManagerIntegration) await vmManagerIntegration.stopVm();
@@ -3616,6 +3625,64 @@ async function handleLogout(context: vscode.ExtensionContext) {
  */
 export async function showAuthStatus(context: vscode.ExtensionContext) {
   await showUnifiedMenu(context);
+}
+
+// ============================================================================
+// VM Configuration Management
+// ============================================================================
+
+/**
+ * Show VM configuration selection and start VM with selected config
+ */
+async function chooseVMConfiguration(context: vscode.ExtensionContext) {
+  if (!vmManagerIntegration) {
+    return;
+  }
+
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('vm.config.choose', { phase: 'start' });
+
+  const configs = Object.values(VMManagerIntegration.VM_CONFIGS);
+  const currentConfig = vmManagerIntegration.getLastUsedConfig();
+
+  const items: (vscode.QuickPickItem & { config: VMConfig })[] = configs.map(config => ({
+    label: config.name,
+    description: config.description,
+    detail: config.id === currentConfig.id ? '$(check) Currently selected' : '',
+    config
+  }));
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select VM configuration to start',
+    title: 'TensorFleet: Choose VM Configuration',
+    matchOnDescription: true
+  });
+
+  if (!selected) {
+    telemetry?.trackEvent('vm.config.choose', { phase: 'cancelled' });
+    return;
+  }
+
+  telemetry?.trackEvent('vm.config.choose', {
+    phase: 'selected',
+    configId: selected.config.id
+  });
+
+  try {
+    // Start VM with the selected configuration
+    await vmManagerIntegration.startVm(selected.config);
+    telemetry?.trackEvent('vm.config.choose', {
+      phase: 'success',
+      configId: selected.config.id
+    });
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'chooseVMConfiguration', configId: selected.config.id });
+    telemetry?.trackEvent('vm.config.choose', {
+      phase: 'error',
+      configId: selected.config.id
+    });
+    throw error;
+  }
 }
 
 // ============================================================================
