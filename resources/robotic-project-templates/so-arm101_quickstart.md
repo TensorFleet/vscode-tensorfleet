@@ -26,6 +26,8 @@
    ```bash
    uv run python src/teleop_so_arm101.py
    ```
+   > [!IMPORTANT]
+   > Keyboard controls will only work when the **terminal window is focused**.
 
 ### Keyboard Controls
 
