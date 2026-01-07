@@ -13,6 +13,15 @@
    - `/so_arm101/side_camera/image_raw`
    - `/so_arm101/wrist_camera/image_raw`
    ![Image Panels](assets/image_panels.png)
+
+   **Tip: Using Raw Messages**
+   For a more compact view of multiple topics, use the **Raw Messages** panel:
+   - Open the **Raw Messages** panel.
+   - Search for your topic in **Search Topics**.
+   - Select the topic and click **Subscribe**.
+
+   ![Raw Messages](assets/raw_messages.png)
+
 5. **Run Teleoperation**: Start the keyboard control script:
    ```bash
    uv run python src/teleop_so_arm101.py
