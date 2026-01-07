@@ -86,8 +86,8 @@ class ProxyRosClient:
             msg = json.loads(data)
             op = msg.get("op")
 
+
             if op == "publish":
-                # Handle subscription callbacks
                 topic = msg.get("topic")
                 if topic and topic in self._callbacks:
                     for callback in self._callbacks[topic]:
@@ -95,6 +95,8 @@ class ProxyRosClient:
                             callback(msg.get("msg", {}))
                         except Exception as e:
                             print(f"[ProxyRos] Callback error: {e}")
+                else:
+                    pass
 
             elif op == "service_response":
                 # Handle service response
