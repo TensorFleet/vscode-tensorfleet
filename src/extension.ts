@@ -3669,12 +3669,13 @@ async function chooseVMConfiguration(context: vscode.ExtensionContext) {
   });
 
   try {
-    // Start VM with the selected configuration
-    await vmManagerIntegration.startVm(selected.config);
+    // Set the selected configuration without starting VM
+    vmManagerIntegration.setLastUsedConfig(selected.config.id);
     telemetry?.trackEvent('vm.config.choose', {
       phase: 'success',
       configId: selected.config.id
     });
+    vscode.window.showInformationMessage(`VM configuration changed to "${selected.config.name}". Use "Start VM" to launch with this configuration.`);
   } catch (error) {
     telemetry?.captureError(error, { source: 'chooseVMConfiguration', configId: selected.config.id });
     telemetry?.trackEvent('vm.config.choose', {
