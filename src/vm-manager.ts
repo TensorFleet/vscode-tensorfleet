@@ -678,7 +678,13 @@ export class VMManagerIntegration implements vscode.Disposable {
         this.setOptimisticState('starting');
       }
 
-      await this.apiRequest<{ status: string; message?: string }>('POST', '/vms/self/restart', { sim_config: { config_version: "0.0.1", world_components: {} } });
+      // Use the same config logic as startVm
+      const configToUse = this.getLastUsedConfig();
+      const requestBody = {
+        sim_config: configToUse.sim_config,
+      };
+
+      await this.apiRequest<{ status: string; message?: string }>('POST', '/vms/self/restart', requestBody);
       await this.refresh(true);
       this.outputChannel.appendLine('[VM Manager] VM restart initiated');
     } catch (error) {
