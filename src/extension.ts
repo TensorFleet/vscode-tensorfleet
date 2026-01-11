@@ -192,6 +192,147 @@ const DRONE_VIEWS: DroneViewport[] = [
 /**
  * Unique panels that will have their own html rendering functions.
  */
+/**
+ * Message handler for server settings panel
+ */
+async function serverSettingsMessageHandler(message: any, api: {
+  context: vscode.ExtensionContext;
+  webview: vscode.Webview;
+  telemetry?: TelemetryService | null;
+}) {
+  if (!message || !message.command) return;
+
+  const { command } = message;
+  const { webview, telemetry } = api;
+
+  try {
+    switch (command) {
+      case 'getRegions': {
+        const regionsList = regions.getAvailableRegions();
+        const currentRegion = regions.getSelectedRegion();
+        const regionData = Object.values(regionsList).map(region => ({
+          id: region.id,
+          name: region.name,
+          icon: region.icon,
+          description: region.description
+        }));
+
+        webview.postMessage({
+          command: 'updateRegions',
+          regions: regionData,
+          currentRegion: {
+            id: currentRegion.id,
+            name: currentRegion.name,
+            icon: currentRegion.icon,
+            description: currentRegion.description
+          }
+        });
+        break;
+      }
+
+      case 'getVmTypes': {
+        if (!vmManagerIntegration) {
+          webview.postMessage({
+            command: 'updateVmTypes',
+            vmTypes: [],
+            currentVmType: { id: 'unknown', name: 'Unknown', description: 'VM Manager not available' }
+          });
+          return;
+        }
+
+        const vmConfigs = Object.values(VMManagerIntegration.VM_CONFIGS);
+        const currentConfig = vmManagerIntegration.getLastUsedConfig();
+
+        webview.postMessage({
+          command: 'updateVmTypes',
+          vmTypes: vmConfigs.map(config => ({
+            id: config.id,
+            name: config.name,
+            description: config.description
+          })),
+          currentVmType: {
+            id: currentConfig.id,
+            name: currentConfig.name,
+            description: currentConfig.description
+          }
+        });
+        break;
+      }
+
+      case 'getStatus': {
+        if (!unifiedStatusCoordinator) {
+          webview.postMessage({
+            command: 'updateStatus',
+            status: {
+              auth: 'not_authenticated',
+              connection: 'disconnected',
+              vmState: 'unknown'
+            }
+          });
+          return;
+        }
+
+        const state = unifiedStatusCoordinator.getState();
+        webview.postMessage({
+          command: 'updateStatus',
+          status: {
+            auth: state.auth,
+            connection: state.connection,
+            vmState: state.vmState,
+            ipAddress: state.ipAddress,
+            provider: state.provider,
+            region: state.region,
+            uptimeSeconds: state.uptimeSeconds,
+            error: state.error
+          }
+        });
+        break;
+      }
+
+      case 'setRegion': {
+        const { regionId } = message;
+        if (!regionId) return;
+
+        telemetry?.trackEvent('serverSettings.region.set', { regionId, phase: 'start' });
+        await regions.setSelectedRegion(regionId);
+
+        const newRegion = regions.getSelectedRegion();
+        telemetry?.trackEvent('serverSettings.region.set', { regionId, phase: 'success' });
+
+        // Refresh VM Manager status
+        if (vmManagerIntegration) {
+          vmManagerIntegration.refreshStatus(false);
+        }
+
+        // Send updated region data
+        await serverSettingsMessageHandler({ command: 'getRegions' }, api);
+        break;
+      }
+
+      case 'setVmType': {
+        const { vmTypeId } = message;
+        if (!vmTypeId || !vmManagerIntegration) return;
+
+        telemetry?.trackEvent('serverSettings.vmType.set', { vmTypeId, phase: 'start' });
+        vmManagerIntegration.setLastUsedConfig(vmTypeId);
+        telemetry?.trackEvent('serverSettings.vmType.set', { vmTypeId, phase: 'success' });
+
+        // Send updated VM types data
+        await serverSettingsMessageHandler({ command: 'getVmTypes' }, api);
+        break;
+      }
+
+      default: {
+        console.log('[ServerSettings] Unknown message:', command);
+        break;
+      }
+    }
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'serverSettingsMessageHandler', command });
+    console.error('[ServerSettings] Message handler error:', error);
+  }
+}
+
 const UNIQUE_PANELS: UniquePanel[] = [
   {
     id: 'tensorfleet-account',
@@ -486,6 +627,12 @@ const UNIQUE_PANELS: UniquePanel[] = [
     render: htmlRenderer('drone-view-list.html')
   },
   {
+    id: 'tensorfleet-server-settings',
+    title: 'Virtual machine settings',
+    render: htmlRenderer('server-settings.html'),
+    onMessage: serverSettingsMessageHandler
+  },
+  {
     id: 'tensorfleet-help-panel',
     title: 'Help panel',
     render: htmlRenderer('help-panel.html')
@@ -581,7 +728,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Initialize auth state
-  vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
+  vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "" as any)
   updateUnifiedAuthStatus(context);
   updateAuthenticatedContext(context);
 
@@ -754,6 +901,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openDroneViewsPanel', () => openDroneViewsPanel(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openServerSettingsPanel', () => openServerSettingsPanel(context))
   );
 
   context.subscriptions.push(
@@ -3153,6 +3304,10 @@ async function closeHelpPanel(context: vscode.ExtensionContext) {
 
 async function openDroneViewsPanel(context: vscode.ExtensionContext) {
   await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
+}
+
+async function openServerSettingsPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "server-settings" as any)
 }
 
 async function openTutorialsGuide(context: vscode.ExtensionContext) {
