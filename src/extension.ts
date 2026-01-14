@@ -322,6 +322,72 @@ async function serverSettingsMessageHandler(message: any, api: {
         break;
       }
 
+      case 'startVm': {
+        if (!vmManagerIntegration) return;
+
+        telemetry?.trackEvent('serverSettings.vm.start', { phase: 'start' });
+        try {
+          await vmManagerIntegration.startVm();
+          telemetry?.trackEvent('serverSettings.vm.start', { phase: 'success' });
+
+          // Send updated status back to webview
+          if (unifiedStatusCoordinator) {
+            const state = unifiedStatusCoordinator.getState();
+            webview.postMessage({
+              command: 'updateStatus',
+              status: {
+                auth: state.auth,
+                connection: state.connection,
+                vmState: state.vmState,
+                ipAddress: state.ipAddress,
+                provider: state.provider,
+                region: state.region,
+                uptimeSeconds: state.uptimeSeconds,
+                error: state.error
+              }
+            });
+          }
+        } catch (error) {
+          telemetry?.captureError(error, { source: 'serverSettings.vm.start' });
+          telemetry?.trackEvent('serverSettings.vm.start', { phase: 'error' });
+          throw error;
+        }
+        break;
+      }
+
+      case 'stopVm': {
+        if (!vmManagerIntegration) return;
+
+        telemetry?.trackEvent('serverSettings.vm.stop', { phase: 'start' });
+        try {
+          await vmManagerIntegration.stopVm();
+          telemetry?.trackEvent('serverSettings.vm.stop', { phase: 'success' });
+
+          // Send updated status back to webview
+          if (unifiedStatusCoordinator) {
+            const state = unifiedStatusCoordinator.getState();
+            webview.postMessage({
+              command: 'updateStatus',
+              status: {
+                auth: state.auth,
+                connection: state.connection,
+                vmState: state.vmState,
+                ipAddress: state.ipAddress,
+                provider: state.provider,
+                region: state.region,
+                uptimeSeconds: state.uptimeSeconds,
+                error: state.error
+              }
+            });
+          }
+        } catch (error) {
+          telemetry?.captureError(error, { source: 'serverSettings.vm.stop' });
+          telemetry?.trackEvent('serverSettings.vm.stop', { phase: 'error' });
+          throw error;
+        }
+        break;
+      }
+
       default: {
         console.log('[ServerSettings] Unknown message:', command);
         break;
@@ -681,6 +747,8 @@ let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
 // Panel registry for unique panels (to enable refresh on auth changes)
 const uniquePanelRegistry = new Map<string, UniqueViewProvider>();
 
+
+
 // -----------------------------------------------------------------------------
 // Activation
 // -----------------------------------------------------------------------------
@@ -905,6 +973,49 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openServerSettingsPanel', () => openServerSettingsPanel(context))
+  );
+
+  // Test command for server settings panel
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.testServerSettings', async () => {
+      const panel = vscode.window.createWebviewPanel(
+        'tensorfleet-test-server-settings',
+        'Test Server Settings',
+        vscode.ViewColumn.One,
+        {
+          enableScripts: true,
+          localResourceRoots: [
+            vscode.Uri.joinPath(context.extensionUri, 'media'),
+            vscode.Uri.joinPath(context.extensionUri, 'src', 'templates')
+          ]
+        }
+      );
+
+      const htmlPath = path.join(__dirname, '..', 'src', 'templates', 'server-settings.html');
+      let html = fs.readFileSync(htmlPath, 'utf8');
+
+      // Add CSP meta tag
+      const cspSource = panel.webview.cspSource;
+      const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
+      if (!html.includes('Content-Security-Policy')) {
+        html = html.replace('<head>', `<head>\n    ${cspMeta}`);
+      }
+
+      panel.webview.html = html;
+
+      // Handle messages from the webview
+      panel.webview.onDidReceiveMessage(async (message) => {
+        try {
+          await serverSettingsMessageHandler(message, {
+            context,
+            webview: panel.webview,
+            telemetry: telemetryService
+          });
+        } catch (error) {
+          console.error('Test panel message error:', error);
+        }
+      });
+    })
   );
 
   context.subscriptions.push(

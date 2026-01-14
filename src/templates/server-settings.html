@@ -254,6 +254,26 @@
       -moz-appearance: auto;
     }
 
+    .vm-control-btn {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: 1px solid var(--vscode-button-border);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: background 0.08s ease-out, opacity 0.08s ease-out;
+    }
+
+    .vm-control-btn:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    .vm-control-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .tf-empty {
       display: none;
       margin-top: 8px;
@@ -344,6 +364,23 @@
           <div class="tf-panel-card__pill" id="vm-status-pill">Unknown</div>
         </div>
 
+        <!-- VM Controls -->
+        <div class="tf-panel-card" id="vm-controls-card" style="display: none;">
+          <div class="tf-panel-card__left">
+            <div class="tf-panel-card__icon">🎮</div>
+            <div class="tf-panel-card__text">
+              <div class="tf-panel-card__title">VM Controls</div>
+              <div class="tf-panel-card__subtitle">Start or stop your virtual machine</div>
+            </div>
+          </div>
+          <div class="tf-panel-card__pill">
+            <div style="display: flex; gap: 6px;">
+              <button id="start-vm-btn" class="vm-control-btn" style="display: none;">Start VM</button>
+              <button id="stop-vm-btn" class="vm-control-btn" style="display: none;">Stop VM</button>
+            </div>
+          </div>
+        </div>
+
         <!-- VM Details -->
         <div class="tf-panel-card" id="vm-details-card" style="display: none;">
           <div class="tf-panel-card__left">
@@ -371,6 +408,9 @@
     const backendStatusPill = document.getElementById('backend-status-pill');
     const vmStatusEl = document.getElementById('vm-status');
     const vmStatusPill = document.getElementById('vm-status-pill');
+    const vmControlsCard = document.getElementById('vm-controls-card');
+    const startVmBtn = document.getElementById('start-vm-btn');
+    const stopVmBtn = document.getElementById('stop-vm-btn');
     const vmDetailsCard = document.getElementById('vm-details-card');
     const vmDetailsEl = document.getElementById('vm-details');
 
@@ -386,6 +426,21 @@
       // Set up event listeners
       regionSelect.addEventListener('change', handleRegionChange);
       vmTypeSelect.addEventListener('change', handleVmTypeChange);
+      startVmBtn.addEventListener('click', handleStartVm);
+      stopVmBtn.addEventListener('click', handleStopVm);
+
+      // Start polling for status updates
+      startStatusPolling();
+    }
+
+    /**
+     * Start polling for status updates to keep UI in sync
+     */
+    function startStatusPolling() {
+      // Poll every 200ms for status updates
+      setInterval(() => {
+        vscode.postMessage({ command: 'getStatus' });
+      }, 200);
     }
 
     /**
@@ -406,6 +461,24 @@
       if (vmTypeId) {
         vscode.postMessage({ command: 'setVmType', vmTypeId });
       }
+    }
+
+    /**
+     * Handle start VM button click
+     */
+    function handleStartVm() {
+      // Immediately show starting state for instant feedback
+      updateVmStatus('starting', {});
+      vscode.postMessage({ command: 'startVm' });
+    }
+
+    /**
+     * Handle stop VM button click
+     */
+    function handleStopVm() {
+      // Immediately show stopping state for instant feedback
+      updateVmStatus('stopping', {});
+      vscode.postMessage({ command: 'stopVm' });
     }
 
     /**
@@ -540,6 +613,12 @@
       vmStatusEl.textContent = statusText;
       vmStatusPill.textContent = pillText;
       vmStatusPill.className = `tf-panel-card__pill ${pillClass}`;
+
+      // Update VM controls visibility and state
+      updateVmControls(vmState);
+
+      // Update VM type selector state
+      updateVmTypeSelectorState(vmState);
     }
 
     /**
@@ -590,6 +669,102 @@
       if (parts.length === 0 || s > 0) parts.push(`${s}s`);
 
       return parts.join(' ');
+    }
+
+    /**
+     * Update VM controls visibility and state based on VM state
+     */
+    function updateVmControls(vmState) {
+      // Always show controls card for debugging
+      vmControlsCard.style.display = 'flex';
+
+      // Explicit logic for each state
+      switch (vmState) {
+        case 'running':
+          startVmBtn.style.display = 'none';
+          stopVmBtn.style.display = 'inline-block';
+          startVmBtn.disabled = false;
+          stopVmBtn.disabled = false;
+          break;
+
+        case 'starting':
+          startVmBtn.style.display = 'inline-block';
+          stopVmBtn.style.display = 'none';
+          startVmBtn.disabled = true;
+          stopVmBtn.disabled = true;
+          break;
+
+        case 'stopping':
+          startVmBtn.style.display = 'none';
+          stopVmBtn.style.display = 'inline-block';
+          startVmBtn.disabled = true;
+          stopVmBtn.disabled = true;
+          break;
+
+        case 'stopped':
+          startVmBtn.style.display = 'inline-block';
+          stopVmBtn.style.display = 'none';
+          startVmBtn.disabled = false;
+          stopVmBtn.disabled = false;
+          break;
+
+        case 'failed':
+          startVmBtn.style.display = 'inline-block';
+          stopVmBtn.style.display = 'none';
+          startVmBtn.disabled = false;
+          stopVmBtn.disabled = false;
+          break;
+
+        case 'pending':
+          startVmBtn.style.display = 'inline-block';
+          stopVmBtn.style.display = 'none';
+          startVmBtn.disabled = false;
+          stopVmBtn.disabled = false;
+          break;
+
+        case 'unknown':
+        default:
+          startVmBtn.style.display = 'inline-block';
+          stopVmBtn.style.display = 'none';
+          startVmBtn.disabled = false;
+          stopVmBtn.disabled = false;
+          break;
+      }
+
+      // Update button styles for disabled state
+      if (startVmBtn.disabled) {
+        startVmBtn.style.opacity = '0.5';
+        startVmBtn.style.cursor = 'not-allowed';
+      } else {
+        startVmBtn.style.opacity = '1';
+        startVmBtn.style.cursor = 'pointer';
+      }
+
+      if (stopVmBtn.disabled) {
+        stopVmBtn.style.opacity = '0.5';
+        stopVmBtn.style.cursor = 'not-allowed';
+      } else {
+        stopVmBtn.style.opacity = '1';
+        stopVmBtn.style.cursor = 'pointer';
+      }
+    }
+
+    /**
+     * Update VM type selector state based on VM state
+     */
+    function updateVmTypeSelectorState(vmState) {
+      // Disable VM type changes when VM is not stopped
+      const isVmNotStopped = vmState !== 'stopped' && vmState !== 'failed' && vmState !== 'pending' && vmState !== 'unknown';
+      vmTypeSelect.disabled = isVmNotStopped;
+
+      // Update visual styling for disabled state
+      if (isVmNotStopped) {
+        vmTypeSelect.style.opacity = '0.5';
+        vmTypeSelect.style.cursor = 'not-allowed';
+      } else {
+        vmTypeSelect.style.opacity = '1';
+        vmTypeSelect.style.cursor = 'pointer';
+      }
     }
 
     /**
