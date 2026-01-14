@@ -234,6 +234,26 @@
       border-color: var(--vscode-button-border, var(--vscode-editorWidget-border));
     }
 
+    .tf-panel-card__pill:has(select) {
+      background: transparent;
+      border: none;
+      padding: 0;
+    }
+
+    .tf-panel-card__pill select {
+      background: var(--vscode-dropdown-background);
+      border: 1px solid var(--vscode-dropdown-border);
+      color: var(--vscode-dropdown-foreground);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      width: 100%;
+      cursor: pointer;
+      appearance: auto;
+      -webkit-appearance: auto;
+      -moz-appearance: auto;
+    }
+
     .tf-empty {
       display: none;
       margin-top: 8px;
@@ -267,7 +287,7 @@
             </div>
           </div>
           <div class="tf-panel-card__pill">
-            <select id="region-select" style="background: transparent; border: none; color: inherit; font: inherit;">
+            <select id="region-select">
               <option value="">Loading...</option>
             </select>
           </div>
@@ -288,7 +308,7 @@
             </div>
           </div>
           <div class="tf-panel-card__pill">
-            <select id="vm-type-select" style="background: transparent; border: none; color: inherit; font: inherit;">
+            <select id="vm-type-select">
               <option value="">Loading...</option>
             </select>
           </div>
