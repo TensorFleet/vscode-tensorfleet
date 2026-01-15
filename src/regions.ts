@@ -65,11 +65,12 @@ export const REGIONS: Record<string, RegionConfig> = {
     id: 'asia',
     name: 'Asia',
     backendUrl: 'https://app.tensorfleet.net',
-    vmManagerUrl: 'https://vm-manager-asia-1.tail4f6a7.ts.net',
+    vmManagerUrl: 'http://vm-manager-asia-1.tail4f6a7.ts.net',
     foxglovePort: 8765,
     ros2Port: 9091,
     description: 'Asia - Southeast (beta/staging)',
-    icon: '🇹🇭'
+    icon: '🇹🇭',
+    devOnly: true  // Only visible when running in dev mode (F5 debugging)
   },
   'local': {
     id: 'local',

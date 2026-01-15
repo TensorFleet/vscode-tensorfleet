@@ -334,6 +334,9 @@ export class ROS2Bridge {
   getAvailableImageTopics(): Subscription[] {
     // A few common image topic guesses for convenience
     return [
+      { topic: "/so_arm101/agent_camera/image_raw", type: "sensor_msgs/msg/Image" },
+      { topic: "/so_arm101/side_camera/image_raw", type: "sensor_msgs/msg/Image" },
+      { topic: "/so_arm101/wrist_camera/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/image_raw", type: "sensor_msgs/msg/Image" },
       { topic: "/camera/image_annotated", type: "sensor_msgs/msg/Image" },

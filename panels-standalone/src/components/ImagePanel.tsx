@@ -39,6 +39,7 @@ export const ImagePanel: React.FC = () => {
   const [cameraInfo] = useState<CameraInfo | null>(null);
   const [cameraModel, setCameraModel] = useState<ICameraModel | null>(null);
   const [show3DAnnotations, setShow3DAnnotations] = useState<boolean>(false);
+  const [showImageInfo, setShowImageInfo] = useState<boolean>(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -668,6 +669,16 @@ export const ImagePanel: React.FC = () => {
 
       <div className="canvas-container">
         <canvas ref={canvasRef} onContextMenu={handleContextMenu} />
+        <button
+          className={`image-info-toggle ${showImageInfo ? 'active' : ''}`}
+          type="button"
+          onClick={() => setShowImageInfo(!showImageInfo)}
+          disabled={!currentImage}
+          aria-pressed={showImageInfo}
+          title={showImageInfo ? 'Hide image info' : 'Show image info'}
+        >
+          Info
+        </button>
         
         {/* HUD Overlays */}
         {connectionStatus === 'disconnected' && (
@@ -689,7 +700,7 @@ export const ImagePanel: React.FC = () => {
           </div>
         )}
         
-        {currentImage && (
+        {currentImage && showImageInfo && (
           <div className="image-info">
             <div>Topic: {currentImage.topic}</div>
             <div>Frame: {currentImage.frameId || 'N/A'}</div>
