@@ -1660,11 +1660,58 @@ function launchTerminalSession(target: string) {
 }
 
 async function createNewProject(context: vscode.ExtensionContext, openNew: boolean = false) {
-  await createNewProjectInternal(context, {
-    kindLabel: 'drone',
-    defaultName: 'my-drone-project',
-    commandLabel: 'TensorFleet Project',
-  }, openNew);
+  // Show project type selection
+  const projectTypes = [
+    {
+      label: '🚁 Drone (JavaScript)',
+      description: 'JavaScript-based drone control with PX4 and ROS 2',
+      detail: 'Perfect for drone automation, computer vision, and AI integration'
+    },
+    {
+      label: '🤖 Robotic (JavaScript)',
+      description: 'JavaScript-based robotics with ROS 2 and simulation',
+      detail: 'Ideal for robotic arms, mobile robots, and sensor integration'
+    },
+    {
+      label: '🤖 Robotic (Python)',
+      description: 'Python-based robotics with ROS 2 and simulation',
+      detail: 'Full Python environment for advanced robotics and AI'
+    }
+  ];
+
+  const selectedType = await vscode.window.showQuickPick(projectTypes, {
+    placeHolder: 'Select the type of project you want to create',
+    title: 'TensorFleet: New Project Type',
+    matchOnDescription: true,
+    matchOnDetail: true
+  });
+
+  if (!selectedType) {
+    return; // User cancelled
+  }
+
+  // Route to appropriate creation function based on selection
+  if (selectedType.label.includes('Drone (JavaScript)')) {
+    await createNewProjectInternal(context, {
+      kindLabel: 'drone',
+      defaultName: 'my-drone-project',
+      commandLabel: 'TensorFleet Drone Project',
+    }, openNew);
+  } else if (selectedType.label.includes('Robotic (JavaScript)')) {
+    await createNewProjectInternal(context, {
+      kindLabel: 'robotic',
+      defaultName: 'my-robotic-project',
+      commandLabel: 'TensorFleet Robotic Project (JavaScript)',
+      templateSubdir: 'robotic-js-project-templates'
+    }, openNew);
+  } else if (selectedType.label.includes('Robotic (Python)')) {
+    await createNewProjectInternal(context, {
+      kindLabel: 'robotic',
+      defaultName: 'my-robotic-project',
+      commandLabel: 'TensorFleet Robotic Project (Python)',
+      templateSubdir: 'robotic-project-templates'
+    }, openNew);
+  }
 }
 
 async function createNewRoboticProject(context: vscode.ExtensionContext, openNew: boolean = false) {
