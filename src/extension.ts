@@ -1027,49 +1027,58 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
             telemetry
           });
           return;
-        } else {
-          // DEFAULT BEHAVIOR WHEN onMessage IS NOT PROVIDED
-
-          if (!message || typeof message.command !== 'string') {
-            console.warn('[TensorFleet] Unique panel webview message missing command:', message);
-            return;
-          }
-
-          const command = message.command as string;
-          const args: unknown[] =
-            Array.isArray(message.args)
-              ? message.args
-              : message.args !== undefined
-                ? [message.args]
-                : [];
-
-          telemetry?.trackEvent('webview.action', {
-            viewId: this.def.id,
-            action: command
-          });
-
-          // Forward any tensorfleet.* command
-          if (command.startsWith('tensorfleet.')) {
-            vscode.commands.executeCommand(command, ...args).then(undefined, (error) => {
-              vscode.window.showErrorMessage(
-                `Failed to execute command "${command}": ${error instanceof Error ? error.message : String(error)
-                }`
-              );
-            });
-            return;
-          }
-
-          // Convenience alias: openAllPanels → tensorfleet.openAllPanels
-          if (command === 'openAllPanels') {
-            vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
-              vscode.window.showErrorMessage(
-                `Failed to execute command "tensorfleet.openAllPanels": ${error instanceof Error ? error.message : String(error)
-                }`
-              );
-            });
-            return;
-          }
         }
+
+        if (message.command === 'checkAuth') {
+          webviewView.webview.postMessage({
+            type: 'authStatus',
+            authenticated: await auth.isAuthenticated(this.context)
+          });
+          return;
+        }
+
+        // DEFAULT BEHAVIOR WHEN onMessage IS NOT PROVIDED
+
+        if (!message || typeof message.command !== 'string') {
+          console.warn('[TensorFleet] Unique panel webview message missing command:', message);
+          return;
+        }
+
+        const command = message.command as string;
+        const args: unknown[] =
+          Array.isArray(message.args)
+            ? message.args
+            : message.args !== undefined
+              ? [message.args]
+              : [];
+
+        telemetry?.trackEvent('webview.action', {
+          viewId: this.def.id,
+          action: command
+        });
+
+        // Forward any tensorfleet.* command
+        if (command.startsWith('tensorfleet.')) {
+          vscode.commands.executeCommand(command, ...args).then(undefined, (error) => {
+            vscode.window.showErrorMessage(
+              `Failed to execute command "${command}": ${error instanceof Error ? error.message : String(error)
+              }`
+            );
+          });
+          return;
+        }
+
+        // Convenience alias: openAllPanels → tensorfleet.openAllPanels
+        if (command === 'openAllPanels') {
+          vscode.commands.executeCommand('tensorfleet.openAllPanels').then(undefined, (error) => {
+            vscode.window.showErrorMessage(
+              `Failed to execute command "tensorfleet.openAllPanels": ${error instanceof Error ? error.message : String(error)
+              }`
+            );
+          });
+          return;
+        }
+
 
         // default handling: just log
         console.log(`[UniquePanel:${this.def.id}] message`, message);
