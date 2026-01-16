@@ -56,13 +56,6 @@
           "title": "TensorFleet",
           "icon": "media/tensorfleet-icon.svg"
         }
-      ],
-      "panel": [
-        {
-          "id": "tensorfleet-tooling",
-          "title": "TensorFleet Tools",
-          "icon": "media/tensorfleet-icon.svg"
-        }
       ]
     },
     "views": {
@@ -84,13 +77,12 @@
           "name": "Help",
           "type": "webview",
           "when": "(tensorfleet.current_panel == 'help')"
-        }
-      ],
-      "tensorfleet-tooling": [
+        },
         {
           "id": "tensorfleet-tooling-view",
           "name": "Tool Installer",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.current_panel == 'tooling'"
         }
       ]
     },
@@ -218,6 +210,12 @@
         "category": "TensorFleet"
       },
       {
+        "command": "tensorfleet.openToolsPanel",
+        "title": "Open Tools Panel",
+        "category": "TensorFleet",
+        "icon": "media/tools-icon.png"
+      },
+      {
         "command": "tensorfleet.selectRegion",
         "title": "Select Region",
         "category": "TensorFleet"
@@ -249,22 +247,22 @@
         {
           "command": "tensorfleet.openAccountPanel",
           "group": "navigation@2",
-          "when": "view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel"
+          "when": "view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view"
         },
         {
           "command": "tensorfleet.openDroneViewsPanel",
           "group": "navigation@1",
-          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel) && tensorfleet.is_authenticated"
+          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view) && tensorfleet.is_authenticated"
         },
         {
           "command": "tensorfleet.openHelpPanel",
           "group": "navigation@3",
-          "when": "view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel"
+          "when": "view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view"
         },
         {
-          "command": "tensorfleet.createNewProject",
-          "group": "navigation@0",
-          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel) && tensorfleet.is_authenticated"
+          "command": "tensorfleet.openToolsPanel",
+          "group": "navigation@0.5",
+          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view) && tensorfleet.is_authenticated"
         }
       ]
     }

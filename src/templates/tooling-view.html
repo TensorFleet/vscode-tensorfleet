@@ -100,6 +100,14 @@
         align-items: flex-start;
       }
     }
+
+    .icon-small {
+      width: 16px;
+      height: 16px;
+      vertical-align: text-bottom;
+      margin-right: 6px;
+      object-fit: contain;
+    }
   </style>
 </head>
 
@@ -112,19 +120,35 @@
       </p>
     </header>
 
+    <section class="viewport tooling-card" style="margin-bottom: 24px;">
+      <div class="tooling-card__meta">
+        <span class="tooling-card__chip">Wizard</span>
+        <span>Interactive Setup</span>
+      </div>
+      <h2 class="viewport__title">Create Project</h2>
+      <p class="viewport__description">
+        Start a new TensorFleet project using the interactive wizard to select your project type.
+      </p>
+      <div class="viewport__actions">
+        <button id="createProjectWizard" class="viewport__action"><img src="{{plus_icon}}" class="icon-small" /> Create
+          Project</button>
+      </div>
+    </section>
+
     <div class="tooling__grid">
       <section class="viewport tooling-card tooling-card--accent">
         <div class="tooling-card__meta">
           <span class="tooling-card__chip">Projects</span>
           <span>Start from curated boilerplates</span>
         </div>
-        <h2 class="viewport__title">Quick Start</h2>
+        <h2 class="viewport__title">Drone Quick Start</h2>
         <p class="viewport__description">
           Create a new drone project with pre-configured templates, example missions, and dashboards wired to ROS
           topics.
         </p>
         <div class="viewport__actions">
-          <button id="newProject" class="viewport__action">🚀 New Drone Project</button>
+          <button id="newProject" class="viewport__action"><img src="{{drone_icon}}" class="icon-small" /> New Drone
+            Project</button>
         </div>
       </section>
 
@@ -139,8 +163,10 @@
           perception demos.
         </p>
         <div class="viewport__actions">
-          <button id="newRoboticProject" class="viewport__action">🤖 JavaScript</button>
-          <button id="newRoboticPythonProject" class="viewport__action viewport__action--secondary">🐍 Python</button>
+          <button id="newRoboticProject" class="viewport__action"><img src="{{js_icon}}" class="icon-small" />
+            JavaScript</button>
+          <button id="newRoboticPythonProject" class="viewport__action"><img src="{{python_icon}}" class="icon-small" />
+            Python</button>
         </div>
       </section>
     </div>
@@ -173,6 +199,9 @@
   </main>
   <script nonce="tooling">
     const vscode = acquireVsCodeApi();
+    document.getElementById('createProjectWizard')?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'createProjectWizard' });
+    });
     document.getElementById('newProject')?.addEventListener('click', () => {
       vscode.postMessage({ command: 'newProject' });
     });
