@@ -623,8 +623,9 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.openToolsPanel', () => {
-      vscode.commands.executeCommand('tensorfleet-tooling-view.focus');
+    vscode.commands.registerCommand('tensorfleet.openToolsPanel', async () => {
+      await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', 'tooling');
+      await vscode.commands.executeCommand('tensorfleet-tooling-view.focus');
     })
   );
 
@@ -1251,9 +1252,12 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this.renderHtml(webviewView.webview);
     webviewView.webview.onDidReceiveMessage((message) => {
-      if (message?.command === 'newProject') {
-        getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'newProject' });
+      if (message?.command === 'createProjectWizard') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'createProjectWizard' });
         vscode.commands.executeCommand('tensorfleet.createNewProject');
+      } else if (message?.command === 'newProject') {
+        getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'newProject' });
+        createNewDroneProject(this.context);
       } else if (message?.command === 'newRoboticProject') {
         vscode.commands.executeCommand('tensorfleet.createNewRoboticProject');
       } else if (message?.command === 'newRoboticPythonProject') {
@@ -1272,9 +1276,18 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
     const styles = getBaseStyles();
     const cspSource = webview.cspSource;
 
+    const drone_icon = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'drone.png')).toString();
+    const js_icon = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'javascript.png')).toString();
+    const plus_icon = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'plus.png')).toString();
+    const python_icon = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'python.png')).toString();
+
     return loadTemplate('tooling-view.html', {
       cspSource,
-      styles
+      styles,
+      drone_icon,
+      js_icon,
+      plus_icon,
+      python_icon
     });
   }
 }
@@ -1712,6 +1725,15 @@ async function createNewProject(context: vscode.ExtensionContext, openNew: boole
       templateSubdir: 'robotic-project-templates'
     }, openNew);
   }
+}
+
+async function createNewDroneProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  await createNewProjectInternal(context, {
+    kindLabel: 'drone',
+    defaultName: 'my-drone-project',
+    commandLabel: 'TensorFleet Drone Project',
+    templateSubdir: 'drone-js-project-templates'
+  }, openNew);
 }
 
 async function createNewRoboticProject(context: vscode.ExtensionContext, openNew: boolean = false) {
