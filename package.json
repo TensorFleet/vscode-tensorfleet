@@ -56,13 +56,6 @@
           "title": "TensorFleet",
           "icon": "media/tensorfleet-icon.svg"
         }
-      ],
-      "panel": [
-        {
-          "id": "tensorfleet-tooling",
-          "title": "TensorFleet Tools",
-          "icon": "media/tensorfleet-icon.svg"
-        }
       ]
     },
     "views": {
@@ -90,13 +83,12 @@
           "name": "Help",
           "type": "webview",
           "when": "(tensorfleet.current_panel == 'help')"
-        }
-      ],
-      "tensorfleet-tooling": [
+        },
         {
           "id": "tensorfleet-tooling-view",
           "name": "Tool Installer",
-          "type": "webview"
+          "type": "webview",
+          "when": "tensorfleet.current_panel == 'tooling'"
         }
       ]
     },
@@ -228,6 +220,12 @@
         "command": "tensorfleet.authStatus",
         "title": "TensorFleet: Show Auth Status",
         "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openToolsPanel",
+        "title": "Open Tools Panel",
+        "category": "TensorFleet",
+        "icon": "media/tools-icon.png"
       },
       {
         "command": "tensorfleet.selectRegion",

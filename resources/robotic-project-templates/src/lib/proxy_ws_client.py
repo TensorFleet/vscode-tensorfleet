@@ -180,7 +180,6 @@ class ProxyWebSocketClient:
             self._connected_event.set()
             return
 
-        # Forward normal messages
         if self.on_message:
             self.on_message(data)
 

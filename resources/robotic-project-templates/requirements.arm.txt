@@ -1,0 +1,15 @@
+# TensorFleet Python dependencies for robotic project template
+
+# ROS bridge client (required)
+roslibpy>=1.6.0
+
+# Environment and config loading
+python-dotenv>=1.0.0
+PyYAML>=6.0
+
+# WebSocket client for proxy connections
+websocket-client>=1.6.0
+
+# Vision dependencies (optional, for vision_yolo.py)
+numpy>=1.21.0
+opencv-python>=4.5.0

@@ -5,8 +5,8 @@
   background: #1e1e1e;
   color: rgba(255, 255, 255, 0.87);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  padding: 24px;
-  gap: 20px;
+  padding: 14px;
+  gap: 12px;
 }
 
 /* ===== HEADER PANEL STYLES ===== */
@@ -21,7 +21,7 @@
 
 /* Layer 1: Title + Status */
 .header-top {
-  padding: 20px 24px 16px;
+  padding: 12px 16px 10px;
   background: linear-gradient(135deg, rgba(33, 150, 243, 0.08) 0%, rgba(33, 150, 243, 0.02) 100%);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   position: relative;
@@ -46,7 +46,7 @@
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
 }
 
 .header-actions {
@@ -58,7 +58,7 @@
 
 .panel-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.3px;
   color: rgba(255, 255, 255, 0.95);
@@ -69,9 +69,9 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px;
+  padding: 3px 8px;
   border-radius: 20px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -140,7 +140,7 @@
 
 /* Layer 2: Primary Settings */
 .header-settings {
-  padding: 20px 24px;
+  padding: 12px 16px;
   background: rgba(0, 0, 0, 0.2);
 }
 
@@ -154,9 +154,9 @@
 .setting-item {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   flex: 1;
-  min-width: 220px;
+  min-width: 180px;
   max-width: 460px;
   position: relative;
 }
@@ -171,11 +171,11 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.5);
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.6px;
 }
 
 .label-text {
@@ -194,8 +194,8 @@
   background: rgba(0, 0, 0, 0.3);
   border: 1.5px solid rgba(255, 255, 255, 0.08);
   border-radius: 6px;
-  padding: 10px 14px;
-  font-size: 13px;
+  padding: 8px 12px;
+  font-size: 12px;
   color: rgba(255, 255, 255, 0.95);
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   width: 100%;
@@ -208,7 +208,7 @@
   border: 1px solid #334155;
   color: #f1f5f9;
   border-radius: 0.55rem;
-  padding: 10px 14px;
+  padding: 8px 12px;
   cursor: pointer;
 }
 
@@ -294,10 +294,10 @@
 
 .advanced-settings summary {
   cursor: pointer;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.5);
-  padding: 16px 24px;
+  padding: 10px 16px;
   user-select: none;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -312,7 +312,7 @@
 .advanced-settings summary::before {
   content: '▸';
   display: inline-block;
-  font-size: 12px;
+  font-size: 11px;
   margin-right: 8px;
   transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   color: rgba(33, 150, 243, 0.7);
@@ -337,7 +337,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 14px;
-  padding: 20px 24px 24px;
+  padding: 14px 16px 16px;
   background: rgba(0, 0, 0, 0.25);
 }
 
@@ -345,7 +345,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 16px;
+  padding: 12px;
   background: rgba(0, 0, 0, 0.3);
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -381,7 +381,7 @@
 }
 
 .setting-group label {
-  font-size: 11px;
+  font-size: 10px;
   color: rgba(255, 255, 255, 0.65);
   font-weight: 500;
 }
@@ -421,9 +421,9 @@
   background: #1e1e1e;
   color: rgba(255, 255, 255, 0.95);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 11px;
   transition: all 0.2s ease;
   cursor: pointer;
   flex: 1;
@@ -472,6 +472,41 @@ canvas {
   image-rendering: crisp-edges;
   width: 100%;
   height: 100%;
+}
+
+.image-info-toggle {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 12;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.image-info-toggle:hover:not(:disabled) {
+  background: rgba(33, 150, 243, 0.2);
+  border-color: rgba(33, 150, 243, 0.6);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.image-info-toggle.active {
+  background: rgba(33, 150, 243, 0.25);
+  border-color: rgba(33, 150, 243, 0.7);
+  color: #e3f2fd;
+}
+
+.image-info-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .image-info {

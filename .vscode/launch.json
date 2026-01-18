@@ -10,7 +10,7 @@
         "--extensionDevelopmentPath=${workspaceFolder}"
       ],
       "outFiles": [
-        "${workspaceFolder}/out/**/*.js"
+        "${workspaceFolder}/dist/**/*.js"
       ]
     },
     {
@@ -23,7 +23,7 @@
         "<node_internals>/**"
       ],
       "outFiles": [
-        "${workspaceFolder}/out/**/*.js"
+        "${workspaceFolder}/dist/**/*.js"
       ]
     }
   ]

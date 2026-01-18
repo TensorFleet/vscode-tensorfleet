@@ -1,8 +1,10 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'unsafe-inline' 'unsafe-eval'; img-src {{cspSource}} data: https:; font-src {{cspSource}} data:; connect-src {{cspSource}} https: http: ws: wss:;" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'unsafe-inline' 'unsafe-eval'; img-src {{cspSource}} data: https:; font-src {{cspSource}} data:; connect-src {{cspSource}} https: http: ws: wss:;" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TensorFleet Help</title>
   {{styles}}
@@ -13,7 +15,11 @@
       --tf-help-accent-strong: rgba(40, 162, 122, 0.35);
     }
 
-    html, body { height: 100%; }
+    html,
+    body {
+      height: 100%;
+    }
+
     body {
       margin: 0;
       padding: 12px 16px 16px 16px;
@@ -33,7 +39,12 @@
       min-height: 0;
     }
 
-    .tf-header { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+    .tf-header {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+    }
 
     .tf-header__title {
       margin: 0;
@@ -83,7 +94,10 @@
       font-size: 0.95rem;
     }
 
-    .tf-search__icon { opacity: 0.9; font-size: 1rem; }
+    .tf-search__icon {
+      opacity: 0.9;
+      font-size: 1rem;
+    }
 
     .tf-content {
       margin-top: 8px;
@@ -105,7 +119,11 @@
       opacity: 0.7;
     }
 
-    .tf-panel-list { display: flex; flex-direction: column; gap: 10px; }
+    .tf-panel-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
 
     .tf-panel-card {
       display: flex;
@@ -118,15 +136,23 @@
       transition: background 0.08s, border-color 0.08s, transform 0.08s;
     }
 
-    .tf-panel-card.is-clickable { cursor: pointer; }
+    .tf-panel-card.is-clickable {
+      cursor: pointer;
+    }
+
     .tf-panel-card.is-clickable:hover {
       background: var(--tf-help-accent-soft);
       border-color: var(--tf-help-accent-strong);
       transform: translateY(-1px);
     }
 
-    .tf-panel-card.is-static { cursor: default; }
-    .tf-panel-card.is-hidden { display: none; }
+    .tf-panel-card.is-static {
+      cursor: default;
+    }
+
+    .tf-panel-card.is-hidden {
+      display: none;
+    }
 
     .tf-panel-card__header {
       display: flex;
@@ -148,8 +174,18 @@
       box-shadow: 0 0 0 1px var(--tf-help-accent-strong);
     }
 
-    .tf-panel-card__title { font-size: 1rem; font-weight: 600; margin: 0; }
-    .tf-panel-card__subtitle { font-size: 0.85rem; opacity: 0.8; margin: 0; }
+    .tf-panel-card__title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin: 0;
+    }
+
+    .tf-panel-card__subtitle {
+      font-size: 0.85rem;
+      opacity: 0.8;
+      margin: 0;
+    }
+
     .tf-panel-card__description {
       font-size: 0.9rem;
       margin: 2px 0 0 0;
@@ -167,6 +203,7 @@
     }
   </style>
 </head>
+
 <body>
   <div class="tf-root">
     <header class="tf-header">
@@ -194,6 +231,7 @@
 
   <script>
     const vscode = acquireVsCodeApi();
+    let isAuthenticated = false;
 
     const PANELS = [
       {
@@ -292,6 +330,13 @@
 
       if (panel.command) {
         card.addEventListener('click', () => {
+          // Check auth for restricted panels
+          if (panel.id === 'tensorfleet-project-creation' || panel.id === 'tensorfleet-tools') {
+            if (!isAuthenticated) {
+              vscode.postMessage({ command: 'tensorfleet.openAccountPanel' });
+              return;
+            }
+          }
           vscode.postMessage({ command: panel.command });
         });
       }
@@ -320,6 +365,21 @@
     renderPanels();
     applyFilter();
     searchInput.addEventListener('input', applyFilter);
+
+    // Auth check logic
+    window.addEventListener('message', (event) => {
+      const msg = event.data || {};
+      if (msg.type === 'authStatus') {
+        isAuthenticated = !!msg.authenticated;
+      }
+    });
+
+    // Initial check and periodic poll
+    vscode.postMessage({ command: 'checkAuth' });
+    setInterval(() => {
+      vscode.postMessage({ command: 'checkAuth' });
+    }, 5000);
   </script>
 </body>
+
 </html>
