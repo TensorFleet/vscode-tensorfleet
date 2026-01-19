@@ -119,6 +119,16 @@ export class VMManagerIntegration implements vscode.Disposable {
         world_components: "static_bodies_01;simple_bot_include"
       }
     },
+    'lerobot': {
+      id: 'lerobot',
+      name: 'Lerobot arm',
+      description: 'Basic robotics arm simulation',
+      sim_config: {
+        config_version: "0.0.1",
+        world_components: "lerobot/lerobot_world_01",
+        gazebo_lerobot_enabled: "true"
+      }
+    },
   };
 
   // Default config ID
