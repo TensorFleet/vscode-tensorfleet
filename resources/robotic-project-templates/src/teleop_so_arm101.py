@@ -3,13 +3,21 @@
 Keyboard teleop for SO-ARM101 using rosbridge websocket.
 This script runs on the HOST and connects to the VM's rosbridge server.
 
-Supports both direct rosbridge connection and TensorFleet proxy connection.
+Supports:
+- Simulation mode: Controls simulated arm via ros2_control trajectory topics
+- Real mode: Controls physical SO101 arm via lerobot SDK, publishes state to VM
 
 Usage:
-    python3 teleop_arm_rosbridge.py [--host VM_IP] [--port 9091]
+    # Simulation mode (default)
+    python3 teleop_so_arm101.py [--host VM_IP] [--port 9091]
+
+    # Real arm mode
+    python3 teleop_so_arm101.py --mode real --robot-port /dev/ttyACM0 [--host VM_IP]
 
 Requirements:
     pip install roslibpy websocket-client
+    # For real mode:
+    pip install lerobot pyserial feetech-servo-sdk
 
 Environment overrides (for proxy connection):
     - TENSORFLEET_BASE_URL, TENSORFLEET_JWT (for proxy connection)
@@ -40,16 +48,37 @@ except ImportError:
         connect_to_robot = None
         Topic = None
 
+# SO101 hardware bridge (optional, for real mode)
+try:
+    from lib.so101_bridge import SO101Bridge, is_hardware_available
+except ImportError:
+    try:
+        from so101_bridge import SO101Bridge, is_hardware_available
+    except ImportError:
+        SO101Bridge = None
+        is_hardware_available = lambda: False
+
 
 class ArmKeyboardTeleop:
-    def __init__(self, client, host: str = "", port: int = 0) -> None:
+    def __init__(
+        self,
+        client,
+        host: str = "",
+        port: int = 0,
+        mode: str = "sim",
+        so101_bridge: Optional["SO101Bridge"] = None,
+    ) -> None:
         """Initialize the teleop controller.
         
         Args:
             client: Connected ROS client (roslibpy.Ros or ProxyRosClient)
             host: Display host for user messages (optional)
             port: Display port for user messages (optional)
+            mode: Operating mode - 'sim' for simulation, 'real' for hardware
+            so101_bridge: SO101Bridge instance for real mode (required if mode='real')
         """
+        self.mode = mode
+        self.so101_bridge = so101_bridge
         self.host = host
         self.port = port
         self.client = client
@@ -80,23 +109,33 @@ class ArmKeyboardTeleop:
         # Use Topic factory for compatibility with both roslibpy.Ros and ProxyRosClient
         TopicClass = Topic if Topic else roslibpy.Topic
 
-        # Publishers
-        self.arm_pub = TopicClass(
-            self.client,
-            "/arm_controller/joint_trajectory",
-            "trajectory_msgs/JointTrajectory",
-        )
-        self.gripper_pub = TopicClass(
-            self.client,
-            "/gripper_controller/joint_trajectory",
-            "trajectory_msgs/JointTrajectory",
-        )
+        if self.mode == "sim":
+            # Simulation mode: use ros2_control trajectory topics
+            self.arm_pub = TopicClass(
+                self.client,
+                "/arm_controller/joint_trajectory",
+                "trajectory_msgs/JointTrajectory",
+            )
+            self.gripper_pub = TopicClass(
+                self.client,
+                "/gripper_controller/joint_trajectory",
+                "trajectory_msgs/JointTrajectory",
+            )
 
-        # Subscriber
-        self.joint_sub = TopicClass(
-            self.client, "/joint_states", "sensor_msgs/JointState"
-        )
-        self.joint_sub.subscribe(self._joint_state_cb)
+            # Subscriber for joint states from simulation
+            self.joint_sub = TopicClass(
+                self.client, "/joint_states", "sensor_msgs/JointState"
+            )
+            self.joint_sub.subscribe(self._joint_state_cb)
+        else:
+            # Real mode: use SO101Bridge for hardware, no trajectory publishers
+            self.arm_pub = None
+            self.gripper_pub = None
+            self.joint_sub = None
+            
+            # In real mode, we already have state from the bridge
+            if self.so101_bridge and self.so101_bridge.is_connected:
+                self._sync_positions_from_hardware()
 
         # Advertise publishers
         self._setup_publishers()
@@ -104,8 +143,10 @@ class ArmKeyboardTeleop:
     def _setup_publishers(self) -> None:
         """Advertise topics before publishing."""
         print("Advertising topics...")
-        self.arm_pub.advertise()
-        self.gripper_pub.advertise()
+        if self.arm_pub:
+            self.arm_pub.advertise()
+        if self.gripper_pub:
+            self.gripper_pub.advertise()
         print("✓ Topics advertised")
         self._print_help()
 
@@ -181,16 +222,56 @@ class ArmKeyboardTeleop:
         return msg
 
     def _publish_arm(self) -> None:
-        positions = [self.positions[name] for name in self.arm_joint_names]
-        msg = self._make_trajectory_msg(list(self.arm_joint_names), positions)
-        # Use dict directly - ProxyTopic handles this, roslibpy.Topic accepts dict or Message
-        self.arm_pub.publish(msg)
+        if self.mode == "sim":
+            positions = [self.positions[name] for name in self.arm_joint_names]
+            msg = self._make_trajectory_msg(list(self.arm_joint_names), positions)
+            self.arm_pub.publish(msg)
+        else:
+            # Real mode: bridge sends commands directly to hardware
+            self._send_command_to_bridge()
 
     def _publish_gripper(self) -> None:
-        positions = [self.positions["6"]]
-        msg = self._make_trajectory_msg(list(self.gripper_joint_names), positions)
-        # Use dict directly - ProxyTopic handles this, roslibpy.Topic accepts dict or Message
-        self.gripper_pub.publish(msg)
+        if self.mode == "sim":
+            positions = [self.positions["6"]]
+            msg = self._make_trajectory_msg(list(self.gripper_joint_names), positions)
+            self.gripper_pub.publish(msg)
+        else:
+            # Real mode: bridge handles all joints together
+            self._send_command_to_bridge()
+
+    def _send_command_to_bridge(self) -> None:
+        """Send current positions to real robot via bridge."""
+        if not self.so101_bridge:
+            return
+
+        # Leader arm is read-only (input device)
+        if self.so101_bridge.robot_type == "leader":
+            if self.echo_keys:
+                print(f"\rLeader arm is read-only. Ignoring command.   ", end="", flush=True)
+            return
+
+        # SO101Bridge expects list of 6 values in order (rad)
+        # Map our "1".."6" to the correct list order
+        # Our internal mapping: 1->shoulder_pan, 2->shoulder_lift, etc.
+        # matches bridge order
+        target_pos = [self.positions[str(i+1)] for i in range(6)]
+        
+        self.so101_bridge.send_command(target_pos)
+        
+        if self.echo_keys:
+            print(f"\rSent to robot: {[f'{p:.3f}' for p in target_pos]}   ")
+
+    def _sync_positions_from_hardware(self) -> None:
+        """Update internal positions from current robot state."""
+        if not self.so101_bridge:
+            return
+            
+        current = self.so101_bridge.get_positions()
+        if len(current) == 6:
+            for i in range(6):
+                self.positions[str(i+1)] = current[i]
+            self.have_state = True
+            print(f"Synced with hardware: {[f'{p:.2f}' for p in current]}")
 
     def _handle_key(self, key: str) -> bool:
         """Handle key press. Returns False if should exit."""
@@ -201,8 +282,13 @@ class ArmKeyboardTeleop:
             return False
 
         if not self.have_state:
-            print("\rWaiting for /joint_states...   ", end="", flush=True)
-            return True
+            # In real mode, we might get state immediately from bridge
+            if self.mode == "real" and self.so101_bridge:
+                self._sync_positions_from_hardware()
+            
+            if not self.have_state:
+                print("\rWaiting for state...   ", end="", flush=True)
+                return True
 
         key = key.lower()
         mapping = {
@@ -296,9 +382,14 @@ class ArmKeyboardTeleop:
 
         # Cleanup topics (connection is closed by main)
         try:
-            self.joint_sub.unsubscribe()
-            self.arm_pub.unadvertise()
-            self.gripper_pub.unadvertise()
+            if self.joint_sub:
+                self.joint_sub.unsubscribe()
+            if self.arm_pub:
+                self.arm_pub.unadvertise()
+            if self.gripper_pub:
+                self.gripper_pub.unadvertise()
+            if self.so101_bridge:
+                self.so101_bridge.shutdown()
         except Exception:
             pass
 
@@ -316,14 +407,48 @@ def main() -> None:
     parser.add_argument(
         "--port",
         type=int,
-        default=9091,
         help="Rosbridge server port (default: 9091)",
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="sim",
+        choices=["sim", "real"],
+        help="Operating mode: 'sim' (default) or 'real'",
+    )
+    parser.add_argument(
+        "--robot-port",
+        type=str,
+        default="/dev/ttyACM0",
+        help="Robot USB serial port (only for --mode real)",
+    )
+    parser.add_argument(
+        "--robot-id",
+        type=str,
+        default="awesome_follower",
+        help="Robot ID for calibration (only for --mode real)",
+    )
+    parser.add_argument(
+        "--calibration-dir",
+        type=str,
+        default="/home/shane/.config/lerobot/",
+        help="Path to calibration directory (only for --mode real)",
+    )
+    parser.add_argument(
+        "--robot-type",
+        type=str,
+        default="follower",
+        choices=["follower", "leader"],
+        help="Robot type: 'follower' (actuated) or 'leader' (passive inputs) (only for --mode real)",
+    )
+
     args = parser.parse_args()
 
     client = None
     host = args.host
     port = args.port
+    mode = args.mode
+    so101_bridge = None
 
     try:
         # Try to use connect_to_robot (supports proxy and direct connections)
@@ -343,7 +468,42 @@ def main() -> None:
             sys.exit(1)
 
         print("✓ Connected to rosbridge!")
-        teleop = ArmKeyboardTeleop(client=client, host=host, port=port)
+
+        if mode == "real":
+            if not SO101Bridge:
+                print("Error: lerobot or SO101Bridge not available.")
+                print("Please install requirements: pip install lerobot pyserial feetech-servo-sdk")
+                sys.exit(1)
+                
+            print(f"Initializing SO101Bridge on {args.robot_port}...")
+            # Use ProxyTopic if available to wrap ros_client
+            TopicClass = Topic if Topic else roslibpy.Topic
+            
+            so101_bridge = SO101Bridge(
+                ros_client=client,
+                robot_port=args.robot_port,
+                robot_id=args.robot_id,
+                robot_type=args.robot_type,
+                calibration_dir=args.calibration_dir,
+            )
+            
+            if not so101_bridge.connect():
+                print("Failed to connect to real robot.")
+                sys.exit(1)
+                
+            # Setup ROS topics for state publishing
+            so101_bridge.setup_ros_topics(TopicClass)
+            
+            # Start background publishing thread
+            so101_bridge.start_publishing(rate_hz=20)
+
+        teleop = ArmKeyboardTeleop(
+            client=client,
+            host=host,
+            port=port,
+            mode=mode,
+            so101_bridge=so101_bridge
+        )
         teleop.run()
 
     except Exception as exc:
