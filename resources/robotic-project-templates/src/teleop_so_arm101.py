@@ -76,7 +76,7 @@ class ArmKeyboardTeleop:
             host: Display host for user messages (optional)
             port: Display port for user messages (optional)
             mode: Operating mode - 'sim' for simulation, 'real' for hardware
-            input_device: 'keyboard' or 'leader'
+            input_device: 'keyboard' or 'leader' for how to capture input
             so101_bridge: SO101Bridge instance for real mode (required if mode='real')
         """
         self.mode = mode
@@ -473,7 +473,6 @@ def main() -> None:
         choices=["follower", "leader"],
         help="Robot type: 'follower' (actuated) or 'leader' (passive inputs) (only for --mode real)",
     )
-
     parser.add_argument(
         "--input-device",
         type=str,
@@ -481,7 +480,6 @@ def main() -> None:
         choices=["keyboard", "leader"],
         help="Input device for teleoperation: 'keyboard' (default) or 'leader'",
     )
-
     args = parser.parse_args()
 
     client = None
@@ -525,7 +523,6 @@ def main() -> None:
                 ros_client=client,
                 robot_port=args.robot_port,
                 robot_id=args.robot_id,
-                # Force leader type if input device is leader
                 robot_type="leader" if input_device == "leader" else args.robot_type,
                 calibration_dir=args.calibration_dir,
             )
@@ -546,7 +543,7 @@ def main() -> None:
             port=port,
             mode=mode,
             input_device=input_device,
-            so101_bridge=so101_bridge
+            so101_bridge=so101_bridge,
         )
         teleop.run()
 
