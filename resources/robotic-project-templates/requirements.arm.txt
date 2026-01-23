@@ -13,3 +13,8 @@ websocket-client>=1.6.0
 # Vision dependencies (optional, for vision_yolo.py)
 numpy>=1.21.0
 opencv-python>=4.5.0
+
+# SO101 real arm hardware dependencies (optional, for so101_bridge.py)
+pyserial
+lerobot @ git+https://github.com/nimiCurtis/lerobot.git
+feetech-servo-sdk
