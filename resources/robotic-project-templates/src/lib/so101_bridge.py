@@ -75,7 +75,9 @@ class SO101Bridge:
         calibration_dir: Optional[str] = None,
         use_degrees: bool = False,
         publish_topic: str = '/joint_states_raw',
+        publish_joint_names: Optional[List[str]] = None,
         command_topic: str = '/joint_commands',
+        subscribe_commands: bool = True,
     ):
         """
         Initialize the SO101 bridge.
@@ -88,7 +90,9 @@ class SO101Bridge:
             calibration_dir: Path to calibration files (default: ~/.config/lerobot/)
             use_degrees: Use degrees instead of normalized values for hardware
             publish_topic: Topic to publish joint states to
+            publish_joint_names: Joint name list to publish (defaults to ROS names)
             command_topic: Topic to subscribe for commands (follower only)
+            subscribe_commands: Whether to subscribe to command topic (follower only)
         """
         if not LEROBOT_AVAILABLE:
             raise ImportError(
@@ -102,7 +106,16 @@ class SO101Bridge:
         self.robot_type = robot_type
         self.use_degrees = use_degrees
         self.publish_topic = publish_topic
+        self.publish_joint_names = publish_joint_names or list(self.JOINT_NAMES)
         self.command_topic = command_topic
+        self.subscribe_commands = subscribe_commands
+
+        if len(self.publish_joint_names) != len(self.JOINT_NAMES):
+            print(
+                "[SO101Bridge] WARNING: publish_joint_names length mismatch, "
+                "falling back to default ROS joint names."
+            )
+            self.publish_joint_names = list(self.JOINT_NAMES)
 
         # Set default calibration directory
         if calibration_dir is None:
@@ -192,7 +205,7 @@ class SO101Bridge:
         print(f"[SO101Bridge] Publishing to {self.publish_topic}")
 
         # Subscriber: joint commands from VM (only for follower)
-        if self.robot_type == 'follower':
+        if self.robot_type == 'follower' and self.subscribe_commands:
             self.joint_cmd_sub = Topic(
                 self.ros_client,
                 self.command_topic,
@@ -314,7 +327,7 @@ class SO101Bridge:
                     'stamp': {'sec': secs, 'nanosec': nsecs},
                     'frame_id': '',
                 },
-                'name': self.JOINT_NAMES,
+                'name': self.publish_joint_names,
                 'position': positions,
                 'velocity': velocities,
                 'effort': [0.0] * len(self.JOINT_NAMES),
