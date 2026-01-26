@@ -130,8 +130,9 @@ class ArmKeyboardTeleop:
         self.publish_to_sim = self.mode == "sim" or self.mirror_to_sim
         self.step = 0.05
         self.gripper_step = 0.02
+        # Shorter goal horizon keeps sim responsive when mirroring hardware
         self.time_from_start_sec = 0
-        self.time_from_start_nsec = int(0.2 * 1e9)
+        self.time_from_start_nsec = int(0.05 * 1e9)
         self.home = [0.0, 0.3, -0.5, 0.0, 0.0, 0.4]
         self.echo_keys = True
 
@@ -349,6 +350,9 @@ class ArmKeyboardTeleop:
             # Leader input should remain the source of commands
             return
         self._apply_state_update(positions)
+        # Mirror actual hardware motion into the simulator to reduce lag
+        if self.mirror_to_sim:
+            self._publish_sim_from_feedback()
 
     def _on_leader_state(self, positions: list) -> None:
         """Update state from leader input."""
@@ -364,6 +368,21 @@ class ArmKeyboardTeleop:
             except (ValueError, TypeError):
                 continue
         self.have_state = True
+
+    def _publish_sim_from_feedback(self) -> None:
+        """Publish measured hardware state to the simulator without re-commanding hardware."""
+        if not self.publish_to_sim:
+            return
+
+        if self.arm_pub:
+            arm_positions = [self.positions[name] for name in self.arm_joint_names]
+            arm_msg = self._make_trajectory_msg(list(self.arm_joint_names), arm_positions)
+            self.arm_pub.publish(arm_msg)
+
+        if self.gripper_pub:
+            grip_positions = [self.positions["6"]]
+            grip_msg = self._make_trajectory_msg(list(self.gripper_joint_names), grip_positions)
+            self.gripper_pub.publish(grip_msg)
 
     def _handle_key(self, key: str) -> bool:
         """Handle key press. Returns False if should exit."""
@@ -671,7 +690,7 @@ def main() -> None:
                 print("Failed to connect to leader arm.")
                 sys.exit(1)
             leader_bridge.setup_ros_topics(TopicClass)
-            leader_bridge.start_publishing(rate_hz=20)
+            leader_bridge.start_publishing(rate_hz=50)
 
         if args.mode == "real":
             publish_topic = "/joint_states" if (state_only or mirror_sim) else "/joint_states_raw"
@@ -695,7 +714,7 @@ def main() -> None:
                 sys.exit(1)
 
             follower_bridge.setup_ros_topics(TopicClass)
-            follower_bridge.start_publishing(rate_hz=20)
+            follower_bridge.start_publishing(rate_hz=50)
 
         if state_only:
             print("Digital twin mode: publishing /joint_states to VM. Press Ctrl-C to exit.")

@@ -21,15 +21,22 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 try:
-    from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
-    from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
+    # Preferred imports for official lerobot releases (>=0.4).
+    from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+    from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
     LEROBOT_AVAILABLE = True
 except ImportError:
-    LEROBOT_AVAILABLE = False
-    SO101Follower = None
-    SO101FollowerConfig = None
-    SO101Leader = None
-    SO101LeaderConfig = None
+    try:
+        # Fallback for legacy lerobot forks that exposed so101_* modules.
+        from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
+        from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
+        LEROBOT_AVAILABLE = True
+    except ImportError:
+        LEROBOT_AVAILABLE = False
+        SO101Follower = None
+        SO101FollowerConfig = None
+        SO101Leader = None
+        SO101LeaderConfig = None
 
 
 class SO101Bridge:

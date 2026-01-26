@@ -16,5 +16,5 @@ opencv-python>=4.5.0
 
 # SO101 real arm hardware dependencies (optional, for so101_bridge.py)
 pyserial
-lerobot @ git+https://github.com/nimiCurtis/lerobot.git
+lerobot>=0.4.3
 feetech-servo-sdk
