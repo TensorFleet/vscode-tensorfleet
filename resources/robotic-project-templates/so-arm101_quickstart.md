@@ -46,8 +46,13 @@
 | `x` / `Ctrl-C` | Exit teleoperation |
 
 
-# using real so101 arm 
-1. Find the USB ports associated with each arm
+## Using a leader arm
+
+1. Find the USB port for the leader arm:
+
+```
+source .venv/bin/activate
+```
 
 ```
 lerobot-find-port
@@ -64,40 +69,23 @@ The port of this MotorsBus is /dev/tty.usbmodem575E0032081
 Reconnect the USB cable.
 ```
 
-2. Calibrate
+2. Calibrate the leader arm  
 https://huggingface.co/docs/lerobot/en/so101 (Calibration video)
 
-- Follower
 ```
-lerobot-calibrate \
-    --robot.type=so101_follower \
-    --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
-    --robot.id=my_awesome_follower_arm # <- Give the robot a unique name
+lerobot-calibrate     --teleop.type=so101_leader     --teleop.port=/dev/ttyACM0 --teleop.id=my_awesome_leader_arm
 ```
 
-- Leader
+3. Run the script (pick one):
 
-Do the same steps to calibrate the leader arm, run the following command or API example:
-```
-lerobot-calibrate \
-    --teleop.type=so101_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
-    --teleop.id=my_awesome_leader_arm # <- Give the robot a unique name
-```
+- Simulated arm via keyboard (default):
+  ```
+  uv run python src/teleop_so_arm101.py --input keyboard
+  ```
+  The simulator resets to the starting (home) position when the script starts.
 
-3. Run the script
-
-- teleops on **simulated so101** arm in the simulated panel via **keyboard**
-```
-uv run python src/teleop_so_arm101.py
-```
-
-- teleops on **real follower** arm via **keyboard**
-```
-uv run python src/teleop_so_arm101.py --mode real --calibration-dir "~/.cache/huggingface/lerobot/calibration/robots/so101_follower/" --follower-port "" --follower-id ""
-```
-
-- teleops on **simulatd so101** arm via **real leader arm**
-```
-uv run python src/teleop_so_arm101.py --mode sim --calibration-dir "~/.cache/huggingface/lerobot/calibration/robots/so101_follower/" --leader-port "" --leader-id "" --input leader  
-```
+- Simulated arm driven by leader input (lowest latency):
+  ```
+  uv run python src/teleop_so_arm101.py --input leader --leader-port /dev/ttyACM1 --leader-id my_awesome_leader_arm
+  ```
+If your calibration files live outside the default cache location, pass `--calibration-dir /path/to/calibration/teleoperators/so_leader`.

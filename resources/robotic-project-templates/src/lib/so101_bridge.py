@@ -50,18 +50,25 @@ class SO101Bridge:
     - Command receiving from /joint_commands
     """
 
-    # ROS 2 standard joint names (matches VM ros2_control config)
+    # Joint names used by the VM ros2_control setup.
     JOINT_NAMES = [
-        'shoulder_pan_joint',
-        'shoulder_lift_joint',
-        'elbow_joint',
-        'wrist_1_joint',
-        'wrist_2_joint',
-        'wrist_3_joint',
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
     ]
 
-    # Mapping from ROS 2 names to lerobot hardware SDK names
+    # Mapping from ROS joint names to lerobot hardware SDK names.
     ROS_TO_HW_MAP = {
+        '1': 'shoulder_pan',
+        '2': 'shoulder_lift',
+        '3': 'elbow_flex',
+        '4': 'wrist_flex',
+        '5': 'wrist_roll',
+        '6': 'gripper',
+        # Aliases for standard ROS-style names.
         'shoulder_pan_joint': 'shoulder_pan',
         'shoulder_lift_joint': 'shoulder_lift',
         'elbow_joint': 'elbow_flex',
@@ -85,6 +92,13 @@ class SO101Bridge:
         publish_joint_names: Optional[List[str]] = None,
         command_topic: str = '/joint_commands',
         subscribe_commands: bool = True,
+        debug: bool = False,
+        debug_interval: float = 1.0,
+        debug_raw: bool = False,
+        limit_map: Optional[Dict[str, tuple[float, float]]] = None,
+        map_to_limits: bool = False,
+        clamp_to_limits: bool = False,
+        publish_to_ros: bool = True,
     ):
         """
         Initialize the SO101 bridge.
@@ -100,6 +114,13 @@ class SO101Bridge:
             publish_joint_names: Joint name list to publish (defaults to ROS names)
             command_topic: Topic to subscribe for commands (follower only)
             subscribe_commands: Whether to subscribe to command topic (follower only)
+            debug: Enable periodic debug output callbacks
+            debug_interval: Seconds between debug updates
+            debug_raw: Read raw servo ticks for debug output (slower)
+            limit_map: Mapping of joint name to (lower, upper) radians limits
+            map_to_limits: Map normalized values to limits when converting to radians
+            clamp_to_limits: Clamp radians to limits after conversion
+            publish_to_ros: Publish joint states to ROS (disable to cut proxy traffic)
         """
         if not LEROBOT_AVAILABLE:
             raise ImportError(
@@ -116,6 +137,13 @@ class SO101Bridge:
         self.publish_joint_names = publish_joint_names or list(self.JOINT_NAMES)
         self.command_topic = command_topic
         self.subscribe_commands = subscribe_commands
+        self.debug = debug
+        self.debug_interval = max(0.1, float(debug_interval))
+        self.debug_raw = debug_raw
+        self.limit_map = limit_map
+        self.map_to_limits = map_to_limits
+        self.clamp_to_limits = clamp_to_limits
+        self.publish_to_ros = publish_to_ros
 
         if len(self.publish_joint_names) != len(self.JOINT_NAMES):
             print(
@@ -128,7 +156,7 @@ class SO101Bridge:
         if calibration_dir is None:
             self.calibration_dir = Path.home() / '.config/lerobot/'
         else:
-            self.calibration_dir = Path(calibration_dir)
+            self.calibration_dir = Path(calibration_dir).expanduser()
 
         # Will be initialized in connect()
         self.robot = None
@@ -138,8 +166,12 @@ class SO101Bridge:
         # State tracking
         self.last_positions: Optional[List[float]] = None
         self.last_time: Optional[float] = None
+        self._last_valid_positions: Optional[List[float]] = None
+        self._last_valid_norm: Optional[List[float]] = None
+        self._last_raw_positions: Optional[List[float]] = None
         self._running = False
         self._connected = False
+        self._last_debug_time = 0.0
 
         # Thread safety
         self._lock = threading.Lock()
@@ -148,6 +180,7 @@ class SO101Bridge:
         # Callbacks
         self.on_state_published: Optional[Callable[[List[float]], None]] = None
         self.on_command_received: Optional[Callable[[List[float]], None]] = None
+        self.on_state_debug: Optional[Callable[[Dict[str, Any]], None]] = None
 
     @property
     def is_connected(self) -> bool:
@@ -203,13 +236,16 @@ class SO101Bridge:
             Topic: Topic factory class (roslibpy.Topic or ProxyTopic)
         """
         # Publisher: joint states to VM
-        self.joint_state_pub = Topic(
-            self.ros_client,
-            self.publish_topic,
-            'sensor_msgs/JointState',
-        )
-        self.joint_state_pub.advertise()
-        print(f"[SO101Bridge] Publishing to {self.publish_topic}")
+        if self.publish_to_ros:
+            self.joint_state_pub = Topic(
+                self.ros_client,
+                self.publish_topic,
+                'sensor_msgs/JointState',
+            )
+            self.joint_state_pub.advertise()
+            print(f"[SO101Bridge] Publishing to {self.publish_topic}")
+        else:
+            print("[SO101Bridge] ROS joint state publishing disabled")
 
         # Subscriber: joint commands from VM (only for follower)
         if self.robot_type == 'follower' and self.subscribe_commands:
@@ -275,78 +311,181 @@ class SO101Bridge:
                 obs = self.robot.get_action()
 
         positions = []
-        for ros_joint_name in self.JOINT_NAMES:
+        norm_positions: List[float] = []
+        raw_positions: Optional[List[float]] = None
+        if self.debug and self.debug_raw:
+            raw_positions = self._read_raw_positions()
+        for idx, ros_joint_name in enumerate(self.JOINT_NAMES):
             hw_joint_name = self.ROS_TO_HW_MAP[ros_joint_name]
-            raw_value = obs.get(f'{hw_joint_name}.pos', 0.0)
+            raw_value = obs.get(f'{hw_joint_name}.pos')
+            if raw_value is None and self._last_valid_positions is not None:
+                if self._last_valid_norm is not None:
+                    norm_positions.append(self._last_valid_norm[idx])
+                positions.append(self._last_valid_positions[idx])
+                continue
+            if raw_value is None:
+                raw_value = 0.0
+            norm_positions.append(float(raw_value))
             rad = self._robot_format_to_radians(ros_joint_name, raw_value)
             positions.append(rad)
 
+        if raw_positions is not None:
+            self._last_raw_positions = raw_positions
+        self._last_valid_norm = norm_positions.copy()
+        self._last_valid_positions = positions.copy()
         return positions
+
+    def _read_raw_positions(self) -> Optional[List[float]]:
+        if not hasattr(self.robot, 'bus'):
+            return None
+        try:
+            raw_obs = self.robot.bus.sync_read('Present_Position', normalize=False)
+        except Exception:
+            return None
+
+        raw_positions = []
+        for ros_joint_name in self.JOINT_NAMES:
+            hw_joint_name = self.ROS_TO_HW_MAP[ros_joint_name]
+            raw_positions.append(raw_obs.get(hw_joint_name))
+        return raw_positions
+
+    def _is_gripper_joint(self, joint_name: str) -> bool:
+        hw_name = self.ROS_TO_HW_MAP.get(joint_name)
+        return joint_name in ('wrist_3_joint', '6') or hw_name == 'gripper'
+
+    def _get_limits(self, joint_name: str) -> Optional[tuple[float, float]]:
+        if not self.limit_map:
+            return None
+        if joint_name in self.limit_map:
+            return self.limit_map[joint_name]
+        hw_name = self.ROS_TO_HW_MAP.get(joint_name)
+        if not hw_name:
+            return None
+        ros_name = self.HW_TO_ROS_MAP.get(hw_name)
+        if ros_name in self.limit_map:
+            return self.limit_map[ros_name]
+        return None
+
+    def _map_norm_to_limits(
+        self,
+        joint_name: str,
+        norm_value: float,
+        low: float,
+        high: float,
+    ) -> float:
+        if self._is_gripper_joint(joint_name):
+            bounded = max(0.0, min(100.0, norm_value))
+            return low + (bounded / 100.0) * (high - low)
+        bounded = max(-100.0, min(100.0, norm_value))
+        return low + ((bounded + 100.0) / 200.0) * (high - low)
 
     def _radians_to_robot_format(self, joint_name: str, rad: float) -> float:
         """Convert radians to robot-expected format (degrees or normalized)."""
-        if joint_name != 'wrist_3_joint' and self.use_degrees:
-            return math.degrees(rad)
-        else:
-            # Convert radians to normalized range [-100, 100]
+        if self._is_gripper_joint(joint_name):
             normalized = (rad / math.pi) * 100.0
-            return normalized
+            return max(0.0, min(100.0, normalized))
+        if self.use_degrees:
+            return math.degrees(rad)
+        # Convert radians to normalized range [-100, 100]
+        return (rad / math.pi) * 100.0
 
     def _robot_format_to_radians(self, joint_name: str, value: float) -> float:
         """Convert robot format to radians for ROS."""
-        if joint_name == 'wrist_3_joint':
-            # Gripper (wrist_3_joint): normalized [0, 100] -> [0, pi]
-            return (value / 100.0) * math.pi
+        limits = self._get_limits(joint_name)
+
+        if not self.use_degrees and self.map_to_limits and limits:
+            low, high = limits
+            rad = self._map_norm_to_limits(joint_name, value, low, high)
+            if self.clamp_to_limits:
+                return max(low, min(high, rad))
+            return rad
+
+        if self._is_gripper_joint(joint_name):
+            # Gripper: normalized [0, 100] -> [0, pi]
+            rad = (value / 100.0) * math.pi
+        elif self.use_degrees:
+            rad = math.radians(value)
         else:
-            if self.use_degrees:
-                return math.radians(value)
-            else:
-                # Normalized range [-100, 100] -> radians
-                return (value / 100.0) * math.pi
+            # Normalized range [-100, 100] -> radians
+            rad = (value / 100.0) * math.pi
+
+        if self.clamp_to_limits and limits:
+            low, high = limits
+            return max(low, min(high, rad))
+        return rad
 
     def publish_state(self) -> None:
         """Publish current joint states to ROS."""
-        if not self.is_connected or self.joint_state_pub is None:
+        if not self.is_connected:
             return
 
         try:
             current_time = time.time()
             positions = self.get_positions()
 
-            # Calculate velocities from position differences
-            velocities = [0.0] * len(self.JOINT_NAMES)
-            if self.last_positions is not None and self.last_time is not None:
-                dt = current_time - self.last_time
-                if dt > 1e-6:
-                    for i in range(len(self.JOINT_NAMES)):
-                        velocities[i] = (positions[i] - self.last_positions[i]) / dt
+            if self.publish_to_ros and self.joint_state_pub is not None:
+                # Calculate velocities from position differences
+                velocities = [0.0] * len(self.JOINT_NAMES)
+                if self.last_positions is not None and self.last_time is not None:
+                    dt = current_time - self.last_time
+                    if dt > 1e-6:
+                        for i in range(len(self.JOINT_NAMES)):
+                            velocities[i] = (positions[i] - self.last_positions[i]) / dt
 
-            # Update tracking
-            self.last_positions = positions.copy()
-            self.last_time = current_time
+                # Update tracking
+                self.last_positions = positions.copy()
+                self.last_time = current_time
 
-            # Build and publish message
-            secs = int(current_time)
-            nsecs = int((current_time - secs) * 1e9)
+                # Build and publish message
+                secs = int(current_time)
+                nsecs = int((current_time - secs) * 1e9)
 
-            joint_state_msg = {
-                'header': {
-                    'stamp': {'sec': secs, 'nanosec': nsecs},
-                    'frame_id': '',
-                },
-                'name': self.publish_joint_names,
-                'position': positions,
-                'velocity': velocities,
-                'effort': [0.0] * len(self.JOINT_NAMES),
-            }
+                joint_state_msg = {
+                    'header': {
+                        'stamp': {'sec': secs, 'nanosec': nsecs},
+                        'frame_id': '',
+                    },
+                    'name': self.publish_joint_names,
+                    'position': positions,
+                    'velocity': velocities,
+                    'effort': [0.0] * len(self.JOINT_NAMES),
+                }
 
-            self.joint_state_pub.publish(joint_state_msg)
+                self.joint_state_pub.publish(joint_state_msg)
+            else:
+                # Keep timestamps updated for debug cadence.
+                self.last_positions = positions.copy()
+                self.last_time = current_time
 
             if self.on_state_published:
                 self.on_state_published(positions)
+            self._emit_debug(positions)
 
         except Exception as e:
             print(f"[SO101Bridge] ERROR publishing joint states: {e}")
+
+    def _emit_debug(self, positions: List[float]) -> None:
+        if not self.debug:
+            return
+
+        now = time.time()
+        if now - self._last_debug_time < self.debug_interval:
+            return
+
+        payload = {
+            'time': now,
+            'joint_names': list(self.JOINT_NAMES),
+            'positions_rad': positions,
+            'positions_norm': self._last_valid_norm,
+            'positions_raw': self._last_raw_positions,
+        }
+
+        if self.on_state_debug:
+            self.on_state_debug(payload)
+        else:
+            print(f"[SO101Bridge][debug] {payload}")
+
+        self._last_debug_time = now
 
     def _publisher_loop(self, rate_hz: float) -> None:
         """Main publishing loop running in separate thread."""
