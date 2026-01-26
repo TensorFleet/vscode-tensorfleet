@@ -5,6 +5,8 @@
    ```bash
    uv venv && uv pip install -r requirements.arm.txt
    ```
+   > [!NOTE]
+   > Hardware-only packages are now limited to Linux installs. macOS/Windows users can run the command above without hitting missing `torchvision` wheels.
 3. **Open Simulation**: Launch the **Simulation View** and zoom in on the table as shown.
    ![Initial View](assets/simulation_view_01.png)
    ![Zoomed View](assets/simulation_view_02.png)
@@ -42,3 +44,60 @@
 | `space` | Hold current position |
 | `0` | Return to home position |
 | `x` / `Ctrl-C` | Exit teleoperation |
+
+
+# using real so101 arm 
+1. Find the USB ports associated with each arm
+
+```
+lerobot-find-port
+```
+Example Output:
+```
+Finding all available ports for the MotorBus.
+['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+Remove the USB cable from your MotorsBus and press Enter when done.
+
+[...Disconnect corresponding leader or follower arm and press Enter...]
+
+The port of this MotorsBus is /dev/tty.usbmodem575E0032081
+Reconnect the USB cable.
+```
+
+2. Calibrate
+https://huggingface.co/docs/lerobot/en/so101 (Calibration video)
+
+- Follower
+```
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
+    --robot.id=my_awesome_follower_arm # <- Give the robot a unique name
+```
+
+- Leader
+
+Do the same steps to calibrate the leader arm, run the following command or API example:
+```
+lerobot-calibrate \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
+    --teleop.id=my_awesome_leader_arm # <- Give the robot a unique name
+```
+
+3. Run the script
+
+- teleops on **simulated so101** arm in the simulated panel via **keyboard**
+```
+uv run python src/teleop_so_arm101.py
+```
+
+- teleops on **real follower** arm via **keyboard**
+```
+uv run python src/teleop_so_arm101.py --mode real --calibration-dir "~/.cache/huggingface/lerobot/calibration/robots/so101_follower/" --follower-port "" --follower-id ""
+```
+
+- teleops on **simulatd so101** arm via **real leader arm**
+```
+uv run python src/teleop_so_arm101.py --mode sim --calibration-dir "~/.cache/huggingface/lerobot/calibration/robots/so101_follower/" --leader-port "" --leader-id "" --input leader  
+```

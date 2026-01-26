@@ -7,15 +7,21 @@ Supports:
 - Simulation mode: Controls simulated arm via ros2_control trajectory topics
 - Real mode: Controls physical SO101 arm via lerobot SDK, publishes state to VM
 
-Usage:
-    # Simulation mode (default)
-    python3 teleop_so_arm101.py [--host VM_IP] [--port 9091]
+Usage presets:
+    # Simulation via keyboard (default)
+    python3 teleop_so_arm101.py --mode sim --input keyboard [--host VM_IP]
 
-    # Real arm mode
-    python3 teleop_so_arm101.py --mode real --robot-port /dev/ttyACM0 [--host VM_IP]
+    # Simulation driven by real leader arm
+    python3 teleop_so_arm101.py --mode sim --input leader --leader-port /dev/ttyACM0 [--host VM_IP]
 
-    # Real arm with digital twin mirror to VM
-    python3 teleop_so_arm101.py --mode real --mirror-vm --robot-port /dev/ttyACM0
+    # Real follower + simulator mirror, keyboard input
+    python3 teleop_so_arm101.py --mode real --input keyboard --mirror-sim --follower-port /dev/ttyACM0 [--host VM_IP]
+
+    # Real follower + simulator mirror, leader input
+    python3 teleop_so_arm101.py --mode real --input leader --leader-port /dev/ttyACM1 --follower-port /dev/ttyACM0 --mirror-sim [--host VM_IP]
+
+    # State-only digital twin of the real follower
+    python3 teleop_so_arm101.py --mode real --state-only --follower-port /dev/ttyACM0
 
 Requirements:
     pip install roslibpy websocket-client
@@ -78,7 +84,14 @@ def resolve_rosbridge_endpoint(arg_host: str, arg_port: Optional[int]) -> tuple[
 
     host = arg_host or os.getenv("ROS_HOST", default_host)
     port_env = os.getenv("ROS_PORT", "")
-    port = arg_port if arg_port else (int(port_env) if port_env else default_port)
+    port = default_port
+    if arg_port is not None:
+        port = arg_port
+    elif port_env:
+        try:
+            port = int(port_env)
+        except ValueError:
+            port = default_port
     return host, port
 
 
@@ -91,7 +104,8 @@ class ArmKeyboardTeleop:
         mode: str = "sim",
         input_device: str = "keyboard",
         mirror_to_sim: bool = False,
-        so101_bridge: Optional["SO101Bridge"] = None,
+        follower_bridge: Optional["SO101Bridge"] = None,
+        leader_bridge: Optional["SO101Bridge"] = None,
     ) -> None:
         """Initialize the teleop controller.
         
@@ -102,11 +116,13 @@ class ArmKeyboardTeleop:
             mode: Operating mode - 'sim' for simulation, 'real' for hardware
             input_device: 'keyboard' or 'leader' for how to capture input
             mirror_to_sim: If True, also publish commands to the simulator when in real mode
-            so101_bridge: SO101Bridge instance for real mode (required if mode='real')
+            follower_bridge: SO101Bridge instance for the actuated follower (real mode)
+            leader_bridge: SO101Bridge instance for leader-input hardware
         """
         self.mode = mode
         self.input_device = input_device
-        self.so101_bridge = so101_bridge
+        self.follower_bridge = follower_bridge
+        self.leader_bridge = leader_bridge
         self.host = host
         self.port = port
         self.client = client
@@ -164,13 +180,15 @@ class ArmKeyboardTeleop:
         else:
             self.joint_sub = None
             
-            # In real mode, we already have state from the bridge
-            if self.so101_bridge and self.so101_bridge.is_connected:
-                self._sync_positions_from_hardware()
+            # In real mode, we may have state from the follower bridge
+            if self.follower_bridge and self.follower_bridge.is_connected:
+                self._sync_positions_from_bridge(self.follower_bridge, source="follower")
 
-        if self.so101_bridge:
-            # Keep keyboard/leader view in sync with hardware feedback
-            self.so101_bridge.on_state_published = self._on_bridge_state
+        # Keep keyboard/leader view in sync with hardware feedback
+        if self.follower_bridge:
+            self.follower_bridge.on_state_published = self._on_follower_state
+        if self.leader_bridge:
+            self.leader_bridge.on_state_published = self._on_leader_state
 
         # Advertise publishers
         self._setup_publishers()
@@ -279,28 +297,22 @@ class ArmKeyboardTeleop:
             positions = [self.positions[name] for name in self.arm_joint_names]
             msg = self._make_trajectory_msg(list(self.arm_joint_names), positions)
             self.arm_pub.publish(msg)
-        if self.mode == "real":
+        if self.mode == "real" and self.follower_bridge:
             # Real mode: bridge sends commands directly to hardware
-            self._send_command_to_bridge()
+            self._send_command_to_follower()
 
     def _publish_gripper(self) -> None:
         if self.publish_to_sim and self.gripper_pub:
             positions = [self.positions["6"]]
             msg = self._make_trajectory_msg(list(self.gripper_joint_names), positions)
             self.gripper_pub.publish(msg)
-        if self.mode == "real":
+        if self.mode == "real" and self.follower_bridge:
             # Real mode: bridge handles all joints together
-            self._send_command_to_bridge()
+            self._send_command_to_follower()
 
-    def _send_command_to_bridge(self) -> None:
+    def _send_command_to_follower(self) -> None:
         """Send current positions to real robot via bridge."""
-        if not self.so101_bridge:
-            return
-
-        # Leader arm is read-only (input device)
-        if self.so101_bridge.robot_type == "leader":
-            if self.echo_keys:
-                print(f"\rLeader arm is read-only. Ignoring command.   ", end="", flush=True)
+        if not self.follower_bridge or not self.follower_bridge.is_connected:
             return
 
         # SO101Bridge expects list of 6 values in order (rad)
@@ -309,25 +321,40 @@ class ArmKeyboardTeleop:
         # matches bridge order
         target_pos = [self.positions[str(i+1)] for i in range(6)]
         
-        self.so101_bridge.send_command(target_pos)
+        self.follower_bridge.send_command(target_pos)
         
         if self.echo_keys:
             print(f"\rSent to robot: {[f'{p:.3f}' for p in target_pos]}   ")
 
-    def _sync_positions_from_hardware(self) -> None:
-        """Update internal positions from current robot state."""
-        if not self.so101_bridge:
-            return
-            
-        current = self.so101_bridge.get_positions()
-        if len(current) == 6:
-            for i in range(6):
-                self.positions[str(i+1)] = current[i]
-            self.have_state = True
-            print(f"Synced with hardware: {[f'{p:.2f}' for p in current]}")
+    def _sync_positions_from_bridge(self, bridge: "SO101Bridge", source: str = "") -> bool:
+        """Update internal positions from a hardware bridge."""
+        if not bridge or not bridge.is_connected:
+            return False
 
-    def _on_bridge_state(self, positions: list) -> None:
-        """Keep internal state aligned with hardware feedback."""
+        current = bridge.get_positions()
+        if len(current) != 6:
+            return False
+
+        for i in range(6):
+            self.positions[str(i + 1)] = current[i]
+        self.have_state = True
+
+        if source and self.echo_keys:
+            print(f"\rSynced from {source} hardware: {[f'{p:.2f}' for p in current]}   ", end="", flush=True)
+        return True
+
+    def _on_follower_state(self, positions: list) -> None:
+        """Keep internal state aligned with follower feedback (keyboard path)."""
+        if self.input_device == "leader":
+            # Leader input should remain the source of commands
+            return
+        self._apply_state_update(positions)
+
+    def _on_leader_state(self, positions: list) -> None:
+        """Update state from leader input."""
+        self._apply_state_update(positions)
+
+    def _apply_state_update(self, positions: list) -> None:
         if len(positions) != 6:
             return
         for i, pos in enumerate(positions):
@@ -348,8 +375,8 @@ class ArmKeyboardTeleop:
 
         if not self.have_state:
             # In real mode, we might get state immediately from bridge
-            if self.mode == "real" and self.so101_bridge:
-                self._sync_positions_from_hardware()
+            if self.mode == "real" and self.follower_bridge:
+                self._sync_positions_from_bridge(self.follower_bridge, source="follower")
             
             if not self.have_state:
                 print("\rWaiting for state...   ", end="", flush=True)
@@ -422,15 +449,25 @@ class ArmKeyboardTeleop:
         try:
             if self.input_device == "leader":
                 # Leader control loop
+                if self.mode == "real" and not self.follower_bridge:
+                    print("Error: real mode with leader input requires a follower bridge.")
+                    return
+                if not self.leader_bridge or not self.leader_bridge.is_connected:
+                    print("Error: leader input selected but leader bridge is not connected.")
+                    return
+
                 print("Starting leader arm teleop loop...")
                 try:
                     while not self._shutdown and self.client.is_connected:
-                        if self.so101_bridge and self.so101_bridge.is_connected:
-                            self._sync_positions_from_hardware()
+                        if self.leader_bridge and self.leader_bridge.is_connected:
+                            self._sync_positions_from_bridge(self.leader_bridge, source="leader")
                             # Publish to simulator (and hardware if applicable)
                             if self.publish_to_sim or self.mode == "real":
                                 self._publish_arm()
                                 self._publish_gripper()
+                        else:
+                            print("\nLeader bridge disconnected.")
+                            break
                         time.sleep(0.05) # 20Hz
                 except KeyboardInterrupt:
                     pass
@@ -470,8 +507,10 @@ class ArmKeyboardTeleop:
                 self.arm_pub.unadvertise()
             if self.gripper_pub:
                 self.gripper_pub.unadvertise()
-            if self.so101_bridge:
-                self.so101_bridge.shutdown()
+            if self.follower_bridge:
+                self.follower_bridge.shutdown()
+            if self.leader_bridge:
+                self.leader_bridge.shutdown()
         except Exception:
             pass
 
@@ -484,32 +523,20 @@ def main() -> None:
         "--host",
         type=str,
         default="",
-        help="Rosbridge server host (uses proxy if not specified)",
+        help="Rosbridge server host (uses proxy or ROSBRIDGE_URL if omitted)",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=9091,
-        help="Rosbridge server port (default: 9091)",
+        default=None,
+        help="Rosbridge server port (defaults to ROS_PORT or 9091)",
     )
     parser.add_argument(
         "--mode",
         type=str,
         default="sim",
         choices=["sim", "real"],
-        help="Operating mode: 'sim' (default) or 'real'",
-    )
-    parser.add_argument(
-        "--robot-port",
-        type=str,
-        default="/dev/ttyACM0",
-        help="Robot USB serial port (only for --mode real)",
-    )
-    parser.add_argument(
-        "--robot-id",
-        type=str,
-        default="awesome_follower",
-        help="Robot ID for calibration (only for --mode real)",
+        help="Where to send commands: 'sim' (default) or 'real' follower",
     )
     parser.add_argument(
         "--calibration-dir",
@@ -518,39 +545,78 @@ def main() -> None:
         help="Path to calibration directory (only for --mode real)",
     )
     parser.add_argument(
-        "--robot-type",
+        "--follower-port",
+        "--robot-port",
+        dest="follower_port",
         type=str,
-        default="follower",
-        choices=["follower", "leader"],
-        help="Robot type: 'follower' (actuated) or 'leader' (passive inputs) (only for --mode real)",
+        default="/dev/ttyACM0",
+        help="Robot USB serial port for follower (only for --mode real)",
     )
     parser.add_argument(
+        "--follower-id",
+        "--robot-id",
+        dest="follower_id",
+        type=str,
+        default="awesome_follower",
+        help="Follower ID for calibration (only for --mode real)",
+    )
+    parser.add_argument(
+        "--leader-port",
+        type=str,
+        default=None,
+        help="Robot USB serial port for leader input (required when input=leader)",
+    )
+    parser.add_argument(
+        "--leader-id",
+        type=str,
+        default="awesome_leader",
+        help="Leader ID for calibration",
+    )
+    parser.add_argument(
+        "--input",
         "--input-device",
+        dest="input_device",
         type=str,
         default="keyboard",
         choices=["keyboard", "leader"],
         help="Input device for teleoperation: 'keyboard' (default) or 'leader'",
     )
     parser.add_argument(
+        "--mirror-sim",
         "--mirror-vm",
+        dest="mirror_sim",
         action="store_true",
         help="Mirror hardware control to the VM simulator (publish commands + joint states)",
     )
     parser.add_argument(
+        "--state-only",
         "--digital-twin",
+        dest="state_only",
         action="store_true",
         help="State-only digital twin: publish real arm joint states to VM",
     )
     args = parser.parse_args()
 
     client = None
+    follower_bridge = None
+    leader_bridge = None
     host, port = resolve_rosbridge_endpoint(args.host, args.port)
     display_host, display_port = host, port
-    mode = args.mode
-    input_device = args.input_device
-    mirror_vm = args.mirror_vm
-    digital_twin = args.digital_twin
-    so101_bridge = None
+    mirror_sim = bool(args.mirror_sim)
+    state_only = bool(args.state_only)
+
+    if state_only and args.mode != "real":
+        print("Error: --state-only requires --mode real.")
+        sys.exit(1)
+    if args.input_device == "leader" and not args.leader_port:
+        print("Error: --input leader requires --leader-port.")
+        sys.exit(1)
+    if args.mode == "real" and not args.follower_port:
+        print("Error: --mode real requires --follower-port.")
+        sys.exit(1)
+    if args.mode == "sim" and mirror_sim:
+        print("Note: --mirror-sim is ignored in simulation-only mode.")
+        mirror_sim = False
 
     try:
         # Try to use connect_to_robot (supports proxy and direct connections)
@@ -576,66 +642,83 @@ def main() -> None:
 
         print("✓ Connected to rosbridge!")
 
-        # Initialize bridge if in Real mode OR if using Leader input
-        if mirror_vm and mode != "real":
-            print("Error: --mirror-vm requires --mode real.")
-            sys.exit(1)
-        if digital_twin and mode != "real":
-            print("Error: --digital-twin requires --mode real.")
+        needs_hardware = (
+            args.mode == "real"
+            or args.input_device == "leader"
+            or state_only
+            or mirror_sim
+        )
+        if needs_hardware and not SO101Bridge:
+            print("Error: lerobot or SO101Bridge not available.")
+            print("Please install requirements: pip install lerobot pyserial feetech-servo-sdk")
             sys.exit(1)
 
-        if mode == "real" or input_device == "leader" or digital_twin or mirror_vm:
-            if not SO101Bridge:
-                print("Error: lerobot or SO101Bridge not available.")
-                print("Please install requirements: pip install lerobot pyserial feetech-servo-sdk")
-                sys.exit(1)
-                
-            print(f"Initializing SO101Bridge on {args.robot_port}...")
-            # Use ProxyTopic if available to wrap ros_client
-            TopicClass = Topic if Topic else roslibpy.Topic
-            
-            mirror_enabled = digital_twin or mirror_vm
-            publish_topic = "/joint_states" if mirror_enabled else "/joint_states_raw"
-            publish_joint_names = ["1", "2", "3", "4", "5", "6"] if mirror_enabled else None
-            subscribe_commands = False if mirror_enabled else True
-            so101_bridge = SO101Bridge(
+        TopicClass = Topic if Topic else roslibpy.Topic
+
+        if args.input_device == "leader":
+            print(f"Initializing leader bridge on {args.leader_port}...")
+            leader_bridge = SO101Bridge(
                 ros_client=client,
-                robot_port=args.robot_port,
-                robot_id=args.robot_id,
-                robot_type="leader" if input_device == "leader" else args.robot_type,
+                robot_port=args.leader_port,
+                robot_id=args.leader_id,
+                robot_type="leader",
+                calibration_dir=args.calibration_dir,
+                publish_topic="/leader_joint_states",
+                publish_joint_names=["1", "2", "3", "4", "5", "6"],
+                subscribe_commands=False,
+            )
+            if not leader_bridge.connect():
+                print("Failed to connect to leader arm.")
+                sys.exit(1)
+            leader_bridge.setup_ros_topics(TopicClass)
+            leader_bridge.start_publishing(rate_hz=20)
+
+        if args.mode == "real":
+            publish_topic = "/joint_states" if (state_only or mirror_sim) else "/joint_states_raw"
+            publish_joint_names = ["1", "2", "3", "4", "5", "6"]
+            subscribe_commands = False  # Teleop owns command stream
+
+            print(f"Initializing follower bridge on {args.follower_port}...")
+            follower_bridge = SO101Bridge(
+                ros_client=client,
+                robot_port=args.follower_port,
+                robot_id=args.follower_id,
+                robot_type="follower",
                 calibration_dir=args.calibration_dir,
                 publish_topic=publish_topic,
                 publish_joint_names=publish_joint_names,
                 subscribe_commands=subscribe_commands,
             )
-            
-            if not so101_bridge.connect():
-                print("Failed to connect to real robot.")
-                sys.exit(1)
-                
-            # Setup ROS topics for state publishing
-            so101_bridge.setup_ros_topics(TopicClass)
-            
-            # Start background publishing thread
-            so101_bridge.start_publishing(rate_hz=20)
 
-        if digital_twin:
+            if not follower_bridge.connect():
+                print("Failed to connect to follower robot.")
+                sys.exit(1)
+
+            follower_bridge.setup_ros_topics(TopicClass)
+            follower_bridge.start_publishing(rate_hz=20)
+
+        if state_only:
             print("Digital twin mode: publishing /joint_states to VM. Press Ctrl-C to exit.")
             try:
                 while client.is_connected:
                     time.sleep(1.0)
             except KeyboardInterrupt:
                 pass
+            if follower_bridge:
+                follower_bridge.shutdown()
+            if leader_bridge:
+                leader_bridge.shutdown()
             return
 
         teleop = ArmKeyboardTeleop(
             client=client,
             host=display_host,
             port=display_port,
-            mode=mode,
-            input_device=input_device,
-            mirror_to_sim=mirror_vm,
-            so101_bridge=so101_bridge,
+            mode=args.mode,
+            input_device=args.input_device,
+            mirror_to_sim=mirror_sim,
+            follower_bridge=follower_bridge,
+            leader_bridge=leader_bridge,
         )
         teleop.run()
 
