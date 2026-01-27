@@ -3,11 +3,12 @@
 Teleop for SO-ARM101 simulator over rosbridge.
 
 Inputs:
-- keyboard (default): control simulator with keyboard
+- keyboard (default): control simulator with keyboard (optionally mirror to follower arm)
 - leader: drive simulator using a real leader arm
 
 Usage:
     python3 teleop_so_arm101.py --input keyboard
+    python3 teleop_so_arm101.py --input keyboard --follower-port /dev/ttyACM0
     python3 teleop_so_arm101.py --input leader --leader-port /dev/ttyACM0
 
 Requirements:
@@ -33,6 +34,10 @@ from urllib.parse import urlparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEFAULT_HOME = [0.0, 0.3, -0.5, 0.0, 0.0, 0.4]
+DEFAULT_FOLLOWER_ID = "my_awesome_follower_arm"
+DEFAULT_FOLLOWER_CAL_DIR = (
+    "~/.cache/huggingface/lerobot/calibration/robots/so_follower/"
+)
 URDF_LIMITS = {
     "1": (-1.91986, 1.91986),
     "2": (-1.74533, 1.74533),
@@ -122,7 +127,7 @@ def parse_cli_args() -> argparse.Namespace:
         type=str,
         default="keyboard",
         choices=["keyboard", "leader"],
-        help="Input device for teleoperation: 'keyboard' (default) or 'leader'",
+        help="Input device for teleoperation: 'keyboard' or 'leader'",
     )
     parser.add_argument(
         "--leader-port",
@@ -131,16 +136,34 @@ def parse_cli_args() -> argparse.Namespace:
         help="Robot USB serial port for leader input (required when input=leader)",
     )
     parser.add_argument(
+        "--follower-port",
+        type=str,
+        default=None,
+        help="Robot USB serial port for follower output (optional for input=keyboard)",
+    )
+    parser.add_argument(
         "--leader-id",
         type=str,
         default="awesome_leader",
         help="Leader ID for calibration",
     )
     parser.add_argument(
+        "--follower-id",
+        type=str,
+        default=DEFAULT_FOLLOWER_ID,
+        help="Follower ID for calibration",
+    )
+    parser.add_argument(
         "--calibration-dir",
         type=str,
         default="~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/",
         help="Path to leader calibration directory",
+    )
+    parser.add_argument(
+        "--follower-calibration-dir",
+        type=str,
+        default=DEFAULT_FOLLOWER_CAL_DIR,
+        help="Path to follower calibration directory",
     )
     parser.add_argument(
         "--calibration-file",
@@ -234,7 +257,7 @@ def build_ros_client(args: argparse.Namespace) -> tuple[roslibpy.Ros, RosEndpoin
     return client, endpoint
 
 
-def _ensure_leader_support() -> None:
+def _ensure_so101_bridge() -> None:
     if not SO101Bridge:
         print("Error: lerobot or SO101Bridge not available.")
         print("Please install requirements: pip install lerobot pyserial feetech-servo-sdk")
@@ -279,6 +302,32 @@ def _init_leader_bridge(
 
     bridge.setup_ros_topics(topic_class)
     bridge.start_publishing(rate_hz=rate_hz)
+    return bridge
+
+
+def _init_follower_bridge(
+    *,
+    client,
+    topic_class,
+    port: str,
+    robot_id: str,
+    calibration_dir: Optional[str],
+) -> "SO101Bridge":
+    bridge = SO101Bridge(
+        ros_client=client,
+        robot_port=port,
+        robot_id=robot_id,
+        robot_type="follower",
+        calibration_dir=calibration_dir,
+        publish_joint_names=["1", "2", "3", "4", "5", "6"],
+        subscribe_commands=False,
+        publish_to_ros=False,
+    )
+    if not bridge.connect():
+        print("Failed to connect to follower arm.")
+        sys.exit(1)
+
+    bridge.setup_ros_topics(topic_class)
     return bridge
 
 
@@ -343,6 +392,7 @@ class ArmKeyboardTeleop:
         port: int = 0,
         input_device: str = "keyboard",
         leader_bridge: Optional["SO101Bridge"] = None,
+        follower_bridge: Optional["SO101Bridge"] = None,
         trajectory_time: Optional[float] = None,
         debug_leader: bool = False,
         debug_limits: bool = False,
@@ -353,6 +403,7 @@ class ArmKeyboardTeleop:
         """Initialize the teleop controller."""
         self.input_device = input_device
         self.leader_bridge = leader_bridge
+        self.follower_bridge = follower_bridge
         self.host = host
         self.port = port
         self.client = client
@@ -367,7 +418,7 @@ class ArmKeyboardTeleop:
             (trajectory_time - self.time_from_start_sec) * 1e9
         )
         self.home = list(DEFAULT_HOME)
-        self.echo_keys = self.input_device == "keyboard"
+        self.echo_keys = self.input_device.startswith("keyboard")
         self._warned_no_state = False
         self.debug_leader = debug_leader
         self.debug_limits = debug_limits
@@ -379,6 +430,7 @@ class ArmKeyboardTeleop:
         self._last_command_time = None
         self._debug_fp = None
         self._debug_log_path = None
+        self._follower_command_error = False
         if debug_log_file:
             log_path = os.path.expanduser(debug_log_file)
             log_dir = os.path.dirname(log_path)
@@ -446,6 +498,11 @@ class ArmKeyboardTeleop:
             "═" * 44,
             f"  Connected to: {conn_info}",
             *( [f"  Debug log: {self._debug_log_path}"] if self._debug_log_path else [] ),
+            *(
+                [f"  Follower mirror: {self.follower_bridge.robot_port}"]
+                if self.follower_bridge
+                else []
+            ),
             "",
             "  q/a: joint1 +/-",
             "  w/s: joint2 +/-",
@@ -612,11 +669,24 @@ class ArmKeyboardTeleop:
         positions = [self.positions[name] for name in self.arm_joint_names]
         msg = self._make_trajectory_msg(list(self.arm_joint_names), positions)
         self.arm_pub.publish(msg)
+        self._send_follower_command()
 
     def _publish_gripper(self) -> None:
         positions = [self.positions["6"]]
         msg = self._make_trajectory_msg(list(self.gripper_joint_names), positions)
         self.gripper_pub.publish(msg)
+        self._send_follower_command()
+
+    def _send_follower_command(self) -> None:
+        if not self.follower_bridge or not self.follower_bridge.is_connected:
+            return
+        positions = [self.positions[name] for name in self.joint_names]
+        try:
+            self.follower_bridge.send_command(positions)
+        except Exception as exc:
+            if not self._follower_command_error:
+                print(f"[follower] Failed to send command: {exc}")
+                self._follower_command_error = True
 
     def _apply_state_update(self, positions: list) -> None:
         if len(positions) != 6:
@@ -807,6 +877,17 @@ class ArmKeyboardTeleop:
         self._shutdown = True
         print("\nShutting down...")
 
+        if self.input_device == "keyboard":
+            try:
+                if self.client.is_connected:
+                    self._move_to_home()
+                    trajectory_time = (
+                        self.time_from_start_sec + self.time_from_start_nsec / 1e9
+                    )
+                    time.sleep(min(0.5, max(0.05, trajectory_time)))
+            except Exception as exc:
+                print(f"Warning: failed to send home command: {exc}")
+
         if self._stdin_settings is not None:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._stdin_settings)
 
@@ -838,12 +919,13 @@ def main() -> None:
 
     client = None
     leader_bridge = None
+    follower_bridge = None
     try:
         client, endpoint = build_ros_client(args)
         topic_class = Topic if Topic else roslibpy.Topic
 
         if args.input_device == "leader":
-            _ensure_leader_support()
+            _ensure_so101_bridge()
             leader_id, calibration_dir, calibration_file = _resolve_leader_calibration(
                 args
             )
@@ -864,12 +946,29 @@ def main() -> None:
                 clamp_to_limits=True,
             )
 
+        if args.input_device == "keyboard" and args.follower_port:
+            _ensure_so101_bridge()
+            follower_calibration_dir = (
+                os.path.expanduser(args.follower_calibration_dir)
+                if args.follower_calibration_dir
+                else None
+            )
+            print(f"Initializing follower arm bridge on {args.follower_port}...")
+            follower_bridge = _init_follower_bridge(
+                client=client,
+                topic_class=topic_class,
+                port=args.follower_port,
+                robot_id=args.follower_id,
+                calibration_dir=follower_calibration_dir,
+            )
+
         teleop = ArmKeyboardTeleop(
             client=client,
             host=endpoint.host,
             port=endpoint.port,
             input_device=args.input_device,
             leader_bridge=leader_bridge,
+            follower_bridge=follower_bridge,
             trajectory_time=args.trajectory_time,
             debug_leader=args.debug_leader,
             debug_limits=args.debug_limits,
@@ -886,6 +985,11 @@ def main() -> None:
         if leader_bridge:
             try:
                 leader_bridge.shutdown()
+            except Exception:
+                pass
+        if follower_bridge:
+            try:
+                follower_bridge.shutdown()
             except Exception:
                 pass
         if client:
