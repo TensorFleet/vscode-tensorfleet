@@ -31,6 +31,11 @@ Follow this guide any time you work with the SO-ARM101 example. The first sectio
    uv run python src/teleop_so_arm101.py
    ```
 
+   To mirror keyboard commands to a real follower arm, add the follower port:
+   ```bash
+   uv run python src/teleop_so_arm101.py --input keyboard --follower-port /dev/ttyACM0
+   ```
+
    > [!IMPORTANT]
    > Keyboard controls will only work when the **terminal window is focused**.
 
@@ -89,7 +94,17 @@ lerobot-calibrate --teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop
 
 Replace `--teleop.port` with the port you saved and `--teleop.id` with a memorable name. If calibration data lives outside the default cache, add `--calibration-dir /path/to/calibration/teleoperators/so_leader`.
 
-### C. Run teleoperation
+### C. Calibrate the follower arm (for mirroring)
+
+If you want to drive a real follower arm (from the keyboard or leader), calibrate it once:
+
+```bash
+lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=my_awesome_follower_arm
+```
+
+Replace the port and ID with your saved values.
+
+### D. Run teleoperation
 
 Pick the script that matches your desired input:
 
@@ -99,10 +114,20 @@ Pick the script that matches your desired input:
   ```
   The simulator resets to the starting (home) position each time the script launches.
 
+- **Simulated arm via keyboard, mirrored to a real follower**:
+  ```bash
+  uv run python src/teleop_so_arm101.py --input keyboard --follower-port /dev/ttyACM0
+  ```
+
 - **Simulated arm driven by leader arm input (lowest latency)**:
   ```bash
   uv run python src/teleop_so_arm101.py --input leader --leader-port /dev/ttyACM1 --leader-id my_awesome_leader_arm
   ```
   Swap `/dev/ttyACM1` and `my_awesome_leader_arm` with the port and nickname you recorded earlier. Pass `--calibration-dir /path/to/calibration/teleoperators/so_leader` if needed.
+
+- **Leader arm driving a real follower (relative mirroring, no jump-to-home)**:
+  ```bash
+  uv run python src/teleop_so_arm101.py --input leader --leader-port /dev/ttyACM1 --follower-port /dev/ttyACM0
+  ```
 
 Feel free to reconnect the leader arm and rerun the leader command whenever you need live control; the simulator reads from the saved teleop ID and port every time.

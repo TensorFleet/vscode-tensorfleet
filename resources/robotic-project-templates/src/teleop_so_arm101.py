@@ -38,6 +38,7 @@ DEFAULT_FOLLOWER_ID = "my_awesome_follower_arm"
 DEFAULT_FOLLOWER_CAL_DIR = (
     "~/.cache/huggingface/lerobot/calibration/robots/so_follower/"
 )
+LEADER_MIRROR_DEADBAND = 0.02
 URDF_LIMITS = {
     "1": (-1.91986, 1.91986),
     "2": (-1.74533, 1.74533),
@@ -139,7 +140,10 @@ def parse_cli_args() -> argparse.Namespace:
         "--follower-port",
         type=str,
         default=None,
-        help="Robot USB serial port for follower output (optional for input=keyboard)",
+        help=(
+            "Robot USB serial port for follower output "
+            "(optional for input=keyboard or input=leader)"
+        ),
     )
     parser.add_argument(
         "--leader-id",
@@ -431,6 +435,12 @@ class ArmKeyboardTeleop:
         self._debug_fp = None
         self._debug_log_path = None
         self._follower_command_error = False
+        self._follower_mirror_enabled = not (
+            self.input_device == "leader" and self.follower_bridge
+        )
+        self._leader_mirror_ref = None
+        self._follower_mirror_ref = None
+        self._leader_mirror_notice = False
         if debug_log_file:
             log_path = os.path.expanduser(debug_log_file)
             log_dir = os.path.dirname(log_path)
@@ -497,22 +507,35 @@ class ArmKeyboardTeleop:
             f"  Input: {self.input_device}",
             "═" * 44,
             f"  Connected to: {conn_info}",
-            *( [f"  Debug log: {self._debug_log_path}"] if self._debug_log_path else [] ),
+            *([f"  Debug log: {self._debug_log_path}"] if self._debug_log_path else []),
             *(
                 [f"  Follower mirror: {self.follower_bridge.robot_port}"]
                 if self.follower_bridge
                 else []
             ),
-            "",
-            "  q/a: joint1 +/-",
-            "  w/s: joint2 +/-",
-            "  e/d: joint3 +/-",
-            "  r/f: joint4 +/-",
-            "  t/g: joint5 +/-",
-            "  y/h: gripper +/-",
-            "  space: hold current",
-            "  0: home",
-            "  x or Ctrl-C: exit",
+        ]
+        if (
+            self.input_device == "leader"
+            and self.follower_bridge
+            and not self._follower_mirror_enabled
+        ):
+            msg.append("  Follower mirror: waiting for leader motion")
+
+        if self.input_device == "keyboard":
+            msg += [
+                "",
+                "  q/a: joint1 +/-",
+                "  w/s: joint2 +/-",
+                "  e/d: joint3 +/-",
+                "  r/f: joint4 +/-",
+                "  t/g: joint5 +/-",
+                "  y/h: gripper +/-",
+                "  space: hold current",
+                "  0: home",
+                "  x or Ctrl-C: exit",
+            ]
+
+        msg += [
             "═" * 44,
             "",
         ]
@@ -680,7 +703,24 @@ class ArmKeyboardTeleop:
     def _send_follower_command(self) -> None:
         if not self.follower_bridge or not self.follower_bridge.is_connected:
             return
+        if not self._follower_mirror_enabled:
+            return
         positions = [self.positions[name] for name in self.joint_names]
+        if self.input_device == "leader":
+            if self._leader_mirror_ref is None:
+                return
+            if self._follower_mirror_ref is None:
+                self._follower_mirror_ref = self._read_follower_positions()
+                if self._follower_mirror_ref is None:
+                    return
+            deltas = [
+                pos - ref for pos, ref in zip(positions, self._leader_mirror_ref)
+            ]
+            if max(abs(delta) for delta in deltas) < LEADER_MIRROR_DEADBAND:
+                return
+            positions = [
+                ref + delta for ref, delta in zip(self._follower_mirror_ref, deltas)
+            ]
         try:
             self.follower_bridge.send_command(positions)
         except Exception as exc:
@@ -701,10 +741,42 @@ class ArmKeyboardTeleop:
 
     def _on_leader_state(self, positions: list) -> None:
         self._apply_state_update(positions)
+        self._maybe_enable_follower_mirror(positions)
         if self.debug_limits:
             self._warn_limits(positions)
         self._publish_arm()
         self._publish_gripper()
+
+    def _maybe_enable_follower_mirror(self, positions: list) -> None:
+        if self.input_device != "leader" or not self.follower_bridge:
+            return
+        if self._follower_mirror_enabled:
+            return
+        if self._leader_mirror_ref is None:
+            self._leader_mirror_ref = list(positions)
+            if self._follower_mirror_ref is None:
+                self._follower_mirror_ref = self._read_follower_positions()
+            if not self._leader_mirror_notice:
+                print("[follower] Waiting for leader movement to enable mirroring.")
+                self._leader_mirror_notice = True
+            return
+        max_delta = max(
+            abs(pos - ref) for pos, ref in zip(positions, self._leader_mirror_ref)
+        )
+        if max_delta >= LEADER_MIRROR_DEADBAND:
+            self._follower_mirror_enabled = True
+            print("[follower] Leader moved; enabling follower mirror.")
+
+    def _read_follower_positions(self) -> Optional[list[float]]:
+        if not self.follower_bridge:
+            return None
+        try:
+            positions = self.follower_bridge.get_positions()
+        except Exception:
+            return None
+        if len(positions) != 6:
+            return None
+        return positions
 
     def _on_leader_debug(self, payload: dict) -> None:
         if not self.debug_leader:
@@ -946,7 +1018,7 @@ def main() -> None:
                 clamp_to_limits=True,
             )
 
-        if args.input_device == "keyboard" and args.follower_port:
+        if args.follower_port:
             _ensure_so101_bridge()
             follower_calibration_dir = (
                 os.path.expanduser(args.follower_calibration_dir)
