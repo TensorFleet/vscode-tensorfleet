@@ -132,7 +132,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   };
 
   // Default config ID
-  private static readonly DEFAULT_CONFIG_ID = 'simple_drone';
+  private static readonly DEFAULT_CONFIG_ID = 'simple_robot';
 
   constructor(context: vscode.ExtensionContext, unifiedCoordinator?: UnifiedStatusCoordinator | null, private readonly telemetry?: TelemetryService | null) {
     this.context = context;
@@ -945,7 +945,20 @@ export class VMManagerIntegration implements vscode.Disposable {
    */
   public getLastUsedConfig(): VMConfig {
     const configId = this.getLastUsedConfigId() || VMManagerIntegration.DEFAULT_CONFIG_ID;
-    return VMManagerIntegration.VM_CONFIGS[configId] || VMManagerIntegration.VM_CONFIGS[VMManagerIntegration.DEFAULT_CONFIG_ID];
+    const config = VMManagerIntegration.VM_CONFIGS[configId] || VMManagerIntegration.VM_CONFIGS[VMManagerIntegration.DEFAULT_CONFIG_ID];
+
+    if (!config) {
+      // Fallback to first available config if default is missing
+      const firstConfigId = Object.keys(VMManagerIntegration.VM_CONFIGS)[0];
+      const fallbackConfig = VMManagerIntegration.VM_CONFIGS[firstConfigId];
+      if (fallbackConfig) {
+        this.outputChannel.appendLine(`[VM Manager] Warning: Default config '${VMManagerIntegration.DEFAULT_CONFIG_ID}' not found, using '${firstConfigId}'`);
+        return fallbackConfig;
+      }
+      throw new Error('No VM configurations available');
+    }
+
+    return config;
   }
 
   /**
