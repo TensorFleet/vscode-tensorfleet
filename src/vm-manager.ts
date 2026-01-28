@@ -110,10 +110,10 @@ export class VMManagerIntegration implements vscode.Disposable {
         gazebo_px4_enabled: "true"
       }
     },
-    'simple_drone': {
-      id: 'simple_drone',
-      name: 'Simple Drone',
-      description: 'Basic ground drone with Gazebo simulation',
+    'simple_robot': {
+      id: 'simple_robot',
+      name: 'Simple Robot',
+      description: 'Basic ground robot with Gazebo simulation',
       sim_config: {
         config_version: "0.0.1",
         world_components: "static_bodies_01;simple_bot_include"
