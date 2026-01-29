@@ -424,6 +424,7 @@ class ArmKeyboardTeleop:
         self.home = list(DEFAULT_HOME)
         self.echo_keys = self.input_device.startswith("keyboard")
         self._warned_no_state = False
+        self._keyboard_sync_done = False
         self.debug_leader = debug_leader
         self.debug_limits = debug_limits
         self.debug_state = debug_state
@@ -548,6 +549,14 @@ class ArmKeyboardTeleop:
 
         if positions is None:
             return
+        if (
+            self.input_device == "keyboard"
+            and self.follower_bridge
+            and self._keyboard_sync_done
+        ):
+            if self.debug_state:
+                self._emit_state_debug(names, positions)
+            return
 
         first_state = not self.have_state
         for name, pos in zip(names, positions):
@@ -557,6 +566,8 @@ class ArmKeyboardTeleop:
                     self.have_state = True
                 except (ValueError, TypeError):
                     pass
+        if self.input_device == "keyboard" and self.follower_bridge and self.have_state:
+            self._keyboard_sync_done = True
 
         if first_state and self.have_state and self.echo_keys:
             print(f"\n✓ Receiving joint states: {names}")
@@ -840,6 +851,11 @@ class ArmKeyboardTeleop:
             return False
 
         if not self.have_state:
+            if self.follower_bridge and self.follower_bridge.is_connected:
+                follower_positions = self._read_follower_positions()
+                if follower_positions is not None:
+                    self._apply_state_update(follower_positions)
+                    self._keyboard_sync_done = True
             if not self._warned_no_state:
                 print("\nWaiting for /joint_states...")
                 self._warned_no_state = True
