@@ -64,6 +64,22 @@ interface HttpError extends Error {
   body?: string;
 }
 
+// VM Configuration types
+export interface VMConfig {
+  id: string;
+  name: string;
+  description: string;
+  sim_config: {
+    config_version: string;
+    world_components?: string;
+    [key: string]: any;
+  };
+}
+
+export interface VMConfigOption extends vscode.QuickPickItem {
+  config: VMConfig;
+}
+
 export class VMManagerIntegration implements vscode.Disposable {
   private readonly context: vscode.ExtensionContext;
   private readonly statusBarItem: vscode.StatusBarItem;
@@ -82,8 +98,49 @@ export class VMManagerIntegration implements vscode.Disposable {
   private static readonly NORMAL_POLL_MS = 30_000;
   private static readonly FAST_POLL_MS = 5_000;
 
+  // Static VM configuration constants
+  public static readonly VM_CONFIGS: Record<string, VMConfig> = {
+    'px4': {
+      id: 'px4',
+      name: 'PX4 Autopilot',
+      description: 'PX4 flight stack with Gazebo simulation',
+      sim_config: {
+        config_version: "0.0.1",
+        world_components: "static_bodies_01",
+        gazebo_px4_enabled: "true"
+      }
+    },
+    'simple_robot': {
+      id: 'simple_robot',
+      name: 'Simple Robot',
+      description: 'Basic ground robot with Gazebo simulation',
+      sim_config: {
+        config_version: "0.0.1",
+        world_components: "static_bodies_01;simple_bot_include"
+      }
+    },
+    'lerobot': {
+      id: 'lerobot',
+      name: 'Lerobot arm',
+      description: 'Basic robotics arm simulation',
+      sim_config: {
+        config_version: "0.0.1",
+        world_components: "lerobot/lerobot_world_01",
+        gazebo_lerobot_enabled: "true"
+      }
+    },
+  };
+
+  // Default config ID
+  private static readonly DEFAULT_CONFIG_ID = 'simple_robot';
+
   constructor(context: vscode.ExtensionContext, unifiedCoordinator?: UnifiedStatusCoordinator | null, private readonly telemetry?: TelemetryService | null) {
     this.context = context;
+    // Load last used config or set default
+    const lastUsedConfigId = this.getLastUsedConfigId();
+    if (!lastUsedConfigId || !VMManagerIntegration.VM_CONFIGS[lastUsedConfigId]) {
+      this.setLastUsedConfigId(VMManagerIntegration.DEFAULT_CONFIG_ID);
+    }
     this.unifiedCoordinator = unifiedCoordinator || null;
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
 
@@ -550,17 +607,42 @@ export class VMManagerIntegration implements vscode.Disposable {
   // ========== VM Actions ==========
 
   /**
-   * Public method to start VM
+   * Public method to start VM with optional configuration
    */
-  async startVm() {
+  async startVm(configOrActionData?: VMConfig | any) {
     try {
       this.userInitiatedAction = 'start';
       this.trackVmEvent('vm.start', { phase: 'start' });
       this.setOptimisticState('starting');
-      await this.apiRequest<{ status: string }>('POST', '/vms/self/start');
+
+      // Determine config to use
+      let configToUse: VMConfig;
+      if (configOrActionData && typeof configOrActionData === 'object' && 'id' in configOrActionData && 'sim_config' in configOrActionData) {
+        // It's a VMConfig object
+        configToUse = configOrActionData as VMConfig;
+        this.setLastUsedConfig(configToUse.id);
+      } else if (configOrActionData) {
+        // It's actionData (legacy support) - use last config but merge actionData
+        configToUse = this.getLastUsedConfig();
+        configToUse = {
+          ...configToUse,
+          sim_config: { ...configToUse.sim_config, ...configOrActionData }
+        };
+      } else {
+        // No specific config provided - use last used config
+        configToUse = this.getLastUsedConfig();
+      }
+
+      this.trackVmEvent('vm.start', { config: configToUse.id });
+
+      const requestBody = {
+        sim_config: configToUse.sim_config,
+      };
+
+      await this.apiRequest<{ status: string }>('POST', '/vms/self/start', requestBody);
       await this.refresh(true);
-      this.outputChannel.appendLine('[VM Manager] VM start initiated');
-      this.trackVmEvent('vm.start', { phase: 'success' });
+      this.outputChannel.appendLine(`[VM Manager] VM start initiated with config: ${configToUse.name}`);
+      this.trackVmEvent('vm.start', { phase: 'success', config: configToUse.id });
     } catch (error) {
       this.userInitiatedAction = null;
       await this.refresh(true);
@@ -606,7 +688,13 @@ export class VMManagerIntegration implements vscode.Disposable {
         this.setOptimisticState('starting');
       }
 
-      await this.apiRequest<{ status: string; message?: string }>('POST', '/vms/self/restart');
+      // Use the same config logic as startVm
+      const configToUse = this.getLastUsedConfig();
+      const requestBody = {
+        sim_config: configToUse.sim_config,
+      };
+
+      await this.apiRequest<{ status: string; message?: string }>('POST', '/vms/self/restart', requestBody);
       await this.refresh(true);
       this.outputChannel.appendLine('[VM Manager] VM restart initiated');
     } catch (error) {
@@ -648,7 +736,7 @@ export class VMManagerIntegration implements vscode.Disposable {
         .then((choice) => {
           if (choice === 'Retry') {
             if (action === 'start') {
-              void this.startVm();
+              void this.startVm(); // Use last config
             } else if (action === 'stop') {
               void this.stopVm();
             } else if (action === 'restart') {
@@ -834,5 +922,51 @@ export class VMManagerIntegration implements vscode.Disposable {
       'status' in error &&
       ((error as HttpError).status === 401 || (error as HttpError).status === 403)
     );
+  }
+
+  // ========== Configuration Management ==========
+
+  /**
+   * Get the last used VM configuration ID from workspace state
+   */
+  private getLastUsedConfigId(): string | undefined {
+    return this.context.workspaceState.get<string>('tensorfleet.vm.lastConfigId');
+  }
+
+  /**
+   * Set the last used VM configuration ID in workspace state
+   */
+  private setLastUsedConfigId(configId: string): void {
+    void this.context.workspaceState.update('tensorfleet.vm.lastConfigId', configId);
+  }
+
+  /**
+   * Get the last used VM configuration
+   */
+  public getLastUsedConfig(): VMConfig {
+    const configId = this.getLastUsedConfigId() || VMManagerIntegration.DEFAULT_CONFIG_ID;
+    const config = VMManagerIntegration.VM_CONFIGS[configId] || VMManagerIntegration.VM_CONFIGS[VMManagerIntegration.DEFAULT_CONFIG_ID];
+
+    if (!config) {
+      // Fallback to first available config if default is missing
+      const firstConfigId = Object.keys(VMManagerIntegration.VM_CONFIGS)[0];
+      const fallbackConfig = VMManagerIntegration.VM_CONFIGS[firstConfigId];
+      if (fallbackConfig) {
+        this.outputChannel.appendLine(`[VM Manager] Warning: Default config '${VMManagerIntegration.DEFAULT_CONFIG_ID}' not found, using '${firstConfigId}'`);
+        return fallbackConfig;
+      }
+      throw new Error('No VM configurations available');
+    }
+
+    return config;
+  }
+
+  /**
+   * Set the last used VM configuration
+   */
+  public setLastUsedConfig(configId: string): void {
+    if (VMManagerIntegration.VM_CONFIGS[configId]) {
+      this.setLastUsedConfigId(configId);
+    }
   }
 }

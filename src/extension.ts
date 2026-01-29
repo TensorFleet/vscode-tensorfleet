@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
-import { VMManagerIntegration } from './vm-manager';
+import { VMManagerIntegration, VMConfig } from './vm-manager';
 import * as auth from './auth';
 import * as help from './help';
 import { UnifiedStatusCoordinator } from './unified-status';
@@ -16,6 +16,26 @@ import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
 // -----------------------------------------------------------------------------
 
 type PanelKind = 'standard' | 'terminalTabs';
+
+// Menu action types for deterministic option handling
+type MenuAction =
+  | 'auth.login'
+  | 'auth.logout'
+  | 'vm.retryStatus'
+  | 'vm.start'
+  | 'vm.stop'
+  | 'vm.retryStart'
+  | 'vm.refresh'
+  | 'vm.chooseConfig'
+  | 'region.change'
+  | 'onboarding.reset'
+  | 'noop.header';
+
+type ActionItem = vscode.QuickPickItem & { action: MenuAction; actionData?: any };
+
+function item(label: string, action: MenuAction, detail?: string, kind?: vscode.QuickPickItemKind, actionData?: any): ActionItem {
+  return { label, detail, kind, action, actionData };
+}
 
 type DroneViewport = {
   id: string;
@@ -172,6 +192,213 @@ const DRONE_VIEWS: DroneViewport[] = [
 /**
  * Unique panels that will have their own html rendering functions.
  */
+/**
+ * Message handler for server settings panel
+ */
+async function serverSettingsMessageHandler(message: any, api: {
+  context: vscode.ExtensionContext;
+  webview: vscode.Webview;
+  telemetry?: TelemetryService | null;
+}) {
+  if (!message || !message.command) return;
+
+  const { command } = message;
+  const { webview, telemetry } = api;
+
+  try {
+    switch (command) {
+      case 'getRegions': {
+        const regionsList = regions.getAvailableRegions();
+        const currentRegion = regions.getSelectedRegion();
+        const regionData = Object.values(regionsList).map(region => ({
+          id: region.id,
+          name: region.name,
+          icon: region.icon,
+          description: region.description
+        }));
+
+        webview.postMessage({
+          command: 'updateRegions',
+          regions: regionData,
+          currentRegion: {
+            id: currentRegion.id,
+            name: currentRegion.name,
+            icon: currentRegion.icon,
+            description: currentRegion.description
+          }
+        });
+        break;
+      }
+
+      case 'getVmTypes': {
+        if (!vmManagerIntegration) {
+          webview.postMessage({
+            command: 'updateVmTypes',
+            vmTypes: [],
+            currentVmType: { id: 'unknown', name: 'Unknown', description: 'VM Manager not available' }
+          });
+          return;
+        }
+
+        const vmConfigs = Object.values(VMManagerIntegration.VM_CONFIGS);
+        const currentConfig = vmManagerIntegration.getLastUsedConfig();
+
+        webview.postMessage({
+          command: 'updateVmTypes',
+          vmTypes: vmConfigs.map(config => ({
+            id: config.id,
+            name: config.name,
+            description: config.description
+          })),
+          currentVmType: {
+            id: currentConfig.id,
+            name: currentConfig.name,
+            description: currentConfig.description
+          }
+        });
+        break;
+      }
+
+      case 'getStatus': {
+        if (!unifiedStatusCoordinator) {
+          webview.postMessage({
+            command: 'updateStatus',
+            status: {
+              auth: 'not_authenticated',
+              connection: 'disconnected',
+              vmState: 'unknown'
+            }
+          });
+          return;
+        }
+
+        const state = unifiedStatusCoordinator.getState();
+        webview.postMessage({
+          command: 'updateStatus',
+          status: {
+            auth: state.auth,
+            connection: state.connection,
+            vmState: state.vmState,
+            ipAddress: state.ipAddress,
+            provider: state.provider,
+            region: state.region,
+            uptimeSeconds: state.uptimeSeconds,
+            error: state.error
+          }
+        });
+        break;
+      }
+
+      case 'setRegion': {
+        const { regionId } = message;
+        if (!regionId) return;
+
+        telemetry?.trackEvent('serverSettings.region.set', { regionId, phase: 'start' });
+        await regions.setSelectedRegion(regionId);
+
+        const newRegion = regions.getSelectedRegion();
+        telemetry?.trackEvent('serverSettings.region.set', { regionId, phase: 'success' });
+
+        // Refresh VM Manager status
+        if (vmManagerIntegration) {
+          vmManagerIntegration.refreshStatus(false);
+        }
+
+        // Send updated region data
+        await serverSettingsMessageHandler({ command: 'getRegions' }, api);
+        break;
+      }
+
+      case 'setVmType': {
+        const { vmTypeId } = message;
+        if (!vmTypeId || !vmManagerIntegration) return;
+
+        telemetry?.trackEvent('serverSettings.vmType.set', { vmTypeId, phase: 'start' });
+        vmManagerIntegration.setLastUsedConfig(vmTypeId);
+        telemetry?.trackEvent('serverSettings.vmType.set', { vmTypeId, phase: 'success' });
+
+        // Send updated VM types data
+        await serverSettingsMessageHandler({ command: 'getVmTypes' }, api);
+        break;
+      }
+
+      case 'startVm': {
+        if (!vmManagerIntegration) return;
+
+        telemetry?.trackEvent('serverSettings.vm.start', { phase: 'start' });
+        try {
+          await vmManagerIntegration.startVm();
+          telemetry?.trackEvent('serverSettings.vm.start', { phase: 'success' });
+
+          // Send updated status back to webview
+          if (unifiedStatusCoordinator) {
+            const state = unifiedStatusCoordinator.getState();
+            webview.postMessage({
+              command: 'updateStatus',
+              status: {
+                auth: state.auth,
+                connection: state.connection,
+                vmState: state.vmState,
+                ipAddress: state.ipAddress,
+                provider: state.provider,
+                region: state.region,
+                uptimeSeconds: state.uptimeSeconds,
+                error: state.error
+              }
+            });
+          }
+        } catch (error) {
+          telemetry?.captureError(error, { source: 'serverSettings.vm.start' });
+          telemetry?.trackEvent('serverSettings.vm.start', { phase: 'error' });
+          throw error;
+        }
+        break;
+      }
+
+      case 'stopVm': {
+        if (!vmManagerIntegration) return;
+
+        telemetry?.trackEvent('serverSettings.vm.stop', { phase: 'start' });
+        try {
+          await vmManagerIntegration.stopVm();
+          telemetry?.trackEvent('serverSettings.vm.stop', { phase: 'success' });
+
+          // Send updated status back to webview
+          if (unifiedStatusCoordinator) {
+            const state = unifiedStatusCoordinator.getState();
+            webview.postMessage({
+              command: 'updateStatus',
+              status: {
+                auth: state.auth,
+                connection: state.connection,
+                vmState: state.vmState,
+                ipAddress: state.ipAddress,
+                provider: state.provider,
+                region: state.region,
+                uptimeSeconds: state.uptimeSeconds,
+                error: state.error
+              }
+            });
+          }
+        } catch (error) {
+          telemetry?.captureError(error, { source: 'serverSettings.vm.stop' });
+          telemetry?.trackEvent('serverSettings.vm.stop', { phase: 'error' });
+          throw error;
+        }
+        break;
+      }
+
+      default: {
+        console.log('[ServerSettings] Unknown message:', command);
+        break;
+      }
+    }
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'serverSettingsMessageHandler', command });
+    console.error('[ServerSettings] Message handler error:', error);
+  }
+}
+
 const UNIQUE_PANELS: UniquePanel[] = [
   {
     id: 'tensorfleet-account',
@@ -466,6 +693,12 @@ const UNIQUE_PANELS: UniquePanel[] = [
     render: htmlRenderer('drone-view-list.html')
   },
   {
+    id: 'tensorfleet-server-settings',
+    title: 'Virtual machine settings',
+    render: htmlRenderer('server-settings.html'),
+    onMessage: serverSettingsMessageHandler
+  },
+  {
     id: 'tensorfleet-help-panel',
     title: 'Help panel',
     render: htmlRenderer('help-panel.html')
@@ -514,6 +747,8 @@ let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
 // Panel registry for unique panels (to enable refresh on auth changes)
 const uniquePanelRegistry = new Map<string, UniqueViewProvider>();
 
+
+
 // -----------------------------------------------------------------------------
 // Activation
 // -----------------------------------------------------------------------------
@@ -561,7 +796,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Initialize auth state
-  vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
+  vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "" as any)
   updateUnifiedAuthStatus(context);
   updateAuthenticatedContext(context);
 
@@ -738,6 +973,53 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.openServerSettingsPanel', () => openServerSettingsPanel(context))
+  );
+
+  // Test command for server settings panel
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.testServerSettings', async () => {
+      const panel = vscode.window.createWebviewPanel(
+        'tensorfleet-test-server-settings',
+        'Test Server Settings',
+        vscode.ViewColumn.One,
+        {
+          enableScripts: true,
+          localResourceRoots: [
+            vscode.Uri.joinPath(context.extensionUri, 'media'),
+            vscode.Uri.joinPath(context.extensionUri, 'src', 'templates')
+          ]
+        }
+      );
+
+      const htmlPath = path.join(__dirname, '..', 'src', 'templates', 'server-settings.html');
+      let html = fs.readFileSync(htmlPath, 'utf8');
+
+      // Add CSP meta tag
+      const cspSource = panel.webview.cspSource;
+      const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; img-src ${cspSource} data: https:; font-src ${cspSource} data:; connect-src ${cspSource} https: http: ws: wss:;">`;
+      if (!html.includes('Content-Security-Policy')) {
+        html = html.replace('<head>', `<head>\n    ${cspMeta}`);
+      }
+
+      panel.webview.html = html;
+
+      // Handle messages from the webview
+      panel.webview.onDidReceiveMessage(async (message) => {
+        try {
+          await serverSettingsMessageHandler(message, {
+            context,
+            webview: panel.webview,
+            telemetry: telemetryService
+          });
+        } catch (error) {
+          console.error('Test panel message error:', error);
+        }
+      });
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openTutorialsGuide', () => openTutorialsGuide(context))
   )
   context.subscriptions.push(
@@ -777,7 +1059,7 @@ export function activate(context: vscode.ExtensionContext) {
   } else {
     // If onboarding hasn't ended show it
     const lastStep = help.loadOnboardingProgress(context).lastCompletedStep;
-    if (lastStep == 'none' || lastStep == 'project') {
+    if (lastStep === 'none' || lastStep === 'project') {
       showWelcomePage(context);
     }
   }
@@ -1124,8 +1406,8 @@ async function showWelcomePage(context: vscode.ExtensionContext) {
     lastState.lastCompletedStep = 'account';
     help.saveOnboardingProgress(context, lastState);
   }
-  let lastStep = lastState.lastCompletedStep;
-  if (lastStep == 'end') {
+  let lastStep: 'none' | 'account' | 'project' | 'panels' | 'end' = lastState.lastCompletedStep;
+  if (lastStep === 'end') {
     lastStep = 'panels';
   }
 
@@ -1583,12 +1865,16 @@ async function sendVmManagerInfoToWebview(
   }
 
   try {
-    const requestedVmBase = typeof payload?.vmBase === 'string' ? payload.vmBase : undefined;
-    const requestedToken = typeof payload?.token === 'string' ? payload.token : undefined;
-    const info = await vmManagerIntegration.fetchVmManagerInfo({
-      vmBase: requestedVmBase,
-      token: requestedToken
-    });
+    // Get basic VM info from snapshot
+    const snapshot = vmManagerIntegration.snapshot;
+    const info = {
+      vmState: snapshot.vmState,
+      ipAddress: snapshot.ipAddress,
+      nodeId: snapshot.nodeId,
+      provider: snapshot.provider,
+      region: snapshot.region,
+      uptimeSeconds: snapshot.uptimeSeconds
+    };
     webview.postMessage({ command: 'tensorfleet.vmManagerInfo', payload: info });
   } catch (error) {
     webview.postMessage({
@@ -3209,6 +3495,10 @@ async function openDroneViewsPanel(context: vscode.ExtensionContext) {
   await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
 }
 
+async function openServerSettingsPanel(context: vscode.ExtensionContext) {
+  await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "server-settings" as any)
+}
+
 async function openTutorialsGuide(context: vscode.ExtensionContext) {
   if (!vscode.workspace.workspaceFolders) {
     vscode.window.showErrorMessage('No workspace folder found');
@@ -3248,52 +3538,42 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   }
 
   const state = unifiedStatusCoordinator.getState();
-  const items: vscode.QuickPickItem[] = [];
+  const items: ActionItem[] = [];
 
   // Auth check in progress
   if (state.auth === 'checking') {
-    items.push({
-      label: '$(sync~spin) Checking authentication...',
-      detail: 'Verifying your TensorFleet login',
-      kind: vscode.QuickPickItemKind.Default
-    });
+    items.push(item('$(sync~spin) Checking authentication...', 'noop.header', 'Verifying your TensorFleet login', vscode.QuickPickItemKind.Default));
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator } as any);
+    items.push(item('$(sign-out) Cancel and Logout', 'auth.logout'));
 
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
-
-    items.push({
-      label: '$(sign-out) Cancel and Logout'
-    });
-
-    const selection = await vscode.window.showQuickPick(items, {
+    const selection = await vscode.window.showQuickPick(items as ActionItem[], {
       placeHolder: 'Checking authentication…',
       ignoreFocusOut: true
     });
 
-    if (selection?.label.includes('Logout')) {
-      await handleLogout(context);
+    if (!selection) return;
+    switch (selection.action) {
+      case 'auth.logout':
+        await handleLogout(context);
+        return;
     }
     return;
   }
 
   // User not authenticated at all
   if (state.auth === 'not_authenticated') {
-    // Primary action - only login available before authentication
-    items.push({
-      label: '$(key) Login',
-      detail: 'Authenticate with TensorFleet',
-      kind: vscode.QuickPickItemKind.Default
-    });
+    items.push(item('$(key) Login', 'auth.login', 'Authenticate with TensorFleet', vscode.QuickPickItemKind.Default));
 
-    const selection = await vscode.window.showQuickPick(items, {
+    const selection = await vscode.window.showQuickPick(items as ActionItem[], {
       placeHolder: 'Not Logged In',
       ignoreFocusOut: true
     });
 
-    if (selection?.label.includes('Login')) {
-      await handleLogin(context);
+    if (!selection) return;
+    switch (selection.action) {
+      case 'auth.login':
+        await handleLogin(context);
+        return;
     }
     return;
   }
@@ -3302,46 +3582,34 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   if (state.connection === 'not_authenticated') {
     const currentRegion = regions.getSelectedRegion();
 
-    items.push({
-      label: '$(warning) VM Manager unavailable',
-      detail: state.error || 'Service may not be deployed in this region',
-      kind: vscode.QuickPickItemKind.Default
-    });
-
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
+    items.push(item('$(warning) VM Manager unavailable', 'noop.header', state.error || 'Service may not be deployed in this region', vscode.QuickPickItemKind.Default));
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator } as any);
 
     if (vmManagerIntegration) {
-      items.push({
-        label: '$(refresh) Retry VM Status',
-        detail: 'Retry with current authentication'
-      });
+      items.push(item('$(refresh) Retry VM Status', 'vm.retryStatus', 'Retry with current authentication'));
     }
 
-    items.push(
-      {
-        label: `$(globe) Change Region`,
-        detail: `Current: ${currentRegion.name}`
-      },
-      {
-        label: '$(sign-out) Logout',
-        detail: 'Logout from TensorFleet'
-      }
-    );
+    items.push(item(`$(globe) Change Region`, 'region.change', `Current: ${currentRegion.name}`));
+    items.push(item('$(sign-out) Logout', 'auth.logout', 'Logout from TensorFleet'));
 
-    const selection = await vscode.window.showQuickPick(items, {
+    const selection = await vscode.window.showQuickPick(items as ActionItem[], {
       placeHolder: 'VM Manager unavailable',
       ignoreFocusOut: true
     });
 
-    if (selection?.label.includes('Retry') && vmManagerIntegration) {
-      vmManagerIntegration.refreshStatus(false);
-    } else if (selection?.label.includes('Change Region')) {
-      await selectRegion(context);
-    } else if (selection?.label.includes('Logout')) {
-      await handleLogout(context);
+    if (!selection) return;
+    switch (selection.action) {
+      case 'vm.retryStatus':
+        if (vmManagerIntegration) {
+          vmManagerIntegration.refreshStatus(false);
+        }
+        return;
+      case 'region.change':
+        await selectRegion(context);
+        return;
+      case 'auth.logout':
+        await handleLogout(context);
+        return;
     }
     return;
   }
@@ -3350,48 +3618,35 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   if (state.connection === 'disconnected') {
     const currentRegion = regions.getSelectedRegion();
 
-    // Primary action
-    items.push({
-      label: '$(refresh) Retry Connection',
-      detail: state.error || 'Attempt to reconnect'
-    });
+    items.push(item('$(refresh) Retry Connection', 'vm.refresh', state.error || 'Attempt to reconnect'));
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator } as any);
+    items.push(item(`$(globe) Change Region`, 'region.change', `Current: ${currentRegion.name}`));
+    items.push(item('$(sign-out) Logout', 'auth.logout', 'Logout from TensorFleet'));
 
-    // Separator
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
-
-    // Secondary actions (always available while authenticated)
-    items.push(
-      {
-        label: `$(globe) Change Region`,
-        detail: `Current: ${currentRegion.name}`
-      },
-      {
-        label: '$(sign-out) Logout',
-        detail: 'Logout from TensorFleet'
-      }
-    );
-
-    const selection = await vscode.window.showQuickPick(items, {
+    const selection = await vscode.window.showQuickPick(items as ActionItem[], {
       placeHolder: 'API Disconnected',
       ignoreFocusOut: true
     });
 
-    if (selection?.label.includes('Retry') && vmManagerIntegration) {
-      vmManagerIntegration.refreshStatus(false);
-    } else if (selection?.label.includes('Change Region')) {
-      await selectRegion(context);
-    } else if (selection?.label.includes('Logout')) {
-      await handleLogout(context);
+    if (!selection) return;
+    switch (selection.action) {
+      case 'vm.refresh':
+        if (vmManagerIntegration) {
+          vmManagerIntegration.refreshStatus(false);
+        }
+        return;
+      case 'region.change':
+        await selectRegion(context);
+        return;
+      case 'auth.logout':
+        await handleLogout(context);
+        return;
     }
     return;
   }
 
   // Authenticated and connected - show VM-specific menu
   const vmState = state.vmState;
-  const ipAddress = state.ipAddress;
   const uptime = formatUptime(state.uptimeSeconds);
 
   // Format header using helper function
@@ -3405,71 +3660,75 @@ async function showUnifiedMenu(context: vscode.ExtensionContext) {
   });
 
   // Header as regular item (separators don't render icons)
-  items.push({
-    label: headerLabel,
-    detail: headerDetail,
-    kind: vscode.QuickPickItemKind.Default
-  });
+  items.push(item(headerLabel, 'noop.header', headerDetail, vscode.QuickPickItemKind.Default));
 
-  // Build menu with visual grouping (primary actions, separator, secondary actions)
-  const menuItems = buildMenuForState(vmState, ipAddress);
-  items.push(...menuItems);
-
-  const developmentActions: vscode.QuickPickItem[] = [
-    {
-      label: '$(question) Reset Onboarding'
-    }
-  ];
-  if (context.extensionMode === vscode.ExtensionMode.Development) {
-    if (developmentActions) {
-      items.push(...developmentActions);
-    }
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
+  // Add primary actions based on VM state
+  switch (vmState) {
+    case 'running':
+      items.push(item('$(debug-stop) Stop VM', 'vm.stop'));
+      break;
+    case 'stopped':
+    case 'pending':
+    case 'unknown':
+      items.push(item('$(play) Start VM', 'vm.start', 'Uses last selected configuration'));
+      items.push(item('$(gear) Choose Configuration', 'vm.chooseConfig', 'Select VM configuration before starting'));
+      break;
+    case 'failed':
+      items.push(item('$(refresh) Retry Start', 'vm.retryStart'));
+      break;
   }
 
+  // Add separator after primary actions if any exist
+  if (vmState !== 'starting' && vmState !== 'stopping') {
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator } as any);
+  }
 
+  // Secondary actions (always shown)
+  const currentRegion = regions.getSelectedRegion();
+  items.push(item('$(refresh) Refresh Status', 'vm.refresh'));
+  items.push(item(`$(globe) Change Region`, 'region.change', `Current: ${currentRegion.name}`));
+  items.push(item('$(sign-out) Logout', 'auth.logout', 'Logout from TensorFleet'));
 
-  const selection = await vscode.window.showQuickPick(items, {
+  // Development actions
+  if (context.extensionMode === vscode.ExtensionMode.Development) {
+    items.push(item('$(question) Reset Onboarding', 'onboarding.reset'));
+  }
+
+  const selection = await vscode.window.showQuickPick(items as ActionItem[], {
     placeHolder: headerLabel.replace(/\$\([^)]+\)\s*/, ''),
     ignoreFocusOut: true
   });
 
-  if (!selection) {
-    return;
-  }
-
-  // Ignore header selection (it's just for display)
-  const headerPatterns = [
-    '$(circle-filled) Running',
-    '$(circle-outline) Stopped',
-    '$(loading~spin) Starting',
-    '$(loading~spin) Stopping',
-    '$(error) Failed',
-    '$(sync~spin) Pending',
-    '$(sync~spin) Checking...'
-  ];
-  if (headerPatterns.some(pattern => selection.label.startsWith(pattern))) {
-    return;
-  }
+  if (!selection) return;
 
   try {
-    if (selection.label.includes('Stop VM') && vmManagerIntegration) {
-      await vmManagerIntegration.stopVm();
-    } else if (selection.label.includes('Start VM') && vmManagerIntegration) {
-      await vmManagerIntegration.startVm();
-    } else if (selection.label.includes('Retry Start') && vmManagerIntegration) {
-      await vmManagerIntegration.startVm();
-    } else if (selection.label.includes('Refresh Status') && vmManagerIntegration) {
-      vmManagerIntegration.refreshStatus(false);
-    } else if (selection.label.includes('Change Region')) {
-      await selectRegion(context);
-    } else if (selection.label.includes('Logout')) {
-      await handleLogout(context);
-    } else if (selection.label.includes("Reset Onboarding")) {
-      await resetOnboarding(context);
+    switch (selection.action) {
+      case 'noop.header':
+        return; // Ignore header selection
+      case 'vm.start':
+        if (vmManagerIntegration) await vmManagerIntegration.startVm(selection.actionData);
+        return;
+      case 'vm.chooseConfig':
+        await chooseVMConfiguration(context);
+        return;
+      case 'vm.stop':
+        if (vmManagerIntegration) await vmManagerIntegration.stopVm();
+        return;
+      case 'vm.retryStart':
+        if (vmManagerIntegration) await vmManagerIntegration.startVm();
+        return;
+      case 'vm.refresh':
+        if (vmManagerIntegration) vmManagerIntegration.refreshStatus(false);
+        return;
+      case 'region.change':
+        await selectRegion(context);
+        return;
+      case 'auth.logout':
+        await handleLogout(context);
+        return;
+      case 'onboarding.reset':
+        await resetOnboarding(context);
+        return;
     }
   } catch (error) {
     void vscode.window.showErrorMessage(
@@ -3710,6 +3969,65 @@ async function handleLogout(context: vscode.ExtensionContext) {
  */
 export async function showAuthStatus(context: vscode.ExtensionContext) {
   await showUnifiedMenu(context);
+}
+
+// ============================================================================
+// VM Configuration Management
+// ============================================================================
+
+/**
+ * Show VM configuration selection and start VM with selected config
+ */
+async function chooseVMConfiguration(context: vscode.ExtensionContext) {
+  if (!vmManagerIntegration) {
+    return;
+  }
+
+  const telemetry = getTelemetry();
+  telemetry?.trackEvent('vm.config.choose', { phase: 'start' });
+
+  const configs = Object.values(VMManagerIntegration.VM_CONFIGS);
+  const currentConfig = vmManagerIntegration.getLastUsedConfig();
+
+  const items: (vscode.QuickPickItem & { config: VMConfig })[] = configs.map(config => ({
+    label: config.name,
+    description: config.description,
+    detail: config.id === currentConfig.id ? '$(check) Currently selected' : '',
+    config
+  }));
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select VM configuration to start',
+    title: 'TensorFleet: Choose VM Configuration',
+    matchOnDescription: true
+  });
+
+  if (!selected) {
+    telemetry?.trackEvent('vm.config.choose', { phase: 'cancelled' });
+    return;
+  }
+
+  telemetry?.trackEvent('vm.config.choose', {
+    phase: 'selected',
+    configId: selected.config.id
+  });
+
+  try {
+    // Set the selected configuration without starting VM
+    vmManagerIntegration.setLastUsedConfig(selected.config.id);
+    telemetry?.trackEvent('vm.config.choose', {
+      phase: 'success',
+      configId: selected.config.id
+    });
+    vscode.window.showInformationMessage(`VM configuration changed to "${selected.config.name}". Use "Start VM" to launch with this configuration.`);
+  } catch (error) {
+    telemetry?.captureError(error, { source: 'chooseVMConfiguration', configId: selected.config.id });
+    telemetry?.trackEvent('vm.config.choose', {
+      phase: 'error',
+      configId: selected.config.id
+    });
+    throw error;
+  }
 }
 
 // ============================================================================

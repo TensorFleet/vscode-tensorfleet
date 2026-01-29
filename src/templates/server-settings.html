@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'unsafe-inline' 'unsafe-eval'; img-src {{cspSource}} data: https:; font-src {{cspSource}} data:; connect-src {{cspSource}} https: http: ws: wss:;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Drone and ROS views</title>
+  {{styles}}
+  <style>
+    html,
+    body {
+      height: 100%;
+    }
+
+    body {
+      margin: 0;
+      padding: 12px 16px 16px 16px;
+      color: var(--vscode-foreground);
+      background: transparent;
+      box-sizing: border-box;
+      overflow: hidden;
+      /* keep header fixed, scroll only inside content */
+    }
+
+    .tf-root {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-width: 960px;
+      margin: 0 auto;
+      height: 100%;
+      min-height: 0;
+      /* allow children to shrink for flex scrolling */
+    }
+
+    .tf-header {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+      /* prevent header from shrinking */
+    }
+
+    .tf-header__title {
+      margin: 0;
+      font-size: 1.2rem;
+      font-weight: 600;
+    }
+
+    .tf-header__hint {
+      margin: 0;
+      font-size: 0.9rem;
+      opacity: 0.75;
+    }
+
+    .tf-search {
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border));
+    }
+
+    .tf-search__input {
+      border: none;
+      outline: none;
+      background: transparent;
+      flex: 1;
+      font: inherit;
+      color: inherit;
+    }
+
+    .tf-search__input::placeholder {
+      opacity: 0.7;
+    }
+
+    .tf-search__icon {
+      opacity: 0.7;
+      font-size: 0.9rem;
+    }
+
+    .tf-content {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      padding-right: 2px;
+      flex: 1 1 auto;
+      /* take remaining space and be scrollable */
+      min-height: 0;
+      /* critical for flex + overflow to work */
+    }
+
+    .tf-category {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .tf-category.is-hidden {
+      display: none;
+    }
+
+    .tf-category__title {
+      margin: 0;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      opacity: 0.75;
+    }
+
+    .tf-panel-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .tf-panel-card {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      user-select: none;
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-editorWidget-border);
+      transition: background 0.08s ease-out, border-color 0.08s ease-out, transform 0.08s ease-out;
+    }
+
+    .tf-panel-card:hover {
+      background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.04));
+      border-color: var(--vscode-focusBorder, var(--vscode-editorWidget-border));
+      transform: translateY(-0.5px);
+    }
+
+    .tf-panel-card:active {
+      transform: translateY(0);
+    }
+
+    .tf-panel-card.is-hidden {
+      display: none;
+    }
+
+    .tf-panel-card__left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      /* allow text to truncate */
+    }
+
+    .tf-panel-card__icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      background: var(--vscode-button-secondaryBackground, var(--vscode-editorWidget-border));
+      opacity: 0.9;
+      flex-shrink: 0;
+    }
+
+    .tf-panel-card__text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .tf-panel-card__title {
+      font-size: 0.95rem;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tf-panel-card__subtitle {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tf-panel-card__pill {
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--vscode-button-border, var(--vscode-editorWidget-border));
+      opacity: 0.85;
+    }
+
+    .tf-panel-card__pill.success {
+      background: var(--vscode-charts-green, #4CAF50);
+      color: white;
+      border-color: var(--vscode-charts-green, #4CAF50);
+    }
+
+    .tf-panel-card__pill.warning {
+      background: var(--vscode-charts-yellow, #FF9800);
+      color: white;
+      border-color: var(--vscode-charts-yellow, #FF9800);
+    }
+
+    .tf-panel-card__pill.error {
+      background: var(--vscode-charts-red, #F44336);
+      color: white;
+      border-color: var(--vscode-charts-red, #F44336);
+    }
+
+    .tf-panel-card__pill.info {
+      background: var(--vscode-charts-blue, #2196F3);
+      color: white;
+      border-color: var(--vscode-charts-blue, #2196F3);
+    }
+
+    .tf-panel-card__pill.neutral {
+      background: var(--vscode-button-secondaryBackground, var(--vscode-editorWidget-border));
+      color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+      border-color: var(--vscode-button-border, var(--vscode-editorWidget-border));
+    }
+
+    .tf-panel-card__pill:has(select) {
+      background: transparent;
+      border: none;
+      padding: 0;
+    }
+
+    .tf-panel-card__pill select {
+      background: var(--vscode-dropdown-background);
+      border: 1px solid var(--vscode-dropdown-border);
+      color: var(--vscode-dropdown-foreground);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      width: 100%;
+      cursor: pointer;
+      appearance: auto;
+      -webkit-appearance: auto;
+      -moz-appearance: auto;
+    }
+
+    .vm-control-btn {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: 1px solid var(--vscode-button-border);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: background 0.08s ease-out, opacity 0.08s ease-out;
+    }
+
+    .vm-control-btn:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    .vm-control-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .tf-empty {
+      display: none;
+      margin-top: 8px;
+      font-size: 0.9rem;
+      opacity: 0.7;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="tf-root">
+    <header class="tf-header">
+      <div class="tf-search">
+        <span class="tf-search__icon">🔍</span>
+        <input id="tf-search-input" class="tf-search__input" type="search"
+          placeholder="Search panels by name or description…" autocomplete="off" />
+      </div>
+    </header>
+
+  <main class="tf-content" aria-label="Server Settings">
+    <!-- Region Section -->
+    <section class="tf-category" data-category-id="region" aria-label="Region Settings">
+      <h2 class="tf-category__title">Region</h2>
+      <div class="tf-panel-list">
+        <div class="tf-panel-card">
+          <div class="tf-panel-card__left">
+            <div class="tf-panel-card__icon">🌍</div>
+            <div class="tf-panel-card__text">
+              <div class="tf-panel-card__title">Region Selection</div>
+              <div class="tf-panel-card__subtitle" id="current-region">Loading...</div>
+            </div>
+          </div>
+          <div class="tf-panel-card__pill">
+            <select id="region-select">
+              <option value="">Loading...</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VM Type Section -->
+    <section class="tf-category" data-category-id="vm-type" aria-label="VM Type Settings">
+      <h2 class="tf-category__title">Virtual Machine Type</h2>
+      <div class="tf-panel-list">
+        <div class="tf-panel-card">
+          <div class="tf-panel-card__left">
+            <div class="tf-panel-card__icon">🚁</div>
+            <div class="tf-panel-card__text">
+              <div class="tf-panel-card__title">VM Configuration</div>
+              <div class="tf-panel-card__subtitle" id="current-vm-type">Loading...</div>
+            </div>
+          </div>
+          <div class="tf-panel-card__pill">
+            <select id="vm-type-select">
+              <option value="">Loading...</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Status Section -->
+    <section class="tf-category" data-category-id="status" aria-label="System Status">
+      <h2 class="tf-category__title">System Status</h2>
+      <div class="tf-panel-list">
+        <!-- Backend Status -->
+        <div class="tf-panel-card">
+          <div class="tf-panel-card__left">
+            <div class="tf-panel-card__icon">🔗</div>
+            <div class="tf-panel-card__text">
+              <div class="tf-panel-card__title">Backend Connection</div>
+              <div class="tf-panel-card__subtitle" id="backend-status">Checking...</div>
+            </div>
+          </div>
+          <div class="tf-panel-card__pill" id="backend-status-pill">Unknown</div>
+        </div>
+
+        <!-- VM Status -->
+        <div class="tf-panel-card">
+          <div class="tf-panel-card__left">
+            <div class="tf-panel-card__icon">🖥️</div>
+            <div class="tf-panel-card__text">
+              <div class="tf-panel-card__title">Virtual Machine</div>
+              <div class="tf-panel-card__subtitle" id="vm-status">Checking...</div>
+            </div>
+          </div>
+          <div class="tf-panel-card__pill" id="vm-status-pill">Unknown</div>
+        </div>
+
+        <!-- VM Controls -->
+        <div class="tf-panel-card" id="vm-controls-card" style="display: none;">
+          <div class="tf-panel-card__left">
+            <div class="tf-panel-card__icon">🎮</div>
+            <div class="tf-panel-card__text">
+              <div class="tf-panel-card__title">VM Controls</div>
+              <div class="tf-panel-card__subtitle">Start or stop your virtual machine</div>
+            </div>
+          </div>
+          <div class="tf-panel-card__pill">
+            <div style="display: flex; gap: 6px;">
+              <button id="start-vm-btn" class="vm-control-btn" style="display: none;">Start VM</button>
+              <button id="stop-vm-btn" class="vm-control-btn" style="display: none;">Stop VM</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- VM Details -->
+        <div class="tf-panel-card" id="vm-details-card" style="display: none;">
+          <div class="tf-panel-card__left">
+            <div class="tf-panel-card__icon">📊</div>
+            <div class="tf-panel-card__text">
+              <div class="tf-panel-card__title">VM Details</div>
+              <div class="tf-panel-card__subtitle" id="vm-details">Loading...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+
+    // DOM elements
+    const regionSelect = document.getElementById('region-select');
+    const currentRegionEl = document.getElementById('current-region');
+    const vmTypeSelect = document.getElementById('vm-type-select');
+    const currentVmTypeEl = document.getElementById('current-vm-type');
+    const backendStatusEl = document.getElementById('backend-status');
+    const backendStatusPill = document.getElementById('backend-status-pill');
+    const vmStatusEl = document.getElementById('vm-status');
+    const vmStatusPill = document.getElementById('vm-status-pill');
+    const vmControlsCard = document.getElementById('vm-controls-card');
+    const startVmBtn = document.getElementById('start-vm-btn');
+    const stopVmBtn = document.getElementById('stop-vm-btn');
+    const vmDetailsCard = document.getElementById('vm-details-card');
+    const vmDetailsEl = document.getElementById('vm-details');
+
+    /**
+     * Initialize the server settings panel
+     */
+    function initialize() {
+      // Request initial data from extension
+      vscode.postMessage({ command: 'getRegions' });
+      vscode.postMessage({ command: 'getVmTypes' });
+      vscode.postMessage({ command: 'getStatus' });
+
+      // Set up event listeners
+      regionSelect.addEventListener('change', handleRegionChange);
+      vmTypeSelect.addEventListener('change', handleVmTypeChange);
+      startVmBtn.addEventListener('click', handleStartVm);
+      stopVmBtn.addEventListener('click', handleStopVm);
+
+      // Start polling for status updates
+      startStatusPolling();
+    }
+
+    /**
+     * Start polling for status updates to keep UI in sync
+     */
+    function startStatusPolling() {
+      // Poll every 200ms for status updates
+      setInterval(() => {
+        vscode.postMessage({ command: 'getStatus' });
+      }, 200);
+    }
+
+    /**
+     * Handle region selection change
+     */
+    function handleRegionChange(event) {
+      const regionId = event.target.value;
+      if (regionId) {
+        vscode.postMessage({ command: 'setRegion', regionId });
+      }
+    }
+
+    /**
+     * Handle VM type selection change
+     */
+    function handleVmTypeChange(event) {
+      const vmTypeId = event.target.value;
+      if (vmTypeId) {
+        vscode.postMessage({ command: 'setVmType', vmTypeId });
+      }
+    }
+
+    /**
+     * Handle start VM button click
+     */
+    function handleStartVm() {
+      // Immediately show starting state for instant feedback
+      updateVmStatus('starting', {});
+      vscode.postMessage({ command: 'startVm' });
+    }
+
+    /**
+     * Handle stop VM button click
+     */
+    function handleStopVm() {
+      // Immediately show stopping state for instant feedback
+      updateVmStatus('stopping', {});
+      vscode.postMessage({ command: 'stopVm' });
+    }
+
+    /**
+     * Update region display
+     */
+    function updateRegions(regions, currentRegion) {
+      // Clear existing options
+      regionSelect.innerHTML = '';
+
+      // Add options
+      regions.forEach(region => {
+        const option = document.createElement('option');
+        option.value = region.id;
+        option.textContent = `${region.icon} ${region.name}`;
+        if (region.id === currentRegion.id) {
+          option.selected = true;
+        }
+        regionSelect.appendChild(option);
+      });
+
+      // Update current region display
+      currentRegionEl.textContent = `${currentRegion.icon} ${currentRegion.name} - ${currentRegion.description}`;
+    }
+
+    /**
+     * Update VM type display
+     */
+    function updateVmTypes(vmTypes, currentVmType) {
+      // Clear existing options
+      vmTypeSelect.innerHTML = '';
+
+      // Add options
+      vmTypes.forEach(vmType => {
+        const option = document.createElement('option');
+        option.value = vmType.id;
+        option.textContent = vmType.name;
+        if (vmType.id === currentVmType.id) {
+          option.selected = true;
+        }
+        vmTypeSelect.appendChild(option);
+      });
+
+      // Update current VM type display
+      currentVmTypeEl.textContent = currentVmType.description;
+    }
+
+    /**
+     * Update status display
+     */
+    function updateStatus(status) {
+      // Backend status
+      updateBackendStatus(status.auth, status.connection);
+
+      // VM status
+      updateVmStatus(status.vmState, status);
+
+      // VM details
+      updateVmDetails(status);
+    }
+
+    /**
+     * Update backend connection status
+     */
+    function updateBackendStatus(auth, connection) {
+      let statusText = 'Unknown';
+      let pillText = 'Unknown';
+      let pillClass = '';
+
+      if (auth === 'not_authenticated') {
+        statusText = 'Not logged in';
+        pillText = 'Login Required';
+        pillClass = 'error';
+      } else if (connection === 'connected') {
+        statusText = 'Connected to VM Manager API';
+        pillText = 'Connected';
+        pillClass = 'success';
+      } else if (connection === 'disconnected') {
+        statusText = 'Cannot reach VM Manager API';
+        pillText = 'Disconnected';
+        pillClass = 'warning';
+      } else if (connection === 'not_authenticated') {
+        statusText = 'Authentication failed';
+        pillText = 'Auth Error';
+        pillClass = 'error';
+      }
+
+      backendStatusEl.textContent = statusText;
+      backendStatusPill.textContent = pillText;
+      backendStatusPill.className = `tf-panel-card__pill ${pillClass}`;
+    }
+
+    /**
+     * Update VM status
+     */
+    function updateVmStatus(vmState, status) {
+      let statusText = 'Unknown';
+      let pillText = vmState || 'Unknown';
+      let pillClass = '';
+
+      switch (vmState) {
+        case 'running':
+          statusText = `Running at ${status.ipAddress || 'unknown IP'}`;
+          pillClass = 'success';
+          break;
+        case 'starting':
+          statusText = 'VM is starting up...';
+          pillClass = 'info';
+          break;
+        case 'stopping':
+          statusText = 'VM is shutting down...';
+          pillClass = 'warning';
+          break;
+        case 'stopped':
+          statusText = 'VM is stopped';
+          pillClass = 'neutral';
+          break;
+        case 'failed':
+          statusText = 'VM failed to start';
+          pillClass = 'error';
+          break;
+        case 'pending':
+          statusText = 'VM not started yet';
+          pillClass = 'neutral';
+          break;
+        case 'unknown':
+        default:
+          statusText = 'VM status unclear';
+          pillClass = 'neutral';
+          break;
+      }
+
+      vmStatusEl.textContent = statusText;
+      vmStatusPill.textContent = pillText;
+      vmStatusPill.className = `tf-panel-card__pill ${pillClass}`;
+
+      // Update VM controls visibility and state
+      updateVmControls(vmState);
+
+      // Update VM type selector state
+      updateVmTypeSelectorState(vmState);
+    }
+
+    /**
+     * Update VM details
+     */
+    function updateVmDetails(status) {
+      const details = [];
+
+      if (status.ipAddress) {
+        details.push(`IP: ${status.ipAddress}`);
+      }
+
+      if (status.provider) {
+        details.push(`Provider: ${status.provider}`);
+      }
+
+      if (status.region) {
+        details.push(`Region: ${status.region}`);
+      }
+
+      if (status.uptimeSeconds != null) {
+        const uptime = formatUptime(status.uptimeSeconds);
+        details.push(`Uptime: ${uptime}`);
+      }
+
+      if (details.length > 0) {
+        vmDetailsEl.textContent = details.join(' • ');
+        vmDetailsCard.style.display = 'flex';
+      } else {
+        vmDetailsCard.style.display = 'none';
+      }
+    }
+
+    /**
+     * Format uptime seconds into human readable format
+     */
+    function formatUptime(seconds) {
+      if (seconds == null) return 'Unknown';
+
+      const total = Math.max(0, Math.floor(seconds));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+
+      const parts = [];
+      if (h > 0) parts.push(`${h}h`);
+      if (m > 0) parts.push(`${m}m`);
+      if (parts.length === 0 || s > 0) parts.push(`${s}s`);
+
+      return parts.join(' ');
+    }
+
+    /**
+     * Update VM controls visibility and state based on VM state
+     */
+    function updateVmControls(vmState) {
+      // Always show controls card for debugging
+      vmControlsCard.style.display = 'flex';
+
+      // Explicit logic for each state
+      switch (vmState) {
+        case 'running':
+          startVmBtn.style.display = 'none';
+          stopVmBtn.style.display = 'inline-block';
+          startVmBtn.disabled = false;
+          stopVmBtn.disabled = false;
+          break;
+
+        case 'starting':
+          startVmBtn.style.display = 'inline-block';
+          stopVmBtn.style.display = 'none';
+          startVmBtn.disabled = true;
+          stopVmBtn.disabled = true;
+          break;
+
+        case 'stopping':
+          startVmBtn.style.display = 'none';
+          stopVmBtn.style.display = 'inline-block';
+          startVmBtn.disabled = true;
+          stopVmBtn.disabled = true;
+          break;
+
+        case 'stopped':
+          startVmBtn.style.display = 'inline-block';
+          stopVmBtn.style.display = 'none';
+          startVmBtn.disabled = false;
+          stopVmBtn.disabled = false;
+          break;
+
+        case 'failed':
+          startVmBtn.style.display = 'inline-block';
+          stopVmBtn.style.display = 'none';
+          startVmBtn.disabled = false;
+          stopVmBtn.disabled = false;
+          break;
+
+        case 'pending':
+          startVmBtn.style.display = 'inline-block';
+          stopVmBtn.style.display = 'none';
+          startVmBtn.disabled = false;
+          stopVmBtn.disabled = false;
+          break;
+
+        case 'unknown':
+        default:
+          startVmBtn.style.display = 'inline-block';
+          stopVmBtn.style.display = 'none';
+          startVmBtn.disabled = false;
+          stopVmBtn.disabled = false;
+          break;
+      }
+
+      // Update button styles for disabled state
+      if (startVmBtn.disabled) {
+        startVmBtn.style.opacity = '0.5';
+        startVmBtn.style.cursor = 'not-allowed';
+      } else {
+        startVmBtn.style.opacity = '1';
+        startVmBtn.style.cursor = 'pointer';
+      }
+
+      if (stopVmBtn.disabled) {
+        stopVmBtn.style.opacity = '0.5';
+        stopVmBtn.style.cursor = 'not-allowed';
+      } else {
+        stopVmBtn.style.opacity = '1';
+        stopVmBtn.style.cursor = 'pointer';
+      }
+    }
+
+    /**
+     * Update VM type selector state based on VM state
+     */
+    function updateVmTypeSelectorState(vmState) {
+      // Disable VM type changes when VM is not stopped
+      const isVmNotStopped = vmState !== 'stopped' && vmState !== 'failed' && vmState !== 'pending' && vmState !== 'unknown';
+      vmTypeSelect.disabled = isVmNotStopped;
+
+      // Update visual styling for disabled state
+      if (isVmNotStopped) {
+        vmTypeSelect.style.opacity = '0.5';
+        vmTypeSelect.style.cursor = 'not-allowed';
+      } else {
+        vmTypeSelect.style.opacity = '1';
+        vmTypeSelect.style.cursor = 'pointer';
+      }
+    }
+
+    /**
+     * Handle messages from extension
+     */
+    window.addEventListener('message', event => {
+      const message = event.data;
+
+      switch (message.command) {
+        case 'updateRegions':
+          updateRegions(message.regions, message.currentRegion);
+          break;
+        case 'updateVmTypes':
+          updateVmTypes(message.vmTypes, message.currentVmType);
+          break;
+        case 'updateStatus':
+          updateStatus(message.status);
+          break;
+      }
+    });
+
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initialize);
+    } else {
+      initialize();
+    }
+  </script>
+</body>
+
+</html>

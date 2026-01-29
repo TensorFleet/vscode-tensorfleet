@@ -67,6 +67,12 @@
           "when": "(!tensorfleet.is_authenticated && tensorfleet.current_panel != 'help') || tensorfleet.current_panel == 'account'"
         },
         {
+          "id": "tensorfleet-server-settings",
+          "name": "Virtual machine settings",
+          "type": "webview",
+          "when": "tensorfleet.is_authenticated && (tensorfleet.current_panel == 'server-settings')"
+        },
+        {
           "id": "tensorfleet-drone-view-list",
           "name": "Drone and ROS Views",
           "type": "webview",
@@ -98,6 +104,12 @@
         "title": "Open drone views",
         "category": "Tensorfleet",
         "icon": "media/tensorfleet-icon.svg"
+      },
+      {
+        "command": "tensorfleet.openServerSettingsPanel",
+        "title": "Open server settings",
+        "category": "Tensorfleet",
+        "icon": "$(server-environment)"
       },
       {
         "command": "tensorfleet.openHelpPanel",
@@ -247,17 +259,22 @@
         {
           "command": "tensorfleet.openAccountPanel",
           "group": "navigation@2",
-          "when": "view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view"
+          "when": "(view == tensorfleet-account || view == tensorfleet-server-settings || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view)"
         },
         {
           "command": "tensorfleet.openDroneViewsPanel",
           "group": "navigation@1",
-          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view) && tensorfleet.is_authenticated"
+          "when": "tensorfleet.is_authenticated && (view == tensorfleet-account || view == tensorfleet-server-settings || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view)"
+        },
+        {
+          "command": "tensorfleet.openServerSettingsPanel",
+          "group": "navigation@1",
+          "when": "tensorfleet.is_authenticated && (view == tensorfleet-account || view == tensorfleet-server-settings || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view)"
         },
         {
           "command": "tensorfleet.openHelpPanel",
           "group": "navigation@3",
-          "when": "view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view"
+          "when": "(view == tensorfleet-account || view == tensorfleet-server-settings || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view)"
         },
         {
           "command": "tensorfleet.openToolsPanel",
@@ -266,6 +283,7 @@
         }
       ]
     }
+
   },
   "scripts": {
     "vscode:prepublish": "bun run compile",
