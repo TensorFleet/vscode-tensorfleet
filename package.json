@@ -277,9 +277,9 @@
           "when": "(view == tensorfleet-account || view == tensorfleet-server-settings || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view)"
         },
         {
-          "command": "tensorfleet.createNewProject",
-          "group": "navigation@0",
-          "when": "tensorfleet.is_authenticated && (view == tensorfleet-account || view == tensorfleet-server-settings || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view)"
+          "command": "tensorfleet.openToolsPanel",
+          "group": "navigation@0.5",
+          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view) && tensorfleet.is_authenticated"
         }
       ]
     }
