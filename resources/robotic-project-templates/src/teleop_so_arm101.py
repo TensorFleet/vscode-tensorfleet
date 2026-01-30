@@ -996,6 +996,18 @@ class ArmKeyboardTeleop:
 def main() -> None:
     args = parse_cli_args()
     validate_cli_args(args)
+
+    # Debug: print resolved configuration from environment variables
+    print("=" * 50)
+    print("Resolved configuration (from env vars or defaults):")
+    print(f"  SO101_LEADER_PORT:              {args.leader_port or '(not set)'}")
+    print(f"  SO101_LEADER_ID:                {args.leader_id}")
+    print(f"  SO101_LEADER_CALIBRATION_DIR:   {args.calibration_dir}")
+    print(f"  SO101_FOLLOWER_PORT:            {args.follower_port or '(not set)'}")
+    print(f"  SO101_FOLLOWER_ID:              {args.follower_id}")
+    print(f"  SO101_FOLLOWER_CALIBRATION_DIR: {args.follower_calibration_dir}")
+    print("=" * 50)
+
     if args.debug_all:
         args.debug_leader = True
         args.debug_limits = True
