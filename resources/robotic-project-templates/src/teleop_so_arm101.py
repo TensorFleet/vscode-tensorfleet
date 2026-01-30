@@ -33,6 +33,13 @@ from urllib.parse import urlparse
 # Add parent directory to path for lib imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Load .env file automatically (no need for 'source .env')
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv is optional
+
 DEFAULT_HOME = [0.0, 0.3, -0.5, 0.0, 0.0, 0.4]
 DEFAULT_FOLLOWER_ID = "my_awesome_follower_arm"
 DEFAULT_FOLLOWER_CAL_DIR = (

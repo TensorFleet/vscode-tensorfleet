@@ -108,16 +108,13 @@ Replace the port and ID with your saved values.
 
 To avoid typing long port names and IDs every time, set up environment variables:
 
-**Option A: Create a .env file**
+**Option A: Create a .env file (recommended)**
 ```bash
 cp .env.example .env
 # Edit .env with your actual port and ID values
 ```
 
-Then load the variables before running:
-```bash
-source .env
-```
+The script automatically loads `.env` on startup - no need to run `source .env`.
 
 **Option B: Export directly in terminal**
 ```bash
@@ -128,7 +125,7 @@ export SO101_FOLLOWER_ID="my_awesome_follower_arm"
 ```
 
 > [!TIP]
-> Add the export commands to your `~/.zshrc` or `~/.bashrc` to persist them across terminal sessions.
+> If using Option B, add the export commands to your `~/.zshrc` or `~/.bashrc` to persist them across terminal sessions.
 
 ### E. Run teleoperation
 
