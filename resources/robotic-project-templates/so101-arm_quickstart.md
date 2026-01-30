@@ -104,11 +104,37 @@ lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.
 
 Replace the port and ID with your saved values.
 
-### D. Run teleoperation
+### D. Set up environment variables (recommended)
 
-Pick the script that matches your desired input:
+To avoid typing long port names and IDs every time, set up environment variables:
 
-- **Simulated arm via keyboard (default, still available)**:
+**Option A: Create a .env file**
+```bash
+cp .env.example .env
+# Edit .env with your actual port and ID values
+```
+
+Then load the variables before running:
+```bash
+source .env
+```
+
+**Option B: Export directly in terminal**
+```bash
+export SO101_LEADER_PORT="/dev/tty.usbmodem58760431551"
+export SO101_LEADER_ID="my_awesome_leader_arm"
+export SO101_FOLLOWER_PORT="/dev/tty.usbmodem58760431552"
+export SO101_FOLLOWER_ID="my_awesome_follower_arm"
+```
+
+> [!TIP]
+> Add the export commands to your `~/.zshrc` or `~/.bashrc` to persist them across terminal sessions.
+
+### E. Run teleoperation
+
+Pick the script that matches your desired input. With environment variables set (see step D), the commands are much simpler:
+
+- **Simulated arm via keyboard (default)**:
   ```bash
   uv run python src/teleop_so_arm101.py --input keyboard
   ```
@@ -116,18 +142,33 @@ Pick the script that matches your desired input:
 
 - **Simulated arm via keyboard, mirrored to a real follower**:
   ```bash
+  # With environment variables set:
+  uv run python src/teleop_so_arm101.py --input keyboard
+
+  # Or with explicit flags:
   uv run python src/teleop_so_arm101.py --input keyboard --follower-port /dev/ttyACM0
   ```
 
 - **Simulated arm driven by leader arm input (lowest latency)**:
   ```bash
-  uv run python src/teleop_so_arm101.py --input leader --leader-port /dev/ttyACM1 --leader-id my_awesome_leader_arm
+  # With environment variables set:
+  uv run python src/teleop_so_arm101.py --input leader
+
+  # Or with explicit flags:
+  uv run python src/teleop_so_arm101.py --input leader \
+      --leader-port /dev/ttyACM1 \
+      --leader-id my_awesome_leader_arm
   ```
-  Swap `/dev/ttyACM1` and `my_awesome_leader_arm` with the port and nickname you recorded earlier. Pass `--calibration-dir /path/to/calibration/teleoperators/so_leader` if needed.
 
 - **Leader arm driving a real follower (relative mirroring, no jump-to-home)**:
   ```bash
-  uv run python src/teleop_so_arm101.py --input leader --leader-port /dev/ttyACM1 --follower-port /dev/ttyACM0
+  # With environment variables set:
+  uv run python src/teleop_so_arm101.py --input leader
+
+  # Or with explicit flags:
+  uv run python src/teleop_so_arm101.py --input leader \
+      --leader-port /dev/ttyACM1 \
+      --follower-port /dev/ttyACM0
   ```
 
 Feel free to reconnect the leader arm and rerun the leader command whenever you need live control; the simulator reads from the saved teleop ID and port every time.

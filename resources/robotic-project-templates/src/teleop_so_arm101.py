@@ -133,41 +133,38 @@ def parse_cli_args() -> argparse.Namespace:
     parser.add_argument(
         "--leader-port",
         type=str,
-        default=None,
-        help="Robot USB serial port for leader input (required when input=leader)",
+        default=os.getenv("SO101_LEADER_PORT"),
+        help="Leader USB serial port (env: SO101_LEADER_PORT)",
     )
     parser.add_argument(
         "--follower-port",
         type=str,
-        default=None,
-        help=(
-            "Robot USB serial port for follower output "
-            "(optional for input=keyboard or input=leader)"
-        ),
+        default=os.getenv("SO101_FOLLOWER_PORT"),
+        help="Follower USB serial port (env: SO101_FOLLOWER_PORT)",
     )
     parser.add_argument(
         "--leader-id",
         type=str,
-        default="awesome_leader",
-        help="Leader ID for calibration",
+        default=os.getenv("SO101_LEADER_ID", "awesome_leader"),
+        help="Leader ID for calibration (env: SO101_LEADER_ID)",
     )
     parser.add_argument(
         "--follower-id",
         type=str,
-        default=DEFAULT_FOLLOWER_ID,
-        help="Follower ID for calibration",
+        default=os.getenv("SO101_FOLLOWER_ID", DEFAULT_FOLLOWER_ID),
+        help="Follower ID for calibration (env: SO101_FOLLOWER_ID)",
     )
     parser.add_argument(
         "--calibration-dir",
         type=str,
-        default="~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/",
-        help="Path to leader calibration directory",
+        default=os.getenv("SO101_LEADER_CALIBRATION_DIR", "~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/"),
+        help="Path to leader calibration directory (env: SO101_LEADER_CALIBRATION_DIR)",
     )
     parser.add_argument(
         "--follower-calibration-dir",
         type=str,
-        default=DEFAULT_FOLLOWER_CAL_DIR,
-        help="Path to follower calibration directory",
+        default=os.getenv("SO101_FOLLOWER_CALIBRATION_DIR", DEFAULT_FOLLOWER_CAL_DIR),
+        help="Path to follower calibration directory (env: SO101_FOLLOWER_CALIBRATION_DIR)",
     )
     parser.add_argument(
         "--calibration-file",
