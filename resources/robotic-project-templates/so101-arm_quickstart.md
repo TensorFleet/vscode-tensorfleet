@@ -131,3 +131,45 @@ Pick the script that matches your desired input:
   ```
 
 Feel free to reconnect the leader arm and rerun the leader command whenever you need live control; the simulator reads from the saved teleop ID and port every time.
+
+## 3. Record a LeRobot dataset (sim)
+
+This recorder writes a LeRobot dataset by subscribing to `/joint_states`, action commands, and the SO-ARM101 cameras over rosbridge.
+
+### A. Run the recorder
+
+```bash
+uv run python src/record_so_arm101_dataset.py
+```
+
+Defaults:
+- Dataset root: `./datasets/so_arm101_sim_<timestamp>`
+- Repo id: `local/so_arm101_sim_<timestamp>`
+- FPS: 5 (matches sim cameras)
+- Cameras: wrist, agent, side
+- Video codec: h264
+
+### B. Controls
+
+- `n`: end episode and start next
+- `p`: pause/resume recording
+- `q`: quit (saves current episode if it has frames)
+
+### C. Common overrides
+
+```bash
+# Record 20 episodes at 10 seconds each
+uv run python src/record_so_arm101_dataset.py \
+  --episodes 20 \
+  --episode-seconds 10 \
+  --task "pick-and-place"
+
+# Disable images and log only joint/action data
+uv run python src/record_so_arm101_dataset.py --no-images
+
+# Record just wrist + agent cameras
+uv run python src/record_so_arm101_dataset.py --cameras wrist,agent
+
+# Append to an existing dataset root
+uv run python src/record_so_arm101_dataset.py --resume --root ./datasets/so_arm101_sim_20250130_120000
+```
