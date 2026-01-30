@@ -31,9 +31,9 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets.lerobot_dataset import INFO_PATH, LeRobotDataset
     from lerobot.datasets.pipeline_features import hw_to_dataset_features
-    from lerobot.datasets.utils import build_dataset_frame
+    from lerobot.datasets.utils import DEFAULT_FEATURES, build_dataset_frame
     from lerobot.utils.constants import ACTION, OBS_STR
 except ImportError:
     print("Error: lerobot not installed. Run: pip install lerobot")
@@ -170,6 +170,34 @@ def _decode_ros_image(msg: dict) -> Optional[np.ndarray]:
 
 def _normalize_joint_name(name: str) -> Optional[str]:
     return JOINT_NAME_MAP.get(name)
+
+
+def _format_feature_mismatch(expected: dict[str, dict], actual: dict[str, dict]) -> str:
+    expected_keys = set(expected)
+    actual_keys = set(actual)
+    missing = sorted(expected_keys - actual_keys)
+    extra = sorted(actual_keys - expected_keys)
+    mismatched = []
+    for key in sorted(expected_keys & actual_keys):
+        if expected[key] != actual[key]:
+            mismatched.append((key, expected[key], actual[key]))
+
+    parts = []
+    if missing:
+        parts.append(f"missing: {missing}")
+    if extra:
+        parts.append(f"extra: {extra}")
+    if mismatched:
+        preview = ", ".join(
+            f"{key}: expected {expected_val} got {actual_val}"
+            for key, expected_val, actual_val in mismatched[:6]
+        )
+        if len(mismatched) > 6:
+            preview += ", ..."
+        parts.append(f"mismatched: {preview}")
+
+    details = "; ".join(parts) if parts else "features differ"
+    return f"Resume dataset features do not match current config. {details}"
 
 
 @dataclass
@@ -361,6 +389,7 @@ class SoArm101Recorder:
             {name: float for name in JOINT_ORDER}, ACTION, use_video=self.config.use_videos
         )
         dataset_features = {**obs_features, **act_features}
+        expected_features = {**dataset_features, **DEFAULT_FEATURES}
 
         if self.config.resume:
             self._dataset = LeRobotDataset(
@@ -369,6 +398,7 @@ class SoArm101Recorder:
                 batch_encoding_size=1,
                 vcodec=self.config.vcodec,
             )
+            self._assert_resume_compatible(expected_features)
         else:
             self._dataset = LeRobotDataset.create(
                 self.config.repo_id,
@@ -379,6 +409,24 @@ class SoArm101Recorder:
                 use_videos=self.config.use_videos,
                 batch_encoding_size=1,
                 vcodec=self.config.vcodec,
+            )
+
+    def _assert_resume_compatible(self, expected_features: dict[str, dict]) -> None:
+        if self._dataset is None:
+            return
+        actual_features = self._dataset.features
+        if actual_features != expected_features:
+            raise ValueError(_format_feature_mismatch(expected_features, actual_features))
+        dataset_fps = int(self._dataset.meta.fps)
+        if dataset_fps != int(self.config.fps):
+            raise ValueError(
+                f"Resume fps mismatch: dataset fps {dataset_fps} != --fps {self.config.fps}."
+            )
+        robot_type = self._dataset.meta.info.get("robot_type")
+        if robot_type and robot_type != "so101_sim":
+            raise ValueError(
+                "Resume robot_type mismatch: "
+                f"dataset robot_type '{robot_type}' != 'so101_sim'."
             )
 
     def _get_timestamp(self) -> float:
@@ -896,9 +944,14 @@ def parse_args() -> RecorderConfig:
     if args.input_device == "leader" and not args.leader_port:
         parser.error("--input leader requires --leader-port.")
 
+    if args.resume and not args.root:
+        parser.error("--resume requires --root pointing to an existing dataset.")
+
     timestamp = _now_ts()
     repo_id = args.repo_id or f"local/so_arm101_sim_{timestamp}"
-    root = args.root or os.path.join(os.getcwd(), "datasets", f"so_arm101_sim_{timestamp}")
+    root = os.path.expanduser(args.root) if args.root else os.path.join(
+        os.getcwd(), "datasets", f"so_arm101_sim_{timestamp}"
+    )
 
     cameras = []
     if not args.no_images:
@@ -967,6 +1020,13 @@ def main() -> None:
         print("Error: connect_to_robot unavailable. Ensure lib.robotic_utils is installed.")
         sys.exit(1)
 
+    if config.resume:
+        info_path = os.path.join(config.root, INFO_PATH)
+        if not os.path.exists(info_path):
+            print(f"Error: --resume expects an existing LeRobot dataset at {config.root}")
+            print(f"Missing metadata: {info_path}")
+            sys.exit(1)
+
     if not config.check and not config.resume and os.path.exists(config.root):
         print(f"Error: dataset root exists: {config.root}")
         print("Use --resume to append or pass a new --root.")
@@ -983,9 +1043,11 @@ def main() -> None:
         recorder = SoArm101Recorder(config, client)
         if config.input_device != "none":
             teleop_controller, leader_bridge, follower_bridge = _init_teleop(config, client)
-        ffmpeg_warning = _check_ffmpeg(config.use_videos)
-        if ffmpeg_warning:
-            print(f"[CHECK] Warning: {ffmpeg_warning}")
+        ffmpeg_error = _check_ffmpeg(config.use_videos)
+        if ffmpeg_error:
+            print(f"[CHECK] Error: {ffmpeg_error}")
+            if not config.check:
+                sys.exit(1)
         ros_topics = _rosapi_topics(client)
         if ros_topics is not None:
             print(f"[CHECK] rosapi topics: {len(ros_topics)} available")
@@ -1010,7 +1072,10 @@ def main() -> None:
             if keyboard_ready:
                 recorder._stop.set()
                 recorder._restore_keyboard()
-            sys.exit(0 if ok else 2)
+            exit_code = 0 if ok else 2
+            if ffmpeg_error:
+                exit_code = 2
+            sys.exit(exit_code)
         recorder.record(teleop=teleop_controller)
     except KeyboardInterrupt:
         print("Stopping...")

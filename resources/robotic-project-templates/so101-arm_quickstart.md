@@ -148,6 +148,8 @@ Defaults:
 - FPS: 5 (matches sim cameras)
 - Cameras: wrist, agent, side
 - Video codec: h264
+> [!NOTE]
+> Recording videos requires `ffmpeg` to be available in `PATH`. If not, pass `--no-videos` to store PNGs.
 
 ### B. Controls
 
@@ -173,3 +175,58 @@ uv run python src/record_so_arm101_dataset.py --cameras wrist,agent
 # Append to an existing dataset root
 uv run python src/record_so_arm101_dataset.py --resume --root ./datasets/so_arm101_sim_20250130_120000
 ```
+
+> [!IMPORTANT]
+> `--resume` is strict: it requires `--root`, and your current settings (fps, cameras, image/video mode)
+> must match the existing dataset metadata.
+
+### D. Preflight check (optional)
+
+```bash
+uv run python src/record_so_arm101_dataset.py --check
+```
+
+Use `--check` to confirm topics, images, and ffmpeg before recording.
+
+## 4. Test + train the dataset
+
+### A. Quick sanity check
+
+```bash
+python - <<'PY'
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+repo_id = "local/so_arm101_sim_YYYYMMDD_HHMMSS"
+root = "./datasets/so_arm101_sim_YYYYMMDD_HHMMSS"
+
+ds = LeRobotDataset(repo_id, root=root)
+print("episodes:", ds.meta.total_episodes, "frames:", ds.meta.total_frames)
+print("features:", list(ds.meta.features.keys()))
+print("sample keys:", list(ds[0].keys()))
+PY
+```
+
+### B. Visualize an episode (optional)
+
+```bash
+lerobot-dataset-viz \
+  --repo-id local/so_arm101_sim_YYYYMMDD_HHMMSS \
+  --root ./datasets/so_arm101_sim_YYYYMMDD_HHMMSS \
+  --episode-index 0
+```
+
+### C. Start a minimal training run
+
+```bash
+python -m lerobot.scripts.lerobot_train \
+  --dataset.repo_id=local/so_arm101_sim_YYYYMMDD_HHMMSS \
+  --dataset.root=./datasets/so_arm101_sim_YYYYMMDD_HHMMSS \
+  --policy.type=act \
+  --steps=1000 \
+  --batch_size=4 \
+  --num_workers=0 \
+  --eval_freq=0 \
+  --wandb.enable=false
+```
+
+If you want CPU only, add `--policy.device=cpu`.
