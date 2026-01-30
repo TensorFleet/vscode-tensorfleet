@@ -172,6 +172,15 @@ uv run python src/record_so_arm101_dataset.py --no-images
 # Record just wrist + agent cameras
 uv run python src/record_so_arm101_dataset.py --cameras wrist,agent
 
+# Record + keyboard teleop in the same process
+uv run python src/record_so_arm101_dataset.py --input keyboard
+
+# Record + leader teleop in the same process
+uv run python src/record_so_arm101_dataset.py \
+  --input leader \
+  --leader-port /dev/ttyACM1 \
+  --leader-id my_awesome_leader_arm
+
 # Append to an existing dataset root
 uv run python src/record_so_arm101_dataset.py --resume --root ./datasets/so_arm101_sim_20250130_120000
 ```
