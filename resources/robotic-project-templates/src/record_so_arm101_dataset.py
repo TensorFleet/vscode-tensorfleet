@@ -2,6 +2,8 @@
 """
 Record a LeRobot-compatible dataset from the SO-ARM101 simulator over rosbridge.
 
+Optionally run teleop in the same process (use --input keyboard or --input leader).
+
 Default topics are aligned with the Firecracker VM stack:
   - /joint_states
   - /arm_controller/joint_trajectory
@@ -12,11 +14,13 @@ Default topics are aligned with the Firecracker VM stack:
 import argparse
 import base64
 import os
+import shutil
 import sys
 import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import numpy as np
 
@@ -36,13 +40,14 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from lib.robotic_utils import connect_to_robot, Topic
+    from lib.robotic_utils import connect_to_robot, Topic, Service
 except ImportError:
     try:
-        from robotic_utils import connect_to_robot, Topic
+        from robotic_utils import connect_to_robot, Topic, Service
     except ImportError:
         connect_to_robot = None
         Topic = None
+        Service = None
 
 
 JOINT_NAME_MAP = {
@@ -52,12 +57,28 @@ JOINT_NAME_MAP = {
     "4": "wrist_flex.pos",
     "5": "wrist_roll.pos",
     "6": "gripper.pos",
+    "joint1": "shoulder_pan.pos",
+    "joint2": "shoulder_lift.pos",
+    "joint3": "elbow_flex.pos",
+    "joint4": "wrist_flex.pos",
+    "joint5": "wrist_roll.pos",
+    "joint6": "gripper.pos",
     "joint_1": "shoulder_pan.pos",
     "joint_2": "shoulder_lift.pos",
     "joint_3": "elbow_flex.pos",
     "joint_4": "wrist_flex.pos",
     "joint_5": "wrist_roll.pos",
     "joint_6": "gripper.pos",
+    "shoulder_pan_joint": "shoulder_pan.pos",
+    "shoulder_lift_joint": "shoulder_lift.pos",
+    "elbow_joint": "elbow_flex.pos",
+    "elbow_flex_joint": "elbow_flex.pos",
+    "wrist_1_joint": "wrist_flex.pos",
+    "wrist_2_joint": "wrist_roll.pos",
+    "wrist_3_joint": "gripper.pos",
+    "wrist_flex_joint": "wrist_flex.pos",
+    "wrist_roll_joint": "wrist_roll.pos",
+    "gripper_joint": "gripper.pos",
     "shoulder_pan": "shoulder_pan.pos",
     "shoulder_lift": "shoulder_lift.pos",
     "elbow_flex": "elbow_flex.pos",
@@ -80,6 +101,11 @@ JOINT_ORDER = [
     "wrist_roll.pos",
     "gripper.pos",
 ]
+
+DEFAULT_LEADER_ID = "awesome_leader"
+DEFAULT_FOLLOWER_ID = "my_awesome_follower_arm"
+DEFAULT_LEADER_CAL_DIR = "~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/"
+DEFAULT_FOLLOWER_CAL_DIR = "~/.cache/huggingface/lerobot/calibration/robots/so_follower/"
 
 
 def _now_ts() -> str:
@@ -165,6 +191,25 @@ class RecorderConfig:
     camera_topics: dict[str, str]
     resume: bool
     rosbridge_url: str
+    check: bool
+    check_timeout: float
+    wait_for_action: bool
+    input_device: str
+    leader_port: Optional[str]
+    leader_id: str
+    leader_calibration_dir: str
+    leader_calibration_file: Optional[str]
+    leader_rate: float
+    follower_port: Optional[str]
+    follower_id: str
+    follower_calibration_dir: Optional[str]
+    trajectory_time: Optional[float]
+    debug_leader: bool
+    debug_limits: bool
+    debug_state: bool
+    debug_interval: float
+    debug_raw: bool
+    debug_log_file: Optional[str]
 
 
 class SoArm101Recorder:
@@ -175,6 +220,7 @@ class SoArm101Recorder:
         self._stop = threading.Event()
         self._next_episode = threading.Event()
         self._have_joint_state = False
+        self._have_action = False
         self._have_images = {name: False for name in config.cameras}
         self._clock_time = None
 
@@ -254,6 +300,7 @@ class SoArm101Recorder:
         if not positions:
             return
         with self._lock:
+            self._have_action = True
             for name, pos in zip(joint_names, positions):
                 canonical = _normalize_joint_name(str(name))
                 if not canonical:
@@ -278,8 +325,10 @@ class SoArm101Recorder:
             with self._lock:
                 joints_ok = self._have_joint_state
                 images_ok = all(self._have_images.values()) if self.config.cameras else True
+                actions_ok = self._have_action if self.config.wait_for_action else True
             if joints_ok and images_ok:
-                return
+                if actions_ok:
+                    return
             time.sleep(0.1)
         missing = []
         with self._lock:
@@ -288,7 +337,17 @@ class SoArm101Recorder:
             for cam, ok in self._have_images.items():
                 if not ok:
                     missing.append(f"image:{cam}")
-        raise TimeoutError(f"Timeout waiting for initial data: {', '.join(missing)}")
+            if self.config.wait_for_action and not self._have_action:
+                missing.append("action_commands")
+        hints = []
+        if "joint_states" in missing:
+            hints.append("use --state-topic to point at the joint state topic")
+        if "action_commands" in missing:
+            hints.append("start teleop or disable with --no-wait-for-action")
+        if any(item.startswith("image:") for item in missing):
+            hints.append("use --no-images or --cameras to match available cameras")
+        hint_text = f" Hints: {'; '.join(hints)}" if hints else ""
+        raise TimeoutError(f"Timeout waiting for initial data: {', '.join(missing)}.{hint_text}")
 
     def _create_dataset(self) -> None:
         obs_hw_features: dict[str, Any] = {name: float for name in JOINT_ORDER}
@@ -334,6 +393,8 @@ class SoArm101Recorder:
                 return None
             if self.config.cameras and not all(self._have_images.values()):
                 return None
+            if self.config.wait_for_action and not self._have_action:
+                return None
 
             joints = {name: self._joint_positions[name] for name in JOINT_ORDER}
             actions = {name: self._action_positions[name] for name in JOINT_ORDER}
@@ -352,17 +413,16 @@ class SoArm101Recorder:
 
         action_values = {**actions}
 
-        if not self._dataset:
+        if self._dataset is None:
             return None
 
         frame = {}
         frame.update(build_dataset_frame(self._dataset.features, obs_values, prefix=OBS_STR))
         frame.update(build_dataset_frame(self._dataset.features, action_values, prefix=ACTION))
         frame["task"] = self.config.task
-        frame["timestamp"] = self._get_timestamp()
         return frame
 
-    def _setup_keyboard(self) -> None:
+    def _setup_keyboard(self, teleop=None) -> None:
         if not sys.stdin.isatty():
             return
         import termios
@@ -374,12 +434,26 @@ class SoArm101Recorder:
         def _listen():
             while not self._stop.is_set():
                 ch = sys.stdin.read(1)
-                if ch.lower() == "n":
+                if not ch:
+                    continue
+                if teleop is not None and getattr(teleop, "input_device", "") == "keyboard":
+                    try:
+                        keep_running = teleop._handle_key(ch)
+                    except Exception as exc:
+                        print(f"\n[teleop] Error handling key: {exc}")
+                        keep_running = True
+                    if keep_running is False:
+                        self._stop.set()
+                        return
+                key = ch.lower()
+                if key == "n":
                     self._next_episode.set()
-                elif ch.lower() == "q":
-                    self._stop.set()
-                elif ch.lower() == "p":
+                elif key == "p":
                     self._recording = not self._recording
+                elif key == "q" and (
+                    teleop is None or getattr(teleop, "input_device", "") != "keyboard"
+                ):
+                    self._stop.set()
 
         thread = threading.Thread(target=_listen, daemon=True)
         thread.start()
@@ -392,13 +466,16 @@ class SoArm101Recorder:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._stdin_settings)
         self._stdin_settings = None
 
-    def record(self) -> None:
+    def record(self, teleop=None) -> None:
+        self._setup_keyboard(teleop)
+        if self.config.wait_for_action:
+            print("Waiting for action commands to start recording...")
         self._wait_for_ready()
         self._create_dataset()
-        if not self._dataset:
-            raise RuntimeError("Failed to create dataset.")
-
-        self._setup_keyboard()
+        if self._dataset is None:
+            raise RuntimeError(
+                "Failed to create dataset. If ffmpeg is missing, try --no-videos."
+            )
         try:
             fps = max(1, int(self.config.fps))
             interval = 1.0 / fps
@@ -407,7 +484,10 @@ class SoArm101Recorder:
 
             self._episode_start = time.monotonic()
             print("Recording started.")
-            print("Keys: n = next episode, p = pause, q = quit")
+            if teleop is not None and getattr(teleop, "input_device", "") == "keyboard":
+                print("Recorder keys: n = next episode, p = pause, x/Ctrl-C = quit")
+            else:
+                print("Keys: n = next episode, p = pause, q = quit")
 
             while not self._stop.is_set():
                 now = time.monotonic()
@@ -453,7 +533,7 @@ class SoArm101Recorder:
                 self._dataset.save_episode()
                 print(f"Saved episode {episode_index + 1}.")
         finally:
-            if self._dataset:
+            if self._dataset is not None:
                 self._dataset.finalize()
             self._restore_keyboard()
             self._shutdown_topics()
@@ -473,10 +553,169 @@ class SoArm101Recorder:
 def _resolve_rosbridge_url(host: str, port: Optional[int], url: str) -> str:
     if url:
         return url
+    env_url = os.getenv("ROSBRIDGE_URL")
+    if env_url:
+        return env_url
+    env_host = os.getenv("ROS_HOST")
+    env_port = os.getenv("ROS_PORT") or os.getenv("ROSBRIDGE_PORT")
+    env_port_val = None
+    if env_port:
+        try:
+            env_port_val = int(env_port)
+        except ValueError:
+            env_port_val = None
     if host:
         port_val = port if port is not None else 9091
         return f"ws://{host}:{port_val}"
+    if env_host:
+        port_val = port if port is not None else env_port_val if env_port_val is not None else 9091
+        return f"ws://{env_host}:{port_val}"
     return ""
+
+
+def _connect_direct_rosbridge(rosbridge_url: str, timeout: float = 10.0):
+    parsed = urlparse(rosbridge_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 9091
+
+    print(f"[CONNECT] Connecting to rosbridge at {rosbridge_url}...")
+    client = roslibpy.Ros(host=host, port=port)
+    client.run(timeout=timeout)
+    if not client.is_connected:
+        raise ConnectionError(f"Failed to connect to rosbridge at {rosbridge_url}")
+    print("[CONNECT] Connected to rosbridge")
+    return client
+
+
+def _endpoint_from_rosbridge_url(rosbridge_url: str) -> tuple[str, int]:
+    if not rosbridge_url:
+        return "", 0
+    parsed = urlparse(rosbridge_url)
+    host = parsed.hostname or ""
+    port = parsed.port or 0
+    return host, port
+
+
+def _load_teleop_module():
+    try:
+        import teleop_so_arm101 as teleop_module
+    except ImportError as exc:
+        raise RuntimeError("teleop_so_arm101.py is required for --input modes.") from exc
+    return teleop_module
+
+
+def _init_teleop(config: RecorderConfig, client):
+    if config.input_device == "none":
+        return None, None, None
+
+    teleop = _load_teleop_module()
+    topic_class = Topic if Topic else roslibpy.Topic
+    leader_bridge = None
+    follower_bridge = None
+
+    if config.input_device == "leader":
+        teleop._ensure_so101_bridge()
+        calib_args = argparse.Namespace(
+            calibration_dir=config.leader_calibration_dir,
+            leader_id=config.leader_id,
+            calibration_file=config.leader_calibration_file,
+        )
+        leader_id, calibration_dir, calibration_file = teleop._resolve_leader_calibration(
+            calib_args
+        )
+        print(f"Initializing leader bridge on {config.leader_port}...")
+        print(f"Using calibration file: {calibration_file}")
+        leader_bridge = teleop._init_leader_bridge(
+            client=client,
+            topic_class=topic_class,
+            port=config.leader_port,
+            robot_id=leader_id,
+            calibration_dir=calibration_dir,
+            rate_hz=config.leader_rate,
+            debug=config.debug_leader,
+            debug_interval=config.debug_interval,
+            debug_raw=config.debug_raw,
+            limit_map=teleop.URDF_LIMITS,
+            map_to_limits=True,
+            clamp_to_limits=True,
+        )
+
+    if config.follower_port:
+        teleop._ensure_so101_bridge()
+        follower_calibration_dir = (
+            os.path.expanduser(config.follower_calibration_dir)
+            if config.follower_calibration_dir
+            else None
+        )
+        print(f"Initializing follower arm bridge on {config.follower_port}...")
+        follower_bridge = teleop._init_follower_bridge(
+            client=client,
+            topic_class=topic_class,
+            port=config.follower_port,
+            robot_id=config.follower_id,
+            calibration_dir=follower_calibration_dir,
+        )
+
+    host, port = _endpoint_from_rosbridge_url(config.rosbridge_url)
+    teleop_controller = teleop.ArmKeyboardTeleop(
+        client=client,
+        host=host,
+        port=port,
+        input_device=config.input_device,
+        leader_bridge=leader_bridge,
+        follower_bridge=follower_bridge,
+        trajectory_time=config.trajectory_time,
+        debug_leader=config.debug_leader,
+        debug_limits=config.debug_limits,
+        debug_state=config.debug_state,
+        debug_interval=config.debug_interval,
+        debug_log_file=config.debug_log_file,
+    )
+    return teleop_controller, leader_bridge, follower_bridge
+
+
+def _check_ffmpeg(use_videos: bool) -> Optional[str]:
+    if not use_videos:
+        return None
+    if shutil.which("ffmpeg"):
+        return None
+    return "ffmpeg not found in PATH (use --no-videos to store PNGs instead)"
+
+
+def _rosapi_topics(client) -> Optional[dict[str, str]]:
+    ServiceClass = Service if Service else roslibpy.Service
+    try:
+        srv = ServiceClass(client, "/rosapi/topics", "rosapi/Topics")
+        response = srv.call({})
+    except Exception:
+        return None
+    topics = response.get("topics", []) or []
+    types = response.get("types", []) or []
+    return {topic: types[idx] if idx < len(types) else "" for idx, topic in enumerate(topics)}
+
+
+def _print_preflight(recorder: "SoArm101Recorder", timeout: float) -> bool:
+    print(f"[CHECK] Waiting for topics (timeout {timeout:.1f}s)...")
+    try:
+        recorder._wait_for_ready(timeout=timeout)
+    except TimeoutError as exc:
+        print(f"[CHECK] {exc}")
+        return False
+
+    with recorder._lock:
+        joints_ok = recorder._have_joint_state
+        images_ok = dict(recorder._have_images)
+        shapes = dict(recorder._image_shapes)
+        actions_ok = recorder._have_action
+
+    print(f"[CHECK] Joint states: {'ok' if joints_ok else 'missing'}")
+    if recorder.config.wait_for_action:
+        print(f"[CHECK] Action commands: {'ok' if actions_ok else 'missing'}")
+    for cam, ok in images_ok.items():
+        shape = shapes.get(cam)
+        shape_text = f"{shape}" if shape else "unknown"
+        print(f"[CHECK] Camera {cam}: {'ok' if ok else 'missing'} (shape {shape_text})")
+    return True
 
 
 def parse_args() -> RecorderConfig:
@@ -500,6 +739,19 @@ def parse_args() -> RecorderConfig:
     parser.add_argument("--gripper-action-topic", type=str, default="/gripper_controller/joint_trajectory")
     parser.add_argument("--clock-topic", type=str, default="/clock")
     parser.add_argument(
+        "--wait-for-action",
+        dest="wait_for_action",
+        action="store_true",
+        default=None,
+        help="Wait for action commands before recording",
+    )
+    parser.add_argument(
+        "--no-wait-for-action",
+        dest="wait_for_action",
+        action="store_false",
+        help="Do not wait for action commands before recording",
+    )
+    parser.add_argument(
         "--cameras",
         type=str,
         default="wrist,agent,side",
@@ -519,8 +771,130 @@ def parse_args() -> RecorderConfig:
     parser.add_argument("--host", type=str, default="", help="Rosbridge host override")
     parser.add_argument("--port", type=int, default=None, help="Rosbridge port override")
     parser.add_argument("--rosbridge-url", type=str, default="", help="Rosbridge URL override")
+    parser.add_argument(
+        "--input",
+        "--input-device",
+        dest="input_device",
+        type=str,
+        default="none",
+        choices=["none", "keyboard", "leader"],
+        help="Enable teleop input within the recorder (keyboard or leader)",
+    )
+    parser.add_argument(
+        "--leader-port",
+        type=str,
+        default=None,
+        help="Robot USB serial port for leader input (required when input=leader)",
+    )
+    parser.add_argument(
+        "--leader-id",
+        type=str,
+        default=DEFAULT_LEADER_ID,
+        help="Leader ID for calibration",
+    )
+    parser.add_argument(
+        "--calibration-dir",
+        dest="leader_calibration_dir",
+        type=str,
+        default=DEFAULT_LEADER_CAL_DIR,
+        help="Path to leader calibration directory",
+    )
+    parser.add_argument(
+        "--calibration-file",
+        dest="leader_calibration_file",
+        type=str,
+        default=None,
+        help="Path to a specific leader calibration JSON file",
+    )
+    parser.add_argument(
+        "--leader-rate",
+        type=float,
+        default=100.0,
+        help="Leader state publish rate in Hz (higher = lower latency, more CPU)",
+    )
+    parser.add_argument(
+        "--trajectory-time",
+        type=float,
+        default=None,
+        help="Trajectory time_from_start in seconds (defaults: keyboard=0.2, leader=0.02)",
+    )
+    parser.add_argument(
+        "--follower-port",
+        type=str,
+        default=None,
+        help="Robot USB serial port for follower output (optional)",
+    )
+    parser.add_argument(
+        "--follower-id",
+        type=str,
+        default=DEFAULT_FOLLOWER_ID,
+        help="Follower ID for calibration",
+    )
+    parser.add_argument(
+        "--follower-calibration-dir",
+        type=str,
+        default=DEFAULT_FOLLOWER_CAL_DIR,
+        help="Path to follower calibration directory",
+    )
+    parser.add_argument(
+        "--debug-leader",
+        action="store_true",
+        help="Log leader input values (normalized, radians, raw if enabled)",
+    )
+    parser.add_argument(
+        "--debug-raw",
+        action="store_true",
+        help="Read raw servo ticks for leader debug output (slower)",
+    )
+    parser.add_argument(
+        "--debug-limits",
+        action="store_true",
+        help="Warn when leader values exceed URDF limits",
+    )
+    parser.add_argument(
+        "--debug-state",
+        action="store_true",
+        help="Log sim joint states vs latest commanded targets",
+    )
+    parser.add_argument(
+        "--debug-all",
+        action="store_true",
+        help="Enable all debug logs (includes raw servo ticks)",
+    )
+    parser.add_argument(
+        "--debug-interval",
+        type=float,
+        default=1.0,
+        help="Seconds between debug logs",
+    )
+    parser.add_argument(
+        "--debug-log-file",
+        type=str,
+        default=None,
+        help="Append debug logs to a file",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Preflight check: verify topics and dependencies, then exit",
+    )
+    parser.add_argument(
+        "--check-timeout",
+        type=float,
+        default=15.0,
+        help="Seconds to wait for initial data during --check",
+    )
 
     args = parser.parse_args()
+
+    if args.debug_all:
+        args.debug_leader = True
+        args.debug_limits = True
+        args.debug_state = True
+        args.debug_raw = True
+
+    if args.input_device == "leader" and not args.leader_port:
+        parser.error("--input leader requires --leader-port.")
 
     timestamp = _now_ts()
     repo_id = args.repo_id or f"local/so_arm101_sim_{timestamp}"
@@ -542,6 +916,9 @@ def parse_args() -> RecorderConfig:
         camera_topics["side"] = args.side_topic
 
     rosbridge_url = _resolve_rosbridge_url(args.host, args.port, args.rosbridge_url)
+    wait_for_action = args.wait_for_action
+    if wait_for_action is None:
+        wait_for_action = args.input_device != "none"
 
     return RecorderConfig(
         repo_id=repo_id,
@@ -561,6 +938,25 @@ def parse_args() -> RecorderConfig:
         camera_topics=camera_topics,
         resume=args.resume,
         rosbridge_url=rosbridge_url,
+        check=args.check,
+        check_timeout=args.check_timeout,
+        wait_for_action=wait_for_action,
+        input_device=args.input_device,
+        leader_port=args.leader_port,
+        leader_id=args.leader_id,
+        leader_calibration_dir=args.leader_calibration_dir,
+        leader_calibration_file=args.leader_calibration_file,
+        leader_rate=args.leader_rate,
+        follower_port=args.follower_port,
+        follower_id=args.follower_id,
+        follower_calibration_dir=args.follower_calibration_dir,
+        trajectory_time=args.trajectory_time,
+        debug_leader=args.debug_leader,
+        debug_limits=args.debug_limits,
+        debug_state=args.debug_state,
+        debug_interval=args.debug_interval,
+        debug_raw=args.debug_raw,
+        debug_log_file=args.debug_log_file,
     )
 
 
@@ -571,18 +967,69 @@ def main() -> None:
         print("Error: connect_to_robot unavailable. Ensure lib.robotic_utils is installed.")
         sys.exit(1)
 
-    if not config.resume and os.path.exists(config.root):
+    if not config.check and not config.resume and os.path.exists(config.root):
         print(f"Error: dataset root exists: {config.root}")
         print("Use --resume to append or pass a new --root.")
         sys.exit(1)
 
-    client = connect_to_robot(url=config.rosbridge_url or None, timeout=10.0)
+    if config.rosbridge_url:
+        client = _connect_direct_rosbridge(config.rosbridge_url, timeout=10.0)
+    else:
+        client = connect_to_robot(url=None, timeout=10.0)
+    teleop_controller = None
+    leader_bridge = None
+    follower_bridge = None
     try:
         recorder = SoArm101Recorder(config, client)
-        recorder.record()
+        if config.input_device != "none":
+            teleop_controller, leader_bridge, follower_bridge = _init_teleop(config, client)
+        ffmpeg_warning = _check_ffmpeg(config.use_videos)
+        if ffmpeg_warning:
+            print(f"[CHECK] Warning: {ffmpeg_warning}")
+        ros_topics = _rosapi_topics(client)
+        if ros_topics is not None:
+            print(f"[CHECK] rosapi topics: {len(ros_topics)} available")
+            for topic in (
+                config.state_topic,
+                config.arm_action_topic,
+                config.gripper_action_topic,
+                *config.camera_topics.values(),
+            ):
+                if topic in ros_topics:
+                    msg_type = ros_topics.get(topic, "")
+                    type_text = f" ({msg_type})" if msg_type else ""
+                    print(f"[CHECK] Found topic: {topic}{type_text}")
+                else:
+                    print(f"[CHECK] Missing topic: {topic}")
+        if config.check:
+            keyboard_ready = False
+            if teleop_controller and getattr(teleop_controller, "input_device", "") == "keyboard":
+                recorder._setup_keyboard(teleop_controller)
+                keyboard_ready = True
+            ok = _print_preflight(recorder, config.check_timeout)
+            if keyboard_ready:
+                recorder._stop.set()
+                recorder._restore_keyboard()
+            sys.exit(0 if ok else 2)
+        recorder.record(teleop=teleop_controller)
     except KeyboardInterrupt:
         print("Stopping...")
     finally:
+        if teleop_controller:
+            try:
+                teleop_controller.shutdown()
+            except Exception:
+                pass
+        if leader_bridge:
+            try:
+                leader_bridge.shutdown()
+            except Exception:
+                pass
+        if follower_bridge:
+            try:
+                follower_bridge.shutdown()
+            except Exception:
+                pass
         try:
             client.terminate()
         except Exception:
