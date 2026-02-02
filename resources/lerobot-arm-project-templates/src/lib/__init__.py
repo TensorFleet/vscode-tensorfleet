@@ -11,6 +11,8 @@ from .robotic_utils import (
     ProxyService,
 )
 
+from .so101_bridge import SO101Bridge, is_hardware_available
+
 __all__ = [
     # Connection utilities
     'connect_to_robot',
@@ -22,4 +24,7 @@ __all__ = [
     'ProxyRosClient',
     'ProxyTopic',
     'ProxyService',
+    # SO101 hardware
+    'SO101Bridge',
+    'is_hardware_available',
 ]

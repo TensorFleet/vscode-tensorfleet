@@ -1,6 +1,6 @@
-# TensorFleet Robotic JS Project
+# TensorFleet Simple Robot JS Project
 
-JavaScript/Node.js template for robot control over rosbridge using `roslib`. Includes obstacle avoidance and vision examples.
+JavaScript/Node.js template for simple ground-robot control over rosbridge using `roslib`. Includes obstacle avoidance and vision examples.
 
 ## Quick Start
 

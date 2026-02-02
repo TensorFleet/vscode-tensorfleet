@@ -157,16 +157,17 @@
           <span class="tooling-card__chip">Robotics</span>
           <span>ROS 2 + mission code</span>
         </div>
-        <h2 class="viewport__title">Robotic Quick Start</h2>
+        <h2 class="viewport__title">Simple Robot Quick Start</h2>
         <p class="viewport__description">
-          Spin up a robotics-focused workspace using the same TensorFleet boilerplate, ready for ROS 2, teleop, and
-          perception demos.
+          Spin up the ground-robot template with ROS 2 basics, obstacle avoidance, teleop, and vision demos.
         </p>
         <div class="viewport__actions">
           <button id="newRoboticProject" class="viewport__action"><img src="{{js_icon}}" class="icon-small" />
-            JavaScript</button>
+            Simple Robot JS</button>
           <button id="newRoboticPythonProject" class="viewport__action"><img src="{{python_icon}}" class="icon-small" />
-            Python</button>
+            Simple Robot Python</button>
+          <button id="newRoboticArmProject" class="viewport__action"><img src="{{python_icon}}" class="icon-small" />
+            LeRobot Arm</button>
         </div>
       </section>
     </div>
@@ -210,6 +211,9 @@
     });
     document.getElementById('newRoboticPythonProject')?.addEventListener('click', () => {
       vscode.postMessage({ command: 'newRoboticPythonProject' });
+    });
+    document.getElementById('newRoboticArmProject')?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'newRoboticArmProject' });
     });
     document.getElementById('installTools')?.addEventListener('click', () => {
       vscode.postMessage({ command: 'installTools' });
