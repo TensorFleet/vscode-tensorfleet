@@ -140,7 +140,7 @@ Pick the script that matches your desired input. With environment variables set 
 - **Simulated arm via keyboard, mirrored to a real follower**:
   ```bash
   # With environment variables set:
-  uv run python src/teleop_so_arm101.py --input keyboard
+  uv run python src/teleop_so_arm101.py --input keyboard --use-follower-env
 
   # Or with explicit flags:
   uv run python src/teleop_so_arm101.py --input keyboard --follower-port /dev/ttyACM0
