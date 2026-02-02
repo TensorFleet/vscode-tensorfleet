@@ -8,6 +8,7 @@ Inputs:
 
 Usage:
     python3 teleop_so_arm101.py --input keyboard
+    python3 teleop_so_arm101.py --input keyboard --use-follower-env
     python3 teleop_so_arm101.py --input keyboard --follower-port /dev/ttyACM0
     python3 teleop_so_arm101.py --input leader --leader-port /dev/ttyACM0
 
@@ -32,6 +33,13 @@ from urllib.parse import urlparse
 
 # Add parent directory to path for lib imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Load .env file automatically (no need for 'source .env')
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv is optional
 
 DEFAULT_HOME = [0.0, 0.3, -0.5, 0.0, 0.0, 0.4]
 DEFAULT_FOLLOWER_ID = "my_awesome_follower_arm"
@@ -133,41 +141,49 @@ def parse_cli_args() -> argparse.Namespace:
     parser.add_argument(
         "--leader-port",
         type=str,
-        default=None,
-        help="Robot USB serial port for leader input (required when input=leader)",
+        default=os.getenv("SO101_LEADER_PORT"),
+        help="Leader USB serial port (env: SO101_LEADER_PORT)",
     )
     parser.add_argument(
         "--follower-port",
         type=str,
         default=None,
         help=(
-            "Robot USB serial port for follower output "
-            "(optional for input=keyboard or input=leader)"
+            "Follower USB serial port (use with --follower-id, or enable "
+            "--use-follower-env)"
         ),
     )
     parser.add_argument(
         "--leader-id",
         type=str,
-        default="awesome_leader",
-        help="Leader ID for calibration",
+        default=os.getenv("SO101_LEADER_ID", "awesome_leader"),
+        help="Leader ID for calibration (env: SO101_LEADER_ID)",
     )
     parser.add_argument(
         "--follower-id",
         type=str,
-        default=DEFAULT_FOLLOWER_ID,
-        help="Follower ID for calibration",
+        default=None,
+        help="Follower ID for calibration (env: SO101_FOLLOWER_ID)",
     )
     parser.add_argument(
         "--calibration-dir",
         type=str,
-        default="~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/",
-        help="Path to leader calibration directory",
+        default=os.getenv("SO101_LEADER_CALIBRATION_DIR", "~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/"),
+        help="Path to leader calibration directory (env: SO101_LEADER_CALIBRATION_DIR)",
     )
     parser.add_argument(
         "--follower-calibration-dir",
         type=str,
-        default=DEFAULT_FOLLOWER_CAL_DIR,
-        help="Path to follower calibration directory",
+        default=None,
+        help=(
+            "Path to follower calibration directory "
+            "(env: SO101_FOLLOWER_CALIBRATION_DIR)"
+        ),
+    )
+    parser.add_argument(
+        "--use-follower-env",
+        action="store_true",
+        help="Use SO101_FOLLOWER_* env vars to enable follower mirroring",
     )
     parser.add_argument(
         "--calibration-file",
@@ -231,6 +247,51 @@ def validate_cli_args(args: argparse.Namespace) -> None:
     if args.input_device == "leader" and not args.leader_port:
         print("Error: --input leader requires --leader-port.")
         sys.exit(1)
+    if args.use_follower_env and not os.getenv("SO101_FOLLOWER_PORT"):
+        print(
+            "Error: --use-follower-env requires SO101_FOLLOWER_PORT to be set."
+        )
+        sys.exit(1)
+
+
+def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def resolve_follower_config(
+    args: argparse.Namespace,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    follower_port = _normalize_optional_text(args.follower_port)
+    follower_id = _normalize_optional_text(args.follower_id)
+    follower_calibration_dir = _normalize_optional_text(args.follower_calibration_dir)
+
+    if args.use_follower_env:
+        if follower_port is None:
+            follower_port = _normalize_optional_text(os.getenv("SO101_FOLLOWER_PORT"))
+        if follower_id is None:
+            follower_id = _normalize_optional_text(os.getenv("SO101_FOLLOWER_ID"))
+        if follower_calibration_dir is None:
+            follower_calibration_dir = _normalize_optional_text(
+                os.getenv("SO101_FOLLOWER_CALIBRATION_DIR")
+            )
+    elif follower_port:
+        if follower_id is None:
+            follower_id = _normalize_optional_text(os.getenv("SO101_FOLLOWER_ID"))
+        if follower_calibration_dir is None:
+            follower_calibration_dir = _normalize_optional_text(
+                os.getenv("SO101_FOLLOWER_CALIBRATION_DIR")
+            )
+
+    if follower_port:
+        if follower_id is None:
+            follower_id = DEFAULT_FOLLOWER_ID
+        if follower_calibration_dir is None:
+            follower_calibration_dir = DEFAULT_FOLLOWER_CAL_DIR
+
+    return follower_port, follower_id, follower_calibration_dir
 
 
 def build_ros_client(args: argparse.Namespace) -> tuple[roslibpy.Ros, RosEndpoint]:
@@ -1034,19 +1095,23 @@ def main() -> None:
                 clamp_to_limits=True,
             )
 
-        if args.follower_port:
+        follower_port, follower_id, follower_calibration_dir = resolve_follower_config(
+            args
+        )
+
+        if follower_port:
             _ensure_so101_bridge()
             follower_calibration_dir = (
-                os.path.expanduser(args.follower_calibration_dir)
-                if args.follower_calibration_dir
+                os.path.expanduser(follower_calibration_dir)
+                if follower_calibration_dir
                 else None
             )
-            print(f"Initializing follower arm bridge on {args.follower_port}...")
+            print(f"Initializing follower arm bridge on {follower_port}...")
             follower_bridge = _init_follower_bridge(
                 client=client,
                 topic_class=topic_class,
-                port=args.follower_port,
-                robot_id=args.follower_id,
+                port=follower_port,
+                robot_id=follower_id,
                 calibration_dir=follower_calibration_dir,
             )
 
