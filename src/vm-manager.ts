@@ -133,14 +133,15 @@ export class VMManagerIntegration implements vscode.Disposable {
 
   // Default config ID
   private static readonly DEFAULT_CONFIG_ID = 'simple_robot';
+  private static readonly TEMPLATE_TO_CONFIG_ID: Record<string, string> = {
+    'drone-js': 'px4',
+    'robotic-js': 'simple_robot',
+    'robotic': 'simple_robot',
+    'lerobot-arm': 'lerobot'
+  };
 
   constructor(context: vscode.ExtensionContext, unifiedCoordinator?: UnifiedStatusCoordinator | null, private readonly telemetry?: TelemetryService | null) {
     this.context = context;
-    // Load last used config or set default
-    const lastUsedConfigId = this.getLastUsedConfigId();
-    if (!lastUsedConfigId || !VMManagerIntegration.VM_CONFIGS[lastUsedConfigId]) {
-      this.setLastUsedConfigId(VMManagerIntegration.DEFAULT_CONFIG_ID);
-    }
     this.unifiedCoordinator = unifiedCoordinator || null;
     this.outputChannel = vscode.window.createOutputChannel('TensorFleet VM Manager');
 
@@ -175,6 +176,7 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   initialize() {
+    void this.ensureConfigFromWorkspace();
     void this.refresh(true);
     this.startPolling();
   }
@@ -611,6 +613,7 @@ export class VMManagerIntegration implements vscode.Disposable {
    */
   async startVm(configOrActionData?: VMConfig | any) {
     try {
+      await this.ensureConfigFromWorkspace();
       this.userInitiatedAction = 'start';
       this.trackVmEvent('vm.start', { phase: 'start' });
       this.setOptimisticState('starting');
@@ -675,6 +678,7 @@ export class VMManagerIntegration implements vscode.Disposable {
 
   private async restartVm() {
     try {
+      await this.ensureConfigFromWorkspace();
       const { vmState } = this.currentSnapshot;
 
       // Set user action based on current state
@@ -884,6 +888,58 @@ export class VMManagerIntegration implements vscode.Disposable {
     } catch {
       return 'Unknown error';
     }
+  }
+
+  private isValidConfigId(configId?: string): configId is string {
+    return Boolean(configId && VMManagerIntegration.VM_CONFIGS[configId]);
+  }
+
+  private async ensureConfigFromWorkspace(): Promise<void> {
+    const lastUsedConfigId = this.getLastUsedConfigId();
+    if (this.isValidConfigId(lastUsedConfigId)) {
+      return;
+    }
+
+    const detected = await this.detectConfigFromWorkspace();
+    if (detected && this.isValidConfigId(detected.configId)) {
+      this.setLastUsedConfigId(detected.configId);
+      this.outputChannel.appendLine(
+        `[VM Manager] Auto-selected VM config '${detected.configId}' from project template '${detected.template}'`
+      );
+    }
+  }
+
+  private async detectConfigFromWorkspace(): Promise<{ configId: string; template: string } | null> {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+      return null;
+    }
+
+    for (const folder of folders) {
+      const markerUri = vscode.Uri.joinPath(folder.uri, '.tensorfleet');
+      try {
+        const buf = await vscode.workspace.fs.readFile(markerUri);
+        const text = Buffer.from(buf).toString('utf8').trim();
+        if (!text) {
+          continue;
+        }
+
+        const metadata = JSON.parse(text) as { template?: string };
+        const template = typeof metadata.template === 'string' ? metadata.template : '';
+        const configId = VMManagerIntegration.TEMPLATE_TO_CONFIG_ID[template];
+        if (configId) {
+          return { configId, template };
+        }
+      } catch (error) {
+        const code = (error as Partial<vscode.FileSystemError>)?.code;
+        if (code === 'FileNotFound' || code === 'ENOENT') {
+          continue;
+        }
+        this.outputChannel.appendLine(`[VM Manager] Failed to read .tensorfleet metadata: ${this.formatError(error)}`);
+      }
+    }
+
+    return null;
   }
 
   private getApiBaseUrl(): string {
