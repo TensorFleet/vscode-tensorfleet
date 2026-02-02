@@ -177,8 +177,11 @@ This recorder writes a LeRobot dataset by subscribing to `/joint_states`, action
 ### A. Run the recorder
 
 ```bash
-uv run python src/record_so_arm101_dataset.py
+uv run python src/record_so_arm101_dataset.py --input keyboard
 ```
+
+> [!IMPORTANT]
+> Always include `--input keyboard` or `--input leader` when recording. Without teleop, the arm sits idle and you'll record a static dataset that isn't useful for training.
 
 Defaults:
 - Dataset root: `./datasets/so_arm101_sim_<timestamp>`
@@ -186,6 +189,7 @@ Defaults:
 - FPS: 5 (matches sim cameras)
 - Cameras: wrist, agent, side
 - Video codec: h264
+
 > [!NOTE]
 > Recording videos requires `ffmpeg` to be available in `PATH`. If not, pass `--no-videos` to store PNGs.
 
@@ -193,7 +197,7 @@ Defaults:
 
 - `n`: end episode and start next
 - `p`: pause/resume recording
-- `q`: quit (saves current episode if it has frames)
+- `x` / `Ctrl-C`: quit (saves current episode if it has frames)
 
 ### C. Common overrides
 
@@ -221,6 +225,18 @@ uv run python src/record_so_arm101_dataset.py \
   --input leader \
   --leader-port /dev/ttyACM1 \
   --leader-id my_awesome_leader_arm
+
+# Lerobot-style flags (mirrors lerobot-record)
+uv run python src/record_so_arm101_dataset.py \
+  --robot.type=so101_follower \
+  --robot.cameras="{front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+  --ros.camera_topics="{front: /so_arm101/agent_camera/image_raw}" \
+  --teleop.type=so101_leader \
+  --teleop.port /dev/ttyACM1 \
+  --teleop.id my_awesome_leader_arm \
+  --dataset.repo_id=local/record-test \
+  --dataset.num_episodes=5 \
+  --dataset.single_task="Grab the black cube"
 
 # Append to an existing dataset root
 uv run python src/record_so_arm101_dataset.py --resume --root ./datasets/so_arm101_sim_20250130_120000
@@ -280,3 +296,107 @@ python -m lerobot.scripts.lerobot_train \
 ```
 
 If you want CPU only, add `--policy.device=cpu`.
+
+---
+
+## Appendix: Recorder Argument Reference
+
+Complete list of arguments for `record_so_arm101_dataset.py`.
+
+### Dataset Options
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--repo-id` | `local/so_arm101_sim_<timestamp>` | LeRobot dataset repo ID |
+| `--root` | `./datasets/so_arm101_sim_<timestamp>` | Dataset root directory |
+| `--fps` | `5` | Recording FPS |
+| `--episodes` | `0` (unlimited) | Number of episodes to record |
+| `--episode-seconds` | `0` (manual) | Auto-end episode after N seconds |
+| `--reset-seconds` | `2.0` | Pause between episodes |
+| `--task` | `teleop` | Task label for dataset |
+| `--no-videos` | - | Store images as PNGs instead of videos |
+| `--vcodec` | `h264` | Video codec |
+| `--resume` | - | Resume an existing dataset (requires `--root`) |
+
+### Teleop Input Options
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--input` | `none` | Teleop mode: `none`, `keyboard`, or `leader` |
+| `--leader-port` | - | USB serial port for leader arm (required for `--input leader`) |
+| `--leader-id` | `awesome_leader` | Leader arm ID for calibration lookup |
+| `--calibration-dir` | `~/.cache/.../so_leader/` | Path to leader calibration directory |
+| `--calibration-file` | - | Path to specific calibration JSON file |
+| `--leader-rate` | `100.0` | Leader state publish rate in Hz |
+| `--trajectory-time` | `0.2` (keyboard) / `0.02` (leader) | Trajectory time_from_start in seconds |
+| `--follower-port` | - | USB serial port for real follower arm (optional) |
+| `--follower-id` | `my_awesome_follower_arm` | Follower arm ID for calibration |
+| `--follower-calibration-dir` | `~/.cache/.../so_follower/` | Path to follower calibration directory |
+
+### ROS / Rosbridge Options
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--host` | - | Rosbridge host (or use `ROS_HOST` env) |
+| `--port` | `9091` | Rosbridge port |
+| `--rosbridge-url` | - | Full rosbridge URL (e.g., `ws://127.0.0.1:9091`) |
+| `--state-topic` | `/joint_states` | Joint state topic |
+| `--arm-action-topic` | `/arm_controller/joint_trajectory` | Arm action topic |
+| `--gripper-action-topic` | `/gripper_controller/joint_trajectory` | Gripper action topic |
+| `--clock-topic` | `/clock` | Clock topic for timestamps |
+
+### Camera Options
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--cameras` | `wrist,agent,side` | Comma-separated camera list |
+| `--no-images` | - | Disable image recording |
+| `--wrist-topic` | `/so_arm101/wrist_camera/image_raw` | Wrist camera topic |
+| `--agent-topic` | `/so_arm101/agent_camera/image_raw` | Agent camera topic |
+| `--side-topic` | `/so_arm101/side_camera/image_raw` | Side camera topic |
+| `--ros.camera_topics` | - | YAML mapping of camera names to topics |
+| `--display_data` | `false` | Preview camera feeds in OpenCV windows |
+
+### LeRobot-style Aliases
+
+These mirror `lerobot-record` flags:
+
+| Argument | Maps to |
+|----------|---------|
+| `--dataset.repo_id` | `--repo-id` |
+| `--dataset.root` | `--root` |
+| `--dataset.fps` | `--fps` |
+| `--dataset.num_episodes` | `--episodes` |
+| `--dataset.episode_time_s` | `--episode-seconds` |
+| `--dataset.reset_time_s` | `--reset-seconds` |
+| `--dataset.single_task` | `--task` |
+| `--dataset.video` | inverse of `--no-videos` |
+| `--dataset.vcodec` | `--vcodec` |
+| `--robot.type` | Sets robot type metadata |
+| `--robot.port` | `--follower-port` |
+| `--robot.id` | `--follower-id` |
+| `--robot.cameras` | `--cameras` (YAML format) |
+| `--teleop.type` | `--input` |
+| `--teleop.port` | `--leader-port` |
+| `--teleop.id` | `--leader-id` |
+
+### Debug Options
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--debug-leader` | - | Log leader input values |
+| `--debug-raw` | - | Include raw servo ticks in debug output |
+| `--debug-limits` | - | Warn when values exceed URDF limits |
+| `--debug-state` | - | Log sim joint states vs commanded targets |
+| `--debug-all` | - | Enable all debug options |
+| `--debug-interval` | `1.0` | Seconds between debug logs |
+| `--debug-log-file` | - | Append debug logs to a file |
+
+### Utilities
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--check` | - | Preflight check: verify topics and exit |
+| `--check-timeout` | `15.0` | Seconds to wait during preflight check |
+| `--wait-for-action` | auto | Wait for action commands before recording |
+| `--no-wait-for-action` | - | Start recording without action commands |
