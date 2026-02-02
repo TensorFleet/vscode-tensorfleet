@@ -34,6 +34,7 @@
     "onCommand:tensorfleet.openMapPanel",
     "onCommand:tensorfleet.openRawMessagesPanel",
     "onCommand:tensorfleet.createNewProject",
+    "onCommand:tensorfleet.createNewRoboticArmProject",
     "onCommand:tensorfleet.installTools",
     "onCommand:tensorfleet.openAllPanels",
     "onCommand:tensorfleet.startMCPServer",
@@ -96,6 +97,12 @@
       {
         "command": "tensorfleet.createNewProject",
         "title": "Create new tensorfleet project",
+        "category": "Tensorfleet",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "tensorfleet.createNewRoboticArmProject",
+        "title": "Create new LeRobot arm project",
         "category": "Tensorfleet",
         "icon": "$(plus)"
       },

@@ -885,6 +885,10 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.createNewRoboticArmProject', () => createNewRoboticArmProject(context))
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
   );
 
@@ -1553,6 +1557,8 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand('tensorfleet.createNewRoboticProject');
       } else if (message?.command === 'newRoboticPythonProject') {
         vscode.commands.executeCommand('tensorfleet.createNewRoboticPythonProject');
+      } else if (message?.command === 'newRoboticArmProject') {
+        vscode.commands.executeCommand('tensorfleet.createNewRoboticArmProject');
       } else if (message?.command === 'installTools') {
         getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'installTools' });
         vscode.commands.executeCommand('tensorfleet.installTools');
@@ -1971,19 +1977,28 @@ async function createNewProject(context: vscode.ExtensionContext, openNew: boole
   // Show project type selection
   const projectTypes = [
     {
+      id: 'drone-js',
       label: '🚁 Drone (JavaScript)',
       description: 'JavaScript-based drone control with PX4 and ROS 2',
       detail: 'Perfect for drone automation, computer vision, and AI integration'
     },
     {
-      label: '🤖 Robotic (JavaScript)',
-      description: 'JavaScript-based robotics with ROS 2 and simulation',
-      detail: 'Ideal for robotic arms, mobile robots, and sensor integration'
+      id: 'robotic-js',
+      label: '🤖 Simple Robot (JavaScript)',
+      description: 'Ground robot demos with ROS 2, obstacle avoidance, and vision',
+      detail: 'Great for basic navigation, teleop, and perception'
     },
     {
-      label: '🤖 Robotic (Python)',
-      description: 'Python-based robotics with ROS 2 and simulation',
-      detail: 'Full Python environment for advanced robotics and AI'
+      id: 'robotic-py',
+      label: '🤖 Simple Robot (Python)',
+      description: 'Python ground robot template with ROS 2 and perception demos',
+      detail: 'A clean starting point for scripts and autonomy'
+    },
+    {
+      id: 'lerobot-arm',
+      label: '🦾 LeRobot Arm (Python)',
+      description: 'LeRobot SO-ARM101 teleop and calibration',
+      detail: 'Keyboard, leader, and follower control wired to ROS 2'
     }
   ];
 
@@ -1999,26 +2014,38 @@ async function createNewProject(context: vscode.ExtensionContext, openNew: boole
   }
 
   // Route to appropriate creation function based on selection
-  if (selectedType.label.includes('Drone (JavaScript)')) {
-    await createNewProjectInternal(context, {
-      kindLabel: 'drone',
-      defaultName: 'my-drone-project',
-      commandLabel: 'TensorFleet Drone Project',
-    }, openNew);
-  } else if (selectedType.label.includes('Robotic (JavaScript)')) {
-    await createNewProjectInternal(context, {
-      kindLabel: 'robotic',
-      defaultName: 'my-robotic-project',
-      commandLabel: 'TensorFleet Robotic Project (JavaScript)',
-      templateSubdir: 'robotic-js-project-templates'
-    }, openNew);
-  } else if (selectedType.label.includes('Robotic (Python)')) {
-    await createNewProjectInternal(context, {
-      kindLabel: 'robotic',
-      defaultName: 'my-robotic-project',
-      commandLabel: 'TensorFleet Robotic Project (Python)',
-      templateSubdir: 'robotic-project-templates'
-    }, openNew);
+  switch (selectedType.id) {
+    case 'drone-js':
+      await createNewProjectInternal(context, {
+        kindLabel: 'drone',
+        defaultName: 'my-drone-project',
+        commandLabel: 'TensorFleet Drone Project',
+      }, openNew);
+      break;
+    case 'robotic-js':
+      await createNewProjectInternal(context, {
+        kindLabel: 'simple robot',
+        defaultName: 'my-simple-robot-project',
+        commandLabel: 'TensorFleet Simple Robot Project (JavaScript)',
+        templateSubdir: 'robotic-js-project-templates'
+      }, openNew);
+      break;
+    case 'robotic-py':
+      await createNewProjectInternal(context, {
+        kindLabel: 'simple robot',
+        defaultName: 'my-simple-robot-project',
+        commandLabel: 'TensorFleet Simple Robot Project (Python)',
+        templateSubdir: 'robotic-project-templates'
+      }, openNew);
+      break;
+    case 'lerobot-arm':
+      await createNewProjectInternal(context, {
+        kindLabel: 'robotic arm',
+        defaultName: 'my-lerobot-arm-project',
+        commandLabel: 'TensorFleet LeRobot Arm Project (Python)',
+        templateSubdir: 'lerobot-arm-project-templates'
+      }, openNew);
+      break;
   }
 }
 
@@ -2033,19 +2060,28 @@ async function createNewDroneProject(context: vscode.ExtensionContext, openNew: 
 
 async function createNewRoboticProject(context: vscode.ExtensionContext, openNew: boolean = false) {
   await createNewProjectInternal(context, {
-    kindLabel: 'robotic',
-    defaultName: 'my-robotic-project',
-    commandLabel: 'TensorFleet Robotic Project (JavaScript)',
+    kindLabel: 'simple robot',
+    defaultName: 'my-simple-robot-project',
+    commandLabel: 'TensorFleet Simple Robot Project (JavaScript)',
     templateSubdir: 'robotic-js-project-templates'
   }, openNew);
 }
 
 async function createNewRoboticPythonProject(context: vscode.ExtensionContext, openNew: boolean = false) {
   await createNewProjectInternal(context, {
-    kindLabel: 'robotic',
-    defaultName: 'my-robotic-project',
-    commandLabel: 'TensorFleet Robotic Project (Python)',
+    kindLabel: 'simple robot',
+    defaultName: 'my-simple-robot-project',
+    commandLabel: 'TensorFleet Simple Robot Project (Python)',
     templateSubdir: 'robotic-project-templates'
+  }, openNew);
+}
+
+async function createNewRoboticArmProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  await createNewProjectInternal(context, {
+    kindLabel: 'robotic arm',
+    defaultName: 'my-lerobot-arm-project',
+    commandLabel: 'TensorFleet LeRobot Arm Project (Python)',
+    templateSubdir: 'lerobot-arm-project-templates'
   }, openNew);
 }
 

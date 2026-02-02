@@ -1,8 +1,20 @@
-# SO-ARM101 Quick Start
+# TensorFleet LeRobot Arm Project Template
 
-Follow this guide any time you work with the SO-ARM101 example. The first section covers the simulated keyboard teleop you have today, and the second introduces the leader arm workflow that streams real controller input into the simulated robot.
+This directory hosts the LeRobot SO-ARM101 teleoperation template. Use it for keyboard control, leader-arm input, and optional follower mirroring.
 
-## 1. Keyboard teleop (simulated arm)
+## Template contents
+
+- `requirements.arm.txt` - Python dependencies for teleop and LeRobot hardware support.
+- `src/teleop_so_arm101.py` - keyboard/leader teleop script.
+- `src/lib/` - shared helpers plus SO101 hardware bridge.
+- `assets/` - screenshots referenced by this guide.
+- `.env.example` - SO101 environment variable template.
+
+## LeRobot SO-ARM101 Quick Start
+
+Follow this guide any time you work with the LeRobot SO-ARM101 example. The first section covers the simulated keyboard teleop you have today, and the second introduces the leader arm workflow that streams real controller input into the simulated robot.
+
+### 1. Keyboard teleop (simulated arm)
 
 1. **Start VM**: Click the **TensorFleet** status bar in VS Code and select **Start VM**.
 2. **Setup Environment**: Install dependencies using `uv`.
@@ -39,7 +51,7 @@ Follow this guide any time you work with the SO-ARM101 example. The first sectio
    > [!IMPORTANT]
    > Keyboard controls will only work when the **terminal window is focused**.
 
-### Keyboard Controls
+#### Keyboard Controls
 
 | Key | Action |
 | --- | --- |
@@ -53,11 +65,11 @@ Follow this guide any time you work with the SO-ARM101 example. The first sectio
 | `0` | Return to home position |
 | `x` / `Ctrl-C` | Exit teleoperation |
 
-## 2. Leader arm teleop (real input into simulated arm)
+### 2. Leader arm teleop (real input into simulated arm)
 
 This mode injects live rotations from a real SO101 leader arm into the simulator. Keep clear notes of the USB ports you use so you can reuse them later (save the port path in your notes or `.env` file). If you disconnect/reconnect cables, repeat the port discovery step.
 
-### A. Find the leader arm USB port
+#### A. Find the leader arm USB port
 
 1. Activate the Python environment:
    ```bash
@@ -82,9 +94,9 @@ This mode injects live rotations from a real SO101 leader arm into the simulator
 
    > Tip: jot down the port you plan to reuse (e.g., `/dev/ttyACM1`) so calibration and teleop steps stay consistent.
 
-### B. Calibrate the leader arm
+#### B. Calibrate the leader arm
 
-Follow the Hugging Face calibration guide (includes video): https://huggingface.co/docs/lerobot/en/so101  
+Follow the Hugging Face calibration guide (includes video): https://huggingface.co/docs/lerobot/en/so101
 
 Then run:
 
@@ -94,7 +106,7 @@ lerobot-calibrate --teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop
 
 Replace `--teleop.port` with the port you saved and `--teleop.id` with a memorable name. If calibration data lives outside the default cache, add `--calibration-dir /path/to/calibration/teleoperators/so_leader`.
 
-### C. Calibrate the follower arm (for mirroring)
+#### C. Calibrate the follower arm (for mirroring)
 
 If you want to drive a real follower arm (from the keyboard or leader), calibrate it once:
 
@@ -104,7 +116,7 @@ lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.
 
 Replace the port and ID with your saved values.
 
-### D. Set up environment variables (recommended)
+#### D. Set up environment variables (recommended)
 
 To avoid typing long port names and IDs every time, set up environment variables:
 
@@ -127,7 +139,7 @@ export SO101_FOLLOWER_ID="my_awesome_follower_arm"
 > [!TIP]
 > If using Option B, add the export commands to your `~/.zshrc` or `~/.bashrc` to persist them across terminal sessions.
 
-### E. Run teleoperation
+#### E. Run teleoperation
 
 Pick the script that matches your desired input. With environment variables set (see step D), the commands are much simpler:
 
