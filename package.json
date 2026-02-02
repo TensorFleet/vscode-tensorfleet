@@ -279,11 +279,10 @@
         {
           "command": "tensorfleet.openToolsPanel",
           "group": "navigation@0.5",
-          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view) && tensorfleet.is_authenticated"
+          "when": "(view == tensorfleet-account || view == tensorfleet-drone-view-list || view == tensorfleet-help-panel || view == tensorfleet-tooling-view || view == tensorfleet-server-settings) && tensorfleet.is_authenticated"
         }
       ]
     }
-
   },
   "scripts": {
     "vscode:prepublish": "bun run compile",

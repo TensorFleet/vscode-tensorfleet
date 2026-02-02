@@ -147,6 +147,31 @@
       transform: translateY(0);
     }
 
+    .tf-panel-card.is-expanded {
+      background: var(--vscode-editor-inactiveSelectionBackground);
+      border-color: var(--vscode-focusBorder);
+      align-items: flex-start;
+    }
+
+    .tf-panel-card.is-expanded .tf-panel-card__left {
+      align-items: flex-start;
+    }
+
+    .tf-panel-card.is-expanded .tf-panel-card__icon {
+      margin-top: 4px;
+    }
+
+    .tf-panel-card.is-expanded .tf-panel-card__text {
+      white-space: normal;
+    }
+
+    .tf-panel-card.is-expanded .tf-panel-card__title,
+    .tf-panel-card.is-expanded .tf-panel-card__subtitle {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
+
     .tf-panel-card.is-hidden {
       display: none;
     }
@@ -293,107 +318,107 @@
       </div>
     </header>
 
-  <main class="tf-content" aria-label="Server Settings">
-    <!-- Region Section -->
-    <section class="tf-category" data-category-id="region" aria-label="Region Settings">
-      <h2 class="tf-category__title">Region</h2>
-      <div class="tf-panel-list">
-        <div class="tf-panel-card">
-          <div class="tf-panel-card__left">
-            <div class="tf-panel-card__icon">🌍</div>
-            <div class="tf-panel-card__text">
-              <div class="tf-panel-card__title">Region Selection</div>
-              <div class="tf-panel-card__subtitle" id="current-region">Loading...</div>
+    <main class="tf-content" aria-label="Server Settings">
+      <!-- Region Section -->
+      <section class="tf-category" data-category-id="region" aria-label="Region Settings">
+        <h2 class="tf-category__title">Region</h2>
+        <div class="tf-panel-list">
+          <div class="tf-panel-card">
+            <div class="tf-panel-card__left">
+              <div class="tf-panel-card__icon">🌍</div>
+              <div class="tf-panel-card__text">
+                <div class="tf-panel-card__title">Region Selection</div>
+                <div class="tf-panel-card__subtitle" id="current-region">Loading...</div>
+              </div>
+            </div>
+            <div class="tf-panel-card__pill">
+              <select id="region-select">
+                <option value="">Loading...</option>
+              </select>
             </div>
           </div>
-          <div class="tf-panel-card__pill">
-            <select id="region-select">
-              <option value="">Loading...</option>
-            </select>
-          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- VM Type Section -->
-    <section class="tf-category" data-category-id="vm-type" aria-label="VM Type Settings">
-      <h2 class="tf-category__title">Virtual Machine Type</h2>
-      <div class="tf-panel-list">
-        <div class="tf-panel-card">
-          <div class="tf-panel-card__left">
-            <div class="tf-panel-card__icon">🚁</div>
-            <div class="tf-panel-card__text">
-              <div class="tf-panel-card__title">VM Configuration</div>
-              <div class="tf-panel-card__subtitle" id="current-vm-type">Loading...</div>
+      <!-- VM Type Section -->
+      <section class="tf-category" data-category-id="vm-type" aria-label="VM Type Settings">
+        <h2 class="tf-category__title">Virtual Machine Type</h2>
+        <div class="tf-panel-list">
+          <div class="tf-panel-card">
+            <div class="tf-panel-card__left">
+              <div class="tf-panel-card__icon">🚁</div>
+              <div class="tf-panel-card__text">
+                <div class="tf-panel-card__title">VM Configuration</div>
+                <div class="tf-panel-card__subtitle" id="current-vm-type">Loading...</div>
+              </div>
+            </div>
+            <div class="tf-panel-card__pill">
+              <select id="vm-type-select">
+                <option value="">Loading...</option>
+              </select>
             </div>
           </div>
-          <div class="tf-panel-card__pill">
-            <select id="vm-type-select">
-              <option value="">Loading...</option>
-            </select>
-          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- Status Section -->
-    <section class="tf-category" data-category-id="status" aria-label="System Status">
-      <h2 class="tf-category__title">System Status</h2>
-      <div class="tf-panel-list">
-        <!-- Backend Status -->
-        <div class="tf-panel-card">
-          <div class="tf-panel-card__left">
-            <div class="tf-panel-card__icon">🔗</div>
-            <div class="tf-panel-card__text">
-              <div class="tf-panel-card__title">Backend Connection</div>
-              <div class="tf-panel-card__subtitle" id="backend-status">Checking...</div>
+      <!-- Status Section -->
+      <section class="tf-category" data-category-id="status" aria-label="System Status">
+        <h2 class="tf-category__title">System Status</h2>
+        <div class="tf-panel-list">
+          <!-- Backend Status -->
+          <div class="tf-panel-card">
+            <div class="tf-panel-card__left">
+              <div class="tf-panel-card__icon">🔗</div>
+              <div class="tf-panel-card__text">
+                <div class="tf-panel-card__title">Backend Connection</div>
+                <div class="tf-panel-card__subtitle" id="backend-status">Checking...</div>
+              </div>
             </div>
+            <div class="tf-panel-card__pill" id="backend-status-pill">Unknown</div>
           </div>
-          <div class="tf-panel-card__pill" id="backend-status-pill">Unknown</div>
-        </div>
 
-        <!-- VM Status -->
-        <div class="tf-panel-card">
-          <div class="tf-panel-card__left">
-            <div class="tf-panel-card__icon">🖥️</div>
-            <div class="tf-panel-card__text">
-              <div class="tf-panel-card__title">Virtual Machine</div>
-              <div class="tf-panel-card__subtitle" id="vm-status">Checking...</div>
+          <!-- VM Status -->
+          <div class="tf-panel-card">
+            <div class="tf-panel-card__left">
+              <div class="tf-panel-card__icon">🖥️</div>
+              <div class="tf-panel-card__text">
+                <div class="tf-panel-card__title">Virtual Machine</div>
+                <div class="tf-panel-card__subtitle" id="vm-status">Checking...</div>
+              </div>
             </div>
+            <div class="tf-panel-card__pill" id="vm-status-pill">Unknown</div>
           </div>
-          <div class="tf-panel-card__pill" id="vm-status-pill">Unknown</div>
-        </div>
 
-        <!-- VM Controls -->
-        <div class="tf-panel-card" id="vm-controls-card" style="display: none;">
-          <div class="tf-panel-card__left">
-            <div class="tf-panel-card__icon">🎮</div>
-            <div class="tf-panel-card__text">
-              <div class="tf-panel-card__title">VM Controls</div>
-              <div class="tf-panel-card__subtitle">Start or stop your virtual machine</div>
+          <!-- VM Controls -->
+          <div class="tf-panel-card" id="vm-controls-card" style="display: none;">
+            <div class="tf-panel-card__left">
+              <div class="tf-panel-card__icon">🎮</div>
+              <div class="tf-panel-card__text">
+                <div class="tf-panel-card__title">VM Controls</div>
+                <div class="tf-panel-card__subtitle">Start or stop your virtual machine</div>
+              </div>
+            </div>
+            <div class="tf-panel-card__pill">
+              <div style="display: flex; gap: 6px;">
+                <button id="start-vm-btn" class="vm-control-btn" style="display: none;">Start VM</button>
+                <button id="stop-vm-btn" class="vm-control-btn" style="display: none;">Stop VM</button>
+              </div>
             </div>
           </div>
-          <div class="tf-panel-card__pill">
-            <div style="display: flex; gap: 6px;">
-              <button id="start-vm-btn" class="vm-control-btn" style="display: none;">Start VM</button>
-              <button id="stop-vm-btn" class="vm-control-btn" style="display: none;">Stop VM</button>
-            </div>
-          </div>
-        </div>
 
-        <!-- VM Details -->
-        <div class="tf-panel-card" id="vm-details-card" style="display: none;">
-          <div class="tf-panel-card__left">
-            <div class="tf-panel-card__icon">📊</div>
-            <div class="tf-panel-card__text">
-              <div class="tf-panel-card__title">VM Details</div>
-              <div class="tf-panel-card__subtitle" id="vm-details">Loading...</div>
+          <!-- VM Details -->
+          <div class="tf-panel-card" id="vm-details-card" style="display: none;">
+            <div class="tf-panel-card__left">
+              <div class="tf-panel-card__icon">📊</div>
+              <div class="tf-panel-card__text">
+                <div class="tf-panel-card__title">VM Details</div>
+                <div class="tf-panel-card__subtitle" id="vm-details">Loading...</div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    </section>
-  </main>
+      </section>
+    </main>
   </div>
 
   <script>
@@ -431,6 +456,24 @@
 
       // Start polling for status updates
       startStatusPolling();
+
+      // Initialize panel expansion logic
+      setupPanelExpansion();
+    }
+
+    /**
+     * Set up click listeners for expanding panels
+     */
+    function setupPanelExpansion() {
+      document.querySelectorAll('.tf-panel-card').forEach(card => {
+        card.addEventListener('click', (e) => {
+          // Ignore clicks on form controls or interactive elements
+          if (e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON' || e.target.closest('select') || e.target.closest('button')) {
+            return;
+          }
+          card.classList.toggle('is-expanded');
+        });
+      });
     }
 
     /**
