@@ -247,6 +247,11 @@ def validate_cli_args(args: argparse.Namespace) -> None:
     if args.input_device == "leader" and not args.leader_port:
         print("Error: --input leader requires --leader-port.")
         sys.exit(1)
+    if args.use_follower_env and not os.getenv("SO101_FOLLOWER_PORT"):
+        print(
+            "Error: --use-follower-env requires SO101_FOLLOWER_PORT to be set."
+        )
+        sys.exit(1)
 
 
 def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
