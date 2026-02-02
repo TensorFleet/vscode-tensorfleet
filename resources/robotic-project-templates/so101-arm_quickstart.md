@@ -275,27 +275,50 @@ PY
 ### B. Visualize an episode (optional)
 
 ```bash
-lerobot-dataset-viz \
+# HF_HUB_OFFLINE=1 prevents any HuggingFace hub access
+HF_HUB_OFFLINE=1 lerobot-dataset-viz \
   --repo-id local/so_arm101_sim_YYYYMMDD_HHMMSS \
   --root ./datasets/so_arm101_sim_YYYYMMDD_HHMMSS \
-  --episode-index 0
+  --episode-index 0 \
+  --display-compressed-images true
 ```
+
+> [!NOTE]
+> If you recorded with an older recorder and see `meta/tasks.parquet` missing, recreate it once (replace `teleop` with your `--task` label):
+> ```bash
+> python - <<'PY'
+> from pathlib import Path
+> import pandas as pd
+>
+> root = Path("./datasets/so_arm101_sim_YYYYMMDD_HHMMSS")
+> tasks = pd.DataFrame({"task_index": [0]}, index=["teleop"])
+> tasks.to_parquet(root / "meta" / "tasks.parquet")
+> print("Wrote", root / "meta" / "tasks.parquet")
+> PY
+> ```
 
 ### C. Start a minimal training run
 
 ```bash
-python -m lerobot.scripts.lerobot_train \
+# HF_HUB_OFFLINE=1 prevents any HuggingFace hub access
+HF_HUB_OFFLINE=1 python -m lerobot.scripts.lerobot_train \
   --dataset.repo_id=local/so_arm101_sim_YYYYMMDD_HHMMSS \
   --dataset.root=./datasets/so_arm101_sim_YYYYMMDD_HHMMSS \
   --policy.type=act \
+  --policy.repo_id=local/so_arm101_policy \
   --steps=1000 \
   --batch_size=4 \
   --num_workers=0 \
   --eval_freq=0 \
-  --wandb.enable=false
+  --wandb.enable=false \
+  --save_checkpoint=true \
+  --output_dir=./outputs
 ```
 
-If you want CPU only, add `--policy.device=cpu`.
+> [!TIP]
+> - `--policy.repo_id` is required even for local training (just use any local name)
+> - `--output_dir` specifies where checkpoints are saved
+> - Add `--policy.device=cpu` for CPU-only training
 
 ---
 

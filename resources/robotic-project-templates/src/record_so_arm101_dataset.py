@@ -3,6 +3,7 @@
 Record a LeRobot-compatible dataset from the SO-ARM101 simulator over rosbridge.
 
 Optionally run teleop in the same process (use --input keyboard or --input leader).
+Lerobot-style flags (--robot.*, --teleop.*, --dataset.*) are also accepted.
 
 Default topics are aligned with the Firecracker VM stack:
   - /joint_states
@@ -19,10 +20,15 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 from urllib.parse import urlparse
 
 import numpy as np
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 try:
     import roslibpy
@@ -106,7 +112,13 @@ DEFAULT_LEADER_ID = "awesome_leader"
 DEFAULT_FOLLOWER_ID = "my_awesome_follower_arm"
 DEFAULT_LEADER_CAL_DIR = "~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/"
 DEFAULT_FOLLOWER_CAL_DIR = "~/.cache/huggingface/lerobot/calibration/robots/so_follower/"
-VALID_CAMERAS = {"wrist", "agent", "side"}
+DEFAULT_CAMERA_TOPICS = {
+    "wrist": "/so_arm101/wrist_camera/image_raw",
+    "agent": "/so_arm101/agent_camera/image_raw",
+    "side": "/so_arm101/side_camera/image_raw",
+    "front": "/so_arm101/agent_camera/image_raw",
+}
+DISPLAY_MAX_FPS = 15
 
 
 def _now_ts() -> str:
@@ -201,10 +213,90 @@ def _format_feature_mismatch(expected: dict[str, dict], actual: dict[str, dict])
     return f"Resume dataset features do not match current config. {details}"
 
 
+def _coerce_bool(value: Optional[str], default: Optional[bool] = None) -> Optional[bool]:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Invalid boolean value: {value}")
+
+
+def _dedupe_keep_order(items: Iterable[str]) -> list[str]:
+    seen = set()
+    result = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _parse_yaml_value(raw: str, label: str) -> Any:
+    if yaml is None:
+        raise ValueError(f"{label} requires PyYAML (pip install pyyaml).")
+    try:
+        return yaml.safe_load(raw)
+    except Exception as exc:
+        raise ValueError(f"Failed to parse {label}: {exc}") from exc
+
+
+def _parse_yaml_mapping(raw: Optional[str], label: str) -> dict[str, str]:
+    if not raw:
+        return {}
+    data = _parse_yaml_value(raw, label)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{label} must be a mapping (got {type(data).__name__}).")
+    output = {}
+    for key, value in data.items():
+        if value is None:
+            raise ValueError(f"{label} missing value for key '{key}'.")
+        output[str(key)] = str(value)
+    return output
+
+
+def _parse_camera_names(raw: Optional[str], label: str) -> list[str]:
+    if not raw:
+        return []
+    data = _parse_yaml_value(raw, label)
+    if isinstance(data, dict):
+        names = [str(name) for name in data.keys()]
+    elif isinstance(data, list):
+        names = [str(name) for name in data]
+    else:
+        raise ValueError(f"{label} must be a mapping or list (got {type(data).__name__}).")
+    names = [name.strip() for name in names if name and str(name).strip()]
+    return _dedupe_keep_order(names)
+
+
+def _resolve_camera_topics(
+    cameras: list[str], overrides: dict[str, str]
+) -> dict[str, str]:
+    topics = dict(DEFAULT_CAMERA_TOPICS)
+    topics.update(overrides)
+    missing = [name for name in cameras if name not in topics]
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(
+            "Missing camera topics for: "
+            f"{missing_text}. Provide --ros.camera_topics "
+            "like '{front: /so_arm101/agent_camera/image_raw}'."
+        )
+    return {name: topics[name] for name in cameras}
+
+
 @dataclass
 class RecorderConfig:
     repo_id: str
     root: str
+    robot_type: str
     fps: int
     episodes: int
     episode_seconds: float
@@ -233,12 +325,67 @@ class RecorderConfig:
     follower_id: str
     follower_calibration_dir: Optional[str]
     trajectory_time: Optional[float]
+    display_data: bool
     debug_leader: bool
     debug_limits: bool
     debug_state: bool
     debug_interval: float
     debug_raw: bool
     debug_log_file: Optional[str]
+
+
+class DisplayManager:
+    def __init__(self, fps: int, window_prefix: str = "so101: ") -> None:
+        self._enabled = True
+        self._window_prefix = window_prefix
+        self._interval = 1.0 / max(1, min(DISPLAY_MAX_FPS, fps))
+        self._next_time = 0.0
+        try:
+            import cv2  # pylint: disable=import-error
+        except Exception as exc:
+            print(f"[DISPLAY] Disabled (OpenCV unavailable): {exc}")
+            self._enabled = False
+            self._cv2 = None
+            return
+        self._cv2 = cv2
+
+    def due(self) -> bool:
+        if not self._enabled:
+            return False
+        return time.monotonic() >= self._next_time
+
+    def update(self, images: dict[str, Optional[np.ndarray]]) -> bool:
+        if not self._enabled or self._cv2 is None:
+            return True
+        now = time.monotonic()
+        if now < self._next_time:
+            return True
+        self._next_time = now + self._interval
+        try:
+            for name, img in images.items():
+                if img is None:
+                    continue
+                if img.ndim == 3 and img.shape[2] == 3:
+                    bgr = img[:, :, ::-1]
+                else:
+                    bgr = img
+                self._cv2.imshow(f"{self._window_prefix}{name}", bgr)
+            key = self._cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), 27):
+                return False
+            return True
+        except Exception as exc:
+            print(f"[DISPLAY] Error, disabling previews: {exc}")
+            self._enabled = False
+            return True
+
+    def close(self) -> None:
+        if not self._enabled or self._cv2 is None:
+            return
+        try:
+            self._cv2.destroyAllWindows()
+        except Exception:
+            pass
 
 
 class SoArm101Recorder:
@@ -262,8 +409,76 @@ class SoArm101Recorder:
         self._episode_start = None
         self._recording = True
         self._stdin_settings = None
+        if config.display_data and not config.cameras:
+            print("[DISPLAY] No cameras enabled; previews disabled.")
+        self._display = (
+            DisplayManager(config.fps) if config.display_data and config.cameras else None
+        )
 
         self._setup_topics()
+
+    def _safe_episode_buffer(self) -> Optional[dict]:
+        if self._dataset is None:
+            return None
+        buffer = self._dataset.episode_buffer
+        if isinstance(buffer, dict) and "size" in buffer and "task" in buffer:
+            return buffer
+        try:
+            self._dataset.episode_buffer = self._dataset.create_episode_buffer()
+            return self._dataset.episode_buffer
+        except Exception:
+            return None
+
+    def _episode_buffer_size(self) -> int:
+        buffer = self._safe_episode_buffer()
+        if not buffer:
+            return 0
+        size = buffer.get("size")
+        if isinstance(size, (int, np.integer)):
+            return int(size)
+        frame_index = buffer.get("frame_index")
+        if isinstance(frame_index, list):
+            return len(frame_index)
+        return 0
+
+    def _get_episode_count(self) -> int:
+        if self._dataset is None:
+            return 0
+        try:
+            return int(self._dataset.meta.total_episodes)
+        except Exception:
+            return 0
+
+    def _save_episode(self, episode_index: int) -> int:
+        if self._dataset is None:
+            return episode_index
+        frames = self._episode_buffer_size()
+        if frames <= 0:
+            print("Skipping empty episode.")
+            self._reset_episode_buffer()
+            return episode_index
+        print(f"Saving episode {episode_index + 1} ({frames} frames)...")
+        self._dataset.save_episode(parallel_encoding=False)
+        new_total = self._get_episode_count()
+        if new_total < episode_index + 1:
+            new_total = episode_index + 1
+        print(f"Saved episode {new_total}.")
+        return new_total
+
+    def _reset_episode_buffer(self) -> None:
+        if self._dataset is None:
+            return
+        buffer = self._dataset.episode_buffer
+        if isinstance(buffer, dict) and "episode_index" in buffer:
+            try:
+                self._dataset.clear_episode_buffer()
+                return
+            except Exception:
+                pass
+        try:
+            self._dataset.episode_buffer = self._dataset.create_episode_buffer()
+        except Exception:
+            self._dataset.episode_buffer = None
 
     def _setup_topics(self) -> None:
         TopicClass = Topic if Topic else roslibpy.Topic
@@ -326,7 +541,7 @@ class SoArm101Recorder:
         points = msg.get("points", []) or []
         if not joint_names or not points:
             return
-        positions = points[0].get("positions", []) if points else []
+        positions = points[-1].get("positions", []) if points else []
         if not positions:
             return
         with self._lock:
@@ -375,7 +590,10 @@ class SoArm101Recorder:
         if "action_commands" in missing:
             hints.append("start teleop or disable with --no-wait-for-action")
         if any(item.startswith("image:") for item in missing):
-            hints.append("use --no-images or --cameras to match available cameras")
+            hints.append(
+                "use --no-images, --cameras, or --robot.cameras to match available cameras"
+            )
+            hints.append("override topics with --ros.camera_topics")
         hint_text = f" Hints: {'; '.join(hints)}" if hints else ""
         raise TimeoutError(f"Timeout waiting for initial data: {', '.join(missing)}.{hint_text}")
 
@@ -407,11 +625,13 @@ class SoArm101Recorder:
                 fps=self.config.fps,
                 features=dataset_features,
                 root=self.config.root,
-                robot_type="so101_sim",
+                robot_type=self.config.robot_type,
                 use_videos=self.config.use_videos,
                 batch_encoding_size=1,
                 vcodec=self.config.vcodec,
             )
+            # Ensure tasks metadata exists so tooling can load datasets before any episodes are saved.
+            self._dataset.meta.save_episode_tasks([self.config.task])
 
     def _assert_resume_compatible(self, expected_features: dict[str, dict]) -> None:
         if self._dataset is None:
@@ -425,10 +645,10 @@ class SoArm101Recorder:
                 f"Resume fps mismatch: dataset fps {dataset_fps} != --fps {self.config.fps}."
             )
         robot_type = self._dataset.meta.info.get("robot_type")
-        if robot_type and robot_type != "so101_sim":
+        if robot_type and robot_type != self.config.robot_type:
             raise ValueError(
                 "Resume robot_type mismatch: "
-                f"dataset robot_type '{robot_type}' != 'so101_sim'."
+                f"dataset robot_type '{robot_type}' != '{self.config.robot_type}'."
             )
 
     def _get_timestamp(self) -> float:
@@ -470,7 +690,16 @@ class SoArm101Recorder:
         frame.update(build_dataset_frame(self._dataset.features, obs_values, prefix=OBS_STR))
         frame.update(build_dataset_frame(self._dataset.features, action_values, prefix=ACTION))
         frame["task"] = self.config.task
+        # Note: DEFAULT_FEATURES (timestamp, frame_index, episode_index, etc.) are auto-populated
+        # by LeRobotDataset and should NOT be included in the frame.
         return frame
+
+    def _get_display_images(self) -> dict[str, Optional[np.ndarray]]:
+        with self._lock:
+            return {
+                name: np.array(img, copy=True) if img is not None else None
+                for name, img in self._images.items()
+            }
 
     def _setup_keyboard(self, teleop=None) -> None:
         if not sys.stdin.isatty():
@@ -500,9 +729,7 @@ class SoArm101Recorder:
                     self._next_episode.set()
                 elif key == "p":
                     self._recording = not self._recording
-                elif key == "q" and (
-                    teleop is None or getattr(teleop, "input_device", "") != "keyboard"
-                ):
+                elif key == "x" or ch == "\x03":
                     self._stop.set()
 
         thread = threading.Thread(target=_listen, daemon=True)
@@ -529,63 +756,70 @@ class SoArm101Recorder:
         try:
             fps = max(1, int(self.config.fps))
             interval = 1.0 / fps
-            episode_index = 0
+            episode_index = self._get_episode_count()
             next_frame_time = time.monotonic()
 
             self._episode_start = time.monotonic()
             print("Recording started.")
-            if teleop is not None and getattr(teleop, "input_device", "") == "keyboard":
-                print("Recorder keys: n = next episode, p = pause, x/Ctrl-C = quit")
-            else:
-                print("Keys: n = next episode, p = pause, q = quit")
+            print("Keys: n = next episode, p = pause, x/Ctrl-C = quit")
+            if self._display:
+                print("Display: q/Esc in preview window to quit")
 
-            while not self._stop.is_set():
-                now = time.monotonic()
-                if now < next_frame_time:
-                    time.sleep(min(0.01, next_frame_time - now))
-                    continue
+            interrupted = False
+            try:
+                while not self._stop.is_set():
+                    now = time.monotonic()
+                    if now < next_frame_time:
+                        time.sleep(min(0.01, next_frame_time - now))
+                        continue
 
-                next_frame_time += interval
+                    next_frame_time += interval
 
-                if not self._recording:
-                    continue
+                    if self._display and self._display.due():
+                        images = self._get_display_images()
+                        if not self._display.update(images):
+                            self._stop.set()
+                            break
 
-                frame = self._build_frame()
-                if frame is not None:
-                    self._dataset.add_frame(frame)
+                    if not self._recording:
+                        continue
 
-                episode_done = False
-                if self.config.episode_seconds > 0:
-                    if (time.monotonic() - self._episode_start) >= self.config.episode_seconds:
+                    frame = self._build_frame()
+                    if frame is not None:
+                        self._dataset.add_frame(frame)
+
+                    episode_done = False
+                    if self.config.episode_seconds > 0:
+                        if (time.monotonic() - self._episode_start) >= self.config.episode_seconds:
+                            episode_done = True
+
+                    if self._next_episode.is_set():
                         episode_done = True
+                        self._next_episode.clear()
 
-                if self._next_episode.is_set():
-                    episode_done = True
-                    self._next_episode.clear()
+                    if episode_done:
+                        episode_index = self._save_episode(episode_index)
 
-                if episode_done:
-                    if self._dataset.episode_buffer and self._dataset.episode_buffer["size"] > 0:
-                        self._dataset.save_episode()
-                        episode_index += 1
-                        print(f"Saved episode {episode_index}.")
-                    else:
-                        print("Skipping empty episode.")
+                        if self.config.episodes and episode_index >= self.config.episodes:
+                            break
 
-                    if self.config.episodes and episode_index >= self.config.episodes:
-                        break
+                        if self.config.reset_seconds > 0:
+                            time.sleep(self.config.reset_seconds)
+                        self._episode_start = time.monotonic()
+            except KeyboardInterrupt:
+                interrupted = True
+                self._stop.set()
 
-                    self._dataset.clear_episode_buffer()
-                    if self.config.reset_seconds > 0:
-                        time.sleep(self.config.reset_seconds)
-                    self._episode_start = time.monotonic()
-
-            if self._dataset.episode_buffer and self._dataset.episode_buffer["size"] > 0:
-                self._dataset.save_episode()
-                print(f"Saved episode {episode_index + 1}.")
+            if self._episode_buffer_size() > 0:
+                episode_index = self._save_episode(episode_index)
+            elif interrupted and self._get_episode_count() == 0:
+                print("No frames recorded; dataset contains no episodes.")
         finally:
             if self._dataset is not None:
                 self._dataset.finalize()
             self._restore_keyboard()
+            if self._display:
+                self._display.close()
             self._shutdown_topics()
 
     def _shutdown_topics(self) -> None:
@@ -729,7 +963,7 @@ def _check_ffmpeg(use_videos: bool) -> Optional[str]:
         return None
     if shutil.which("ffmpeg"):
         return None
-    return "ffmpeg not found in PATH (use --no-videos to store PNGs instead)"
+    return "ffmpeg not found in PATH (use --no-videos or --dataset.video=false)"
 
 
 def _rosapi_topics(client) -> Optional[dict[str, str]]:
@@ -784,10 +1018,69 @@ def parse_args() -> RecorderConfig:
     parser.add_argument("--task", type=str, default="teleop", help="Task label")
     parser.add_argument("--no-videos", action="store_true", help="Store images as PNGs instead of videos")
     parser.add_argument("--vcodec", type=str, default="h264", help="Video codec")
-    parser.add_argument("--state-topic", type=str, default="/joint_states")
-    parser.add_argument("--arm-action-topic", type=str, default="/arm_controller/joint_trajectory")
-    parser.add_argument("--gripper-action-topic", type=str, default="/gripper_controller/joint_trajectory")
-    parser.add_argument("--clock-topic", type=str, default="/clock")
+    parser.add_argument("--dataset.repo_id", dest="dataset_repo_id", type=str, default=None)
+    parser.add_argument("--dataset.root", dest="dataset_root", type=str, default=None)
+    parser.add_argument("--dataset.fps", dest="dataset_fps", type=int, default=None)
+    parser.add_argument("--dataset.num_episodes", dest="dataset_num_episodes", type=int, default=None)
+    parser.add_argument(
+        "--dataset.episode_time_s",
+        dest="dataset_episode_time_s",
+        type=float,
+        default=None,
+    )
+    parser.add_argument(
+        "--dataset.reset_time_s",
+        dest="dataset_reset_time_s",
+        type=float,
+        default=None,
+    )
+    parser.add_argument("--dataset.single_task", dest="dataset_single_task", type=str, default=None)
+    parser.add_argument(
+        "--dataset.video",
+        dest="dataset_video",
+        nargs="?",
+        const="true",
+        default=None,
+        help="Store images as videos (true/false)",
+    )
+    parser.add_argument("--dataset.vcodec", dest="dataset_vcodec", type=str, default=None)
+    parser.add_argument(
+        "--display_data",
+        "--display-data",
+        dest="display_data",
+        nargs="?",
+        const="true",
+        default=None,
+        help="Preview incoming camera feeds",
+    )
+    parser.add_argument(
+        "--state-topic",
+        "--ros.state_topic",
+        dest="state_topic",
+        type=str,
+        default="/joint_states",
+    )
+    parser.add_argument(
+        "--arm-action-topic",
+        "--ros.arm_action_topic",
+        dest="arm_action_topic",
+        type=str,
+        default="/arm_controller/joint_trajectory",
+    )
+    parser.add_argument(
+        "--gripper-action-topic",
+        "--ros.gripper_action_topic",
+        dest="gripper_action_topic",
+        type=str,
+        default="/gripper_controller/joint_trajectory",
+    )
+    parser.add_argument(
+        "--clock-topic",
+        "--ros.clock_topic",
+        dest="clock_topic",
+        type=str,
+        default="/clock",
+    )
     parser.add_argument(
         "--wait-for-action",
         dest="wait_for_action",
@@ -805,22 +1098,65 @@ def parse_args() -> RecorderConfig:
         "--cameras",
         type=str,
         default="wrist,agent,side",
-        help="Comma-separated camera list (wrist,agent,side)",
+        help="Comma-separated camera list (wrist,agent,side,front)",
     )
     parser.add_argument("--no-images", action="store_true", help="Disable image recording")
     parser.add_argument(
-        "--wrist-topic", type=str, default="/so_arm101/wrist_camera/image_raw"
+        "--camera-topics",
+        "--ros.camera_topics",
+        dest="ros_camera_topics",
+        type=str,
+        default=None,
+        help="YAML mapping of camera name to ROS image topic",
     )
     parser.add_argument(
-        "--agent-topic", type=str, default="/so_arm101/agent_camera/image_raw"
+        "--wrist-topic", type=str, default=DEFAULT_CAMERA_TOPICS["wrist"]
     )
     parser.add_argument(
-        "--side-topic", type=str, default="/so_arm101/side_camera/image_raw"
+        "--agent-topic", type=str, default=DEFAULT_CAMERA_TOPICS["agent"]
+    )
+    parser.add_argument(
+        "--side-topic", type=str, default=DEFAULT_CAMERA_TOPICS["side"]
     )
     parser.add_argument("--resume", action="store_true", help="Resume an existing dataset")
-    parser.add_argument("--host", type=str, default="", help="Rosbridge host override")
-    parser.add_argument("--port", type=int, default=None, help="Rosbridge port override")
-    parser.add_argument("--rosbridge-url", type=str, default="", help="Rosbridge URL override")
+    parser.add_argument("--host", "--ros.host", dest="host", type=str, default="")
+    parser.add_argument("--port", "--ros.port", dest="port", type=int, default=None)
+    parser.add_argument(
+        "--rosbridge-url",
+        "--rosbridge.url",
+        dest="rosbridge_url",
+        type=str,
+        default="",
+        help="Rosbridge URL override",
+    )
+    parser.add_argument(
+        "--robot.type",
+        dest="robot_type",
+        type=str,
+        default=None,
+        help="Lerobot-style robot type (e.g. so101_follower)",
+    )
+    parser.add_argument(
+        "--robot.port",
+        dest="robot_port",
+        type=str,
+        default=None,
+        help="Follower serial port (optional)",
+    )
+    parser.add_argument(
+        "--robot.id",
+        dest="robot_id",
+        type=str,
+        default=None,
+        help="Follower ID (maps to --follower-id)",
+    )
+    parser.add_argument(
+        "--robot.cameras",
+        dest="robot_cameras",
+        type=str,
+        default=None,
+        help="YAML camera config dict; keys become dataset camera names",
+    )
     parser.add_argument(
         "--input",
         "--input-device",
@@ -835,6 +1171,27 @@ def parse_args() -> RecorderConfig:
         type=str,
         default=None,
         help="Robot USB serial port for leader input (required when input=leader)",
+    )
+    parser.add_argument(
+        "--teleop.type",
+        dest="teleop_type",
+        type=str,
+        default=None,
+        help="Lerobot-style teleop type (e.g. so101_leader, keyboard)",
+    )
+    parser.add_argument(
+        "--teleop.port",
+        dest="teleop_port",
+        type=str,
+        default=None,
+        help="Lerobot-style teleop port (maps to --leader-port)",
+    )
+    parser.add_argument(
+        "--teleop.id",
+        dest="teleop_id",
+        type=str,
+        default=None,
+        help="Lerobot-style teleop id (maps to --leader-id)",
     )
     parser.add_argument(
         "--leader-id",
@@ -937,69 +1294,124 @@ def parse_args() -> RecorderConfig:
 
     args = parser.parse_args()
 
+    if args.display_data is not None:
+        try:
+            args.display_data = _coerce_bool(args.display_data, default=False)
+        except ValueError as exc:
+            parser.error(str(exc))
+    else:
+        args.display_data = False
+
+    dataset_video = None
+    if args.dataset_video is not None:
+        try:
+            dataset_video = _coerce_bool(args.dataset_video, default=True)
+        except ValueError as exc:
+            parser.error(str(exc))
+
     if args.debug_all:
         args.debug_leader = True
         args.debug_limits = True
         args.debug_state = True
         args.debug_raw = True
 
-    if args.input_device == "leader" and not args.leader_port:
-        parser.error("--input leader requires --leader-port.")
+    input_device = args.input_device
+    if args.teleop_type:
+        teleop_type = args.teleop_type.strip().lower()
+        if "leader" in teleop_type:
+            input_device = "leader"
+        elif "keyboard" in teleop_type:
+            input_device = "keyboard"
+        elif teleop_type in {"none", "off", "false", "no"}:
+            input_device = "none"
+        else:
+            parser.error("--teleop.type must be leader, keyboard, or none for this recorder.")
 
-    if args.resume and not args.root:
-        parser.error("--resume requires --root pointing to an existing dataset.")
+    leader_port = args.leader_port or args.teleop_port
+    if input_device == "leader" and not leader_port:
+        parser.error("--input leader requires --leader-port or --teleop.port.")
+
+    leader_id = args.leader_id
+    if args.teleop_id:
+        leader_id = args.teleop_id
+
+    follower_port = args.follower_port or args.robot_port
+    follower_id = args.follower_id
+    if args.robot_id:
+        follower_id = args.robot_id
 
     timestamp = _now_ts()
-    repo_id = args.repo_id or f"local/so_arm101_sim_{timestamp}"
-    root = os.path.expanduser(args.root) if args.root else os.path.join(
+    repo_id = args.dataset_repo_id or args.repo_id or f"local/so_arm101_sim_{timestamp}"
+    root_value = args.dataset_root or args.root
+    root = os.path.expanduser(root_value) if root_value else os.path.join(
         os.getcwd(), "datasets", f"so_arm101_sim_{timestamp}"
     )
 
+    if args.resume and not root_value:
+        parser.error("--resume requires --root or --dataset.root pointing to an existing dataset.")
+
     cameras = []
     if not args.no_images:
-        unknown = []
-        seen = set()
-        for name in args.cameras.split(","):
-            name = name.strip()
-            if not name:
-                continue
-            if name not in VALID_CAMERAS:
-                unknown.append(name)
-                continue
-            if name in seen:
-                continue
-            seen.add(name)
-            cameras.append(name)
-        if unknown:
-            parser.error(
-                "--cameras contains unknown names: "
-                f"{', '.join(sorted(set(unknown)))}. "
-                "Valid: wrist,agent,side."
+        try:
+            cameras = _parse_camera_names(args.robot_cameras, "--robot.cameras")
+        except ValueError as exc:
+            parser.error(str(exc))
+        if not cameras:
+            cameras = _dedupe_keep_order(
+                [name.strip() for name in args.cameras.split(",") if name.strip()]
             )
 
+    per_camera_overrides = {}
+    if args.wrist_topic != DEFAULT_CAMERA_TOPICS["wrist"]:
+        per_camera_overrides["wrist"] = args.wrist_topic
+    if args.agent_topic != DEFAULT_CAMERA_TOPICS["agent"]:
+        per_camera_overrides["agent"] = args.agent_topic
+    if args.side_topic != DEFAULT_CAMERA_TOPICS["side"]:
+        per_camera_overrides["side"] = args.side_topic
+
     camera_topics = {}
-    if "wrist" in cameras:
-        camera_topics["wrist"] = args.wrist_topic
-    if "agent" in cameras:
-        camera_topics["agent"] = args.agent_topic
-    if "side" in cameras:
-        camera_topics["side"] = args.side_topic
+    if cameras:
+        try:
+            overrides = _parse_yaml_mapping(args.ros_camera_topics, "--ros.camera_topics")
+        except ValueError as exc:
+            parser.error(str(exc))
+        overrides = {**per_camera_overrides, **overrides}
+        try:
+            camera_topics = _resolve_camera_topics(cameras, overrides)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     rosbridge_url = _resolve_rosbridge_url(args.host, args.port, args.rosbridge_url)
     wait_for_action = args.wait_for_action
     if wait_for_action is None:
-        wait_for_action = args.input_device != "none"
+        wait_for_action = input_device != "none"
+
+    fps = args.dataset_fps if args.dataset_fps is not None else args.fps
+    episodes = args.dataset_num_episodes if args.dataset_num_episodes is not None else args.episodes
+    episode_seconds = (
+        args.dataset_episode_time_s
+        if args.dataset_episode_time_s is not None
+        else args.episode_seconds
+    )
+    reset_seconds = (
+        args.dataset_reset_time_s if args.dataset_reset_time_s is not None else args.reset_seconds
+    )
+    task = args.dataset_single_task or args.task
+    use_videos = dataset_video if dataset_video is not None else not args.no_videos
+    vcodec = args.dataset_vcodec or args.vcodec
+    robot_type = args.robot_type or "so101_sim"
 
     return RecorderConfig(
         repo_id=repo_id,
         root=root,
-        fps=args.fps,
-        episodes=args.episodes,
-        episode_seconds=args.episode_seconds,
-        reset_seconds=args.reset_seconds,
-        task=args.task,
-        use_videos=not args.no_videos,
-        vcodec=args.vcodec,
+        robot_type=robot_type,
+        fps=fps,
+        episodes=episodes,
+        episode_seconds=episode_seconds,
+        reset_seconds=reset_seconds,
+        task=task,
+        use_videos=use_videos,
+        vcodec=vcodec,
         state_topic=args.state_topic,
         arm_action_topic=args.arm_action_topic,
         gripper_action_topic=args.gripper_action_topic,
@@ -1011,16 +1423,17 @@ def parse_args() -> RecorderConfig:
         check=args.check,
         check_timeout=args.check_timeout,
         wait_for_action=wait_for_action,
-        input_device=args.input_device,
-        leader_port=args.leader_port,
-        leader_id=args.leader_id,
+        input_device=input_device,
+        leader_port=leader_port,
+        leader_id=leader_id,
         leader_calibration_dir=args.leader_calibration_dir,
         leader_calibration_file=args.leader_calibration_file,
         leader_rate=args.leader_rate,
-        follower_port=args.follower_port,
-        follower_id=args.follower_id,
+        follower_port=follower_port,
+        follower_id=follower_id,
         follower_calibration_dir=args.follower_calibration_dir,
         trajectory_time=args.trajectory_time,
+        display_data=args.display_data,
         debug_leader=args.debug_leader,
         debug_limits=args.debug_limits,
         debug_state=args.debug_state,
@@ -1072,6 +1485,7 @@ def main() -> None:
                 config.state_topic,
                 config.arm_action_topic,
                 config.gripper_action_topic,
+                config.clock_topic,
                 *config.camera_topics.values(),
             ):
                 if topic in ros_topics:
