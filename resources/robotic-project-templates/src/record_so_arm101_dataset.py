@@ -106,6 +106,7 @@ DEFAULT_LEADER_ID = "awesome_leader"
 DEFAULT_FOLLOWER_ID = "my_awesome_follower_arm"
 DEFAULT_LEADER_CAL_DIR = "~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/"
 DEFAULT_FOLLOWER_CAL_DIR = "~/.cache/huggingface/lerobot/calibration/robots/so_follower/"
+VALID_CAMERAS = {"wrist", "agent", "side"}
 
 
 def _now_ts() -> str:
@@ -315,9 +316,10 @@ class SoArm101Recorder:
             self._have_joint_state = all(
                 self._joint_positions[name] is not None for name in JOINT_ORDER
             )
-            for name in JOINT_ORDER:
-                if self._action_positions[name] is None and self._joint_positions[name] is not None:
-                    self._action_positions[name] = self._joint_positions[name]
+            if not self._have_action:
+                for name in JOINT_ORDER:
+                    if self._joint_positions[name] is not None:
+                        self._action_positions[name] = self._joint_positions[name]
 
     def _on_action(self, msg: dict) -> None:
         joint_names = msg.get("joint_names", []) or []
@@ -955,10 +957,25 @@ def parse_args() -> RecorderConfig:
 
     cameras = []
     if not args.no_images:
+        unknown = []
+        seen = set()
         for name in args.cameras.split(","):
             name = name.strip()
-            if name:
-                cameras.append(name)
+            if not name:
+                continue
+            if name not in VALID_CAMERAS:
+                unknown.append(name)
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            cameras.append(name)
+        if unknown:
+            parser.error(
+                "--cameras contains unknown names: "
+                f"{', '.join(sorted(set(unknown)))}. "
+                "Valid: wrist,agent,side."
+            )
 
     camera_topics = {}
     if "wrist" in cameras:

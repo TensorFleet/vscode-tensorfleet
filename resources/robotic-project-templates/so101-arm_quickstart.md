@@ -172,6 +172,9 @@ uv run python src/record_so_arm101_dataset.py --no-images
 # Record just wrist + agent cameras
 uv run python src/record_so_arm101_dataset.py --cameras wrist,agent
 
+# Record even if action topics are missing (actions mirror joint states until commands arrive)
+uv run python src/record_so_arm101_dataset.py --no-wait-for-action
+
 # Record + keyboard teleop in the same process
 uv run python src/record_so_arm101_dataset.py --input keyboard
 
