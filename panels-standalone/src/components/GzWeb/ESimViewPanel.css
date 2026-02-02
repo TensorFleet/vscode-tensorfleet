@@ -1,0 +1,105 @@
+.esim-wrapper {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+}
+
+.esim-main-view {
+  flex: 1;
+  position: relative;
+}
+
+.esim-sidebar {
+  width: 300px;
+  background-color: #f5f5f5;
+  border-left: 1px solid #ddd;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.featured-entities-container {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  height: fit-content;
+}
+
+.featured-entities-container h3 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.featured-entities-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.entity-card {
+  background: white;
+  border: 1px solid #e1e5e9;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.entity-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.entity-icon {
+  font-size: 16px;
+}
+
+.entity-name {
+  flex: 1;
+  font-weight: 600;
+  color: #333;
+}
+
+.entity-status {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.status-active {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-pending {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.entity-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.entity-metric {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.metric-label {
+  color: #666;
+}
+
+.metric-value {
+  font-weight: 500;
+  color: #333;
+}

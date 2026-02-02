@@ -73,6 +73,7 @@ export default defineConfig({
         gzweb: resolve(rootDir, "gzweb.html"),
         raw_messages: resolve(rootDir, "raw_messages.html"),
         sensor_3d: resolve(rootDir, "sensor_view_3d.html"),
+        featured_entities: resolve(rootDir, "featured_entities.html"),
       },
       output: {
         assetFileNames: "assets/[name]-[hash][extname]",
