@@ -58,41 +58,59 @@ Use [keyboard controls](#keyboard-controls) to move the arm. **The terminal must
 **Time**: ~30 minutes (first-time only)
 
 > [!IMPORTANT]
-> Complete all steps before running scripts. After first-time setup, you only need to run the final command.
+> **Already set up your SO101?** Skip to [Configure Environment Variables](#configure-environment-variables) if you've completed motor setup and calibration.
 
-### Find Your USB Port
+### Prerequisites: SO101 Hardware Setup
+
+Before using this project, your arm must have motors configured and calibrated.
+
+👉 **Follow the official guide**: [HuggingFace SO101 Setup](https://huggingface.co/docs/lerobot/en/so101)
+
+Complete these sections:
+1. **Motor IDs & Baudrates** — `lerobot-setup-motors` (~15 min per arm)
+2. **Calibration** — `lerobot-calibrate` (~5 min per arm)
+
+### Find Your USB Ports
+
+> [!TIP]
+> **Using two arms?** Identify ports one at a time to avoid confusion.
 
 ```bash
 source .venv/bin/activate
 lerobot-find-port
 ```
 
-Disconnect the arm when prompted. Note the port (e.g., `/dev/ttyACM0` on Linux, `/dev/tty.usbmodem...` on macOS).
+**For two-arm setups (leader + follower):**
+1. **Unplug both arms**
+2. **Plug in leader arm only** → run `lerobot-find-port` → note as `LEADER_PORT`
+3. **Plug in follower arm** (keep leader plugged) → run again → the new port is `FOLLOWER_PORT`
 
-### Setup Motors (First-Time Only)
+| Arm | Example Port (macOS) | .env Variable |
+|-----|----------------------|---------------|
+| Leader | `/dev/tty.usbmodem58760431551` | `SO101_LEADER_PORT` |
+| Follower | `/dev/tty.usbmodem58760431552` | `SO101_FOLLOWER_PORT` |
 
-> [!WARNING]
-> This step is **required** for new motors. Takes ~15 minutes.
+> [!NOTE]
+> See [HuggingFace: Find Port](https://huggingface.co/docs/lerobot/en/so101#1-find-the-usb-ports-for-each-arm) for more details.
 
-Follow the [HuggingFace motor setup guide](https://huggingface.co/docs/lerobot/en/so101#2-set-the-motors-ids-and-baudrates). You'll run `lerobot-setup-motors` and connect each motor one at a time.
+### Find Your Calibration IDs
 
-### Calibrate the Arm
+The calibration ID is the name you gave when running `lerobot-calibrate`. If you forgot it, check:
 
-**Leader arm:**
 ```bash
-lerobot-calibrate \
-  --teleop.type=so101_leader \
-  --teleop.port=/dev/ttyACM0 \
-  --teleop.id=my_leader
+# Leader calibration
+ls ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/
+# → my_awesome_leader_arm.json
+
+# Follower calibration  
+ls ~/.cache/huggingface/lerobot/calibration/robots/so_follower/
+# → my_awesome_follower_arm.json
 ```
 
-**Follower arm** (if using):
-```bash
-lerobot-calibrate \
-  --robot.type=so101_follower \
-  --robot.port=/dev/ttyACM1 \
-  --robot.id=my_follower
-```
+The `.json` filename (without extension) is your ID.
+
+> [!NOTE]
+> **Need to calibrate?** See [HuggingFace Calibration Guide](https://huggingface.co/docs/lerobot/en/so101#3-calibrate). Run `lerobot-calibrate` and follow the prompts (~5 min per arm).
 
 ### Configure Environment Variables
 
@@ -103,13 +121,13 @@ cp .env.example .env
 Edit `.env` with your values:
 
 ```bash
-# Required for leader arm input
-SO101_LEADER_PORT=/dev/ttyACM0
-SO101_LEADER_ID=my_leader
+# Required for leader arm
+SO101_LEADER_PORT=/dev/tty.usbmodem58760431551
+SO101_LEADER_ID=my_awesome_leader_arm
 
-# Required for follower mirroring (optional)
-SO101_FOLLOWER_PORT=/dev/ttyACM1
-SO101_FOLLOWER_ID=my_follower
+# For follower mirroring (Track C only)
+SO101_FOLLOWER_PORT=/dev/tty.usbmodem58760431552
+SO101_FOLLOWER_ID=my_awesome_follower_arm
 ```
 
 ### Run Leader Teleop
