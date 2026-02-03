@@ -14,6 +14,9 @@ import { ROS_PORTS } from "./ws-proxy-client";
 import * as RosTypes from "tensorfleet-util/ros/ros-types";
 import { ROS2BridgeApi } from "tensorfleet-util/ros/ros-bridge-api";
 
+// (optional but nice) local type for the rosapi response
+type RosapiNodesResponse = { nodes: string[] };
+
 export type ConnectionMode = "foxglove";
 
 interface ConnectionSettings {
@@ -364,6 +367,38 @@ export class ROS2Bridge {
       serviceName: name,
       request: request
     }) as T;
+  }
+
+  /**
+   * Return ROS2 node names via rosapi:
+   *   ros2 service call /rosapi/nodes rosapi_msgs/srv/Nodes "{}"
+   *
+   * Requires /rosapi/nodes to be advertised by Foxglove Bridge (services enabled).
+   */
+  async listNodes(): Promise<string[]> {
+    if (!this.client) throw new Error("listNodes() before connect");
+    if (!this.client.isConnected()) throw new Error("listNodes() while disconnected");
+
+    const resp = await this.client.callService<RosapiNodesResponse>({
+      serviceName: "/rosapi/nodes",
+      request: {}, // rosapi_msgs/srv/Nodes_Request has no fields
+    });
+
+    // Be defensive in case bridge returns a slightly different shape
+    const nodes = (resp as any)?.nodes;
+    if (!Array.isArray(nodes)) {
+      throw new Error(`Unexpected /rosapi/nodes response: ${JSON.stringify(resp)}`);
+    }
+    return nodes;
+  }
+
+  /**
+   * Convenience wrapper matching your grep use-case:
+   * returns only node names containing `substr`
+   */
+  async listNodesMatching(substr: string): Promise<string[]> {
+    const nodes = await this.listNodes();
+    return nodes.filter((n) => n.includes(substr));
   }
 
 
