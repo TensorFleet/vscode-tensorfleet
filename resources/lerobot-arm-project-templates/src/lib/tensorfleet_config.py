@@ -56,8 +56,10 @@ def _load_yaml_config() -> dict[str, Any]:
                 if value:
                     result[key] = value
         return result
+    except FileNotFoundError:
+        return {}  # Config file is optional
     except Exception as err:
-        print(f"[TF-CONFIG] Could not load config at {config_path}, using defaults. {err}")
+        print(f"[TF-CONFIG] Could not parse config at {config_path}, using defaults. {err}")
         return {}
 
 
