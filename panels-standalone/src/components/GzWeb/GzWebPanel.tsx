@@ -349,7 +349,9 @@ export const GzWebPanel: React.FC = () => {
   const [autoVmId, setAutoVmId] = useState<string | null>(null);
   const [vmIdFetchState, setVmIdFetchState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [vmIdFetchError, setVmIdFetchError] = useState('');
-  const [hasVsCodeBridge, setHasVsCodeBridge] = useState(false);
+  const [hasVsCodeBridge, setHasVsCodeBridge] = useState(
+    () => typeof window !== 'undefined' && typeof window.acquireVsCodeApi === 'function',
+  );
 
   if (!vmBaseRef.current) {
     vmBaseRef.current = vmBase;
@@ -727,6 +729,7 @@ export const GzWebPanel: React.FC = () => {
 
   useEffect(() => {
     if (hasVsCodeBridge) return;
+    if (typeof window !== 'undefined' && typeof window.acquireVsCodeApi === 'function') return;
     if (!vmBase.trim()) return;
     void fetchVmIdFromManager({ quiet: true });
     return () => vmIdAbortRef.current?.abort();

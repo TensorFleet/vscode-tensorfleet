@@ -1860,12 +1860,26 @@ async function getStandalonePanelHtml(
 
 async function sendVmManagerInfoToWebview(
   webview: vscode.Webview,
+  context: vscode.ExtensionContext,
   payload?: { vmBase?: string; token?: string }
 ) {
+  const vmBase = (payload?.vmBase?.trim() || regions.getVmManagerUrl()).replace(/\/+$/, '');
+  let token = payload?.token?.trim() || '';
+  if (!token) {
+    try {
+      token = (await auth.getToken(context)) || '';
+    } catch (error) {
+      console.warn('[TensorFleet] Failed to read auth token for webview:', error);
+    }
+  }
   if (!vmManagerIntegration) {
     webview.postMessage({
       command: 'tensorfleet.vmManagerInfo',
-      payload: { error: 'VM Manager integration not initialized' }
+      payload: {
+        error: 'VM Manager integration not initialized',
+        vmBase,
+        token
+      }
     });
     return;
   }
@@ -1874,28 +1888,40 @@ async function sendVmManagerInfoToWebview(
     // Get basic VM info from snapshot
     const snapshot = vmManagerIntegration.snapshot;
     const info = {
+      vmId: snapshot.nodeId,
+      vmBase,
+      token,
       vmState: snapshot.vmState,
       ipAddress: snapshot.ipAddress,
       nodeId: snapshot.nodeId,
       provider: snapshot.provider,
       region: snapshot.region,
-      uptimeSeconds: snapshot.uptimeSeconds
+      uptimeSeconds: snapshot.uptimeSeconds,
+      error: snapshot.error
     };
     webview.postMessage({ command: 'tensorfleet.vmManagerInfo', payload: info });
   } catch (error) {
     webview.postMessage({
       command: 'tensorfleet.vmManagerInfo',
-      payload: { error: error instanceof Error ? error.message : String(error) }
+      payload: {
+        error: error instanceof Error ? error.message : String(error),
+        vmBase,
+        token
+      }
     });
   }
 }
 
-async function handleOption3Message(_panel: vscode.WebviewPanel, message: any, _context: vscode.ExtensionContext) {
+async function handleOption3Message(panel: vscode.WebviewPanel, message: any, context: vscode.ExtensionContext) {
   if (!message || !message.command) {
     console.warn('[TensorFleet] Invalid message received from webview');
     return;
   }
   getTelemetry()?.trackEvent('panel.option3Message', { command: message.command });
+  if (message.command === 'tensorfleet.vmManagerInfo') {
+    await sendVmManagerInfoToWebview(panel.webview, context, message.payload);
+    return;
+  }
   // Standalone panels manage ROS2 via embedded Foxglove. No extension-side action.
   console.log('[TensorFleet] Webview message (handled in panel):', message.command);
 }
