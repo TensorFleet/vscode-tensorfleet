@@ -29,7 +29,7 @@ Complete these 3 steps before choosing your track.
 
 > Wait for the VM status to show "Running" before proceeding.
 
-<video src="assets/start_vm.mp4" controls width="600"></video>
+![Start VM](assets/start_vm.gif)
 
 ### Step 2: Install Dependencies
 
@@ -45,7 +45,10 @@ uv venv && uv pip install -r requirements.txt
 
 **Or via Command Palette:** `TensorFleet: Open Simulation View`
 
-<video src="assets/simulation_view.mp4" controls width="600"></video>
+![Open Simulation View](assets/simulation_view.gif)
+
+> [!TIP]
+> If the simulation doesn't appear after a while, close and re-open the panel. If the problem persists, restart the VM.
 
 ---
 
