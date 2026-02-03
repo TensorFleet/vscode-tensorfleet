@@ -34,7 +34,7 @@ Complete these 3 steps before choosing your track.
 ### Step 2: Install Dependencies
 
 ```bash
-uv venv && uv pip install -r requirements.arm.txt
+uv venv && uv pip install -r requirements.txt
 ```
 
 ### Step 3: Open Simulation View
@@ -208,7 +208,7 @@ The leader drives the simulation, which mirrors to the real follower.
 .
 ├── src/teleop_so_arm101.py    # Main teleoperation script
 ├── src/lib/                   # Hardware bridge and utilities
-├── requirements.arm.txt       # Python dependencies
+├── requirements.txt       # Python dependencies
 ├── .env.example               # Environment variable template
 └── assets/                    # Screenshots for this guide
 ```
