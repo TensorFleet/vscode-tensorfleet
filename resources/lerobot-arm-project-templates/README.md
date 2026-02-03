@@ -1,183 +1,195 @@
-# TensorFleet LeRobot Arm Project Template
+# TensorFleet LeRobot Arm Project
 
-This directory hosts the LeRobot SO-ARM101 teleoperation template. Use it for keyboard control, leader-arm input, and optional follower mirroring.
+Control the SO-ARM101 robotic arm in simulation, with real hardware, or both.
 
-## Template contents
+| Track | What You Need | Time to First Command |
+|-------|---------------|----------------------|
+| 🎮 **A: Simulation Only** | Keyboard | ~2 minutes |
+| 🦾 **B: Real Arm** | SO101 leader arm + USB | ~30 min (first-time setup) |
+| 🔗 **C: Sim + Real** | Leader + follower arms | ~30 min (first-time setup) |
 
-- `requirements.arm.txt` - Python dependencies for teleop and LeRobot hardware support.
-- `src/teleop_so_arm101.py` - keyboard/leader teleop script.
-- `src/lib/` - shared helpers plus SO101 hardware bridge.
-- `assets/` - screenshots referenced by this guide.
-- `.env.example` - SO101 environment variable template.
+---
 
-## LeRobot SO-ARM101 Quick Start
+## Prerequisites
+- **uv** package manager [install](https://docs.astral.sh/uv/getting-started/installation/): 
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+---
 
-Follow this guide any time you work with the LeRobot SO-ARM101 example. The first section covers the simulated keyboard teleop you have today, and the second introduces the leader arm workflow that streams real controller input into the simulated robot.
+## Quick Start (All Tracks)
 
-### 1. Keyboard teleop (simulated arm)
+Complete these 3 steps before choosing your track.
 
-1. **Start VM**: Click the **TensorFleet** status bar in VS Code and select **Start VM**.
-2. **Setup Environment**: Install dependencies using `uv`.
-   ```bash
-   uv venv && uv pip install -r requirements.arm.txt
-   ```
-3. **Open Simulation**: Launch the **Simulation View** and zoom in on the table as shown.
-   ![Initial View](assets/simulation_view_01.png)
-   ![Zoomed View](assets/simulation_view_02.png)
-4. **Monitor Camera Feeds**: Open several **Image Panels** and subscribe to these camera topics:
-   - `/so_arm101/agent_camera/image_raw`
-   - `/so_arm101/side_camera/image_raw`
-   - `/so_arm101/wrist_camera/image_raw`
-   ![Image Panels](assets/image_panels.png)
+### Step 1: Start the VM
 
-   **Tip: Using Raw Messages**
-   For a more compact view of multiple topics, use the **Raw Messages** panel:
-   - Open the **Raw Messages** panel.
-   - Search for your topic in **Search Topics**.
-   - Select the topic and click **Subscribe**.
+Click the **TensorFleet** status bar at the bottom of VS Code → **Start VM**.
 
-   ![Raw Messages](assets/raw_messages.png)
+> Wait for the VM status to show "Running" before proceeding (~30 seconds).
 
-5. **Run Teleoperation**: Start the keyboard control script:
-   ```bash
-   uv run python src/teleop_so_arm101.py
-   ```
+### Step 2: Install Dependencies
 
-   To mirror keyboard commands to a real follower arm, add the follower port:
-   ```bash
-   uv run python src/teleop_so_arm101.py --input keyboard --follower-port /dev/ttyACM0
-   ```
+```bash
+uv venv && uv pip install -r requirements.arm.txt
+```
 
-   > [!IMPORTANT]
-   > Keyboard controls will only work when the **terminal window is focused**.
+### Step 3: Open Webview Panels
 
-#### Keyboard Controls
+**Simulation View**: Shows the 3D arm in Gazebo
+   - Command Palette → "TensorFleet: Open Simulation View"
+
+---
+
+## 🎮 Track A: Simulation Only (Keyboard)
+
+Run the teleoperation script:
+
+```bash
+uv run python src/teleop_so_arm101.py
+```
+
+Use [keyboard controls](#keyboard-controls) to move the arm. **The terminal must be focused** for keys to work.
+✅ **Done!** You're controlling the simulated arm.
+
+---
+
+## 🦾 Track B: Real Arm Setup
+
+**Time**: ~30 minutes (first-time only)
+
+> [!IMPORTANT]
+> Complete all steps before running scripts. After first-time setup, you only need to run the final command.
+
+### Find Your USB Port
+
+```bash
+source .venv/bin/activate
+lerobot-find-port
+```
+
+Disconnect the arm when prompted. Note the port (e.g., `/dev/ttyACM0` on Linux, `/dev/tty.usbmodem...` on macOS).
+
+### Setup Motors (First-Time Only)
+
+> [!WARNING]
+> This step is **required** for new motors. Takes ~15 minutes.
+
+Follow the [HuggingFace motor setup guide](https://huggingface.co/docs/lerobot/en/so101#2-set-the-motors-ids-and-baudrates). You'll run `lerobot-setup-motors` and connect each motor one at a time.
+
+### Calibrate the Arm
+
+**Leader arm:**
+```bash
+lerobot-calibrate \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/ttyACM0 \
+  --teleop.id=my_leader
+```
+
+**Follower arm** (if using):
+```bash
+lerobot-calibrate \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM1 \
+  --robot.id=my_follower
+```
+
+### Configure Environment Variables
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your values:
+
+```bash
+# Required for leader arm input
+SO101_LEADER_PORT=/dev/ttyACM0
+SO101_LEADER_ID=my_leader
+
+# Required for follower mirroring (optional)
+SO101_FOLLOWER_PORT=/dev/ttyACM1
+SO101_FOLLOWER_ID=my_follower
+```
+
+### Run Leader Teleop
+
+```bash
+uv run python src/teleop_so_arm101.py --input leader
+```
+
+The simulated arm now mirrors your leader arm movements!
+
+---
+
+## 🔗 Track C: Sim + Real (Leader → Sim → Follower)
+
+**Prerequisite**: Complete Track B for both leader and follower arms.
+
+This mode chains: **Leader arm → Simulator → Follower arm**
+
+```bash
+uv run python src/teleop_so_arm101.py --input leader --use-follower-env
+```
+
+The leader drives the simulation, which mirrors to the real follower.
+
+---
+
+## Keyboard Controls
 
 | Key | Action |
-| --- | --- |
+|-----|--------|
 | `q` / `a` | Joint 1 +/- |
 | `w` / `s` | Joint 2 +/- |
 | `e` / `d` | Joint 3 +/- |
 | `r` / `f` | Joint 4 +/- |
 | `t` / `g` | Joint 5 +/- |
 | `y` / `h` | Gripper open/close |
-| `space` | Hold current position |
 | `0` | Return to home position |
-| `x` / `Ctrl-C` | Exit teleoperation |
+| `Space` | Hold current position |
+| `x` / `Ctrl-C` | Exit |
 
-### 2. Leader arm teleop (real input into simulated arm)
+---
 
-This mode injects live rotations from a real SO101 leader arm into the simulator. Keep clear notes of the USB ports you use so you can reuse them later (save the port path in your notes or `.env` file). If you disconnect/reconnect cables, repeat the port discovery step.
+## Environment Variables
 
-#### A. Find the leader arm USB port
+| Variable | Track | Description |
+|----------|-------|-------------|
+| `SO101_LEADER_PORT` | Real Arm, Sim + Real | USB port for leader arm |
+| `SO101_LEADER_ID` | Real Arm, Sim + Real | Calibration ID for leader |
+| `SO101_FOLLOWER_PORT` | Sim + Real | USB port for follower arm |
+| `SO101_FOLLOWER_ID` | Sim + Real | Calibration ID for follower |
 
-1. Activate the Python environment:
-   ```bash
-   source .venv/bin/activate
-   ```
-2. Run the port discovery helper:
-   ```bash
-   lerobot-find-port
-   ```
+---
 
-   **Example output:**
-   ```
-   Finding all available ports for the MotorBus.
-   ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
-   Remove the USB cable from your MotorBus and press Enter when done.
+## Troubleshooting
 
-   [...Disconnect corresponding leader or follower arm and press Enter...]
+| Problem | Solution |
+|---------|----------|
+| VM won't start | Check TensorFleet status bar → Restart VM |
+| `lerobot-find-port` shows nothing | Check USB cable and power supply |
+| Calibration file not found | Re-run `lerobot-calibrate` with matching `--teleop.id` |
+| Connection refused (port 9091) | Wait for VM to fully start, check Simulation View |
+| Keys don't work | Click inside the terminal to focus it |
 
-   The port of this MotorBus is /dev/tty.usbmodem575E0032081
-   Reconnect the USB cable.
-   ```
+---
 
-   > Tip: jot down the port you plan to reuse (e.g., `/dev/ttyACM1`) so calibration and teleop steps stay consistent.
+## Project Contents
 
-#### B. Calibrate the leader arm
-
-Follow the Hugging Face calibration guide (includes video): https://huggingface.co/docs/lerobot/en/so101
-
-Then run:
-
-```bash
-lerobot-calibrate --teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop.id=my_awesome_leader_arm
+```
+.
+├── src/teleop_so_arm101.py    # Main teleoperation script
+├── src/lib/                   # Hardware bridge and utilities
+├── requirements.arm.txt       # Python dependencies
+├── .env.example               # Environment variable template
+└── assets/                    # Screenshots for this guide
 ```
 
-Replace `--teleop.port` with the port you saved and `--teleop.id` with a memorable name. If calibration data lives outside the default cache, add `--calibration-dir /path/to/calibration/teleoperators/so_leader`.
+---
 
-#### C. Calibrate the follower arm (for mirroring)
+## Next Steps
 
-If you want to drive a real follower arm (from the keyboard or leader), calibrate it once:
-
-```bash
-lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=my_awesome_follower_arm
-```
-
-Replace the port and ID with your saved values.
-
-#### D. Set up environment variables (recommended)
-
-To avoid typing long port names and IDs every time, set up environment variables:
-
-**Option A: Create a .env file (recommended)**
-```bash
-cp .env.example .env
-# Edit .env with your actual port and ID values
-```
-
-The script automatically loads `.env` on startup - no need to run `source .env`.
-
-**Option B: Export directly in terminal**
-```bash
-export SO101_LEADER_PORT="/dev/tty.usbmodem58760431551"
-export SO101_LEADER_ID="my_awesome_leader_arm"
-export SO101_FOLLOWER_PORT="/dev/tty.usbmodem58760431552"
-export SO101_FOLLOWER_ID="my_awesome_follower_arm"
-```
-
-> [!TIP]
-> If using Option B, add the export commands to your `~/.zshrc` or `~/.bashrc` to persist them across terminal sessions.
-
-#### E. Run teleoperation
-
-Pick the script that matches your desired input. With environment variables set (see step D), the commands are much simpler:
-
-- **Simulated arm via keyboard (default)**:
-  ```bash
-  uv run python src/teleop_so_arm101.py --input keyboard
-  ```
-  The simulator resets to the starting (home) position each time the script launches.
-
-- **Simulated arm via keyboard, mirrored to a real follower**:
-  ```bash
-  # With environment variables set:
-  uv run python src/teleop_so_arm101.py --input keyboard --use-follower-env
-
-  # Or with explicit flags:
-  uv run python src/teleop_so_arm101.py --input keyboard --follower-port /dev/ttyACM0
-  ```
-
-- **Simulated arm driven by leader arm input (lowest latency)**:
-  ```bash
-  # With environment variables set:
-  uv run python src/teleop_so_arm101.py --input leader
-
-  # Or with explicit flags:
-  uv run python src/teleop_so_arm101.py --input leader \
-      --leader-port /dev/ttyACM1 \
-      --leader-id my_awesome_leader_arm
-  ```
-
-- **Leader arm driving a real follower (relative mirroring, no jump-to-home)**:
-  ```bash
-  # With environment variables set:
-  uv run python src/teleop_so_arm101.py --input leader
-
-  # Or with explicit flags:
-  uv run python src/teleop_so_arm101.py --input leader \
-      --leader-port /dev/ttyACM1 \
-      --follower-port /dev/ttyACM0
-  ```
-
-Feel free to reconnect the leader arm and rerun the leader command whenever you need live control; the simulator reads from the saved teleop ID and port every time.
+- **Record demonstrations**: Collect training data for imitation learning
+- **Train models**: Use LeRobot to train policies from your data
+- **[LeRobot documentation](https://huggingface.co/docs/lerobot)**: Full SDK reference
