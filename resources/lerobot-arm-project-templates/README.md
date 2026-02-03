@@ -2,11 +2,11 @@
 
 Control the SO-ARM101 robotic arm in simulation, with real hardware, or both.
 
-| Track | What You Need | Time to First Command |
-|-------|---------------|----------------------|
-| 🎮 **A: Simulation Only** | Keyboard | ~2 minutes |
-| 🦾 **B: Real Arm** | SO101 leader arm + USB | ~30 min (first-time setup) |
-| 🔗 **C: Sim + Real** | Leader + follower arms | ~30 min (first-time setup) |
+| Track | What You Need |
+|-------|---------------|
+| 🎮 **A: Simulation Only** | Keyboard |
+| 🦾 **B: Real Arm** | SO101 leader arm + USB |
+| 🔗 **C: Sim + Real** | Leader + follower arms |
 
 ---
 
@@ -27,7 +27,7 @@ Complete these 3 steps before choosing your track.
 2. Click **Open Server Settings** at the top
 3. In **VM Controls**, click **Start VM**
 
-> Wait for the VM status to show "Running" before proceeding (~30 seconds).
+> Wait for the VM status to show "Running" before proceeding.
 
 <video src="assets/start_vm.mp4" controls width="600"></video>
 
@@ -64,7 +64,7 @@ Use [keyboard controls](#keyboard-controls) to move the arm. **The terminal must
 
 ## 🦾 Track B: Real Arm Setup
 
-**Time**: ~30 minutes (first-time only)
+
 
 > [!IMPORTANT]
 > **Already set up your SO101?** Skip to [Configure Environment Variables](#configure-environment-variables) if you've completed motor setup and calibration.
@@ -76,8 +76,8 @@ Before using this project, your arm must have motors configured and calibrated.
 👉 **Follow the official guide**: [HuggingFace SO101 Setup](https://huggingface.co/docs/lerobot/en/so101)
 
 Complete these sections:
-1. **Motor IDs & Baudrates** — `lerobot-setup-motors` (~15 min per arm)
-2. **Calibration** — `lerobot-calibrate` (~5 min per arm)
+1. **Motor IDs & Baudrates** — `lerobot-setup-motors`
+2. **Calibration** — `lerobot-calibrate`
 
 ### Find Your USB Ports
 
@@ -119,7 +119,7 @@ ls ~/.cache/huggingface/lerobot/calibration/robots/so_follower/
 The `.json` filename (without extension) is your ID.
 
 > [!NOTE]
-> **Need to calibrate?** See [HuggingFace Calibration Guide](https://huggingface.co/docs/lerobot/en/so101#3-calibrate). Run `lerobot-calibrate` and follow the prompts (~5 min per arm).
+> **Need to calibrate?** See [HuggingFace Calibration Guide](https://huggingface.co/docs/lerobot/en/so101#3-calibrate). Run `lerobot-calibrate` and follow the prompts.
 
 ### Configure Environment Variables
 
