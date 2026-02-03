@@ -23,9 +23,13 @@ Complete these 3 steps before choosing your track.
 
 ### Step 1: Start the VM
 
-Click the **TensorFleet** status bar at the bottom of VS Code → **Start VM**.
+1. Open the **TensorFleet** extension in the sidebar
+2. Click **Open Server Settings** at the top
+3. In **VM Controls**, click **Start VM**
 
 > Wait for the VM status to show "Running" before proceeding (~30 seconds).
+
+<video src="assets/start_vm.mp4" controls width="600"></video>
 
 ### Step 2: Install Dependencies
 
@@ -33,10 +37,15 @@ Click the **TensorFleet** status bar at the bottom of VS Code → **Start VM**.
 uv venv && uv pip install -r requirements.arm.txt
 ```
 
-### Step 3: Open Webview Panels
+### Step 3: Open Simulation View
 
-**Simulation View**: Shows the 3D arm in Gazebo
-   - Command Palette → "TensorFleet: Open Simulation View"
+1. Open the **TensorFleet** extension in the sidebar
+2. Click **Open Drone Views** at the top
+3. Click **Simulation View**
+
+**Or via Command Palette:** `TensorFleet: Open Simulation View`
+
+<video src="assets/simulation_view.mp4" controls width="600"></video>
 
 ---
 
