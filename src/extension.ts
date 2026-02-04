@@ -777,6 +777,14 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize environment/mode detection first (must be before any isDev() calls)
   initializeEnv(context);
 
+  // Periodic debug console print
+  const debugInterval = setInterval(() => {
+    console.log('[TensorFleet][DEBUG] dummy text print');
+  }, 5000);
+
+  context.subscriptions.push(new vscode.Disposable(() => clearInterval(debugInterval)));
+
+
   env.log('Extension activating in', getMode(), 'mode');
 
   telemetryService = new TelemetryService(context);

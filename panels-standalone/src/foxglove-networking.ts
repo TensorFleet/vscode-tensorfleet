@@ -144,6 +144,7 @@ export class FoxgloveWsClient {
   private serviceCallbacks = new Map<number, (resp: ServiceCallResponse) => void>();
   private serviceEncoding: "cdr" | undefined;
   private servicesById = new Map<number, ResolvedService>();
+  private serviceWaiters = new Map<string, Set<() => void>>();
 
   // Capabilities
   private supportedEncodings: string[] | undefined;
@@ -164,12 +165,21 @@ export class FoxgloveWsClient {
   // private parameterTypes = new Map<string, Parameter["type"]>();
   private setupParameterSets: Array<{ name: string; value: any }> = [];
 
+  // ---- Parameter read plumbing ----
+  private pendingParamReads = new Map<
+    string,
+    { resolve: (vals: Map<string, unknown>) => void; reject: (err: Error) => void; namesKey: string }
+  >();
+
+  private parameterListeners = new Set<(changed: { name: string; value: unknown }[]) => void>();
+
   // External hooks
   public onOpen?: () => void;
   public onClose?: (ev: CloseEvent | Event) => void;
   public onError?: (ev: Event) => void;
   public onNewTopic?: (topic: string, type: string) => void;
   public onMessage?: (msg: FoxgloveDecodedMessage) => void;
+  public onServerInfo?: () => void;
 
   // Proxy client reference (if using proxy mode)
   private proxyClient: ProxyWebSocketClient | null = null;
@@ -254,6 +264,7 @@ export class FoxgloveWsClient {
       // Workaround. for now do this every time this happens.
       this.processSetupParameterSets();
 
+      this.onServerInfo?.();
     });
 
     // Channel advertisement (topics)
@@ -383,6 +394,14 @@ export class FoxgloveWsClient {
 
           this.servicesByName.set(service.name, resolved);
           this.servicesById.set(service.id, resolved);
+
+          // after: this.servicesByName.set(service.name, resolved);
+          const waiters = this.serviceWaiters.get(service.name);
+          if (waiters) {
+            for (const fn of waiters) fn();
+            this.serviceWaiters.delete(service.name);
+          }
+
           console.log(`[FoxgloveWsClient] added service ${service.name}:${service.type}`);
         } catch (err) {
           console.error("[FoxgloveWsClient] Failed to parse service", service.name, err);
@@ -434,29 +453,81 @@ export class FoxgloveWsClient {
 
     // --- Parameters ---
 
-    this.client.on("parameterValues", ({ parameters }) => {
-      console.log("[FoxgloveWsClient] Got parameterValues ", parameters);
+    this.client.on("parameterValues", (event: any) => {
+      // Foxglove ws-protocol typically includes { id, parameters }
+      const parameters = event?.parameters;
+      const requestId: string | undefined = event?.id;
 
       if (!Array.isArray(parameters)) return;
 
-      // const needsParamSetup = !this.areStartupParametersReady();
+      const changed: { name: string; value: unknown }[] = [];
 
-      for (const p of parameters as Array<{ name: string; value: unknown; type: Parameter["type"] }>) {
+      for (const p of parameters as Array<{ name: string; value: unknown; type?: Parameter["type"] }>) {
         let val: unknown = (p as any).value;
-        if (p.type === "byte_array" && typeof val === "string") {
+
+        // byte_array comes base64-encoded string in Foxglove protocol
+        if ((p as any).type === "byte_array" && typeof val === "string") {
           const s = atob(val);
           const out = new Uint8Array(s.length);
           for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
           val = out;
         }
-        this.parameters.set(p.name, val);
-        // this.parameterTypes.set(p.name, p.type);
-      }
-      // Workaround. for now don't check .we need proper list
 
-      // if (needsParamSetup && this.areStartupParametersReady()) {
-      // this.processSetupParameterSets();
-      // }
+        const prev = this.parameters.get(p.name);
+        this.parameters.set(p.name, val);
+
+        // track changes (shallow)
+        if (prev !== val) {
+          changed.push({ name: p.name, value: val });
+        }
+      }
+
+      if (changed.length > 0) {
+        for (const fn of this.parameterListeners) {
+          try {
+            fn(changed);
+          } catch (e) {
+            console.warn("[FoxgloveWsClient] parameter listener error:", e);
+          }
+        }
+      }
+
+      // Resolve pending read for this requestId if present
+      if (requestId && this.pendingParamReads.has(requestId)) {
+        const pending = this.pendingParamReads.get(requestId)!;
+        this.pendingParamReads.delete(requestId);
+
+        // Build result map for the requested names (or all if request was empty)
+        const out = new Map<string, unknown>();
+
+        // If they asked for "all" (empty list), return everything we currently have
+        if (pending.namesKey === "") {
+          for (const [k, v] of this.parameters.entries()) out.set(k, v);
+        } else {
+          // namesKey is sorted join("|"), so reconstruct list
+          const requested = pending.namesKey.split("|").filter(Boolean);
+          for (const name of requested) out.set(name, this.parameters.get(name));
+        }
+
+        pending.resolve(out);
+      } else if (!requestId) {
+        // If the server doesn't include ids, best-effort resolve ALL pending reads
+        // by letting cache update be the "response".
+        if (this.pendingParamReads.size > 0) {
+          for (const [rid, pending] of Array.from(this.pendingParamReads.entries())) {
+            this.pendingParamReads.delete(rid);
+
+            const out = new Map<string, unknown>();
+            if (pending.namesKey === "") {
+              for (const [k, v] of this.parameters.entries()) out.set(k, v);
+            } else {
+              const requested = pending.namesKey.split("|").filter(Boolean);
+              for (const name of requested) out.set(name, this.parameters.get(name));
+            }
+            pending.resolve(out);
+          }
+        }
+      }
     });
   }
 
@@ -840,6 +911,34 @@ export class FoxgloveWsClient {
   }
 
   // ---------- SERVICES (CDR, ROS 2) ----------
+  public async waitForService(serviceName: string, timeoutMs = 10_000): Promise<void> {
+    if (this.servicesByName.has(serviceName)) return;
+
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => {
+        // remove waiter
+        const set = this.serviceWaiters.get(serviceName);
+        if (set) {
+          set.delete(resolve);
+          if (set.size === 0) this.serviceWaiters.delete(serviceName);
+        }
+        reject(new Error(`Timeout waiting for service: ${serviceName}`));
+      }, timeoutMs);
+
+      const wrappedResolve = () => {
+        clearTimeout(t);
+        resolve();
+      };
+
+      let set = this.serviceWaiters.get(serviceName);
+      if (!set) {
+        set = new Set();
+        this.serviceWaiters.set(serviceName, set);
+      }
+      set.add(wrappedResolve);
+    });
+  }
+
   public async callService<T = any>(call: ServiceCallRequest): Promise<T> {
     const { serviceName, request } = call;
     const svc = this.servicesByName.get(serviceName);
@@ -981,6 +1080,87 @@ export class FoxgloveWsClient {
         console.warn(`[FoxgloveWsClient] setup parameter set deferred: ${name}`, err instanceof Error ? err.message : err);
       }
     }
+  }
+
+  /** Subscribe to local parameter-cache updates */
+  public onParameterChanged(cb: (changed: { name: string; value: unknown }[]) => void): () => void {
+    this.parameterListeners.add(cb);
+    return () => this.parameterListeners.delete(cb);
+  }
+
+  /** Local cache read (no network) */
+  public getCachedParameter(name: string): unknown | undefined {
+    return this.parameters.get(name);
+  }
+
+  /** List locally-known parameter names (no network) */
+  public listCachedParameters(): string[] {
+    return Array.from(this.parameters.keys()).sort();
+  }
+
+  /** Fetch one parameter value (uses cache; falls back to getParameters([name])) */
+  public async getParameter(name: string, opts?: { force?: boolean; timeoutMs?: number }): Promise<unknown> {
+    const force = opts?.force ?? false;
+    const timeoutMs = opts?.timeoutMs ?? 10_000;
+
+    if (!force && this.parameters.has(name)) {
+      return this.parameters.get(name);
+    }
+
+    const res = await this.getParameters([name], { timeoutMs });
+    return res.get(name);
+  }
+
+  /** Fetch many parameter values */
+  public async getParameters(
+    names: string[],
+    opts?: { timeoutMs?: number },
+  ): Promise<Map<string, unknown>> {
+    if (!this.serverCapabilities.includes(ServerCapability.parameters)) {
+      throw new Error("Server does not support parameters capability");
+    }
+    if (!this.isOpenFlag) {
+      throw new Error("Not connected");
+    }
+
+    const timeoutMs = opts?.timeoutMs ?? 10_000;
+    const requestId = `${++this.requestCounter}`;
+
+    // Normalize names: empty array => request all (Foxglove bridge convention)
+    const normalized = Array.isArray(names) ? names : [];
+    const namesKey = normalized.slice().sort().join("|");
+
+    return await new Promise<Map<string, unknown>>((resolve, reject) => {
+      const t = window.setTimeout(() => {
+        this.pendingParamReads.delete(requestId);
+        reject(new Error(`getParameters timeout (id=${requestId}, names=${JSON.stringify(normalized)})`));
+      }, timeoutMs);
+
+      this.pendingParamReads.set(requestId, {
+        namesKey,
+        resolve: (vals) => {
+          clearTimeout(t);
+          resolve(vals);
+        },
+        reject: (err) => {
+          clearTimeout(t);
+          reject(err);
+        },
+      });
+
+      try {
+        this.client.getParameters(normalized, requestId);
+      } catch (err) {
+        clearTimeout(t);
+        this.pendingParamReads.delete(requestId);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  }
+
+  /** Explicit "fetch all" helper */
+  public async getAllParameters(opts?: { timeoutMs?: number }): Promise<Map<string, unknown>> {
+    return await this.getParameters([], opts);
   }
 
   getAvailableTopics(): { topic: string, type: string }[] {
