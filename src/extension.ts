@@ -2076,6 +2076,16 @@ async function createNewProject(context: vscode.ExtensionContext, openNew: boole
 }
 
 async function createNewDroneProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  const confirm = await vscode.window.showQuickPick([{
+    label: '🚁 Drone (JavaScript)',
+    description: 'JavaScript-based drone control with PX4 and ROS 2',
+    detail: 'Perfect for drone automation, computer vision, and AI integration'
+  }], {
+    title: 'TensorFleet: New Drone Project',
+    placeHolder: 'Press Enter to continue or Escape to cancel'
+  });
+  if (!confirm) return;
+
   await createNewProjectInternal(context, {
     kindLabel: 'drone',
     defaultName: 'my-drone-project',
@@ -2085,6 +2095,16 @@ async function createNewDroneProject(context: vscode.ExtensionContext, openNew: 
 }
 
 async function createNewRoboticProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  const confirm = await vscode.window.showQuickPick([{
+    label: '🤖 Simple Robot (JavaScript)',
+    description: 'Ground robot demos with ROS 2, obstacle avoidance, and vision',
+    detail: 'Great for basic navigation, teleop, and perception'
+  }], {
+    title: 'TensorFleet: New Simple Robot Project (JavaScript)',
+    placeHolder: 'Press Enter to continue or Escape to cancel'
+  });
+  if (!confirm) return;
+
   await createNewProjectInternal(context, {
     kindLabel: 'simple robot',
     defaultName: 'my-simple-robot-project',
@@ -2094,6 +2114,16 @@ async function createNewRoboticProject(context: vscode.ExtensionContext, openNew
 }
 
 async function createNewRoboticPythonProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  const confirm = await vscode.window.showQuickPick([{
+    label: '🤖 Simple Robot (Python)',
+    description: 'Python ground robot template with ROS 2 and perception demos',
+    detail: 'A clean starting point for scripts and autonomy'
+  }], {
+    title: 'TensorFleet: New Simple Robot Project (Python)',
+    placeHolder: 'Press Enter to continue or Escape to cancel'
+  });
+  if (!confirm) return;
+
   await createNewProjectInternal(context, {
     kindLabel: 'simple robot',
     defaultName: 'my-simple-robot-project',
@@ -2103,6 +2133,16 @@ async function createNewRoboticPythonProject(context: vscode.ExtensionContext, o
 }
 
 async function createNewRoboticArmProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  const confirm = await vscode.window.showQuickPick([{
+    label: '🦾 LeRobot Arm (Python)',
+    description: 'LeRobot SO-ARM101 teleop and calibration',
+    detail: 'Keyboard, leader, and follower control wired to ROS 2'
+  }], {
+    title: 'TensorFleet: New LeRobot Arm Project',
+    placeHolder: 'Press Enter to continue or Escape to cancel'
+  });
+  if (!confirm) return;
+
   await createNewProjectInternal(context, {
     kindLabel: 'robotic arm',
     defaultName: 'my-lerobot-arm-project',
@@ -2641,23 +2681,8 @@ async function createNewProjectInternal(
 
     telemetry?.trackEvent('project.create', { phase: 'success' });
 
-    if (openNew) {
-      await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
-      return;
-    }
-
-    const openProject = await vscode.window.showInformationMessage(
-      `✨ ${options.commandLabel} "${projectName}" created successfully!`,
-      'Open Project',
-      'Open in New Window',
-      'Close'
-    );
-
-    if (openProject === 'Open Project') {
-      await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
-    } else if (openProject === 'Open in New Window') {
-      await vscode.commands.executeCommand('vscode.openFolder', projectFolder, true);
-    }
+    // Always open the project in current window after creation
+    await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
   } catch (error) {
     telemetry?.captureError(error, { source: 'createNewProject' });
     telemetry?.trackEvent('project.create', { phase: 'error' });
