@@ -55,6 +55,13 @@ except ImportError:
         Topic = None
         Service = None
 
+# Load .env file automatically (no need for 'source .env')
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv is optional
+
 
 JOINT_NAME_MAP = {
     "1": "shoulder_pan.pos",
@@ -394,7 +401,6 @@ class SoArm101Recorder:
         self.client = client
         self._lock = threading.Lock()
         self._stop = threading.Event()
-        self._next_episode = threading.Event()
         self._have_joint_state = False
         self._have_action = False
         self._have_images = {name: False for name in config.cameras}
@@ -407,7 +413,9 @@ class SoArm101Recorder:
 
         self._dataset: Optional[LeRobotDataset] = None
         self._episode_start = None
-        self._recording = True
+        self._episode_active = False  # Starts paused, user must press 'r' to begin
+        self._episode_index = 0
+        self._finalized = False
         self._stdin_settings = None
         if config.display_data and not config.cameras:
             print("[DISPLAY] No cameras enabled; previews disabled.")
@@ -421,7 +429,8 @@ class SoArm101Recorder:
         if self._dataset is None:
             return None
         buffer = self._dataset.episode_buffer
-        if isinstance(buffer, dict) and "size" in buffer and "task" in buffer:
+        # Check for valid buffer - accept either 'size' key or 'frame_index' key
+        if isinstance(buffer, dict) and ("size" in buffer or "frame_index" in buffer or "task" in buffer):
             return buffer
         try:
             self._dataset.episode_buffer = self._dataset.create_episode_buffer()
@@ -433,9 +442,11 @@ class SoArm101Recorder:
         buffer = self._safe_episode_buffer()
         if not buffer:
             return 0
+        # Try 'size' key first (newer lerobot)
         size = buffer.get("size")
         if isinstance(size, (int, np.integer)):
             return int(size)
+        # Fall back to frame_index list length (older lerobot)
         frame_index = buffer.get("frame_index")
         if isinstance(frame_index, list):
             return len(frame_index)
@@ -457,28 +468,106 @@ class SoArm101Recorder:
             print("Skipping empty episode.")
             self._reset_episode_buffer()
             return episode_index
-        print(f"Saving episode {episode_index + 1} ({frames} frames)...")
         self._dataset.save_episode(parallel_encoding=False)
         new_total = self._get_episode_count()
         if new_total < episode_index + 1:
             new_total = episode_index + 1
-        print(f"Saved episode {new_total}.")
+        print(f"[s] Episode {new_total} saved ({frames} frames)")
         return new_total
 
     def _reset_episode_buffer(self) -> None:
         if self._dataset is None:
             return
-        buffer = self._dataset.episode_buffer
-        if isinstance(buffer, dict) and "episode_index" in buffer:
-            try:
-                self._dataset.clear_episode_buffer()
-                return
-            except Exception:
-                pass
+        # Don't call clear_episode_buffer() here - it deletes image files
+        # that save_episode() needs for stats computation and video encoding.
+        # Just create a fresh buffer directly.
         try:
             self._dataset.episode_buffer = self._dataset.create_episode_buffer()
         except Exception:
             self._dataset.episode_buffer = None
+        # Ensure 'size' key exists - some lerobot versions require it but don't create it
+        if isinstance(self._dataset.episode_buffer, dict) and "size" not in self._dataset.episode_buffer:
+            self._dataset.episode_buffer["size"] = 0
+
+    def _start_episode(self) -> bool:
+        """Start recording a new episode. Returns True if started successfully."""
+        if self._episode_active:
+            print("Already recording. Use 's' to save or 'd' to discard first.")
+            return False
+        if not self._have_joint_state:
+            print("Cannot start: no joint_states publisher")
+            return False
+        if self.config.cameras and not all(self._have_images.values()):
+            missing = [k for k, v in self._have_images.items() if not v]
+            print(f"Cannot start: missing camera publishers: {missing}")
+            return False
+        # Ensure fresh episode buffer before starting
+        self._reset_episode_buffer()
+        self._episode_active = True
+        self._episode_start = time.monotonic()
+        self._episode_time_warned = False
+        self._episode_index = self._get_episode_count()
+        print(f"[r] Episode {self._episode_index + 1} started")
+        return True
+
+    def _save_episode_and_reset(self) -> bool:
+        """Save the current episode and reset for the next one. Returns True if saved."""
+        if not self._episode_active:
+            print("No active episode. Press 'r' to start.")
+            return False
+        frames = self._episode_buffer_size()
+        if frames == 0:
+            print("No frames recorded in current episode. Nothing to save.")
+            self._episode_active = False
+            return False
+        self._save_episode(self._episode_index)
+        self._episode_active = False
+        self._episode_index = self._get_episode_count()
+        return True
+
+    def _discard_episode(self) -> None:
+        """Discard the current episode without saving."""
+        if not self._episode_active:
+            print("No active episode to discard.")
+            return
+        frames = self._episode_buffer_size()
+        print(f"[d] Episode {self._episode_index + 1} discarded ({frames} frames)")
+        self._reset_episode_buffer()
+        self._episode_active = False
+
+    def _finalize_dataset(self) -> None:
+        """Save any pending episode, consolidate dataset, and quit."""
+        # Save pending episode if frames exist
+        if self._episode_active:
+            pending = self._episode_buffer_size()
+            if pending > 0:
+                print(f"Saving pending episode ({pending} frames)...")
+                self._save_episode(self._episode_index)
+            self._episode_active = False
+
+        # Consolidate dataset
+        if self._dataset is not None and not self._finalized:
+            print("Consolidating dataset...")
+            try:
+                self._dataset.consolidate(run_compute_stats=True)
+                self._finalized = True
+            except Exception as exc:
+                print(f"Warning: consolidation failed: {exc}")
+
+        # Print summary
+        total_eps = self._get_episode_count()
+        print(f"[f] Dataset finalized: {total_eps} episodes")
+        print(f"Saved to: {self.config.root}")
+        self._stop.set()
+
+    def _quit_without_finalize(self) -> None:
+        """Quit immediately without consolidating the dataset."""
+        pending = self._episode_buffer_size()
+        if pending > 0:
+            print(f"Warning: {pending} frames in buffer will be lost")
+        print("Quitting without finalize.")
+        print("To consolidate later, load dataset with LeRobotDataset() and call .consolidate()")
+        self._stop.set()
 
     def _setup_topics(self) -> None:
         TopicClass = Topic if Topic else roslibpy.Topic
@@ -612,24 +701,44 @@ class SoArm101Recorder:
         expected_features = {**dataset_features, **DEFAULT_FEATURES}
 
         if self.config.resume:
-            self._dataset = LeRobotDataset(
-                self.config.repo_id,
-                root=self.config.root,
-                batch_encoding_size=1,
-                vcodec=self.config.vcodec,
-            )
+            # Try with vcodec first, fall back without for older lerobot versions
+            try:
+                self._dataset = LeRobotDataset(
+                    self.config.repo_id,
+                    root=self.config.root,
+                    batch_encoding_size=1,
+                    vcodec=self.config.vcodec,
+                )
+            except TypeError:
+                self._dataset = LeRobotDataset(
+                    self.config.repo_id,
+                    root=self.config.root,
+                    batch_encoding_size=1,
+                )
             self._assert_resume_compatible(expected_features)
         else:
-            self._dataset = LeRobotDataset.create(
-                self.config.repo_id,
-                fps=self.config.fps,
-                features=dataset_features,
-                root=self.config.root,
-                robot_type=self.config.robot_type,
-                use_videos=self.config.use_videos,
-                batch_encoding_size=1,
-                vcodec=self.config.vcodec,
-            )
+            # Try with vcodec first, fall back without for older lerobot versions
+            try:
+                self._dataset = LeRobotDataset.create(
+                    self.config.repo_id,
+                    fps=self.config.fps,
+                    features=dataset_features,
+                    root=self.config.root,
+                    robot_type=self.config.robot_type,
+                    use_videos=self.config.use_videos,
+                    batch_encoding_size=1,
+                    vcodec=self.config.vcodec,
+                )
+            except TypeError:
+                self._dataset = LeRobotDataset.create(
+                    self.config.repo_id,
+                    fps=self.config.fps,
+                    features=dataset_features,
+                    root=self.config.root,
+                    robot_type=self.config.robot_type,
+                    use_videos=self.config.use_videos,
+                    batch_encoding_size=1,
+                )
             # Ensure tasks metadata exists so tooling can load datasets before any episodes are saved.
             self._dataset.meta.save_episode_tasks([self.config.task])
 
@@ -704,18 +813,43 @@ class SoArm101Recorder:
     def _setup_keyboard(self, teleop=None) -> None:
         if not sys.stdin.isatty():
             return
+        import atexit
         import termios
         import tty
 
         self._stdin_settings = termios.tcgetattr(sys.stdin)
         tty.setcbreak(sys.stdin)
 
+        # Register atexit handler to ensure terminal is ALWAYS restored
+        def _restore_on_exit():
+            if self._stdin_settings is not None:
+                try:
+                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._stdin_settings)
+                except Exception:
+                    pass
+
+        atexit.register(_restore_on_exit)
+
         def _listen():
             while not self._stop.is_set():
                 ch = sys.stdin.read(1)
                 if not ch:
                     continue
-                if teleop is not None and getattr(teleop, "input_device", "") == "keyboard":
+                key = ch.lower()
+                # Process recording keys first, before teleop
+                if key == "r":
+                    self._start_episode()
+                elif key == "s":
+                    self._save_episode_and_reset()
+                elif key == "d":
+                    self._discard_episode()
+                elif key == "f":
+                    self._finalize_dataset()
+                    return
+                elif key == "q" or ch == "\x03":
+                    self._quit_without_finalize()
+                    return
+                elif teleop is not None and getattr(teleop, "input_device", "") == "keyboard":
                     try:
                         keep_running = teleop._handle_key(ch)
                     except Exception as exc:
@@ -724,13 +858,6 @@ class SoArm101Recorder:
                     if keep_running is False:
                         self._stop.set()
                         return
-                key = ch.lower()
-                if key == "n":
-                    self._next_episode.set()
-                elif key == "p":
-                    self._recording = not self._recording
-                elif key == "x" or ch == "\x03":
-                    self._stop.set()
 
         thread = threading.Thread(target=_listen, daemon=True)
         thread.start()
@@ -740,8 +867,12 @@ class SoArm101Recorder:
             return
         import termios
 
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._stdin_settings)
+        try:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._stdin_settings)
+        except Exception:
+            pass
         self._stdin_settings = None
+
 
     def record(self, teleop=None) -> None:
         self._setup_keyboard(teleop)
@@ -756,16 +887,22 @@ class SoArm101Recorder:
         try:
             fps = max(1, int(self.config.fps))
             interval = 1.0 / fps
-            episode_index = self._get_episode_count()
+            self._episode_index = self._get_episode_count()
             next_frame_time = time.monotonic()
 
-            self._episode_start = time.monotonic()
-            print("Recording started.")
-            print("Keys: n = next episode, p = pause, x/Ctrl-C = quit")
+            # Print help message
+            if self._episode_index > 0:
+                print(f"Resuming dataset with {self._episode_index} existing episodes.")
+            print("Recording ready.")
+            print("  r = start episode")
+            print("  s = save episode")
+            print("  d = discard episode")
+            print("  f = finalize dataset and quit")
+            print("  q = quit without finalize")
             if self._display:
                 print("Display: q/Esc in preview window to quit")
 
-            interrupted = False
+            self._episode_time_warned = False
             try:
                 while not self._stop.is_set():
                     now = time.monotonic()
@@ -775,47 +912,38 @@ class SoArm101Recorder:
 
                     next_frame_time += interval
 
+                    # Display update (independent of recording state)
                     if self._display and self._display.due():
                         images = self._get_display_images()
                         if not self._display.update(images):
-                            self._stop.set()
+                            self._quit_without_finalize()
                             break
 
-                    if not self._recording:
+                    # Frame collection (only when episode is active)
+                    if not self._episode_active:
                         continue
 
                     frame = self._build_frame()
                     if frame is not None:
+                        # Ensure episode buffer is valid before adding frame
+                        buf = self._dataset.episode_buffer
+                        if buf is None or not isinstance(buf, dict) or "size" not in buf:
+                            self._reset_episode_buffer()
                         self._dataset.add_frame(frame)
 
-                    episode_done = False
-                    if self.config.episode_seconds > 0:
-                        if (time.monotonic() - self._episode_start) >= self.config.episode_seconds:
-                            episode_done = True
+                    # Episode time limit check (prompts user, doesn't auto-save)
+                    if self.config.episode_seconds > 0 and self._episode_start:
+                        elapsed = time.monotonic() - self._episode_start
+                        if elapsed >= self.config.episode_seconds and not self._episode_time_warned:
+                            print("Time limit reached. Press 's' to save or 'd' to discard.")
+                            self._episode_time_warned = True
 
-                    if self._next_episode.is_set():
-                        episode_done = True
-                        self._next_episode.clear()
-
-                    if episode_done:
-                        episode_index = self._save_episode(episode_index)
-
-                        if self.config.episodes and episode_index >= self.config.episodes:
-                            break
-
-                        if self.config.reset_seconds > 0:
-                            time.sleep(self.config.reset_seconds)
-                        self._episode_start = time.monotonic()
             except KeyboardInterrupt:
-                interrupted = True
-                self._stop.set()
+                self._quit_without_finalize()
 
-            if self._episode_buffer_size() > 0:
-                episode_index = self._save_episode(episode_index)
-            elif interrupted and self._get_episode_count() == 0:
-                print("No frames recorded; dataset contains no episodes.")
         finally:
-            if self._dataset is not None:
+            # Only call finalize() if not already finalized via 'f' key
+            if self._dataset is not None and not self._finalized:
                 self._dataset.finalize()
             self._restore_keyboard()
             if self._display:
@@ -1169,8 +1297,8 @@ def parse_args() -> RecorderConfig:
     parser.add_argument(
         "--leader-port",
         type=str,
-        default=None,
-        help="Robot USB serial port for leader input (required when input=leader)",
+        default=os.getenv("SO101_LEADER_PORT"),
+        help="Leader USB serial port (env: SO101_LEADER_PORT)",
     )
     parser.add_argument(
         "--teleop.type",
