@@ -885,6 +885,10 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.createNewRoboticArmProject', () => createNewRoboticArmProject(context))
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
   );
 
@@ -1553,6 +1557,8 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand('tensorfleet.createNewRoboticProject');
       } else if (message?.command === 'newRoboticPythonProject') {
         vscode.commands.executeCommand('tensorfleet.createNewRoboticPythonProject');
+      } else if (message?.command === 'newRoboticArmProject') {
+        vscode.commands.executeCommand('tensorfleet.createNewRoboticArmProject');
       } else if (message?.command === 'installTools') {
         getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'installTools' });
         vscode.commands.executeCommand('tensorfleet.installTools');
@@ -1971,19 +1977,28 @@ async function createNewProject(context: vscode.ExtensionContext, openNew: boole
   // Show project type selection
   const projectTypes = [
     {
+      id: 'drone-js',
       label: '🚁 Drone (JavaScript)',
       description: 'JavaScript-based drone control with PX4 and ROS 2',
       detail: 'Perfect for drone automation, computer vision, and AI integration'
     },
     {
-      label: '🤖 Robotic (JavaScript)',
-      description: 'JavaScript-based robotics with ROS 2 and simulation',
-      detail: 'Ideal for robotic arms, mobile robots, and sensor integration'
+      id: 'robotic-js',
+      label: '🤖 Simple Robot (JavaScript)',
+      description: 'Ground robot demos with ROS 2, obstacle avoidance, and vision',
+      detail: 'Great for basic navigation, teleop, and perception'
     },
     {
-      label: '🤖 Robotic (Python)',
-      description: 'Python-based robotics with ROS 2 and simulation',
-      detail: 'Full Python environment for advanced robotics and AI'
+      id: 'robotic-py',
+      label: '🤖 Simple Robot (Python)',
+      description: 'Python ground robot template with ROS 2 and perception demos',
+      detail: 'A clean starting point for scripts and autonomy'
+    },
+    {
+      id: 'lerobot-arm',
+      label: '🦾 LeRobot Arm (Python)',
+      description: 'LeRobot SO-ARM101 teleop and calibration',
+      detail: 'Keyboard, leader, and follower control wired to ROS 2'
     }
   ];
 
@@ -1999,30 +2014,52 @@ async function createNewProject(context: vscode.ExtensionContext, openNew: boole
   }
 
   // Route to appropriate creation function based on selection
-  if (selectedType.label.includes('Drone (JavaScript)')) {
-    await createNewProjectInternal(context, {
-      kindLabel: 'drone',
-      defaultName: 'my-drone-project',
-      commandLabel: 'TensorFleet Drone Project',
-    }, openNew);
-  } else if (selectedType.label.includes('Robotic (JavaScript)')) {
-    await createNewProjectInternal(context, {
-      kindLabel: 'robotic',
-      defaultName: 'my-robotic-project',
-      commandLabel: 'TensorFleet Robotic Project (JavaScript)',
-      templateSubdir: 'robotic-js-project-templates'
-    }, openNew);
-  } else if (selectedType.label.includes('Robotic (Python)')) {
-    await createNewProjectInternal(context, {
-      kindLabel: 'robotic',
-      defaultName: 'my-robotic-project',
-      commandLabel: 'TensorFleet Robotic Project (Python)',
-      templateSubdir: 'robotic-project-templates'
-    }, openNew);
+  switch (selectedType.id) {
+    case 'drone-js':
+      await createNewProjectInternal(context, {
+        kindLabel: 'drone',
+        defaultName: 'my-drone-project',
+        commandLabel: 'TensorFleet Drone Project',
+      }, openNew);
+      break;
+    case 'robotic-js':
+      await createNewProjectInternal(context, {
+        kindLabel: 'simple robot',
+        defaultName: 'my-simple-robot-project',
+        commandLabel: 'TensorFleet Simple Robot Project (JavaScript)',
+        templateSubdir: 'robotic-js-project-templates'
+      }, openNew);
+      break;
+    case 'robotic-py':
+      await createNewProjectInternal(context, {
+        kindLabel: 'simple robot',
+        defaultName: 'my-simple-robot-project',
+        commandLabel: 'TensorFleet Simple Robot Project (Python)',
+        templateSubdir: 'robotic-project-templates'
+      }, openNew);
+      break;
+    case 'lerobot-arm':
+      await createNewProjectInternal(context, {
+        kindLabel: 'robotic arm',
+        defaultName: 'my-lerobot-arm-project',
+        commandLabel: 'TensorFleet LeRobot Arm Project (Python)',
+        templateSubdir: 'lerobot-arm-project-templates'
+      }, openNew);
+      break;
   }
 }
 
 async function createNewDroneProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  const confirm = await vscode.window.showQuickPick([{
+    label: '🚁 Drone (JavaScript)',
+    description: 'JavaScript-based drone control with PX4 and ROS 2',
+    detail: 'Perfect for drone automation, computer vision, and AI integration'
+  }], {
+    title: 'TensorFleet: New Drone Project',
+    placeHolder: 'Press Enter to continue or Escape to cancel'
+  });
+  if (!confirm) return;
+
   await createNewProjectInternal(context, {
     kindLabel: 'drone',
     defaultName: 'my-drone-project',
@@ -2032,20 +2069,59 @@ async function createNewDroneProject(context: vscode.ExtensionContext, openNew: 
 }
 
 async function createNewRoboticProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  const confirm = await vscode.window.showQuickPick([{
+    label: '🤖 Simple Robot (JavaScript)',
+    description: 'Ground robot demos with ROS 2, obstacle avoidance, and vision',
+    detail: 'Great for basic navigation, teleop, and perception'
+  }], {
+    title: 'TensorFleet: New Simple Robot Project (JavaScript)',
+    placeHolder: 'Press Enter to continue or Escape to cancel'
+  });
+  if (!confirm) return;
+
   await createNewProjectInternal(context, {
-    kindLabel: 'robotic',
-    defaultName: 'my-robotic-project',
-    commandLabel: 'TensorFleet Robotic Project (JavaScript)',
+    kindLabel: 'simple robot',
+    defaultName: 'my-simple-robot-project',
+    commandLabel: 'TensorFleet Simple Robot Project (JavaScript)',
     templateSubdir: 'robotic-js-project-templates'
   }, openNew);
 }
 
 async function createNewRoboticPythonProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  const confirm = await vscode.window.showQuickPick([{
+    label: '🤖 Simple Robot (Python)',
+    description: 'Python ground robot template with ROS 2 and perception demos',
+    detail: 'A clean starting point for scripts and autonomy'
+  }], {
+    title: 'TensorFleet: New Simple Robot Project (Python)',
+    placeHolder: 'Press Enter to continue or Escape to cancel'
+  });
+  if (!confirm) return;
+
   await createNewProjectInternal(context, {
-    kindLabel: 'robotic',
-    defaultName: 'my-robotic-project',
-    commandLabel: 'TensorFleet Robotic Project (Python)',
+    kindLabel: 'simple robot',
+    defaultName: 'my-simple-robot-project',
+    commandLabel: 'TensorFleet Simple Robot Project (Python)',
     templateSubdir: 'robotic-project-templates'
+  }, openNew);
+}
+
+async function createNewRoboticArmProject(context: vscode.ExtensionContext, openNew: boolean = false) {
+  const confirm = await vscode.window.showQuickPick([{
+    label: '🦾 LeRobot Arm (Python)',
+    description: 'LeRobot SO-ARM101 teleop and calibration',
+    detail: 'Keyboard, leader, and follower control wired to ROS 2'
+  }], {
+    title: 'TensorFleet: New LeRobot Arm Project',
+    placeHolder: 'Press Enter to continue or Escape to cancel'
+  });
+  if (!confirm) return;
+
+  await createNewProjectInternal(context, {
+    kindLabel: 'robotic arm',
+    defaultName: 'my-lerobot-arm-project',
+    commandLabel: 'TensorFleet LeRobot Arm Project (Python)',
+    templateSubdir: 'lerobot-arm-project-templates'
   }, openNew);
 }
 
@@ -2579,23 +2655,8 @@ async function createNewProjectInternal(
 
     telemetry?.trackEvent('project.create', { phase: 'success' });
 
-    if (openNew) {
-      await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
-      return;
-    }
-
-    const openProject = await vscode.window.showInformationMessage(
-      `✨ ${options.commandLabel} "${projectName}" created successfully!`,
-      'Open Project',
-      'Open in New Window',
-      'Close'
-    );
-
-    if (openProject === 'Open Project') {
-      await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
-    } else if (openProject === 'Open in New Window') {
-      await vscode.commands.executeCommand('vscode.openFolder', projectFolder, true);
-    }
+    // Always open the project in current window after creation
+    await vscode.commands.executeCommand('vscode.openFolder', projectFolder);
   } catch (error) {
     telemetry?.captureError(error, { source: 'createNewProject' });
     telemetry?.trackEvent('project.create', { phase: 'error' });

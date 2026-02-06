@@ -1,0 +1,5 @@
+{
+  "template": "lerobot-arm",
+  "version": 1,
+  "managedEnv": true
+}
