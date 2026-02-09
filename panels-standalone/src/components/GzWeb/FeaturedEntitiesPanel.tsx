@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
+import { fetchFeaturedEntities, FeaturedEntityData } from 'tensorfleet-util/ros/fetchFeaturedEntities';
 import './ESimViewPanel.css';
 import {
-  EntityCardData,
   EntityClickMessage,
   CARD_MESSAGES,
 } from './EntityCardData';
@@ -11,6 +11,10 @@ import {
   ENTITY_INFO_POPUP_MESSAGES,
 } from './EntityInfoPopup';
 import { EntityInfoData } from './EntityInfoPopup';
+import { EntityCard } from './EntityCard';
+
+// Adapt FeaturedEntityData to EntityCardData
+type EntityCardData = FeaturedEntityData;
 
 // ============================================================================
 // FeaturedEntitiesPanel Component
@@ -23,7 +27,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
   const [isConnected, setIsConnected] = useState(() => ros2Bridge.isConnected());
 
   // Track active card state for styling
-  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
   const [activeCard, setActiveCard] = useState<string | null>(null);
 
   // Monitor connection status like other components do
@@ -43,51 +46,13 @@ export const FeaturedEntitiesPanel: React.FC = () => {
   useEffect(() => {
     if (!isConnected) return;
 
-    const fetchFeaturedEntities = async () => {
+    const loadFeaturedEntities = async () => {
       console.log(`FeaturedEntitiesPanel: Starting fetch, connection status: ${isConnected}`);
       try {
         console.log('Starting to fetch featured entities...');
-        console.log('Calling ros2Bridge.getAllROSParameters()...');
-        const allParams = await ros2Bridge.getAllROSParameters();
-        console.log('Received allParams:', Object.keys(allParams).length, 'parameters');
-
-        const featured: EntityCardData[] = [];
-        console.log('Starting to process parameters for featured entities...');
-
-        // Find all nodes with proxy_featured=true
-        let processedCount = 0;
-        let featuredCount = 0;
-        for (const [key, value] of Object.entries(allParams)) {
-          processedCount++;
-          if (key.endsWith('.proxy_featured') && value === true) {
-            console.log(`Found proxy_featured=true for key: ${key}`);
-            featuredCount++;
-            const nodeName = key.replace('.proxy_featured', '');
-            const target = allParams[`${nodeName}.proxy_target`] as string;
-            const paramsStr = allParams[`${nodeName}.params`] as string;
-            console.log(`Processing node ${nodeName}: target=${target}, paramsStr length=${paramsStr?.length || 0}`);
-
-            if (target && paramsStr) {
-              try {
-                const params = JSON.parse(paramsStr);
-                console.log(`Successfully parsed params for ${nodeName}:`, params);
-                featured.push({
-                  name: target,
-                  type: params.type || 'unknown',
-                  target: target,
-                  params: params,
-                });
-                console.log(`Added featured entity: ${target}`);
-              } catch (parseError) {
-                console.warn(`Failed to parse params for ${nodeName}:`, parseError);
-              }
-            } else {
-              console.log(`Missing target or params for ${nodeName}: target=${!!target}, paramsStr=${!!paramsStr}`);
-            }
-          }
-        }
-        console.log(`Processed ${processedCount} total parameters, found ${featuredCount} featured entities, added ${featured.length} to list`);
-
+        const featured = await fetchFeaturedEntities(ros2Bridge);
+        console.log(`Fetched ${featured.length} featured entities`);
+        
         console.log('Setting featured entities state...');
         setFeaturedEntities(featured);
         setError(null);
@@ -107,7 +72,7 @@ export const FeaturedEntitiesPanel: React.FC = () => {
       }
     };
 
-    fetchFeaturedEntities();
+    loadFeaturedEntities();
   }, [isConnected]);
 
 // Handle window messages for popup close from parent
@@ -121,22 +86,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
-
-  const getEntityIcon = (type: string) => {
-    switch (type.toLowerCase()) {
-      case 'drone':
-        return '🚁';
-      case 'robot':
-        return '🤖';
-      default:
-        return '📦';
-    }
-  };
-
-  const getStatusIcon = (entity: EntityCardData) => {
-    // For now, assume all are active. You could add logic to check actual status
-    return 'status-active';
-  };
 
   // Handle main card click - sends window message for modularity
   const handleCardClick = useCallback((entity: EntityCardData) => {
@@ -153,16 +102,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     
     // Log for debugging
     console.log(`FeaturedEntitiesPanel: Card clicked - ${entity.name}`, message);
-  }, []);
-
-  // Handle info button mouse down - prevents card press effect
-  const handleInfoMouseDown = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-  }, []);
-
-  // Handle info button mouse up - prevents card press effect
-  const handleInfoMouseUp = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
   }, []);
 
   // Handle info button click - sends window message to open popup
@@ -220,59 +159,14 @@ export const FeaturedEntitiesPanel: React.FC = () => {
         {featuredEntities.length === 0 ? (
           <div className="no-entities">No featured entities found</div>
         ) : (
-          featuredEntities.map((entity, index) => (
-            <div
-              key={index}
-              className={`entity-card ${activeCard === entity.name ? 'active' : ''}`}
-              onClick={() => handleCardClick(entity)}
-              onMouseEnter={() => setHoveredCard(entity.name)}
-              onMouseLeave={() => setHoveredCard(null)}
-              onMouseDown={(e) => {
-                // Don't set active state when clicking on info button
-                if ((e.target as HTMLElement).closest('.info-button')) return;
-                setActiveCard(entity.name);
-              }}
-              onMouseUp={(e) => {
-                if ((e.target as HTMLElement).closest('.info-button')) return;
-                setActiveCard(null);
-              }}
-              onMouseOut={() => setActiveCard(null)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleCardClick(entity);
-                }
-              }}
-            >
-              <div className="entity-header">
-                <span className="entity-icon">{getEntityIcon(entity.type)}</span>
-                <span className="entity-name">{entity.name}</span>
-                <span className={`entity-status ${getStatusIcon(entity)}`}>Active</span>
-                {/* Info Button with $(info) icon - blocks main card click */}
-                <button
-                  className="info-button"
-                  onMouseDown={handleInfoMouseDown}
-                  onMouseUp={handleInfoMouseUp}
-                  onClick={(e) => handleInfoClick(entity, e)}
-                  aria-label={`View info for ${entity.name}`}
-                  title="View detailed information"
-                >
-                  <span className="codicon-info"></span>
-                </button>
-              </div>
-              <div className="entity-details">
-                <div className="entity-metric">
-                  <span className="metric-label">Type:</span>
-                  <span className="metric-value">{entity.type}</span>
-                </div>
-                <div className="entity-metric">
-                  <span className="metric-label">Target:</span>
-                  <span className="metric-value">{entity.target}</span>
-                </div>
-              </div>
-            </div>
+          featuredEntities.map((entity) => (
+            <EntityCard
+              key={entity.name}
+              entity={entity}
+              isActive={activeCard === entity.name}
+              onCardClick={handleCardClick}
+              onInfoClick={handleInfoClick}
+            />
           ))
         )}
       </div>
