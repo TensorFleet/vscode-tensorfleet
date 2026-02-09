@@ -160,19 +160,19 @@
 }
 
 .sp-anchor.right .sp-icon {
-  transform: rotate(0deg);
+  transform: scaleX(-1);
 }
 
 .sp-anchor.right .sp-toggle.open .sp-icon {
-  transform: rotate(180deg);
+  transform: scaleX(1);
 }
 
 .sp-anchor.left .sp-icon {
-  transform: rotate(180deg);
+  transform: scaleX(1);
 }
 
 .sp-anchor.left .sp-toggle.open .sp-icon {
-  transform: rotate(0deg);
+  transform: scaleX(-1);
 }
 
 /* optional: kill accidental layout overflow from the anchor itself */
