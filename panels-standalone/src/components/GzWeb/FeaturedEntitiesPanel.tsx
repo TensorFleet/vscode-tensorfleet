@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
 import './ESimViewPanel.css';
-import { EntityInfoData, ENTITY_INFO_POPUP_MESSAGES } from './InfoPopup';
+import { EntityInfoData, ENTITY_INFO_POPUP_MESSAGES } from './EntityInfoPopup';
 
 // ============================================================================
 // Window Message Types for External Module Communication

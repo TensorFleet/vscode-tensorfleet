@@ -25,10 +25,10 @@ export const ENTITY_INFO_POPUP_MESSAGES = {
 };
 
 // ============================================================================
-// InfoPopup Component - Self-contained popup with window message communication
+// EntityInfoPopup Component - Self-contained popup with window message communication
 // ============================================================================
 
-export const InfoPopup: React.FC = () => {
+export const EntityInfoPopup: React.FC = () => {
   const [data, setData] = useState<EntityInfoData | null>(null);
   const [isVisible, setIsVisible] = useState(false);
 
@@ -225,4 +225,4 @@ export const InfoPopup: React.FC = () => {
   );
 };
 
-export default InfoPopup;
+export default EntityInfoPopup;
