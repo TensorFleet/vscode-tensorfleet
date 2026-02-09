@@ -2,7 +2,9 @@ import React from 'react';
 import { GzWebPanel } from './GzWebPanel';
 import { FeaturedEntitiesPanel } from './FeaturedEntitiesPanel';
 import { EntityInfoPopup } from './EntityInfoPopup';
+import SidePanel from './SidePanel';
 import './ESimViewPanel.css';
+import './SidePanel.css';
 
 export const ESimViewPanel: React.FC = () => {
   return (
@@ -10,9 +12,9 @@ export const ESimViewPanel: React.FC = () => {
       <div className="esim-main-view">
         <GzWebPanel />
       </div>
-      <div className="esim-sidebar">
+      <SidePanel side="right">
         <FeaturedEntitiesPanel />
-      </div>
+      </SidePanel>
       {/* Self-contained EntityInfoPopup - renders when window message is received */}
       <EntityInfoPopup />
     </div>
