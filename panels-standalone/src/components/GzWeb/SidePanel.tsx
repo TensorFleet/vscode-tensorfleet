@@ -23,6 +23,15 @@ export default function SidePanel({
     [width, buttonSize]
   );
 
+  const dir =
+    side === "right"
+      ? open
+        ? "toPanel"
+        : "toScreen"
+      : open
+        ? "toPanel"
+        : "toScreen";
+
   return (
     <div className={`sp-anchor ${side}`} style={style}>
       <div className={`sp-clip ${open ? "open" : "closed"}`}>
@@ -37,7 +46,21 @@ export default function SidePanel({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
-        {side === "right" ? (open ? "›" : "‹") : open ? "‹" : "›"}
+        <svg
+          className={`sp-icon ${side} ${dir}`}
+          viewBox="0 0 12 24"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            d="M3 4 L9 12 L3 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        </svg>
       </button>
     </div>
   );
