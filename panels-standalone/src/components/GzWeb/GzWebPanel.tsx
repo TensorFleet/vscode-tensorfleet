@@ -3,6 +3,12 @@ import { ExpandLess, ExpandMore, Wifi, WifiOff } from '@mui/icons-material';
 import { IconButton, Tooltip } from '@mui/material';
 import './GzWebPanel.css';
 
+declare global {
+  interface Window {
+    OriginalWebSocket?: typeof WebSocket;
+  }
+}
+
 type SceneManagerTransport = { root?: unknown };
 type SceneManagerInstance = {
   destroy: () => void;
@@ -284,6 +290,10 @@ const installVmManagerWebSocketShim = (
         this._ws.send(msg as any);
       }
     }
+  }
+
+  if (!window.OriginalWebSocket) {
+    window.OriginalWebSocket = window.WebSocket;
   }
 
   window.WebSocket = VmManagerWebSocket as unknown as typeof WebSocket;

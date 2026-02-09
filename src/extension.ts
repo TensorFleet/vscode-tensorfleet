@@ -188,16 +188,6 @@ const DRONE_VIEWS: DroneViewport[] = [
     htmlTemplate: 'raw-messages-standalone'
   },
   {
-    id: 'tensorfleet-esim-panel',
-    title: 'Extended Simulation',
-    description: 'Enhanced 3D simulation view with extensible sidebar for Gazebo - wraps the original 3D view with additional features.',
-    image: 'gazebo-placeholder.svg',
-    command: 'tensorfleet.openESimPanel',
-    actionLabel: 'Open Extended Sim View Panel',
-    panelKind: 'standard',
-    htmlTemplate: 'gzweb-standalone'
-  },
-  {
     id: 'tensorfleet-featured-entities-panel',
     title: 'Featured entities',
     description: 'Display and manage important simulation entities with detailed information and controls.',

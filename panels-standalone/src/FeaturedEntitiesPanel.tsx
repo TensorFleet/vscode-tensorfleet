@@ -6,30 +6,11 @@ import './components/GzWeb/ESimViewPanel.css';
 
 const FeaturedEntitiesMainView: React.FC = () => {
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: '100%',
-      padding: '40px',
-      backgroundColor: '#ffffff'
-    }}>
-      <h1 style={{
-        fontSize: '2rem',
-        color: '#333',
-        marginBottom: '20px',
-        textAlign: 'center'
-      }}>
+    <div className="esim-main-content">
+      <h1 className="esim-main-title">
         Featured Entities Dashboard
       </h1>
-      <p style={{
-        fontSize: '1.1rem',
-        color: '#666',
-        textAlign: 'center',
-        maxWidth: '600px',
-        lineHeight: '1.6'
-      }}>
+      <p className="esim-main-description">
         Monitor and manage important simulation entities in real-time.
         The sidebar shows detailed information about active entities including
         their status, metrics, and controls.

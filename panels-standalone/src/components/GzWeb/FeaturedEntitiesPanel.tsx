@@ -1,18 +1,47 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
+import './ESimViewPanel.css';
+import { InfoPopup, EntityInfoData, POPUP_MESSAGES } from './InfoPopup';
 
-interface FeaturedEntity {
+// ============================================================================
+// Window Message Types for External Module Communication
+// ============================================================================
+
+export interface EntityCardData {
   name: string;
   type: string;
   target: string;
-  params: any;
+  params: Record<string, any>;
 }
 
+export interface EntityClickMessage {
+  type: 'ENTITY_CLICK' | 'ENTITY_INFO_CLICK';
+  payload: {
+    entity: EntityCardData;
+    timestamp: number;
+  };
+}
+
+// Message type constants
+export const CARD_MESSAGES = {
+  CLICK: 'ENTITY_CLICK' as const,
+  INFO_CLICK: 'ENTITY_INFO_CLICK' as const,
+};
+
+// ============================================================================
+// FeaturedEntitiesPanel Component
+// ============================================================================
+
 export const FeaturedEntitiesPanel: React.FC = () => {
-  const [featuredEntities, setFeaturedEntities] = useState<FeaturedEntity[]>([]);
+  const [featuredEntities, setFeaturedEntities] = useState<EntityCardData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(() => ros2Bridge.isConnected());
+
+  // Popup state
+  const [popupEntity, setPopupEntity] = useState<EntityInfoData | null>(null);
+  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+  const [activeCard, setActiveCard] = useState<string | null>(null);
 
   // Monitor connection status like other components do
   useEffect(() => {
@@ -39,7 +68,7 @@ export const FeaturedEntitiesPanel: React.FC = () => {
         const allParams = await ros2Bridge.getAllROSParameters();
         console.log('Received allParams:', Object.keys(allParams).length, 'parameters');
 
-        const featured: FeaturedEntity[] = [];
+        const featured: EntityCardData[] = [];
         console.log('Starting to process parameters for featured entities...');
 
         // Find all nodes with proxy_featured=true
@@ -98,6 +127,18 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     fetchFeaturedEntities();
   }, [isConnected]);
 
+  // Handle window messages for popup control from external modules
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data.type === POPUP_MESSAGES.CLOSE) {
+        setPopupEntity(null);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
   const getEntityIcon = (type: string) => {
     switch (type.toLowerCase()) {
       case 'drone':
@@ -109,10 +150,57 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     }
   };
 
-  const getStatusIcon = (entity: FeaturedEntity) => {
+  const getStatusIcon = (entity: EntityCardData) => {
     // For now, assume all are active. You could add logic to check actual status
     return 'status-active';
   };
+
+  // Handle main card click - sends window message for modularity
+  const handleCardClick = useCallback((entity: EntityCardData) => {
+    const message: EntityClickMessage = {
+      type: CARD_MESSAGES.CLICK,
+      payload: {
+        entity,
+        timestamp: Date.now(),
+      },
+    };
+    
+    // Send message to parent window for external module communication
+    window.parent.postMessage(message, '*');
+    
+    // Log for debugging
+    console.log(`FeaturedEntitiesPanel: Card clicked - ${entity.name}`, message);
+  }, []);
+
+  // Handle info button click - opens popup (blocks main card click via stopPropagation)
+  const handleInfoClick = useCallback((entity: EntityCardData, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const popupData: EntityInfoData = {
+      ...entity,
+      timestamp: Date.now(),
+    };
+    
+    setPopupEntity(popupData);
+    
+    // Send info click message for external module communication
+    const message: EntityClickMessage = {
+      type: CARD_MESSAGES.INFO_CLICK,
+      payload: {
+        entity,
+        timestamp: Date.now(),
+      },
+    };
+    
+    window.parent.postMessage(message, '*');
+    console.log(`FeaturedEntitiesPanel: Info button clicked - ${entity.name}`, message);
+  }, []);
+
+  // Handle popup close
+  const handlePopupClose = useCallback(() => {
+    setPopupEntity(null);
+    setActiveCard(null);
+  }, []);
 
   if (loading) {
     return (
@@ -140,11 +228,37 @@ export const FeaturedEntitiesPanel: React.FC = () => {
           <div className="no-entities">No featured entities found</div>
         ) : (
           featuredEntities.map((entity, index) => (
-            <div key={index} className="entity-card">
+            <div
+              key={index}
+              className={`entity-card ${activeCard === entity.name ? 'active' : ''}`}
+              onClick={() => handleCardClick(entity)}
+              onMouseEnter={() => setHoveredCard(entity.name)}
+              onMouseLeave={() => setHoveredCard(null)}
+              onMouseDown={() => setActiveCard(entity.name)}
+              onMouseUp={() => setActiveCard(null)}
+              onMouseOut={() => setActiveCard(null)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleCardClick(entity);
+                }
+              }}
+            >
               <div className="entity-header">
                 <span className="entity-icon">{getEntityIcon(entity.type)}</span>
                 <span className="entity-name">{entity.name}</span>
                 <span className={`entity-status ${getStatusIcon(entity)}`}>Active</span>
+                {/* Info Button with $(info) icon - blocks main card click */}
+                <button
+                  className="info-button"
+                  onClick={(e) => handleInfoClick(entity, e)}
+                  aria-label={`View info for ${entity.name}`}
+                  title="View detailed information"
+                >
+                  <span className="codicon-info"></span>
+                </button>
               </div>
               <div className="entity-details">
                 <div className="entity-metric">
@@ -160,6 +274,13 @@ export const FeaturedEntitiesPanel: React.FC = () => {
           ))
         )}
       </div>
+
+      {/* Info Popup - Shows detailed information when info button is clicked */}
+      {popupEntity && (
+        <InfoPopup data={popupEntity} onClose={handlePopupClose} />
+      )}
     </div>
   );
 };
+
+export default FeaturedEntitiesPanel;

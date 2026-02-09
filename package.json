@@ -33,7 +33,6 @@
     "onCommand:tensorfleet.openTeleopsPanel",
     "onCommand:tensorfleet.openMapPanel",
     "onCommand:tensorfleet.openRawMessagesPanel",
-    "onCommand:tensorfleet.openESimPanel",
     "onCommand:tensorfleet.openFeaturedEntitiesPanel",
     "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.createNewRoboticArmProject",
@@ -168,11 +167,6 @@
       {
         "command": "tensorfleet.openRawMessagesPanel",
         "title": "Open Raw Messages Panel",
-        "category": "TensorFleet"
-      },
-      {
-        "command": "tensorfleet.openESimPanel",
-        "title": "TensorFleet: Open ESim View Panel",
         "category": "TensorFleet"
       },
       {
