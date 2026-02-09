@@ -1,37 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
 import './ESimViewPanel.css';
-import { EntityInfoData, ENTITY_INFO_POPUP_MESSAGES } from './EntityInfoPopup';
-
-// ============================================================================
-// Window Message Types for External Module Communication
-// ============================================================================
-
-export interface EntityCardData {
-  name: string;
-  type: string;
-  target: string;
-  params: Record<string, any>;
-}
-
-export interface EntityClickMessage {
-  type: 'ENTITY_CLICK' | 'ENTITY_INFO_CLICK';
-  payload: {
-    entity: EntityCardData;
-    timestamp: number;
-  };
-}
-
-export interface EntityInfoPopupMessage {
-  type: 'ENTITY_INFO_POPUP_OPEN' | 'ENTITY_INFO_POPUP_CLOSE';
-  payload?: EntityInfoData;
-}
-
-// Message type constants
-export const CARD_MESSAGES = {
-  CLICK: 'ENTITY_CLICK' as const,
-  INFO_CLICK: 'ENTITY_INFO_CLICK' as const,
-};
+import {
+  EntityCardData,
+  EntityClickMessage,
+  CARD_MESSAGES,
+} from './EntityCardData';
+import {
+  EntityInfoPopupMessage,
+  ENTITY_INFO_POPUP_MESSAGES,
+} from './EntityInfoPopup';
+import { EntityInfoData } from './EntityInfoPopup';
 
 // ============================================================================
 // FeaturedEntitiesPanel Component
@@ -176,7 +155,17 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     console.log(`FeaturedEntitiesPanel: Card clicked - ${entity.name}`, message);
   }, []);
 
-// Handle info button click - sends window message to open popup
+  // Handle info button mouse down - prevents card press effect
+  const handleInfoMouseDown = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+
+  // Handle info button mouse up - prevents card press effect
+  const handleInfoMouseUp = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+
+  // Handle info button click - sends window message to open popup
   const handleInfoClick = useCallback((entity: EntityCardData, e: React.MouseEvent) => {
     e.stopPropagation();
     
@@ -238,8 +227,15 @@ export const FeaturedEntitiesPanel: React.FC = () => {
               onClick={() => handleCardClick(entity)}
               onMouseEnter={() => setHoveredCard(entity.name)}
               onMouseLeave={() => setHoveredCard(null)}
-              onMouseDown={() => setActiveCard(entity.name)}
-              onMouseUp={() => setActiveCard(null)}
+              onMouseDown={(e) => {
+                // Don't set active state when clicking on info button
+                if ((e.target as HTMLElement).closest('.info-button')) return;
+                setActiveCard(entity.name);
+              }}
+              onMouseUp={(e) => {
+                if ((e.target as HTMLElement).closest('.info-button')) return;
+                setActiveCard(null);
+              }}
               onMouseOut={() => setActiveCard(null)}
               role="button"
               tabIndex={0}
@@ -257,6 +253,8 @@ export const FeaturedEntitiesPanel: React.FC = () => {
                 {/* Info Button with $(info) icon - blocks main card click */}
                 <button
                   className="info-button"
+                  onMouseDown={handleInfoMouseDown}
+                  onMouseUp={handleInfoMouseUp}
                   onClick={(e) => handleInfoClick(entity, e)}
                   aria-label={`View info for ${entity.name}`}
                   title="View detailed information"
