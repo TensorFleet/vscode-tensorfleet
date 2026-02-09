@@ -25,13 +25,16 @@ export default function SidePanel({
 
   return (
     <div className={`sp-anchor ${side}`} style={style}>
-      <div className={`sp-panel ${open ? "open" : "closed"}`}>
-        <div className="sp-content">{children}</div>
+      <div className={`sp-clip ${open ? "open" : "closed"}`}>
+        <div className="sp-panel">
+          <div className="sp-content">{children}</div>
+        </div>
       </div>
 
       <button
+        type="button"
         className={`sp-toggle ${open ? "open" : "closed"}`}
-        onClick={() => setOpen(v => !v)}
+        onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
         {side === "right" ? (open ? "›" : "‹") : open ? "‹" : "›"}

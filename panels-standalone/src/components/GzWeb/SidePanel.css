@@ -2,6 +2,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
+  width: 0;
   pointer-events: none;
 }
 
@@ -13,6 +14,31 @@
   left: 0;
 }
 
+.sp-clip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  transition: width 160ms ease;
+  pointer-events: none;
+}
+
+.sp-anchor.right .sp-clip {
+  right: 0;
+}
+
+.sp-anchor.left .sp-clip {
+  left: 0;
+}
+
+.sp-clip.open {
+  width: var(--sp-width);
+}
+
+.sp-clip.closed {
+  width: 0;
+}
+
 .sp-panel {
   position: absolute;
   top: 0;
@@ -20,28 +46,17 @@
   width: var(--sp-width);
   background: var(--vscode-sideBar-background);
   color: var(--vscode-sideBar-foreground);
-  border-left: 1px solid var(--vscode-panel-border);
-  border-right: 1px solid var(--vscode-panel-border);
-  transition: transform 160ms ease;
   pointer-events: auto;
 }
 
 .sp-anchor.right .sp-panel {
   right: 0;
-  transform: translateX(0);
+  border-left: 1px solid var(--vscode-panel-border);
 }
 
 .sp-anchor.left .sp-panel {
   left: 0;
-  transform: translateX(0);
-}
-
-.sp-anchor.right .sp-panel.closed {
-  transform: translateX(100%);
-}
-
-.sp-anchor.left .sp-panel.closed {
-  transform: translateX(-100%);
+  border-right: 1px solid var(--vscode-panel-border);
 }
 
 .sp-content {
@@ -60,10 +75,28 @@
   border: 1px solid var(--vscode-panel-border);
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
-  border-radius: 999px;
   box-shadow: 0 2px 8px var(--vscode-widget-shadow);
   cursor: pointer;
   pointer-events: auto;
+  transition: left 160ms ease, right 160ms ease, background 120ms ease;
+}
+
+.sp-anchor.right .sp-toggle {
+  right: 0;
+  border-radius: 6px 0 0 6px;
+}
+
+.sp-anchor.left .sp-toggle {
+  left: 0;
+  border-radius: 0 6px 6px 0;
+}
+
+.sp-anchor.right .sp-toggle.open {
+  right: var(--sp-width);
+}
+
+.sp-anchor.left .sp-toggle.open {
+  left: var(--sp-width);
 }
 
 .sp-toggle:hover {
@@ -72,20 +105,5 @@
 
 .sp-toggle:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
-}
-
-.sp-anchor.right .sp-toggle {
-  right: calc(var(--sp-btn) * -0.5);
-}
-
-.sp-anchor.left .sp-toggle {
-  left: calc(var(--sp-btn) * -0.5);
-}
-
-.sp-anchor.right .sp-toggle.open {
-  right: calc(var(--sp-width) - var(--sp-btn) * 0.5);
-}
-
-.sp-anchor.left .sp-toggle.open {
-  left: calc(var(--sp-width) - var(--sp-btn) * 0.5);
+  outline-offset: 1px;
 }
