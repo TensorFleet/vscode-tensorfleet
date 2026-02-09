@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 // ============================================================================
 // Window Message Types for Modular Communication
@@ -10,65 +10,64 @@ export interface EntityInfoData {
   target: string;
   params: Record<string, any>;
   timestamp: number;
-  // Reserved for future tabs:
-  // telemetry?: any;
-  // diagnostics?: any;
-  // controls?: any;
 }
 
-export interface InfoPopupMessage {
-  type: 'POPUP_OPEN' | 'POPUP_CLOSE' | 'POPUP_READY';
+export interface EntityInfoPopupMessage {
+  type: 'ENTITY_INFO_POPUP_OPEN' | 'ENTITY_INFO_POPUP_CLOSE' | 'ENTITY_INFO_POPUP_READY';
   payload?: EntityInfoData;
 }
 
 // Message type constants for external modules
-export const POPUP_MESSAGES = {
-  OPEN: 'POPUP_OPEN' as const,
-  CLOSE: 'POPUP_CLOSE' as const,
-  READY: 'POPUP_READY' as const,
+export const ENTITY_INFO_POPUP_MESSAGES = {
+  OPEN: 'ENTITY_INFO_POPUP_OPEN' as const,
+  CLOSE: 'ENTITY_INFO_POPUP_CLOSE' as const,
+  READY: 'ENTITY_INFO_POPUP_READY' as const,
 };
 
 // ============================================================================
-// InfoPopup Component - Large popup ready for sub-tabs
+// InfoPopup Component - Self-contained popup with window message communication
 // ============================================================================
 
-interface InfoPopupProps {
-  data: EntityInfoData | null;
-  onClose: () => void;
-}
+export const InfoPopup: React.FC = () => {
+  const [data, setData] = useState<EntityInfoData | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
 
-export const InfoPopup: React.FC<InfoPopupProps> = ({ data, onClose }) => {
-  // Handle window messaging for modular communication
-  const handleMessage = useCallback((event: MessageEvent<InfoPopupMessage>) => {
-    if (event.data.type === POPUP_MESSAGES.CLOSE) {
-      onClose();
+  // Handle window messages for self-contained popup control
+  const handleMessage = useCallback((event: MessageEvent<EntityInfoPopupMessage>) => {
+    if (event.data.type === ENTITY_INFO_POPUP_MESSAGES.OPEN && event.data.payload) {
+      setData(event.data.payload);
+      setIsVisible(true);
+    } else if (event.data.type === ENTITY_INFO_POPUP_MESSAGES.CLOSE) {
+      setIsVisible(false);
+      setData(null);
     }
-  }, [onClose]);
+  }, []);
 
   useEffect(() => {
-    // Subscribe to window messages for cross-module communication
     window.addEventListener('message', handleMessage);
-    
-    // Notify parent that popup is ready
-    window.parent.postMessage({ type: POPUP_MESSAGES.READY }, '*');
-    
-    return () => {
-      window.removeEventListener('message', handleMessage);
-    };
+    return () => window.removeEventListener('message', handleMessage);
   }, [handleMessage]);
+
+  // Handle close
+  const handleClose = useCallback(() => {
+    setIsVisible(false);
+    setData(null);
+    // Notify parent that popup is closed
+    window.parent.postMessage({ type: ENTITY_INFO_POPUP_MESSAGES.CLOSE }, '*');
+  }, []);
 
   // Handle escape key to close
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose();
+      if (event.key === 'Escape' && isVisible) {
+        handleClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [isVisible, handleClose]);
 
-  if (!data) return null;
+  if (!isVisible || !data) return null;
 
   // Format params for display
   const formatParams = (params: Record<string, any>) => {
@@ -90,7 +89,7 @@ export const InfoPopup: React.FC<InfoPopupProps> = ({ data, onClose }) => {
   };
 
   return (
-    <div className="info-popup-overlay" onClick={onClose}>
+    <div className="info-popup-overlay" onClick={handleClose}>
       <div 
         className="info-popup" 
         onClick={(e) => e.stopPropagation()}
@@ -109,7 +108,7 @@ export const InfoPopup: React.FC<InfoPopupProps> = ({ data, onClose }) => {
           </div>
           <button 
             className="info-popup-close"
-            onClick={onClose}
+            onClick={handleClose}
             aria-label="Close popup"
             title="Close (Esc)"
           >
@@ -176,7 +175,7 @@ export const InfoPopup: React.FC<InfoPopupProps> = ({ data, onClose }) => {
                   { type: 'ENTITY_SELECT', payload: { target: data.target } }, 
                   '*'
                 );
-                onClose();
+                handleClose();
               }}
             >
               <span className="codicon codicon-target"></span>
@@ -189,7 +188,7 @@ export const InfoPopup: React.FC<InfoPopupProps> = ({ data, onClose }) => {
                   { type: 'ENTITY_TELEMETRY', payload: { target: data.target } }, 
                   '*'
                 );
-                onClose();
+                handleClose();
               }}
             >
               <span className="codicon codicon-graph"></span>

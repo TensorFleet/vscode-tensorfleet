@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
 import './ESimViewPanel.css';
-import { InfoPopup, EntityInfoData, POPUP_MESSAGES } from './InfoPopup';
+import { EntityInfoData, ENTITY_INFO_POPUP_MESSAGES } from './InfoPopup';
 
 // ============================================================================
 // Window Message Types for External Module Communication
@@ -22,6 +22,11 @@ export interface EntityClickMessage {
   };
 }
 
+export interface EntityInfoPopupMessage {
+  type: 'ENTITY_INFO_POPUP_OPEN' | 'ENTITY_INFO_POPUP_CLOSE';
+  payload?: EntityInfoData;
+}
+
 // Message type constants
 export const CARD_MESSAGES = {
   CLICK: 'ENTITY_CLICK' as const,
@@ -38,8 +43,7 @@ export const FeaturedEntitiesPanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(() => ros2Bridge.isConnected());
 
-  // Popup state
-  const [popupEntity, setPopupEntity] = useState<EntityInfoData | null>(null);
+  // Track active card state for styling
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
   const [activeCard, setActiveCard] = useState<string | null>(null);
 
@@ -127,11 +131,11 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     fetchFeaturedEntities();
   }, [isConnected]);
 
-  // Handle window messages for popup control from external modules
+// Handle window messages for popup close from parent
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data.type === POPUP_MESSAGES.CLOSE) {
-        setPopupEntity(null);
+    const handleMessage = (event: MessageEvent<EntityInfoPopupMessage>) => {
+      if (event.data.type === ENTITY_INFO_POPUP_MESSAGES.CLOSE) {
+        // Popup was closed externally - nothing to do here
       }
     };
 
@@ -172,7 +176,7 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     console.log(`FeaturedEntitiesPanel: Card clicked - ${entity.name}`, message);
   }, []);
 
-  // Handle info button click - opens popup (blocks main card click via stopPropagation)
+// Handle info button click - sends window message to open popup
   const handleInfoClick = useCallback((entity: EntityCardData, e: React.MouseEvent) => {
     e.stopPropagation();
     
@@ -181,10 +185,16 @@ export const FeaturedEntitiesPanel: React.FC = () => {
       timestamp: Date.now(),
     };
     
-    setPopupEntity(popupData);
+    // Send message to parent window to open the popup
+    const message: EntityInfoPopupMessage = {
+      type: ENTITY_INFO_POPUP_MESSAGES.OPEN,
+      payload: popupData,
+    };
     
-    // Send info click message for external module communication
-    const message: EntityClickMessage = {
+    window.parent.postMessage(message, '*');
+    
+    // Also send card info click message
+    const clickMessage: EntityClickMessage = {
       type: CARD_MESSAGES.INFO_CLICK,
       payload: {
         entity,
@@ -192,14 +202,8 @@ export const FeaturedEntitiesPanel: React.FC = () => {
       },
     };
     
-    window.parent.postMessage(message, '*');
+    window.parent.postMessage(clickMessage, '*');
     console.log(`FeaturedEntitiesPanel: Info button clicked - ${entity.name}`, message);
-  }, []);
-
-  // Handle popup close
-  const handlePopupClose = useCallback(() => {
-    setPopupEntity(null);
-    setActiveCard(null);
   }, []);
 
   if (loading) {
@@ -274,11 +278,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
           ))
         )}
       </div>
-
-      {/* Info Popup - Shows detailed information when info button is clicked */}
-      {popupEntity && (
-        <InfoPopup data={popupEntity} onClose={handlePopupClose} />
-      )}
     </div>
   );
 };
