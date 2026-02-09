@@ -515,13 +515,16 @@ class SoArm101Recorder:
         if not self._episode_active:
             print("No active episode. Press 'r' to start.")
             return False
+        
+        # STOP RECORDING IMMEDIATELY to prevent race conditions with main loop
+        self._episode_active = False
+        
         frames = self._episode_buffer_size()
         if frames == 0:
             print("No frames recorded in current episode. Nothing to save.")
-            self._episode_active = False
             return False
+
         self._save_episode(self._episode_index)
-        self._episode_active = False
         self._episode_index = self._get_episode_count()
         return True
 
@@ -530,20 +533,25 @@ class SoArm101Recorder:
         if not self._episode_active:
             print("No active episode to discard.")
             return
+            
+        # STOP RECORDING IMMEDIATELY
+        self._episode_active = False
+        
         frames = self._episode_buffer_size()
         print(f"[d] Episode {self._episode_index + 1} discarded ({frames} frames)")
         self._reset_episode_buffer()
-        self._episode_active = False
 
     def _finalize_dataset(self) -> None:
         """Save any pending episode, consolidate dataset, and quit."""
         # Save pending episode if frames exist
         if self._episode_active:
+            # STOP RECORDING IMMEDIATELY
+            self._episode_active = False
+            
             pending = self._episode_buffer_size()
             if pending > 0:
                 print(f"Saving pending episode ({pending} frames)...")
                 self._save_episode(self._episode_index)
-            self._episode_active = False
 
         # Consolidate dataset
         if self._dataset is not None and not self._finalized:
