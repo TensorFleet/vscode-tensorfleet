@@ -10,6 +10,7 @@ import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
 import * as regions from './regions';
 import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
+import { MavlinkTunnelManager } from './mavlink-tunnel-manager';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -743,6 +744,9 @@ let mcpBridge: MCPBridge | null = null;
 let vmManagerIntegration: VMManagerIntegration | null = null;
 let telemetryService: TelemetryService | null = null;
 let envRefreshTimer: NodeJS.Timeout | null = null;
+let droneTelemetryOutputChannel: vscode.OutputChannel | null = null;
+let mavlinkTunnelManager: MavlinkTunnelManager | null = null;
+const DEFAULT_MAVLINK_TARGET_PORT = 14600;
 
 
 
@@ -781,6 +785,17 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(telemetryService);
   telemetryService.trackEvent('extension.activate', { mode: getMode() });
   help.ensureOnboardingProgressInitialized(context);
+  droneTelemetryOutputChannel = vscode.window.createOutputChannel('TensorFleet Drone Telemetry');
+  context.subscriptions.push(droneTelemetryOutputChannel);
+  mavlinkTunnelManager = new MavlinkTunnelManager((message) => {
+    droneTelemetryOutputChannel?.appendLine(`[Tunnel] ${message}`);
+  });
+  context.subscriptions.push(
+    new vscode.Disposable(() => {
+      void mavlinkTunnelManager?.disconnect();
+      mavlinkTunnelManager = null;
+    })
+  );
 
   // Start MCP bridge for communication between MCP server and VS Code
   mcpBridge = new MCPBridge(context);
@@ -938,6 +953,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.connectDroneTelemetry', () => connectDroneTelemetry(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.disconnectDroneTelemetry', () => disconnectDroneTelemetry())
   );
 
   // Unified menu command (replaces separate auth and VM menu commands)
@@ -1117,6 +1140,11 @@ export function deactivate() {
       telemetryService?.captureError(error, { source: 'mcpServer.stop' });
     }
     mcpServerProcess = null;
+  }
+
+  if (mavlinkTunnelManager) {
+    void mavlinkTunnelManager.disconnect();
+    mavlinkTunnelManager = null;
   }
 
   // Clean up status bar items
@@ -2590,6 +2618,209 @@ function scheduleEnvRefresh(
   }, 300);
 }
 
+function getDroneTelemetryOutputChannel(): vscode.OutputChannel {
+  if (!droneTelemetryOutputChannel) {
+    droneTelemetryOutputChannel = vscode.window.createOutputChannel('TensorFleet Drone Telemetry');
+  }
+  return droneTelemetryOutputChannel;
+}
+
+async function resolveDroneTelemetryProjectFolder(): Promise<vscode.Uri | undefined> {
+  const tensorfleetFolders = await getTensorfleetProjectFolders();
+  if (tensorfleetFolders.length > 0) {
+    return tensorfleetFolders[0];
+  }
+  return vscode.workspace.workspaceFolders?.[0]?.uri;
+}
+
+async function readEnvForFolder(folder: vscode.Uri): Promise<Record<string, string>> {
+  const envUri = vscode.Uri.joinPath(folder, '.env');
+  try {
+    const content = await vscode.workspace.fs.readFile(envUri);
+    return parseEnvFile(Buffer.from(content).toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function resolveMavlinkTargetPort(markerEnv: Record<string, any>, existingEnv: Record<string, string>): number {
+  const candidates = [
+    existingEnv.TENSORFLEET_MAVLINK_TARGET_PORT,
+    existingEnv.MAVLINK_TARGET_PORT,
+    markerEnv.mavlinkTargetPort,
+    markerEnv.mavlink_port
+  ];
+  for (const candidate of candidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.trunc(parsed);
+    }
+  }
+  return DEFAULT_MAVLINK_TARGET_PORT;
+}
+
+async function resolveDroneTelemetryConnection(
+  context: vscode.ExtensionContext,
+  folder: vscode.Uri
+): Promise<{ vmManagerUrl: string; nodeId: string; token: string; targetPort: number }> {
+  const metadata = await readTensorfleetMetadata(folder);
+  const markerEnv = metadata.env ?? {};
+  const envValues = await readEnvForFolder(folder);
+  const region = regions.getSelectedRegion();
+  const snapshot = vmManagerIntegration?.snapshot;
+  const token = (await auth.getToken(context)) || envValues.TENSORFLEET_JWT || '';
+
+  const nodeId = snapshot?.nodeId || markerEnv.nodeId || envValues.TENSORFLEET_NODE_ID || '';
+  const vmManagerUrl =
+    region.vmManagerUrl ||
+    markerEnv.vmManagerUrl ||
+    envValues.TENSORFLEET_VM_MANAGER_URL ||
+    envValues.TENSORFLEET_BASE_URL ||
+    markerEnv.baseUrl ||
+    '';
+  const targetPort = resolveMavlinkTargetPort(markerEnv, envValues);
+
+  return { vmManagerUrl, nodeId, token, targetPort };
+}
+
+async function promptForDroneTelemetrySerialPort(): Promise<string | undefined> {
+  const manualOption = 'Enter serial port manually...';
+  let detectedPorts: string[] = [];
+
+  if (process.platform === 'linux') {
+    try {
+      const entries = await fs.promises.readdir('/dev');
+      detectedPorts = entries
+        .filter((entry) => /^tty(ACM|USB)\d+$/.test(entry))
+        .map((entry) => `/dev/${entry}`)
+        .sort();
+    } catch {
+      detectedPorts = [];
+    }
+  }
+
+  if (detectedPorts.length > 0) {
+    const selected = await vscode.window.showQuickPick([...detectedPorts, manualOption], {
+      title: 'TensorFleet: Connect Drone Telemetry',
+      placeHolder: 'Select the local serial device connected to Pixhawk/radio'
+    });
+    if (!selected) return undefined;
+    if (selected !== manualOption) {
+      return selected;
+    }
+  }
+
+  return vscode.window.showInputBox({
+    title: 'TensorFleet: Connect Drone Telemetry',
+    prompt: 'Enter serial device path',
+    value: detectedPorts[0] || '/dev/ttyACM0',
+    ignoreFocusOut: true,
+    validateInput: (value) => (value.trim() ? null : 'Serial device path is required')
+  });
+}
+
+async function promptForDroneTelemetryBaudRate(): Promise<number | undefined> {
+  const input = await vscode.window.showInputBox({
+    title: 'TensorFleet: Connect Drone Telemetry',
+    prompt: 'Enter MAVLink serial baud rate',
+    value: '115200',
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return 'Baud rate must be a positive number';
+      }
+      return null;
+    }
+  });
+
+  if (!input) return undefined;
+  return Math.trunc(Number(input));
+}
+
+async function connectDroneTelemetry(context: vscode.ExtensionContext): Promise<void> {
+  if (!mavlinkTunnelManager) {
+    mavlinkTunnelManager = new MavlinkTunnelManager((message) => {
+      getDroneTelemetryOutputChannel().appendLine(`[Tunnel] ${message}`);
+    });
+  }
+
+  const output = getDroneTelemetryOutputChannel();
+  output.show(true);
+
+  if (mavlinkTunnelManager.isConnected()) {
+    output.appendLine('[Tunnel] Already connected.');
+    return;
+  }
+
+  const projectFolder = await resolveDroneTelemetryProjectFolder();
+  if (!projectFolder) {
+    vscode.window.showErrorMessage('Open a workspace folder before connecting drone telemetry.');
+    return;
+  }
+
+  const serialPath = await promptForDroneTelemetrySerialPort();
+  if (!serialPath) return;
+
+  const baudRate = await promptForDroneTelemetryBaudRate();
+  if (!baudRate) return;
+
+  const { vmManagerUrl, nodeId, token, targetPort } = await resolveDroneTelemetryConnection(context, projectFolder);
+  if (!vmManagerUrl) {
+    vscode.window.showErrorMessage('No VM Manager URL configured for telemetry tunnel.');
+    return;
+  }
+  if (!nodeId) {
+    vscode.window.showErrorMessage('No VM nodeId available. Start VM and retry.');
+    return;
+  }
+  if (!token) {
+    vscode.window.showErrorMessage('No TensorFleet JWT token available. Login and retry.');
+    return;
+  }
+
+  output.appendLine(
+    `[Tunnel] Connecting serial=${serialPath} baud=${baudRate} nodeId=${nodeId} targetPort=${targetPort}`
+  );
+
+  try {
+    await mavlinkTunnelManager.connect({
+      projectDir: projectFolder.fsPath,
+      serialPath,
+      baudRate,
+      vmManagerUrl,
+      token,
+      nodeId,
+      targetPort
+    });
+    output.appendLine('[Tunnel] Connected and ready.');
+    vscode.window.showInformationMessage('Drone telemetry tunnel connected.');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    output.appendLine(`[Tunnel] Connect failed: ${message}`);
+    vscode.window.showErrorMessage(`Failed to connect drone telemetry tunnel: ${message}`);
+  }
+}
+
+async function disconnectDroneTelemetry(): Promise<void> {
+  const output = getDroneTelemetryOutputChannel();
+  output.show(true);
+
+  if (!mavlinkTunnelManager || !mavlinkTunnelManager.isRunning()) {
+    output.appendLine('[Tunnel] Already disconnected.');
+    return;
+  }
+
+  try {
+    await mavlinkTunnelManager.disconnect();
+    output.appendLine('[Tunnel] Disconnected.');
+    vscode.window.showInformationMessage('Drone telemetry tunnel disconnected.');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    output.appendLine(`[Tunnel] Disconnect failed: ${message}`);
+    vscode.window.showErrorMessage(`Failed to disconnect drone telemetry tunnel: ${message}`);
+  }
+}
 
 async function createNewProjectInternal(
   context: vscode.ExtensionContext,

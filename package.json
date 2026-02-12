@@ -210,6 +210,16 @@
         "category": "TensorFleet"
       },
       {
+        "command": "tensorfleet.connectDroneTelemetry",
+        "title": "TensorFleet: Connect Drone Telemetry",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.disconnectDroneTelemetry",
+        "title": "TensorFleet: Disconnect Drone Telemetry",
+        "category": "TensorFleet"
+      },
+      {
         "command": "tensorfleet.showVMManagerMenu",
         "title": "Show VM Actions",
         "category": "TensorFleet"
@@ -339,7 +349,9 @@
     "flatbuffers": "^25.9.23",
     "flatbuffers_reflection": "^1.2.0",
     "jpeg-js": "^0.4.4",
-    "protobufjs": "^7.5.4"
+    "protobufjs": "^7.5.4",
+    "serialport": "^12.0.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^18.17.0",
