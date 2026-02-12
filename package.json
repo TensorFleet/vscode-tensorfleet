@@ -33,6 +33,7 @@
     "onCommand:tensorfleet.openTeleopsPanel",
     "onCommand:tensorfleet.openMapPanel",
     "onCommand:tensorfleet.openRawMessagesPanel",
+    "onCommand:tensorfleet.openFeaturedEntitiesPanel",
     "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.createNewRoboticArmProject",
     "onCommand:tensorfleet.installTools",
@@ -166,6 +167,11 @@
       {
         "command": "tensorfleet.openRawMessagesPanel",
         "title": "Open Raw Messages Panel",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openFeaturedEntitiesPanel",
+        "title": "TensorFleet: Open Featured Entities Panel",
         "category": "TensorFleet"
       },
       {

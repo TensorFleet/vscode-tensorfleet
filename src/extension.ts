@@ -186,6 +186,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     actionLabel: 'Open Raw Messages Panel',
     panelKind: 'standard',
     htmlTemplate: 'raw-messages-standalone'
+  },
+  {
+    id: 'tensorfleet-featured-entities-panel',
+    title: 'Featured entities',
+    description: 'Display and manage important simulation entities with detailed information and controls.',
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openFeaturedEntitiesPanel',
+    actionLabel: 'Open Featured Entities Panel',
+    panelKind: 'standard',
+    htmlTemplate: 'featured-entities-standalone'
   }
 ];
 
@@ -757,6 +767,14 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize environment/mode detection first (must be before any isDev() calls)
   initializeEnv(context);
 
+  // Periodic debug console print
+  const debugInterval = setInterval(() => {
+    console.log('[TensorFleet][DEBUG] dummy text print');
+  }, 5000);
+
+  context.subscriptions.push(new vscode.Disposable(() => clearInterval(debugInterval)));
+
+
   env.log('Extension activating in', getMode(), 'mode');
 
   telemetryService = new TelemetryService(context);
@@ -796,7 +814,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Initialize auth state
-  vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "" as any)
+  vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
   updateUnifiedAuthStatus(context);
   updateAuthenticatedContext(context);
 
@@ -975,6 +993,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openDroneViewsPanel', () => openDroneViewsPanel(context))
   );
+
+
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openServerSettingsPanel', () => openServerSettingsPanel(context))
@@ -1485,8 +1505,13 @@ async function showWelcomePage(context: vscode.ExtensionContext) {
 
       case 'welcome.setPage': {
         const page: string = msg.page;
+        const validPages: ('none' | 'account' | 'project' | 'panels' | 'end')[] = ['none', 'account', 'project', 'panels', 'end'];
+        if (!validPages.includes(page as any)) {
+          console.warn('[TensorFleet][Welcome] Invalid page:', page);
+          break;
+        }
         const state = help.loadOnboardingProgress(context);
-        state.lastCompletedStep = page;
+        state.lastCompletedStep = page as 'none' | 'account' | 'project' | 'panels' | 'end';
         help.saveOnboardingProgress(context, state);
         break;
       }
@@ -1643,6 +1668,11 @@ async function openDedicatedPanel(
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
       }
+
+      if (view.htmlTemplate == 'featured-entities-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
     }
 
     const panel = vscode.window.createWebviewPanel(
@@ -1763,6 +1793,10 @@ async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, 
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
 
+  if (view.htmlTemplate === 'featured-entities-standalone') {
+    return getStandalonePanelHtml('featured_entities', webview, context, cspSource);
+  }
+
   if (view.htmlTemplate === 'gzweb-standalone') {
     return getStandalonePanelHtml('gzweb', webview, context, cspSource);
   }
@@ -1804,7 +1838,7 @@ async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, 
 }
 
 async function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d' | 'gzweb',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d' | 'gzweb' | 'featured_entities',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
