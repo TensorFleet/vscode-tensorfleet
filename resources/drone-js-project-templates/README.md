@@ -1,6 +1,6 @@
-# TensorFleet Robotic JS Project
+# TensorFleet Drone JS Project
 
-JavaScript/Node.js template for robot control over rosbridge using `roslib`. Includes obstacle avoidance and vision examples.
+JavaScript/Node.js template for drone control over rosbridge using `roslib`.
 
 ## Quick Start
 
@@ -23,23 +23,35 @@ JavaScript/Node.js template for robot control over rosbridge using `roslib`. Inc
    ```bash
    npm install
    ```
-3. Open **Simulation View** and **Image Panel** from the sidebar.
+3. Open **Simulation View** from the sidebar.
 4. Run any of the example scripts:
-   - `bun robot:mover` - Drive forward, backward, turn left/right sequence
-   - `bun robot:obstacle` - LiDAR-based obstacle avoidance
-   - `bun robot:vision` - YOLO object detection on camera feed
-   - `bun robot:vision:colors` - Color-based detection (best for simulation)
+   - `bun tutorial:01` - Connect to rosbridge
+   - `bun tutorial:02` - Monitor MAVROS telemetry
+   - `bun tutorial:03` - Arm/disarm
+   - `bun tutorial:04` - Takeoff and land
+   - `bun tutorial:05` - Offboard hover
+   - `bun tutorial:06` - Move forward
+   - `bun tutorial:07` - Go to waypoint
+
+## MAVLink Tunnel (Option A)
+
+Use the VSCode extension commands for local USB serial to VM MAVLink tunneling. This bridge supports bidirectional binary MAVLink frames.
+
+1. Run **TensorFleet: Connect Drone Telemetry** in VSCode.
+2. Select serial port (for example `/dev/ttyACM0`) and keep baud at `115200` unless needed otherwise.
+3. After tunnel connection, run telemetry/tutorial scripts normally (for example `bun tutorial:02`).
+   - `02_telemetry.js` now includes examples for monitoring **IMU data** (Linear Acceleration and Gyro) alongside standard MAVROS state.
+4. When done, run **TensorFleet: Disconnect Drone Telemetry** to release serial + websocket cleanly.
+
+### Diagnostic Tools
+- `scripts/mavlink_tunnel_probe.js` is available for diagnostics. 
+- Use `--require-ws-rx` to verify that round-trip traffic is active (not just outbound).
+
+Notes:
+- No separate tunnel terminal is required for normal operation.
+- The script/env based tunnel auto-connect flow (Option B) is not used.
 
 ## Scripts
 
 ### Simulation scripts
 - `src/restart_sim.js` - Restarts the simulation
-
-### Movement Scripts
-- `src/drone_mover.js` - Makes the drone Take off, follow an "R" flight pattern and then land.
-
-### Vision Scripts
-
-**Setup:**
-1. Open **Map Panel** from the sidebar
-2. Open **Simulation Panel** to view the drone's movement in 3D view.

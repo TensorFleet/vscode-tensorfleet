@@ -29,6 +29,7 @@ async function main() {
         fix: null,
         altitude: null,
         battery: null,
+        imu: null,
     };
 
     // Raw MAVROS topic subscriptions for educational purposes
@@ -80,6 +81,16 @@ async function main() {
             { topic: "/mavros/battery", type: "sensor_msgs/BatteryState" },
             (msg) => {
                 rawTelemetry.battery = msg;
+            }
+        )
+    );
+
+    // Subscribe to IMU data (/mavros/imu/data)
+    rawSubscriptions.push(
+        bridge.subscribe(
+            { topic: "/mavros/imu/data", type: "sensor_msgs/Imu" },
+            (msg) => {
+                rawTelemetry.imu = msg;
             }
         )
     );
@@ -153,6 +164,15 @@ async function main() {
             console.log("");
         }
 
+        if (rawTelemetry.imu?.linear_acceleration) {
+            const accel = rawTelemetry.imu.linear_acceleration;
+            const gyro = rawTelemetry.imu.angular_velocity;
+            console.log("IMU Data (/mavros/imu/data):");
+            console.log(`  Accel X/Y/Z: ${accel.x?.toFixed(3)}, ${accel.y?.toFixed(3)}, ${accel.z?.toFixed(3)} m/s^2`);
+            console.log(`  Gyro X/Y/Z:  ${gyro.x?.toFixed(3)}, ${gyro.y?.toFixed(3)}, ${gyro.z?.toFixed(3)} rad/s`);
+            console.log("");
+        }
+
         // Managed State Model Data
         console.log("MANAGED STATE MODEL (Aggregated Data):");
         console.log("---------------------------------------");
@@ -200,7 +220,7 @@ async function main() {
     }, 1000);
 
     // Handle graceful shutdown
-    process.on("SIGINT", () => {
+    process.on("SIGINT", async () => {
         clearInterval(displayInterval);
         console.log("\n[EXIT] Shutting down telemetry monitoring...");
 
@@ -209,6 +229,9 @@ async function main() {
 
         // Disconnect managed state model
         droneState.disconnect();
+        if (typeof bridge.disconnect === "function") {
+            await bridge.disconnect();
+        }
 
         process.exit(0);
     });

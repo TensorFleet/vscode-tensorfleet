@@ -166,7 +166,19 @@ Graceful degradation is built in — if the API can’t be reached you’ll see 
 
 ---
 
-## Packaging
+## 🔌 Hardware Connectivity & MAVLink Tunnel
+
+TensorFleet allows you to connect real PX4-powered hardware (via USB serial) directly to your remote simulation or processing environment using a bidirectional **MAVLink Tunnel**.
+
+1. **Connect your hardware**: Plug your Pixhawk or telemetry radio into your local machine.
+2. **Start the tunnel**:
+   - Run the command: `TensorFleet: Connect Drone Telemetry`
+   - Select your serial port (e.g., `/dev/ttyACM0`) and baud rate (usually `115200`).
+3. **Handshake & Login**: The extension automatically performs a secure handshake with the **VM Manager** to route your serial bytes as binary WebSocket frames.
+4. **Bi-directional Flow**: Support for bidirectional communication allows you to both monitor telemetry and send commands from your local machine to the remote environment and back.
+5. **Validation**: Use the optional "Require WS RX" mode in the diagnostic probe to ensure round-trip connectivity is established.
+
+---
 
 To produce a `.vsix` package (requires `vsce`):
 
