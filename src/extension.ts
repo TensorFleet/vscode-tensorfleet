@@ -3574,9 +3574,15 @@ async function updateDroneStatus() {
   }
 
   const tunnelActive = Boolean(mavlinkTunnelManager?.isConnected());
-  const tunnelIcon = tunnelActive ? '$(plug)' : '$(debug-disconnect)';
-  droneStatusBar.text = `$(radio-tower) ${currentDroneRuntimeMode} ${tunnelIcon}`;
-  droneStatusBar.tooltip = 'Drone mode and real-drone tunnel status (plug=connected, disconnect=not connected)';
+  if (currentDroneRuntimeMode === 'SITL') {
+    droneStatusBar.text = '$(radio-tower) SITL';
+    droneStatusBar.tooltip = 'SITL mode active. Real-drone tunnel is not required in this mode.';
+  } else {
+    const tunnelIcon = tunnelActive ? '$(plug)' : '$(debug-disconnect)';
+    const tunnelText = tunnelActive ? 'Connected' : 'Disconnected';
+    droneStatusBar.text = `$(radio-tower) REAL ${tunnelIcon}`;
+    droneStatusBar.tooltip = `REAL mode active. Telemetry tunnel: ${tunnelText}.`;
+  }
   droneStatusBar.show();
 }
 
