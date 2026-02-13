@@ -741,6 +741,7 @@ const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
 };
 
 const terminalRegistry = new Map<string, vscode.Terminal>();
+const COMMAND_DRONE_SETUP = 'tensorfleet.droneSetup';
 const COMMAND_SET_DRONE_MODE = 'tensorfleet.setDroneMode';
 const COMMAND_SWITCH_DRONE_MODE_REAL = 'tensorfleet.switchDroneModeReal';
 const COMMAND_SWITCH_DRONE_MODE_SITL = 'tensorfleet.switchDroneModeSITL';
@@ -755,6 +756,7 @@ let droneModeOutputChannel: vscode.OutputChannel | null = null;
 let mavlinkTunnelManager: MavlinkTunnelManager | null = null;
 let currentDroneRuntimeMode: DroneMode | 'UNKNOWN' = 'UNKNOWN';
 let lastDroneModeResolveAttemptMs = 0;
+let droneSetupNudgeInFlight = false;
 const DEFAULT_MAVLINK_TARGET_PORT = 14600;
 
 
@@ -960,6 +962,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tensorfleet.selectRosVersion', () => selectRosVersion())
   );
 
+  context.subscriptions.push(
+    registerTensorFleetCommand(COMMAND_DRONE_SETUP, () => showDroneSetup(context), { feature: 'drone-mode' })
+  );
   context.subscriptions.push(
     registerTensorFleetCommand(COMMAND_SET_DRONE_MODE, () => setDroneMode(context), { feature: 'drone-mode' })
   );
@@ -2957,6 +2962,66 @@ async function setDroneMode(context: vscode.ExtensionContext, forcedMode?: Drone
   await updateDroneStatus();
 }
 
+async function showDroneSetup(context: vscode.ExtensionContext): Promise<void> {
+  type SetupAction = 'set-mode' | 'set-real' | 'set-sitl' | 'connect-tunnel' | 'disconnect-tunnel';
+  const tunnelActive = Boolean(mavlinkTunnelManager?.isConnected());
+
+  const items: Array<vscode.QuickPickItem & { action: SetupAction }> = [
+    {
+      label: 'Set Drone Mode',
+      description: 'Choose REAL or SITL',
+      action: 'set-mode'
+    },
+    {
+      label: 'Use REAL Mode',
+      description: 'Switch MAVROS to real drone endpoint',
+      action: 'set-real'
+    },
+    {
+      label: 'Use SITL Mode',
+      description: 'Switch MAVROS to simulator endpoint',
+      action: 'set-sitl'
+    },
+    tunnelActive
+      ? {
+          label: 'Disconnect Real Telemetry',
+          description: 'Stop local serial-to-VM tunnel',
+          action: 'disconnect-tunnel'
+        }
+      : {
+          label: 'Connect Real Telemetry',
+          description: 'Start local serial-to-VM tunnel',
+          action: 'connect-tunnel'
+        }
+  ];
+
+  const selected = await vscode.window.showQuickPick(items, {
+    title: 'TensorFleet: Drone Setup',
+    placeHolder: 'Select an action'
+  });
+  if (!selected) {
+    return;
+  }
+
+  switch (selected.action) {
+    case 'set-mode':
+      await setDroneMode(context);
+      break;
+    case 'set-real':
+      await setDroneMode(context, 'REAL');
+      break;
+    case 'set-sitl':
+      await setDroneMode(context, 'SITL');
+      break;
+    case 'connect-tunnel':
+      await connectDroneTelemetry(context);
+      break;
+    case 'disconnect-tunnel':
+      await disconnectDroneTelemetry();
+      break;
+  }
+}
+
 function mergeWarnings(first?: string[], second?: string[]): string[] {
   const normalized: string[] = [];
   for (const source of [first, second]) {
@@ -2975,6 +3040,36 @@ function mergeWarnings(first?: string[], second?: string[]): string[] {
     }
   }
   return normalized;
+}
+
+async function maybeShowDroneSetupNudge(context: vscode.ExtensionContext): Promise<void> {
+  if (droneSetupNudgeInFlight) {
+    return;
+  }
+  if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+    return;
+  }
+
+  const workspaceId = vscode.workspace.workspaceFolders[0].uri.toString();
+  const key = `tensorfleet.droneSetupNudgeShown:${workspaceId}`;
+  if (context.workspaceState.get<boolean>(key)) {
+    return;
+  }
+
+  droneSetupNudgeInFlight = true;
+  await context.workspaceState.update(key, true);
+  try {
+    const selection = await vscode.window.showInformationMessage(
+      'Set drone mode and telemetry quickly from Drone Setup.',
+      'Open Drone Setup',
+      'Later'
+    );
+    if (selection === 'Open Drone Setup') {
+      await showDroneSetup(context);
+    }
+  } finally {
+    droneSetupNudgeInFlight = false;
+  }
 }
 
 async function createNewProjectInternal(
@@ -3392,7 +3487,8 @@ async function initializeStatusBarItems(context: vscode.ExtensionContext) {
     vscode.StatusBarAlignment.Right,
     99
   );
-  droneStatusBar.tooltip = 'Drone mode and real-drone tunnel status';
+  droneStatusBar.command = COMMAND_DRONE_SETUP;
+  droneStatusBar.tooltip = 'Drone mode and real-drone tunnel status (click for Drone Setup)';
   context.subscriptions.push(droneStatusBar);
   console.log('[TensorFleet] Drone status bar created');
 
@@ -3459,11 +3555,15 @@ async function isTensorFleetProject(): Promise<boolean> {
 
 async function updateStatusBars() {
   const isTFProject = await isTensorFleetProject();
+  const context = extensionContextRef;
 
   if (isTFProject) {
     // Detect ROS version from config or system
     await detectRosVersion();
     await updateDroneStatus();
+    if (context) {
+      await maybeShowDroneSetupNudge(context);
+    }
 
     // Show status bars
     if (rosVersionStatusBar) {

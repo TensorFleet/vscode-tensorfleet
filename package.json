@@ -42,6 +42,7 @@
     "onCommand:tensorfleet.stopMCPServer",
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
+    "onCommand:tensorfleet.droneSetup",
     "onCommand:tensorfleet.setDroneMode",
     "onCommand:tensorfleet.switchDroneModeReal",
     "onCommand:tensorfleet.switchDroneModeSITL",
@@ -204,6 +205,11 @@
       {
         "command": "tensorfleet.selectRosVersion",
         "title": "Select ROS Version",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.droneSetup",
+        "title": "TensorFleet: Drone Setup",
         "category": "TensorFleet"
       },
       {
