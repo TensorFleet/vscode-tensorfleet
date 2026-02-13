@@ -37,11 +37,18 @@ JavaScript/Node.js template for drone control over rosbridge using `roslib`.
 
 Use the VSCode extension commands for local USB serial to VM MAVLink tunneling. This bridge supports bidirectional binary MAVLink frames.
 
-1. Run **TensorFleet: Connect Drone Telemetry** in VSCode.
-2. Select serial port (for example `/dev/ttyACM0`) and keep baud at `115200` unless needed otherwise.
-3. After tunnel connection, run telemetry/tutorial scripts normally (for example `bun tutorial:02`).
+1. Run **TensorFleet: Drone Setup** in VSCode.
+2. Pick one action:
+   - **Set Drone Mode**
+   - **Use REAL Mode**
+   - **Use SITL Mode**
+   - **Connect/Disconnect Real Telemetry** (changes based on tunnel state)
+3. Configure tunnel once in project `.env`:
+   - `TENSORFLEET_MAVLINK_SERIAL_PATH=/dev/ttyACM0`
+   - `TENSORFLEET_MAVLINK_BAUD_RATE=115200`
+4. After tunnel connection, run telemetry/tutorial scripts normally (for example `bun tutorial:02`).
    - `02_telemetry.js` now includes examples for monitoring **IMU data** (Linear Acceleration and Gyro) alongside standard MAVROS state.
-4. When done, run **TensorFleet: Disconnect Drone Telemetry** to release serial + websocket cleanly.
+5. When done, use **Connect/Disconnect Real Telemetry** again to release serial + websocket cleanly.
 
 ### Diagnostic Tools
 - `scripts/mavlink_tunnel_probe.js` is available for diagnostics. 

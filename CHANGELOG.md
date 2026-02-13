@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added `tensorfleet.droneSetup` (`TensorFleet: Drone Setup`) as the single entrypoint QuickPick for:
+  - Set Drone Mode
+  - Use REAL Mode
+  - Use SITL Mode
+  - Connect/Disconnect Real Telemetry (dynamic by tunnel state)
+- Updated telemetry tunnel flow to use per-project `.env` configuration keys:
+  - `TENSORFLEET_MAVLINK_SERIAL_PATH`
+  - `TENSORFLEET_MAVLINK_BAUD_RATE`
+  - Auto-prompts and writes `.env` once when missing
 - Added drone mode switching commands in VS Code:
   - `tensorfleet.setDroneMode` (`TensorFleet: Set Drone Mode`)
   - `tensorfleet.switchDroneModeReal` (`TensorFleet: Switch Drone Mode to Real`)
