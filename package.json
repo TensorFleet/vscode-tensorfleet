@@ -42,8 +42,10 @@
     "onCommand:tensorfleet.stopMCPServer",
     "onCommand:tensorfleet.getMCPConfig",
     "onCommand:tensorfleet.selectRosVersion",
+    "onCommand:tensorfleet.setDroneMode",
+    "onCommand:tensorfleet.switchDroneModeReal",
+    "onCommand:tensorfleet.switchDroneModeSITL",
     "onCommand:tensorfleet.showVMManagerMenu",
-    "onCommand:tensorfleet.showDroneStatus",
     "onCommand:tensorfleet.selectRegion",
     "onCommand:tensorfleet.showUnifiedMenu",
     "onCommand:tensorfleet.login"
@@ -205,8 +207,18 @@
         "category": "TensorFleet"
       },
       {
-        "command": "tensorfleet.showDroneStatus",
-        "title": "Show Drone Status",
+        "command": "tensorfleet.setDroneMode",
+        "title": "TensorFleet: Set Drone Mode",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.switchDroneModeReal",
+        "title": "TensorFleet: Switch Drone Mode to Real",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.switchDroneModeSITL",
+        "title": "TensorFleet: Switch Drone Mode to SITL",
         "category": "TensorFleet"
       },
       {

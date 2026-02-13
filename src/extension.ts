@@ -11,6 +11,8 @@ import { TelemetryService } from './telemetry';
 import * as regions from './regions';
 import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
 import { MavlinkTunnelManager } from './mavlink-tunnel-manager';
+import { DroneModeApiClient, DroneModeResponse, DroneMode, normalizeDroneMode, toDroneModeRequest } from './drone-mode-api';
+import { executeDroneModeCommand } from './drone-mode-command';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -739,13 +741,20 @@ const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
 };
 
 const terminalRegistry = new Map<string, vscode.Terminal>();
+const COMMAND_SET_DRONE_MODE = 'tensorfleet.setDroneMode';
+const COMMAND_SWITCH_DRONE_MODE_REAL = 'tensorfleet.switchDroneModeReal';
+const COMMAND_SWITCH_DRONE_MODE_SITL = 'tensorfleet.switchDroneModeSITL';
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 let vmManagerIntegration: VMManagerIntegration | null = null;
 let telemetryService: TelemetryService | null = null;
+let extensionContextRef: vscode.ExtensionContext | null = null;
 let envRefreshTimer: NodeJS.Timeout | null = null;
 let droneTelemetryOutputChannel: vscode.OutputChannel | null = null;
+let droneModeOutputChannel: vscode.OutputChannel | null = null;
 let mavlinkTunnelManager: MavlinkTunnelManager | null = null;
+let currentDroneRuntimeMode: DroneMode | 'UNKNOWN' = 'UNKNOWN';
+let lastDroneModeResolveAttemptMs = 0;
 const DEFAULT_MAVLINK_TARGET_PORT = 14600;
 
 
@@ -753,7 +762,6 @@ const DEFAULT_MAVLINK_TARGET_PORT = 14600;
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
 let droneStatusBar: vscode.StatusBarItem | null = null;
-let projectWatcher: vscode.FileSystemWatcher | null = null;
 
 // Unified status coordinator
 let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
@@ -768,6 +776,7 @@ const uniquePanelRegistry = new Map<string, UniqueViewProvider>();
 // -----------------------------------------------------------------------------
 
 export function activate(context: vscode.ExtensionContext) {
+  extensionContextRef = context;
   // Initialize environment/mode detection first (must be before any isDev() calls)
   initializeEnv(context);
 
@@ -952,7 +961,13 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
+    registerTensorFleetCommand(COMMAND_SET_DRONE_MODE, () => setDroneMode(context), { feature: 'drone-mode' })
+  );
+  context.subscriptions.push(
+    registerTensorFleetCommand(COMMAND_SWITCH_DRONE_MODE_REAL, () => setDroneMode(context, 'REAL'), { feature: 'drone-mode' })
+  );
+  context.subscriptions.push(
+    registerTensorFleetCommand(COMMAND_SWITCH_DRONE_MODE_SITL, () => setDroneMode(context, 'SITL'), { feature: 'drone-mode' })
   );
 
   context.subscriptions.push(
@@ -1146,6 +1161,14 @@ export function deactivate() {
     void mavlinkTunnelManager.disconnect();
     mavlinkTunnelManager = null;
   }
+  if (droneModeOutputChannel) {
+    droneModeOutputChannel.dispose();
+    droneModeOutputChannel = null;
+  }
+  if (droneTelemetryOutputChannel) {
+    droneTelemetryOutputChannel.dispose();
+    droneTelemetryOutputChannel = null;
+  }
 
   // Clean up status bar items
   if (rosVersionStatusBar) {
@@ -1155,10 +1178,6 @@ export function deactivate() {
   if (droneStatusBar) {
     droneStatusBar.dispose();
     droneStatusBar = null;
-  }
-  if (projectWatcher) {
-    projectWatcher.dispose();
-    projectWatcher = null;
   }
 
   if (unifiedStatusCoordinator) {
@@ -2794,6 +2813,7 @@ async function connectDroneTelemetry(context: vscode.ExtensionContext): Promise<
       targetPort
     });
     output.appendLine('[Tunnel] Connected and ready.');
+    await updateDroneStatus();
     vscode.window.showInformationMessage('Drone telemetry tunnel connected.');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -2814,12 +2834,147 @@ async function disconnectDroneTelemetry(): Promise<void> {
   try {
     await mavlinkTunnelManager.disconnect();
     output.appendLine('[Tunnel] Disconnected.');
+    await updateDroneStatus();
     vscode.window.showInformationMessage('Drone telemetry tunnel disconnected.');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     output.appendLine(`[Tunnel] Disconnect failed: ${message}`);
     vscode.window.showErrorMessage(`Failed to disconnect drone telemetry tunnel: ${message}`);
   }
+}
+
+function getDroneModeOutputChannel(): vscode.OutputChannel {
+  if (!droneModeOutputChannel) {
+    droneModeOutputChannel = vscode.window.createOutputChannel('TensorFleet Drone Mode');
+  }
+  return droneModeOutputChannel;
+}
+
+async function setDroneMode(context: vscode.ExtensionContext, forcedMode?: DroneMode): Promise<void> {
+  const output = getDroneModeOutputChannel();
+
+  await executeDroneModeCommand(
+    {
+      resolveVmId: () => vmManagerIntegration?.getSelectedVmId(),
+      pickMode: async () => {
+        const selected = await vscode.window.showQuickPick(
+          [
+            {
+              label: 'Real Drone',
+              description: 'Switch MAVROS target to telemetry tunnel endpoint (127.0.0.1:14541)',
+              value: 'REAL' as const
+            },
+            {
+              label: 'SITL',
+              description: 'Switch MAVROS target to local simulator endpoint (127.0.0.1:14557)',
+              value: 'SITL' as const
+            }
+          ],
+          {
+            title: 'TensorFleet: Set Drone Mode',
+            placeHolder: 'Select drone mode'
+          }
+        );
+        return selected?.value;
+      },
+      runWithProgress: async <T>(title: string, task: () => Promise<T>): Promise<T> => {
+        return await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title
+          },
+          async () => await task()
+        );
+      },
+      setDroneMode: async (vmId: string, mode: DroneMode): Promise<DroneModeResponse> => {
+        const apiBaseUrl = vmManagerIntegration?.getApiBaseUrl();
+        if (!apiBaseUrl) {
+          throw new Error('No VM Manager API URL available.');
+        }
+
+        const token = await auth.getToken(context);
+        if (!token) {
+          throw new Error('No TensorFleet JWT token available. Login and retry.');
+        }
+
+        const client = new DroneModeApiClient({
+          baseUrl: apiBaseUrl,
+          token,
+          timeoutMs: 30_000,
+          log: (line: string) => output.appendLine(line)
+        });
+
+        const response = await client.setDroneMode(vmId, { mode: toDroneModeRequest(mode) });
+        let existing: DroneModeResponse | undefined;
+        try {
+          existing = await client.getDroneMode(vmId);
+        } catch (error) {
+          const refreshMessage = error instanceof Error ? error.message : String(error);
+          output.appendLine(`[DroneMode] Status refresh after successful mode switch failed: ${refreshMessage}`);
+        }
+
+        return {
+          ...response,
+          appliedMode: existing?.appliedMode ?? response.appliedMode,
+          requestedMode: existing?.requestedMode ?? response.requestedMode,
+          mavrosStatus: existing?.mavrosStatus ?? response.mavrosStatus,
+          px4Status: existing?.px4Status ?? response.px4Status,
+          mavrosActive: existing?.mavrosActive ?? response.mavrosActive,
+          px4Active: existing?.px4Active ?? response.px4Active,
+          warnings: mergeWarnings(response.warnings, existing?.warnings)
+        };
+      },
+      isTelemetryTunnelActive: () => Boolean(mavlinkTunnelManager?.isConnected()),
+      onModeApplied: ({ appliedMode }) => {
+        currentDroneRuntimeMode = appliedMode;
+      },
+      onSitlModeWithTunnel: async () => {
+        await disconnectDroneTelemetry();
+      },
+      onRealModeWithoutTunnel: async () => {
+        const selection = await vscode.window.showInformationMessage(
+          'Real drone mode is active, but telemetry tunnel is not connected.',
+          'Connect Tunnel',
+          'Later'
+        );
+        if (selection === 'Connect Tunnel') {
+          await connectDroneTelemetry(context);
+        }
+      },
+      showInfo: (message: string) => {
+        void vscode.window.showInformationMessage(message);
+      },
+      showError: (message: string) => {
+        void vscode.window.showErrorMessage(message);
+      },
+      log: (message: string) => {
+        output.appendLine(message);
+      }
+    },
+    forcedMode
+  );
+
+  await updateDroneStatus();
+}
+
+function mergeWarnings(first?: string[], second?: string[]): string[] {
+  const normalized: string[] = [];
+  for (const source of [first, second]) {
+    if (!Array.isArray(source)) {
+      continue;
+    }
+    for (const warning of source) {
+      if (typeof warning !== 'string') {
+        continue;
+      }
+      const trimmed = warning.trim();
+      if (!trimmed || normalized.includes(trimmed)) {
+        continue;
+      }
+      normalized.push(trimmed);
+    }
+  }
+  return normalized;
 }
 
 async function createNewProjectInternal(
@@ -3204,14 +3359,6 @@ function stopMCPServer() {
 // Status Bar Items for TensorFleet Projects
 // ============================================================================
 
-type DroneInfo = {
-  id: string;
-  name: string;
-  status: 'idle' | 'armed' | 'flying' | 'offline';
-  battery: number;
-  mode: string;
-};
-
 type RosVersion = {
   name: string;
   distro: string;
@@ -3227,7 +3374,6 @@ const AVAILABLE_ROS_VERSIONS: RosVersion[] = [
 ];
 
 let currentRosVersion: RosVersion = AVAILABLE_ROS_VERSIONS[0];
-let drones: DroneInfo[] = [];
 
 async function initializeStatusBarItems(context: vscode.ExtensionContext) {
   console.log('[TensorFleet] Initializing status bar items...');
@@ -3242,13 +3388,11 @@ async function initializeStatusBarItems(context: vscode.ExtensionContext) {
   context.subscriptions.push(rosVersionStatusBar);
   console.log('[TensorFleet] ROS version status bar created');
 
-  // Create drone status bar item
   droneStatusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
     99
   );
-  droneStatusBar.command = 'tensorfleet.showDroneStatus';
-  droneStatusBar.tooltip = 'Click to view drone details';
+  droneStatusBar.tooltip = 'Drone mode and real-drone tunnel status';
   context.subscriptions.push(droneStatusBar);
   console.log('[TensorFleet] Drone status bar created');
 
@@ -3261,23 +3405,20 @@ async function initializeStatusBarItems(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeWorkspaceFolders(() => updateStatusBars())
   );
 
-  // Watch for config file changes
+  // Watch for config changes to keep ROS label current
   const configPattern = '**/config/drone_config.yaml';
-  projectWatcher = vscode.workspace.createFileSystemWatcher(configPattern);
+  const watcher = vscode.workspace.createFileSystemWatcher(configPattern);
+  watcher.onDidCreate(() => updateStatusBars());
+  watcher.onDidChange(() => updateStatusBars());
+  watcher.onDidDelete(() => updateStatusBars());
+  context.subscriptions.push(watcher);
 
-  projectWatcher.onDidCreate(() => updateStatusBars());
-  projectWatcher.onDidChange(() => updateStatusBars());
-  projectWatcher.onDidDelete(() => updateStatusBars());
-
-  context.subscriptions.push(projectWatcher);
-
-  // Update status periodically (every 5 seconds)
+  // Periodic refresh for tunnel/mode state.
   const interval = setInterval(async () => {
     if (await isTensorFleetProject()) {
       await updateDroneStatus();
     }
   }, 5000);
-
   context.subscriptions.push(new vscode.Disposable(() => clearInterval(interval)));
 }
 
@@ -3317,29 +3458,21 @@ async function isTensorFleetProject(): Promise<boolean> {
 }
 
 async function updateStatusBars() {
-  console.log('[TensorFleet] Updating status bars...');
   const isTFProject = await isTensorFleetProject();
 
   if (isTFProject) {
-    console.log('[TensorFleet] TensorFleet project detected, showing status bars');
-
     // Detect ROS version from config or system
     await detectRosVersion();
-
-    // Initialize drone status
     await updateDroneStatus();
 
     // Show status bars
     if (rosVersionStatusBar) {
       rosVersionStatusBar.show();
-      console.log('[TensorFleet] ROS version status bar shown:', rosVersionStatusBar.text);
     }
     if (droneStatusBar) {
       droneStatusBar.show();
-      console.log('[TensorFleet] Drone status bar shown:', droneStatusBar.text);
     }
   } else {
-    console.log('[TensorFleet] Not a TensorFleet project, hiding status bars');
     // Hide status bars when not in a TensorFleet project
     rosVersionStatusBar?.hide();
     droneStatusBar?.hide();
@@ -3386,76 +3519,67 @@ async function detectRosVersion() {
   }
 }
 
-async function updateDroneStatus() {
-  if (!vscode.workspace.workspaceFolders) {
+async function maybeResolveDroneRuntimeModeFromVm(): Promise<void> {
+  if (currentDroneRuntimeMode !== 'UNKNOWN') {
+    return;
+  }
+
+  const snapshot = vmManagerIntegration?.snapshot;
+  const vmId = vmManagerIntegration?.getSelectedVmId();
+  const apiBaseUrl = vmManagerIntegration?.getApiBaseUrl();
+  const now = Date.now();
+  if (!snapshot || snapshot.vmState !== 'running' || !vmId || !apiBaseUrl) {
+    return;
+  }
+
+  if (now - lastDroneModeResolveAttemptMs < 10_000) {
+    return;
+  }
+  lastDroneModeResolveAttemptMs = now;
+
+  const context = extensionContextRef;
+  if (!context) {
     return;
   }
 
   try {
-    // Try to read from config to get drone info
-    const configPath = vscode.Uri.joinPath(
-      vscode.workspace.workspaceFolders[0].uri,
-      'config',
-      'drone_config.yaml'
-    );
-
-    const configContent = await vscode.workspace.fs.readFile(configPath);
-    const configText = Buffer.from(configContent).toString('utf8');
-
-    // Extract drone ID/name from config
-    const idMatch = configText.match(/id:\s*["']?([^"'\n]+)["']?/);
-    const modelMatch = configText.match(/model:\s*["']?([^"'\n]+)["']?/);
-
-    const droneId = idMatch ? idMatch[1] : 'drone_1';
-    const droneModel = modelMatch ? modelMatch[1] : 'iris';
-
-    // Default status (panels handle live telemetry via Foxglove inside webviews)
-    let droneStatus: 'idle' | 'armed' | 'flying' | 'offline' = 'offline';
-    let battery = 0;
-    let mode = 'UNKNOWN';
-
-    drones = [
-      {
-        id: droneId,
-        name: droneModel,
-        status: droneStatus,
-        battery: battery,
-        mode: mode
-      }
-    ];
-
-    // Update status bar
-    if (droneStatusBar) {
-      const activeCount = drones.filter((d) => d.status !== 'offline').length;
-      const flyingCount = drones.filter((d) => d.status === 'flying').length;
-
-      let statusText = `$(radio-tower) ${activeCount} Drone${activeCount !== 1 ? 's' : ''}`;
-
-      if (flyingCount > 0) {
-        statusText += ` (${flyingCount} Flying)`;
-      }
-
-      droneStatusBar.text = statusText;
-      console.log('[TensorFleet] Drone status set to:', statusText);
+    const token = await auth.getToken(context);
+    if (!token) {
+      return;
     }
-  } catch (error) {
-    getTelemetry()?.captureError(error, { source: 'updateDroneStatus' });
-    // Config not found, show default
-    drones = [
-      {
-        id: 'drone_1',
-        name: 'iris',
-        status: 'offline',
-        battery: 0,
-        mode: 'UNKNOWN'
-      }
-    ];
-
-    if (droneStatusBar) {
-      droneStatusBar.text = '$(radio-tower) 0 Drones';
+    const client = new DroneModeApiClient({
+      baseUrl: apiBaseUrl,
+      token,
+      timeoutMs: 10_000
+    });
+    const status = await client.getDroneMode(vmId);
+    const resolved = normalizeDroneMode(status.appliedMode ?? status.requestedMode);
+    if (resolved !== 'UNKNOWN') {
+      currentDroneRuntimeMode = resolved;
     }
+  } catch {
+    // Keep UNKNOWN until a mode can be resolved.
   }
 }
+
+async function updateDroneStatus() {
+  if (!droneStatusBar) {
+    return;
+  }
+
+  await maybeResolveDroneRuntimeModeFromVm();
+  if (currentDroneRuntimeMode === 'UNKNOWN') {
+    droneStatusBar.hide();
+    return;
+  }
+
+  const tunnelActive = Boolean(mavlinkTunnelManager?.isConnected());
+  const tunnelIcon = tunnelActive ? '$(plug)' : '$(debug-disconnect)';
+  droneStatusBar.text = `$(radio-tower) ${currentDroneRuntimeMode} ${tunnelIcon}`;
+  droneStatusBar.tooltip = 'Drone mode and real-drone tunnel status (plug=connected, disconnect=not connected)';
+  droneStatusBar.show();
+}
+
 
 async function selectRosVersion() {
   const telemetry = getTelemetry();
@@ -3553,95 +3677,6 @@ async function updateConfigWithRosVersion(version: RosVersion) {
   }
 }
 
-async function showDroneStatus() {
-  const telemetry = getTelemetry();
-  telemetry?.trackEvent('droneStatus.show', { phase: 'start', droneCount: drones.length.toString() });
-  if (drones.length === 0) {
-    telemetry?.trackEvent('droneStatus.show', { phase: 'empty' });
-    vscode.window.showInformationMessage('No drones detected. Start a simulation to see drone status.');
-    return;
-  }
-
-  const items = drones.map((drone) => {
-    const statusIcon =
-      drone.status === 'flying' ? '$(rocket)' :
-        drone.status === 'armed' ? '$(target)' :
-          drone.status === 'idle' ? '$(circle-outline)' :
-            '$(circle-slash)';
-
-    const batteryIcon =
-      drone.battery > 50 ? '$(pulse)' :
-        drone.battery > 25 ? '$(warning)' :
-          '$(alert)';
-
-    return {
-      label: `${statusIcon} ${drone.name}`,
-      description: `${drone.mode} | ${batteryIcon} ${drone.battery}%`,
-      detail: `ID: ${drone.id} | Status: ${drone.status}`,
-      drone
-    };
-  });
-
-  items.push({
-    label: '$(refresh) Refresh Status',
-    description: 'Update drone information',
-    detail: '',
-    // @ts-ignore
-    drone: null
-  });
-
-  items.push({
-    label: '$(debug-start) Start Simulation',
-    description: 'Launch Gazebo with drones',
-    detail: '',
-    // @ts-ignore
-    drone: null
-  });
-
-  const selected = await vscode.window.showQuickPick(items, {
-    placeHolder: 'Drone Status',
-    title: 'TensorFleet: Connected Drones'
-  });
-
-  if (!selected) {
-    telemetry?.trackEvent('droneStatus.show', { phase: 'dismissed' });
-    return;
-  }
-
-  if (selected.label.includes('Refresh')) {
-    telemetry?.trackEvent('droneStatus.action', { action: 'refresh' });
-    await updateDroneStatus();
-    vscode.window.showInformationMessage('Drone status refreshed');
-  } else if (selected.label.includes('Start Simulation')) {
-    telemetry?.trackEvent('droneStatus.action', { action: 'openSimulation' });
-    vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
-  } else if (selected.drone) {
-    telemetry?.trackEvent('droneStatus.action', { action: 'details', droneId: selected.drone.id });
-    // Show detailed drone info
-    showDetailedDroneInfo(selected.drone);
-  }
-}
-
-function showDetailedDroneInfo(drone: DroneInfo) {
-  const info = `
-**Drone Information**
-
-**ID:** ${drone.id}
-**Model:** ${drone.name}
-**Status:** ${drone.status}
-**Battery:** ${drone.battery}%
-**Mode:** ${drone.mode}
-
-Click "Open Gazebo Workspace" to view in simulation.
-  `.trim();
-
-  vscode.window.showInformationMessage(info, 'Open Gazebo Workspace', 'Close').then((choice) => {
-    if (choice === 'Open Gazebo Workspace') {
-      getTelemetry()?.trackEvent('droneStatus.action', { action: 'openGazebo', droneId: drone.id });
-      vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
-    }
-  });
-}
 
 // ============================================================================
 // ROS2 Connection Management
