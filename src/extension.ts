@@ -2657,6 +2657,89 @@ async function resolveDroneTelemetryProjectFolder(): Promise<vscode.Uri | undefi
   return vscode.workspace.workspaceFolders?.[0]?.uri;
 }
 
+async function hasDroneTelemetryRuntimeDeps(projectFolder: vscode.Uri): Promise<boolean> {
+  const serialportPkg = path.join(projectFolder.fsPath, 'node_modules', 'serialport', 'package.json');
+  try {
+    await fs.promises.access(serialportPkg, fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runBunInstallForProject(projectFolder: vscode.Uri, output: vscode.OutputChannel): Promise<boolean> {
+  return await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'TensorFleet: Installing project dependencies (bun install)'
+    },
+    async () => {
+      return await new Promise<boolean>((resolve) => {
+        output.appendLine(`[Tunnel] Running bun install in ${projectFolder.fsPath}`);
+        const child = spawn('bun', ['install'], {
+          cwd: projectFolder.fsPath,
+          env: { ...process.env }
+        });
+
+        child.stdout?.on('data', (data) => {
+          const text = data.toString('utf8').trimEnd();
+          if (text) {
+            output.appendLine(`[bun] ${text}`);
+          }
+        });
+
+        child.stderr?.on('data', (data) => {
+          const text = data.toString('utf8').trimEnd();
+          if (text) {
+            output.appendLine(`[bun][stderr] ${text}`);
+          }
+        });
+
+        child.on('error', (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          output.appendLine(`[Tunnel] bun install failed to start: ${message}`);
+          resolve(false);
+        });
+
+        child.on('close', (code) => {
+          output.appendLine(`[Tunnel] bun install exited with code ${code ?? -1}`);
+          resolve(code === 0);
+        });
+      });
+    }
+  );
+}
+
+async function ensureDroneTelemetryRuntimeDeps(projectFolder: vscode.Uri, output: vscode.OutputChannel): Promise<boolean> {
+  if (await hasDroneTelemetryRuntimeDeps(projectFolder)) {
+    return true;
+  }
+
+  const choice = await vscode.window.showWarningMessage(
+    'Project dependencies are missing for real telemetry tunnel (serialport not installed). Run bun install now?',
+    'Run bun install',
+    'Cancel'
+  );
+  if (choice !== 'Run bun install') {
+    return false;
+  }
+
+  const installed = await runBunInstallForProject(projectFolder, output);
+  if (!installed) {
+    vscode.window.showErrorMessage('Failed to install project dependencies with bun install.');
+    return false;
+  }
+
+  if (await hasDroneTelemetryRuntimeDeps(projectFolder)) {
+    return true;
+  }
+
+  vscode.window.showErrorMessage(
+    'Dependencies still missing after bun install (serialport). Please run bun install in the project and retry.'
+  );
+  return false;
+}
+
 async function readEnvForFolder(folder: vscode.Uri): Promise<Record<string, string>> {
   const envUri = vscode.Uri.joinPath(folder, '.env');
   try {
@@ -2887,6 +2970,12 @@ async function connectDroneTelemetry(context: vscode.ExtensionContext): Promise<
   const projectFolder = await resolveDroneTelemetryProjectFolder();
   if (!projectFolder) {
     vscode.window.showErrorMessage('Open a workspace folder before connecting drone telemetry.');
+    return;
+  }
+
+  const depsReady = await ensureDroneTelemetryRuntimeDeps(projectFolder, output);
+  if (!depsReady) {
+    output.appendLine('[Tunnel] Aborting connect because required runtime dependencies are missing.');
     return;
   }
 
