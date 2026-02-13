@@ -2667,6 +2667,113 @@ async function readEnvForFolder(folder: vscode.Uri): Promise<Record<string, stri
   }
 }
 
+function normalizeEnvValue(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+async function resolveDroneTelemetryDeviceConfig(
+  folder: vscode.Uri
+): Promise<{ serialPath: string; baudRate: number } | undefined> {
+  const envValues = await readEnvForFolder(folder);
+
+  const serialPath = [
+    envValues.TENSORFLEET_MAVLINK_SERIAL_PATH,
+    envValues.MAVLINK_SERIAL_PATH,
+    envValues.TENSORFLEET_MAVLINK_SERIAL
+  ]
+    .map((v) => normalizeEnvValue(v))
+    .find((v) => Boolean(v && v.length > 0));
+
+  const baudRaw = [
+    envValues.TENSORFLEET_MAVLINK_BAUD_RATE,
+    envValues.MAVLINK_BAUD_RATE
+  ]
+    .map((v) => normalizeEnvValue(v))
+    .find((v) => Boolean(v && v.length > 0));
+
+  const baudParsed = Number(baudRaw);
+  if (!serialPath || !Number.isFinite(baudParsed) || baudParsed <= 0) {
+    return undefined;
+  }
+
+  return {
+    serialPath,
+    baudRate: Math.trunc(baudParsed)
+  };
+}
+
+function upsertEnvLine(content: string, key: string, value: string): string {
+  const normalized = content.replace(/\r\n/g, '\n');
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^\\s*(?:export\\s+)?${escapedKey}=.*$`, 'm');
+  const line = `${key}=${value}`;
+  if (re.test(normalized)) {
+    return normalized.replace(re, line);
+  }
+  const sep = normalized.endsWith('\n') || normalized.length === 0 ? '' : '\n';
+  return `${normalized}${sep}${line}\n`;
+}
+
+async function persistDroneTelemetryDeviceConfig(
+  folder: vscode.Uri,
+  serialPath: string,
+  baudRate: number
+): Promise<void> {
+  const envUri = vscode.Uri.joinPath(folder, '.env');
+  let existing = '';
+  try {
+    const buf = await vscode.workspace.fs.readFile(envUri);
+    existing = Buffer.from(buf).toString('utf8');
+  } catch {
+    existing = '';
+  }
+
+  let next = upsertEnvLine(existing, 'TENSORFLEET_MAVLINK_SERIAL_PATH', serialPath);
+  next = upsertEnvLine(next, 'TENSORFLEET_MAVLINK_BAUD_RATE', String(baudRate));
+  await vscode.workspace.fs.writeFile(envUri, Buffer.from(next, 'utf8'));
+}
+
+async function ensureDroneTelemetryDeviceConfig(
+  folder: vscode.Uri
+): Promise<{ serialPath: string; baudRate: number } | undefined> {
+  const configured = await resolveDroneTelemetryDeviceConfig(folder);
+  if (configured) {
+    return configured;
+  }
+
+  const choice = await vscode.window.showInformationMessage(
+    'Real telemetry config is missing in .env. Configure serial path and baud once now?',
+    'Configure Now',
+    'Open .env',
+    'Cancel'
+  );
+  if (choice === 'Open .env') {
+    const envUri = vscode.Uri.joinPath(folder, '.env');
+    await vscode.commands.executeCommand('vscode.open', envUri);
+    return undefined;
+  }
+  if (choice !== 'Configure Now') {
+    return undefined;
+  }
+
+  const serialPath = await promptForDroneTelemetrySerialPort();
+  if (!serialPath) return undefined;
+
+  const baudRate = await promptForDroneTelemetryBaudRate();
+  if (!baudRate) return undefined;
+
+  await persistDroneTelemetryDeviceConfig(folder, serialPath, baudRate);
+  return { serialPath, baudRate };
+}
+
 function resolveMavlinkTargetPort(markerEnv: Record<string, any>, existingEnv: Record<string, string>): number {
   const candidates = [
     existingEnv.TENSORFLEET_MAVLINK_TARGET_PORT,
@@ -2783,11 +2890,12 @@ async function connectDroneTelemetry(context: vscode.ExtensionContext): Promise<
     return;
   }
 
-  const serialPath = await promptForDroneTelemetrySerialPort();
-  if (!serialPath) return;
-
-  const baudRate = await promptForDroneTelemetryBaudRate();
-  if (!baudRate) return;
+  const deviceConfig = await ensureDroneTelemetryDeviceConfig(projectFolder);
+  if (!deviceConfig) {
+    return;
+  }
+  const serialPath = deviceConfig.serialPath;
+  const baudRate = deviceConfig.baudRate;
 
   const { vmManagerUrl, nodeId, token, targetPort } = await resolveDroneTelemetryConnection(context, projectFolder);
   if (!vmManagerUrl) {
@@ -2963,36 +3071,31 @@ async function setDroneMode(context: vscode.ExtensionContext, forcedMode?: Drone
 }
 
 async function showDroneSetup(context: vscode.ExtensionContext): Promise<void> {
-  type SetupAction = 'set-mode' | 'set-real' | 'set-sitl' | 'connect-tunnel' | 'disconnect-tunnel';
-  const tunnelActive = Boolean(mavlinkTunnelManager?.isConnected());
+  type SetupAction = 'set-mode' | 'set-real' | 'set-sitl' | 'toggle-telemetry';
 
   const items: Array<vscode.QuickPickItem & { action: SetupAction }> = [
     {
       label: 'Set Drone Mode',
-      description: 'Choose REAL or SITL',
+      description: 'Choose between REAL and SITL mode',
       action: 'set-mode'
     },
     {
       label: 'Use REAL Mode',
-      description: 'Switch MAVROS to real drone endpoint',
+      description: 'Switch to REAL and prompt/connect telemetry tunnel if needed',
       action: 'set-real'
     },
     {
       label: 'Use SITL Mode',
-      description: 'Switch MAVROS to simulator endpoint',
+      description: 'Switch to SITL and auto-disconnect telemetry tunnel if active',
       action: 'set-sitl'
     },
-    tunnelActive
-      ? {
-          label: 'Disconnect Real Telemetry',
-          description: 'Stop local serial-to-VM tunnel',
-          action: 'disconnect-tunnel'
-        }
-      : {
-          label: 'Connect Real Telemetry',
-          description: 'Start local serial-to-VM tunnel',
-          action: 'connect-tunnel'
-        }
+    {
+      label: mavlinkTunnelManager?.isConnected() ? 'Disconnect Real Telemetry' : 'Connect Real Telemetry',
+      description: mavlinkTunnelManager?.isConnected()
+        ? 'Disconnect local serial to VM MAVLink tunnel'
+        : 'Connect local serial to VM MAVLink tunnel using project .env config',
+      action: 'toggle-telemetry'
+    }
   ];
 
   const selected = await vscode.window.showQuickPick(items, {
@@ -3013,12 +3116,14 @@ async function showDroneSetup(context: vscode.ExtensionContext): Promise<void> {
     case 'set-sitl':
       await setDroneMode(context, 'SITL');
       break;
-    case 'connect-tunnel':
-      await connectDroneTelemetry(context);
+    case 'toggle-telemetry': {
+      if (mavlinkTunnelManager?.isConnected()) {
+        await disconnectDroneTelemetry();
+      } else {
+        await connectDroneTelemetry(context);
+      }
       break;
-    case 'disconnect-tunnel':
-      await disconnectDroneTelemetry();
-      break;
+    }
   }
 }
 
