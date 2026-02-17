@@ -12,7 +12,7 @@ export const ESimViewPanel: React.FC = () => {
       <div className="esim-main-view">
         <GzWebPanel />
       </div>
-      <SidePanel side="right">
+      <SidePanel side="right" width={348} buttonSize={34}>
         <FeaturedEntitiesPanel />
       </SidePanel>
       {/* Self-contained EntityInfoPopup - renders when window message is received */}
