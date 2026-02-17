@@ -12,11 +12,12 @@ declare global {
 
 type PoseVector = { x: number; y: number; z: number };
 type PoseQuaternion = { x: number; y: number; z: number; w: number };
-type GazeboPose = { name: string; position: PoseVector; orientation: PoseQuaternion };
+type GazeboPose = { name: string; position: PoseVector; orientation: PoseQuaternion; id?: number };
 
 type SceneManagerTransport = {
   root?: unknown;
   getWorld?: () => string;
+  getAvailableTopics?: () => Array<{ topic?: string; msg_type?: string }>;
   subscribe?: (topic: { name: string; cb: (msg: any) => void }) => void;
   unsubscribe?: (topicName: string) => void;
   requestService?: (service: string, msgType: string, msgObj: unknown) => void;
@@ -391,6 +392,264 @@ const toPoseQuaternion = (value: unknown): PoseQuaternion | null => {
   return { x: q.x, y: q.y, z: q.z, w: q.w };
 };
 
+const POSE_MESSAGE_TYPE_CANDIDATES = [
+  'gz.msgs.Pose',
+  'ignition.msgs.Pose',
+  'gazebo.msgs.Pose',
+] as const;
+
+const POSE_VECTOR_MESSAGE_TYPE_CANDIDATES = [
+  'gz.msgs.Pose_V',
+  'ignition.msgs.Pose_V',
+  'gazebo.msgs.Pose_V',
+] as const;
+
+const getOrderedPoseMessageTypes = (transport: SceneManagerTransport, world: string): string[] => {
+  const defaultOrder = [...POSE_MESSAGE_TYPE_CANDIDATES];
+  const topicName = `/world/${world}/dynamic_pose/info`;
+  const availableTopics = transport.getAvailableTopics?.();
+  if (!Array.isArray(availableTopics)) return defaultOrder;
+
+  const topicMeta = availableTopics.find((topic) => topic?.topic === topicName);
+  const msgType = typeof topicMeta?.msg_type === 'string' ? topicMeta.msg_type : '';
+  const preferredPrefix = msgType.startsWith('ignition.msgs.')
+    ? 'ignition.msgs.'
+    : msgType.startsWith('gazebo.msgs.')
+      ? 'gazebo.msgs.'
+      : msgType.startsWith('gz.msgs.')
+        ? 'gz.msgs.'
+        : '';
+
+  if (!preferredPrefix) return defaultOrder;
+  return defaultOrder.sort((a, b) => Number(b.startsWith(preferredPrefix)) - Number(a.startsWith(preferredPrefix)));
+};
+
+const getOrderedPoseVectorMessageTypes = (transport: SceneManagerTransport, world: string): string[] => {
+  const defaultOrder = [...POSE_VECTOR_MESSAGE_TYPE_CANDIDATES];
+  const topicName = `/world/${world}/dynamic_pose/info`;
+  const availableTopics = transport.getAvailableTopics?.();
+  if (!Array.isArray(availableTopics)) return defaultOrder;
+
+  const topicMeta = availableTopics.find((topic) => topic?.topic === topicName);
+  const msgType = typeof topicMeta?.msg_type === 'string' ? topicMeta.msg_type : '';
+  const preferredPrefix = msgType.startsWith('ignition.msgs.')
+    ? 'ignition.msgs.'
+    : msgType.startsWith('gazebo.msgs.')
+      ? 'gazebo.msgs.'
+      : msgType.startsWith('gz.msgs.')
+        ? 'gz.msgs.'
+        : '';
+
+  if (!preferredPrefix) return defaultOrder;
+  return defaultOrder.sort((a, b) => Number(b.startsWith(preferredPrefix)) - Number(a.startsWith(preferredPrefix)));
+};
+
+const getEntityNameCandidates = (entity: EntityCardData): string[] => {
+  const mapped = getGazeboEntityName(entity);
+  const includeBase = mapped.endsWith('_include')
+    ? mapped.slice(0, -'_include'.length)
+    : undefined;
+  const targetBase = entity.target.endsWith('_include')
+    ? entity.target.slice(0, -'_include'.length)
+    : undefined;
+  return unique([
+    mapped,
+    includeBase,
+    entity.target,
+    targetBase,
+    entity.name,
+  ]);
+};
+
+const resolvePoseEntry = (
+  poses: Map<string, GazeboPose>,
+  requestedName: string,
+): { poseName: string; pose: GazeboPose } | null => {
+  const direct = poses.get(requestedName);
+  if (direct) {
+    return { poseName: requestedName, pose: direct };
+  }
+
+  const candidates: Array<{ poseName: string; pose: GazeboPose; score: number }> = [];
+
+  for (const [poseName, pose] of poses.entries()) {
+    let score = -1;
+    if (poseName.endsWith(`::${requestedName}`)) {
+      // world::model
+      score = 30;
+    } else if (poseName.startsWith(`${requestedName}::`)) {
+      // model::link
+      score = 20;
+    } else if (poseName.includes(`::${requestedName}::`)) {
+      // world::model::link
+      score = 10;
+    }
+    if (score >= 0) {
+      candidates.push({ poseName, pose, score });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
+    return a.poseName.length - b.poseName.length;
+  });
+  return { poseName: candidates[0].poseName, pose: candidates[0].pose };
+};
+
+const toOptionalNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (value && typeof value === 'object') {
+    const maybeWithToNumber = value as { toNumber?: () => number };
+    if (typeof maybeWithToNumber.toNumber === 'function') {
+      const n = maybeWithToNumber.toNumber();
+      if (Number.isFinite(n)) return n;
+    }
+    const asRecord = value as Record<string, unknown>;
+    if (typeof asRecord.low === 'number') {
+      return asRecord.low;
+    }
+  }
+  return undefined;
+};
+
+const addPoseVector = (a: PoseVector, b: PoseVector): PoseVector => ({
+  x: a.x + b.x,
+  y: a.y + b.y,
+  z: a.z + b.z,
+});
+
+const resolveVisualOffset = (
+  offsets: Map<string, PoseVector>,
+  world: string,
+  poseName: string,
+): PoseVector | null => {
+  const unscopedName = poseName.includes('::')
+    ? poseName.split('::').slice(1).join('::')
+    : undefined;
+  return (
+    offsets.get(poseName) ??
+    offsets.get(`${world}::${poseName}`) ??
+    (unscopedName ? offsets.get(unscopedName) : undefined) ??
+    null
+  );
+};
+
+const toPoseFromSceneObject = (obj: any): GazeboPose | null => {
+  if (!obj || typeof obj !== 'object') return null;
+
+  const position = obj.position as Partial<PoseVector> | undefined;
+  const quaternion = obj.quaternion as Partial<PoseQuaternion> | undefined;
+  if (
+    !position || typeof position.x !== 'number' || typeof position.y !== 'number' || typeof position.z !== 'number' ||
+    !quaternion || typeof quaternion.x !== 'number' || typeof quaternion.y !== 'number' ||
+    typeof quaternion.z !== 'number' || typeof quaternion.w !== 'number'
+  ) {
+    return null;
+  }
+
+  return {
+    name: typeof obj.name === 'string' ? obj.name : '',
+    position: { x: position.x, y: position.y, z: position.z },
+    orientation: { x: quaternion.x, y: quaternion.y, z: quaternion.z, w: quaternion.w },
+  };
+};
+
+const resolvePoseEntryFromScene = (
+  manager: SceneManagerInstance,
+  world: string,
+  requestedNames: string[],
+): { poseName: string; pose: GazeboPose } | null => {
+  const sceneManagerAny = manager as any;
+  const sceneApi = sceneManagerAny?.scene;
+  const getByName = typeof sceneApi?.getByName === 'function'
+    ? sceneApi.getByName.bind(sceneApi)
+    : null;
+
+  if (!getByName) return null;
+
+  const candidates = unique([
+    ...requestedNames,
+    ...requestedNames.map((name) => `${world}::${name}`),
+  ]);
+
+  for (const candidate of candidates) {
+    try {
+      const obj = getByName(candidate);
+      const pose = toPoseFromSceneObject(obj);
+      if (pose && pose.name) {
+        return { poseName: pose.name, pose };
+      }
+    } catch {
+      // Ignore lookup errors and continue with next candidate.
+    }
+  }
+
+  return null;
+};
+
+const applyPoseToScene = (
+  manager: SceneManagerInstance,
+  world: string,
+  poseNames: string[],
+  pose: GazeboPose,
+): boolean => {
+  const sceneApi = (manager as any)?.scene;
+  const getByName = typeof sceneApi?.getByName === 'function'
+    ? sceneApi.getByName.bind(sceneApi)
+    : null;
+  if (!getByName) return false;
+
+  const candidates = unique([
+    ...poseNames,
+    ...poseNames.map((name) => (name.includes('::') ? name : `${world}::${name}`)),
+  ]);
+
+  for (const candidate of candidates) {
+    try {
+      const obj = getByName(candidate);
+      if (!obj) continue;
+      const position = obj.position as { set?: (x: number, y: number, z: number) => void; x?: number; y?: number; z?: number } | undefined;
+      const quaternion = obj.quaternion as { set?: (x: number, y: number, z: number, w: number) => void; x?: number; y?: number; z?: number; w?: number } | undefined;
+      if (!position || !quaternion) continue;
+
+      if (typeof position.set === 'function') {
+        position.set(pose.position.x, pose.position.y, pose.position.z);
+      } else {
+        position.x = pose.position.x;
+        position.y = pose.position.y;
+        position.z = pose.position.z;
+      }
+
+      if (typeof quaternion.set === 'function') {
+        quaternion.set(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
+      } else {
+        quaternion.x = pose.orientation.x;
+        quaternion.y = pose.orientation.y;
+        quaternion.z = pose.orientation.z;
+        quaternion.w = pose.orientation.w;
+      }
+
+      if (typeof obj.updateMatrixWorld === 'function') {
+        obj.updateMatrixWorld(true);
+      }
+      return true;
+    } catch {
+      // Ignore lookup errors and continue with next candidate.
+    }
+  }
+
+  return false;
+};
+
+const unique = (items: Array<string | undefined>) => {
+  return [...new Set(items.filter((value): value is string => Boolean(value && value.trim().length > 0)))];
+};
+
 export const GzWebPanel: React.FC = () => {
   const originalWebSocket = useRef<typeof WebSocket | null>(null);
   const sceneManagerRef = useRef<SceneManagerInstance | null>(null);
@@ -445,7 +704,10 @@ export const GzWebPanel: React.FC = () => {
   const [selectedEntity, setSelectedEntity] = useState<EntityCardData | null>(null);
   const [entityControlStatus, setEntityControlStatus] = useState('');
   const dynamicPoseTopicRef = useRef<string | null>(null);
+  const dynamicPoseOriginalCbRef = useRef<((msg: { pose?: Array<{ name?: string; position?: unknown; orientation?: unknown; id?: unknown }> }) => void) | null>(null);
+  const dynamicPoseWrappedCbRef = useRef<((msg: { pose?: Array<{ name?: string; position?: unknown; orientation?: unknown; id?: unknown }> }) => void) | null>(null);
   const entityPoseRef = useRef<Map<string, GazeboPose>>(new Map());
+  const entityVisualOffsetRef = useRef<Map<string, PoseVector>>(new Map());
 
   const resetWebSocketToNative = useCallback(() => {
     if (originalWebSocket.current) {
@@ -470,42 +732,175 @@ export const GzWebPanel: React.FC = () => {
       const manager = sceneManagerRef.current;
       const transport = manager?.transport;
       if (!manager || !transport) {
-        setEntityControlStatus('Nudge ignored: scene not ready');
+        setEntityControlStatus('Move ignored: scene not ready');
+        return;
+      }
+      if (!transport.requestService) {
+        setEntityControlStatus('Move failed: transport service calls are unavailable');
         return;
       }
 
       const world = transport.getWorld?.();
       if (!world) {
-        setEntityControlStatus('Nudge ignored: world is unavailable');
+        setEntityControlStatus('Move ignored: world is unavailable');
         return;
       }
 
-      const gazeboEntity = getGazeboEntityName(entity);
-      const currentPose = entityPoseRef.current.get(gazeboEntity);
-      if (!currentPose) {
-        setEntityControlStatus(`Nudge ignored: no pose for ${gazeboEntity}`);
-        return;
+      const entityNameCandidates = getEntityNameCandidates(entity);
+      let resolvedPoseEntry: { poseName: string; pose: GazeboPose } | null = null;
+      let resolvedEntityName = '';
+      for (const entityName of entityNameCandidates) {
+        resolvedPoseEntry = resolvePoseEntry(entityPoseRef.current, entityName);
+        if (resolvedPoseEntry) {
+          resolvedEntityName = entityName;
+          break;
+        }
       }
 
-      const nextPose: GazeboPose = {
-        name: gazeboEntity,
+      if (!resolvedPoseEntry) {
+        const fromScene = resolvePoseEntryFromScene(manager, world, entityNameCandidates);
+        if (fromScene) {
+          resolvedPoseEntry = fromScene;
+          resolvedEntityName = fromScene.poseName;
+          entityPoseRef.current.set(fromScene.poseName, fromScene.pose);
+          console.info('[GzWebPanel] Using scene pose fallback', {
+            world,
+            entityNameCandidates,
+            resolvedPoseName: fromScene.poseName,
+          });
+        }
+      }
+
+      if (!resolvedPoseEntry) {
+        const hint =
+          entityPoseRef.current.size === 0
+            ? 'Move ignored: waiting for dynamic poses'
+            : `Move ignored: no pose for ${entityNameCandidates.join(' / ')}`;
+        setEntityControlStatus(hint);
+        console.warn('[GzWebPanel] No pose entry found for entity candidates', entityNameCandidates, [
+          ...entityPoseRef.current.keys(),
+        ]);
+        return;
+      }
+      const msgTypeCandidates = getOrderedPoseMessageTypes(transport, world);
+      const msgVectorTypeCandidates = getOrderedPoseVectorMessageTypes(transport, world);
+
+      let requested = false;
+      const poseServiceName = `/world/${world}/set_pose`;
+      const poseVectorServiceName = `/world/${world}/set_pose_vector`;
+      const { poseName, pose: currentPose } = resolvedPoseEntry;
+      const canonicalNextPose: GazeboPose = {
+        name: poseName,
         position: {
           x: currentPose.position.x + delta.x,
           y: currentPose.position.y + delta.y,
           z: currentPose.position.z + delta.z,
         },
         orientation: currentPose.orientation,
+        id: currentPose.id,
       };
+      const worldScopedPoseName = poseName.includes('::') ? poseName : `${world}::${poseName}`;
+      const unscopedPoseName = poseName.includes('::')
+        ? poseName.split('::').slice(1).join('::')
+        : undefined;
+      const visualOffsetAliases = unique([
+        poseName,
+        worldScopedPoseName,
+        unscopedPoseName,
+        getGazeboEntityName(entity),
+        resolvedEntityName,
+      ]);
+      for (const alias of visualOffsetAliases) {
+        const prior = entityVisualOffsetRef.current.get(alias) ?? { x: 0, y: 0, z: 0 };
+        entityVisualOffsetRef.current.set(alias, addPoseVector(prior, delta));
+      }
 
-      transport.requestService?.(
-        `/world/${world}/set_pose`,
-        'ignition.msgs.Pose',
-        nextPose,
+      const requestNames = unique([
+        poseName,
+        poseName.includes('::') ? undefined : `${world}::${poseName}`,
+        getGazeboEntityName(entity),
+        resolvedEntityName,
+      ]);
+
+      for (const poseRequestName of requestNames) {
+        const nextPose: GazeboPose = {
+          name: poseRequestName,
+          position: {
+            x: canonicalNextPose.position.x,
+            y: canonicalNextPose.position.y,
+            z: canonicalNextPose.position.z,
+          },
+          orientation: canonicalNextPose.orientation,
+        };
+        if (typeof currentPose.id === 'number') {
+          nextPose.id = currentPose.id;
+        }
+
+        for (const msgType of msgTypeCandidates) {
+          try {
+            transport.requestService(poseServiceName, msgType, nextPose);
+            requested = true;
+            console.info('[GzWebPanel] Requested set_pose', {
+              world,
+              serviceName: poseServiceName,
+              msgType,
+              poseName: poseRequestName,
+              mappedEntity: getGazeboEntityName(entity),
+              resolvedEntityName,
+              resolvedPoseName: poseName,
+              poseId: currentPose.id,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!message.includes('no such type')) {
+              console.warn(`set_pose request failed for ${msgType}`, error);
+            }
+          }
+        }
+
+        for (const msgType of msgVectorTypeCandidates) {
+          try {
+            transport.requestService(poseVectorServiceName, msgType, { pose: [nextPose] });
+            requested = true;
+            console.info('[GzWebPanel] Requested set_pose_vector', {
+              world,
+              serviceName: poseVectorServiceName,
+              msgType,
+              poseName: poseRequestName,
+              mappedEntity: getGazeboEntityName(entity),
+              resolvedEntityName,
+              resolvedPoseName: poseName,
+              poseId: currentPose.id,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!message.includes('no such type')) {
+              console.warn(`set_pose_vector request failed for ${msgType}`, error);
+            }
+          }
+        }
+      }
+
+      if (!requested) {
+        setEntityControlStatus('Move failed: no compatible Pose / Pose_V protobuf message types in current gzweb root');
+        return;
+      }
+
+      // Optimistically update pose cache so repeated clicks move from latest requested pose.
+      entityPoseRef.current.set(poseName, canonicalNextPose);
+      applyPoseToScene(
+        manager,
+        world,
+        unique([
+          poseName,
+          worldScopedPoseName,
+          getGazeboEntityName(entity),
+          resolvedEntityName,
+        ]),
+        canonicalNextPose,
       );
-
-      entityPoseRef.current.set(gazeboEntity, nextPose);
       setEntityControlStatus(
-        `Nudged ${gazeboEntity} by (${delta.x.toFixed(2)}, ${delta.y.toFixed(2)}, ${delta.z.toFixed(2)})`,
+        `Move requested for ${resolvedEntityName || getGazeboEntityName(entity)} by (${delta.x.toFixed(2)}, ${delta.y.toFixed(2)}, ${delta.z.toFixed(2)})`,
       );
     },
     [],
@@ -531,14 +926,14 @@ export const GzWebPanel: React.FC = () => {
       const entityFromMessage = toEntityCardData(message.payload);
       const entity = entityFromMessage ?? selectedEntity;
       if (!entity) {
-        setEntityControlStatus('Nudge ignored: no selected entity');
+        setEntityControlStatus('Move ignored: no selected entity');
         return;
       }
 
       const payload = (message.payload ?? {}) as { delta?: unknown };
       const delta = toPoseVector(payload.delta);
       if (!delta) {
-        setEntityControlStatus('Nudge ignored: invalid delta payload');
+        setEntityControlStatus('Move ignored: invalid delta payload');
         return;
       }
 
@@ -553,11 +948,23 @@ export const GzWebPanel: React.FC = () => {
       resizeHandlerRef.current = null;
     }
     const activeTopic = dynamicPoseTopicRef.current;
-    if (activeTopic) {
-      sceneManagerRef.current?.transport?.unsubscribe?.(activeTopic);
-      dynamicPoseTopicRef.current = null;
+    const transport = sceneManagerRef.current?.transport as { topicMap?: Map<string, { cb: (msg: any) => void }> } | undefined;
+    if (activeTopic && transport?.topicMap) {
+      const topic = transport.topicMap.get(activeTopic);
+      if (
+        topic &&
+        dynamicPoseWrappedCbRef.current &&
+        topic.cb === dynamicPoseWrappedCbRef.current &&
+        dynamicPoseOriginalCbRef.current
+      ) {
+        topic.cb = dynamicPoseOriginalCbRef.current;
+      }
     }
+    dynamicPoseTopicRef.current = null;
+    dynamicPoseOriginalCbRef.current = null;
+    dynamicPoseWrappedCbRef.current = null;
     entityPoseRef.current.clear();
+    entityVisualOffsetRef.current.clear();
     if (sceneManagerRef.current) {
       sceneManagerRef.current.destroy();
       sceneManagerRef.current = null;
@@ -892,31 +1299,67 @@ export const GzWebPanel: React.FC = () => {
       if (!world) return;
 
       const topicName = `/world/${world}/dynamic_pose/info`;
-      if (dynamicPoseTopicRef.current === topicName) return;
+      const transportWithMap = transport as unknown as {
+        topicMap?: Map<string, { cb: (msg: { pose?: Array<{ name?: string; position?: unknown; orientation?: unknown; id?: unknown }> }) => void }>;
+      };
+      const topic = transportWithMap.topicMap?.get(topicName);
+      if (!topic || typeof topic.cb !== 'function') return;
+      if (dynamicPoseTopicRef.current === topicName && dynamicPoseWrappedCbRef.current === topic.cb) return;
 
-      if (dynamicPoseTopicRef.current) {
-        transport.unsubscribe?.(dynamicPoseTopicRef.current);
+      // Restore previously wrapped callback before wrapping a new world topic.
+      if (
+        dynamicPoseTopicRef.current &&
+        dynamicPoseOriginalCbRef.current &&
+        dynamicPoseWrappedCbRef.current
+      ) {
+        const prevTopic = transportWithMap.topicMap?.get(dynamicPoseTopicRef.current);
+        if (prevTopic && prevTopic.cb === dynamicPoseWrappedCbRef.current) {
+          prevTopic.cb = dynamicPoseOriginalCbRef.current;
+        }
       }
 
-      transport.subscribe?.({
-        name: topicName,
-        cb: (msg: { pose?: Array<{ name?: string; position?: unknown; orientation?: unknown }> }) => {
-          for (const poseEntry of msg.pose ?? []) {
-            if (!poseEntry.name) continue;
-            const position = toPoseVector(poseEntry.position);
-            const orientation = toPoseQuaternion(poseEntry.orientation);
-            if (!position || !orientation) continue;
-            entityPoseRef.current.set(poseEntry.name, {
-              name: poseEntry.name,
-              position,
-              orientation,
-            });
-          }
-        },
-      });
+      const originalCb = topic.cb;
+      const wrappedCb = (msg: { pose?: Array<{ name?: string; position?: unknown; orientation?: unknown; id?: unknown }> }) => {
+        let hasAdjustedPose = false;
+        const adjustedPoseEntries = (msg.pose ?? []).map((poseEntry) => {
+          if (!poseEntry.name) return poseEntry;
+          const position = toPoseVector(poseEntry.position);
+          if (!position) return poseEntry;
+          const offset = resolveVisualOffset(entityVisualOffsetRef.current, world, poseEntry.name);
+          if (!offset) return poseEntry;
+          hasAdjustedPose = true;
+          return {
+            ...poseEntry,
+            position: addPoseVector(position, offset),
+          };
+        });
 
+        const msgForRender = hasAdjustedPose
+          ? { ...msg, pose: adjustedPoseEntries }
+          : msg;
+
+        originalCb(msgForRender);
+
+        for (const poseEntry of msgForRender.pose ?? []) {
+          if (!poseEntry.name) continue;
+          const position = toPoseVector(poseEntry.position);
+          const orientation = toPoseQuaternion(poseEntry.orientation);
+          if (!position || !orientation) continue;
+          const id = toOptionalNumber(poseEntry.id);
+          entityPoseRef.current.set(poseEntry.name, {
+            name: poseEntry.name,
+            position,
+            orientation,
+            id,
+          });
+        }
+      };
+
+      topic.cb = wrappedCb;
       dynamicPoseTopicRef.current = topicName;
-    }, 500);
+      dynamicPoseOriginalCbRef.current = originalCb;
+      dynamicPoseWrappedCbRef.current = wrappedCb;
+    }, 250);
 
     return () => clearInterval(interval);
   }, [isConnected]);
