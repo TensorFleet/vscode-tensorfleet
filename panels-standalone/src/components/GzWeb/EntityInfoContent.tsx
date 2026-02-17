@@ -39,6 +39,21 @@ export const EntityInfoContent: React.FC<EntityInfoContentProps> = ({
     if (onAction) {
       onAction(actionType, entity.target);
     } else {
+      if (actionType === 'ENTITY_SELECT') {
+        window.parent.postMessage({
+          type: actionType,
+          payload: {
+            entity: {
+              name: entity.name,
+              type: entity.type,
+              target: entity.target,
+              params: entity.params,
+            },
+            timestamp: Date.now(),
+          },
+        }, '*');
+        return;
+      }
       window.parent.postMessage({ type: actionType, payload: { target: entity.target } }, '*');
     }
   };

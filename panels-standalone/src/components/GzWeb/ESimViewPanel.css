@@ -239,6 +239,70 @@
   color: var(--vscode-foreground, #cccccc);
 }
 
+.entity-nudge-controls {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--vscode-input-border, #3e3e3e);
+  display: grid;
+  gap: 8px;
+}
+
+.nudge-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.nudge-target {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #999999);
+}
+
+.nudge-step-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.nudge-step-label input {
+  width: 76px;
+  border-radius: 6px;
+  border: 1px solid var(--vscode-input-border, #3e3e3e);
+  background: var(--vscode-input-background, #1f1f1f);
+  color: var(--vscode-input-foreground, #cccccc);
+  padding: 4px 6px;
+}
+
+.nudge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.nudge-grid button {
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 6px;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  padding: 6px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nudge-grid button:hover:enabled {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.nudge-grid button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* ============================================================================
    Info Popup Styles - Large and Extensive with VSCode Theme Variables
    ============================================================================ */

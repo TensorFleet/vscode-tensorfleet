@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExpandLess, ExpandMore, Wifi, WifiOff } from '@mui/icons-material';
 import { IconButton, Tooltip } from '@mui/material';
+import { EntityCardData, ENTITY_CONTROL_MESSAGES } from './EntityCardData';
 import './GzWebPanel.css';
 
 declare global {
@@ -9,10 +10,22 @@ declare global {
   }
 }
 
-type SceneManagerTransport = { root?: unknown };
+type PoseVector = { x: number; y: number; z: number };
+type PoseQuaternion = { x: number; y: number; z: number; w: number };
+type GazeboPose = { name: string; position: PoseVector; orientation: PoseQuaternion };
+
+type SceneManagerTransport = {
+  root?: unknown;
+  getWorld?: () => string;
+  subscribe?: (topic: { name: string; cb: (msg: any) => void }) => void;
+  unsubscribe?: (topicName: string) => void;
+  requestService?: (service: string, msgType: string, msgObj: unknown) => void;
+};
+
 type SceneManagerInstance = {
   destroy: () => void;
   resize: () => void;
+  select?: (entityName: string) => void;
   transport?: SceneManagerTransport;
 };
 
@@ -325,6 +338,59 @@ const getInitialFlag = (key: string, fallback: boolean) => {
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
 };
 
+const getGazeboEntityName = (entity: EntityCardData): string => {
+  const mapped = entity.params?.gazebo_entity;
+  if (typeof mapped === 'string' && mapped.trim().length > 0) {
+    return mapped.trim();
+  }
+  return entity.target;
+};
+
+const toEntityCardData = (payload: unknown): EntityCardData | null => {
+  if (!payload || typeof payload !== 'object') return null;
+  const entity = (payload as { entity?: unknown }).entity;
+  if (entity && typeof entity === 'object') {
+    const candidate = entity as Partial<EntityCardData>;
+    if (typeof candidate.name === 'string' && typeof candidate.target === 'string') {
+      return {
+        name: candidate.name,
+        type: typeof candidate.type === 'string' ? candidate.type : 'unknown',
+        target: candidate.target,
+        params: (candidate.params ?? {}) as Record<string, unknown>,
+      };
+    }
+  }
+
+  const target = (payload as { target?: unknown }).target;
+  if (typeof target === 'string' && target.trim().length > 0) {
+    return {
+      name: target,
+      type: 'unknown',
+      target,
+      params: {},
+    };
+  }
+  return null;
+};
+
+const toPoseVector = (value: unknown): PoseVector | null => {
+  if (!value || typeof value !== 'object') return null;
+  const vector = value as Partial<PoseVector>;
+  if (typeof vector.x !== 'number' || typeof vector.y !== 'number' || typeof vector.z !== 'number') {
+    return null;
+  }
+  return { x: vector.x, y: vector.y, z: vector.z };
+};
+
+const toPoseQuaternion = (value: unknown): PoseQuaternion | null => {
+  if (!value || typeof value !== 'object') return null;
+  const q = value as Partial<PoseQuaternion>;
+  if (typeof q.x !== 'number' || typeof q.y !== 'number' || typeof q.z !== 'number' || typeof q.w !== 'number') {
+    return null;
+  }
+  return { x: q.x, y: q.y, z: q.z, w: q.w };
+};
+
 export const GzWebPanel: React.FC = () => {
   const originalWebSocket = useRef<typeof WebSocket | null>(null);
   const sceneManagerRef = useRef<SceneManagerInstance | null>(null);
@@ -376,6 +442,10 @@ export const GzWebPanel: React.FC = () => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [selectedEntity, setSelectedEntity] = useState<EntityCardData | null>(null);
+  const [entityControlStatus, setEntityControlStatus] = useState('');
+  const dynamicPoseTopicRef = useRef<string | null>(null);
+  const entityPoseRef = useRef<Map<string, GazeboPose>>(new Map());
 
   const resetWebSocketToNative = useCallback(() => {
     if (originalWebSocket.current) {
@@ -395,11 +465,99 @@ export const GzWebPanel: React.FC = () => {
     tokenRef.current = token;
   }, [token]);
 
+  const nudgeEntity = useCallback(
+    (entity: EntityCardData, delta: PoseVector) => {
+      const manager = sceneManagerRef.current;
+      const transport = manager?.transport;
+      if (!manager || !transport) {
+        setEntityControlStatus('Nudge ignored: scene not ready');
+        return;
+      }
+
+      const world = transport.getWorld?.();
+      if (!world) {
+        setEntityControlStatus('Nudge ignored: world is unavailable');
+        return;
+      }
+
+      const gazeboEntity = getGazeboEntityName(entity);
+      const currentPose = entityPoseRef.current.get(gazeboEntity);
+      if (!currentPose) {
+        setEntityControlStatus(`Nudge ignored: no pose for ${gazeboEntity}`);
+        return;
+      }
+
+      const nextPose: GazeboPose = {
+        name: gazeboEntity,
+        position: {
+          x: currentPose.position.x + delta.x,
+          y: currentPose.position.y + delta.y,
+          z: currentPose.position.z + delta.z,
+        },
+        orientation: currentPose.orientation,
+      };
+
+      transport.requestService?.(
+        `/world/${world}/set_pose`,
+        'ignition.msgs.Pose',
+        nextPose,
+      );
+
+      entityPoseRef.current.set(gazeboEntity, nextPose);
+      setEntityControlStatus(
+        `Nudged ${gazeboEntity} by (${delta.x.toFixed(2)}, ${delta.y.toFixed(2)}, ${delta.z.toFixed(2)})`,
+      );
+    },
+    [],
+  );
+
+  const handleEntityControlMessage = useCallback(
+    (event: MessageEvent) => {
+      const message = event.data as { type?: string; payload?: unknown };
+      if (!message?.type) return;
+
+      if (message.type === ENTITY_CONTROL_MESSAGES.SELECT) {
+        const entity = toEntityCardData(message.payload);
+        if (!entity) return;
+        setSelectedEntity(entity);
+        const gazeboEntity = getGazeboEntityName(entity);
+        sceneManagerRef.current?.select?.(gazeboEntity);
+        setEntityControlStatus(`Selected ${gazeboEntity}`);
+        return;
+      }
+
+      if (message.type !== ENTITY_CONTROL_MESSAGES.NUDGE) return;
+
+      const entityFromMessage = toEntityCardData(message.payload);
+      const entity = entityFromMessage ?? selectedEntity;
+      if (!entity) {
+        setEntityControlStatus('Nudge ignored: no selected entity');
+        return;
+      }
+
+      const payload = (message.payload ?? {}) as { delta?: unknown };
+      const delta = toPoseVector(payload.delta);
+      if (!delta) {
+        setEntityControlStatus('Nudge ignored: invalid delta payload');
+        return;
+      }
+
+      nudgeEntity(entity, delta);
+    },
+    [nudgeEntity, selectedEntity],
+  );
+
   const destroyScene = useCallback(() => {
     if (resizeHandlerRef.current) {
       window.removeEventListener('resize', resizeHandlerRef.current);
       resizeHandlerRef.current = null;
     }
+    const activeTopic = dynamicPoseTopicRef.current;
+    if (activeTopic) {
+      sceneManagerRef.current?.transport?.unsubscribe?.(activeTopic);
+      dynamicPoseTopicRef.current = null;
+    }
+    entityPoseRef.current.clear();
     if (sceneManagerRef.current) {
       sceneManagerRef.current.destroy();
       sceneManagerRef.current = null;
@@ -719,6 +877,51 @@ export const GzWebPanel: React.FC = () => {
   }, [destroyScene, resetWebSocketToNative]);
 
   useEffect(() => {
+    window.addEventListener('message', handleEntityControlMessage);
+    return () => window.removeEventListener('message', handleEntityControlMessage);
+  }, [handleEntityControlMessage]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const interval = setInterval(() => {
+      const transport = sceneManagerRef.current?.transport;
+      if (!transport) return;
+
+      const world = transport.getWorld?.();
+      if (!world) return;
+
+      const topicName = `/world/${world}/dynamic_pose/info`;
+      if (dynamicPoseTopicRef.current === topicName) return;
+
+      if (dynamicPoseTopicRef.current) {
+        transport.unsubscribe?.(dynamicPoseTopicRef.current);
+      }
+
+      transport.subscribe?.({
+        name: topicName,
+        cb: (msg: { pose?: Array<{ name?: string; position?: unknown; orientation?: unknown }> }) => {
+          for (const poseEntry of msg.pose ?? []) {
+            if (!poseEntry.name) continue;
+            const position = toPoseVector(poseEntry.position);
+            const orientation = toPoseQuaternion(poseEntry.orientation);
+            if (!position || !orientation) continue;
+            entityPoseRef.current.set(poseEntry.name, {
+              name: poseEntry.name,
+              position,
+              orientation,
+            });
+          }
+        },
+      });
+
+      dynamicPoseTopicRef.current = topicName;
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [isConnected]);
+
+  useEffect(() => {
     if (hasAutoConnected.current) return;
     if (!vmBase.trim()) return;
     if (!nodeId.trim() && vmIdFetchState !== 'success') return;
@@ -842,9 +1045,17 @@ export const GzWebPanel: React.FC = () => {
                 <div>
                   VM ID: <code>{nodeId.trim() || 'unset'}</code>
                 </div>
+                <div>
+                  Selected: <code>{selectedEntity ? getGazeboEntityName(selectedEntity) : 'none'}</code>
+                </div>
                 <div className={`gzweb-status ${statusClass}`}>
                   Status: <span>{statusLabel}</span>
                 </div>
+                {entityControlStatus && (
+                  <div className="gzweb-hint">
+                    {entityControlStatus}
+                  </div>
+                )}
               </div>
 
               <form

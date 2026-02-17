@@ -4,7 +4,10 @@ import { fetchFeaturedEntities, FeaturedEntityData } from 'tensorfleet-util/ros/
 import './ESimViewPanel.css';
 import {
   EntityClickMessage,
+  EntityNudgeMessage,
+  EntitySelectMessage,
   CARD_MESSAGES,
+  ENTITY_CONTROL_MESSAGES,
 } from './EntityCardData';
 import {
   EntityInfoPopupMessage,
@@ -15,6 +18,12 @@ import { EntityCard } from './EntityCard';
 
 // Adapt FeaturedEntityData to EntityCardData
 type EntityCardData = FeaturedEntityData;
+const DEFAULT_NUDGE_STEP = 0.1;
+
+const parseStep = (raw: unknown): number => {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_NUDGE_STEP;
+};
 
 // ============================================================================
 // FeaturedEntitiesPanel Component
@@ -26,8 +35,10 @@ export const FeaturedEntitiesPanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(() => ros2Bridge.isConnected());
 
-  // Track active card state for styling
+  // Track active card state for styling + nudge controls
   const [activeCard, setActiveCard] = useState<string | null>(null);
+  const [selectedEntity, setSelectedEntity] = useState<EntityCardData | null>(null);
+  const [nudgeStep, setNudgeStep] = useState(DEFAULT_NUDGE_STEP);
 
   // Monitor connection status like other components do
   useEffect(() => {
@@ -89,6 +100,10 @@ export const FeaturedEntitiesPanel: React.FC = () => {
 
   // Handle main card click - sends window message for modularity
   const handleCardClick = useCallback((entity: EntityCardData) => {
+    setActiveCard(entity.name);
+    setSelectedEntity(entity);
+    setNudgeStep(parseStep(entity.params?.nudge_step));
+
     const message: EntityClickMessage = {
       type: CARD_MESSAGES.CLICK,
       payload: {
@@ -96,12 +111,17 @@ export const FeaturedEntitiesPanel: React.FC = () => {
         timestamp: Date.now(),
       },
     };
-    
-    // Send message to parent window for external module communication
     window.parent.postMessage(message, '*');
-    
-    // Log for debugging
-    console.log(`FeaturedEntitiesPanel: Card clicked - ${entity.name}`, message);
+
+    const selectMessage: EntitySelectMessage = {
+      type: ENTITY_CONTROL_MESSAGES.SELECT,
+      payload: {
+        entity,
+        timestamp: Date.now(),
+      },
+    };
+    window.parent.postMessage(selectMessage, '*');
+    console.log(`FeaturedEntitiesPanel: Card selected - ${entity.name}`, selectMessage);
   }, []);
 
   // Handle info button click - sends window message to open popup
@@ -133,6 +153,27 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     window.parent.postMessage(clickMessage, '*');
     console.log(`FeaturedEntitiesPanel: Info button clicked - ${entity.name}`, message);
   }, []);
+
+  const handleNudge = useCallback((delta: { x: number; y: number; z: number }) => {
+    if (!selectedEntity) return;
+
+    const message: EntityNudgeMessage = {
+      type: ENTITY_CONTROL_MESSAGES.NUDGE,
+      payload: {
+        entity: selectedEntity,
+        delta: {
+          x: delta.x * nudgeStep,
+          y: delta.y * nudgeStep,
+          z: delta.z * nudgeStep,
+        },
+        step: nudgeStep,
+        timestamp: Date.now(),
+      },
+    };
+
+    window.parent.postMessage(message, '*');
+    console.log(`FeaturedEntitiesPanel: Entity nudged - ${selectedEntity.name}`, message);
+  }, [nudgeStep, selectedEntity]);
 
   if (loading) {
     return (
@@ -169,6 +210,46 @@ export const FeaturedEntitiesPanel: React.FC = () => {
             />
           ))
         )}
+      </div>
+
+      <div className="entity-nudge-controls">
+        <div className="nudge-header">
+          Runtime Nudge
+          <span className="nudge-target">{selectedEntity?.name ?? 'Select an entity'}</span>
+        </div>
+
+        <label className="nudge-step-label">
+          Step
+          <input
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={nudgeStep}
+            onChange={(event) => setNudgeStep(parseStep(event.target.value))}
+            disabled={!selectedEntity}
+          />
+        </label>
+
+        <div className="nudge-grid">
+          <button type="button" onClick={() => handleNudge({ x: 0, y: 1, z: 0 })} disabled={!selectedEntity}>
+            +Y
+          </button>
+          <button type="button" onClick={() => handleNudge({ x: -1, y: 0, z: 0 })} disabled={!selectedEntity}>
+            -X
+          </button>
+          <button type="button" onClick={() => handleNudge({ x: 1, y: 0, z: 0 })} disabled={!selectedEntity}>
+            +X
+          </button>
+          <button type="button" onClick={() => handleNudge({ x: 0, y: -1, z: 0 })} disabled={!selectedEntity}>
+            -Y
+          </button>
+          <button type="button" onClick={() => handleNudge({ x: 0, y: 0, z: 1 })} disabled={!selectedEntity}>
+            +Z
+          </button>
+          <button type="button" onClick={() => handleNudge({ x: 0, y: 0, z: -1 })} disabled={!selectedEntity}>
+            -Z
+          </button>
+        </div>
       </div>
     </div>
   );
