@@ -82,22 +82,34 @@
 
 .featured-entities-container {
   background: var(--vscode-editor-background, #1e1e1e);
-  border-radius: 8px;
-  padding: 16px;
-  height: fit-content;
+  border-radius: 10px;
+  padding: 14px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .featured-entities-container h3 {
-  margin: 0 0 12px 0;
-  font-size: 16px;
+  margin: 0;
+  font-size: 17px;
   font-weight: 600;
   color: var(--vscode-foreground, #cccccc);
+}
+
+.featured-entities-subtitle {
+  margin: -4px 0 2px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, #999999);
 }
 
 .featured-entities-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-height: 42vh;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 /* ============================================================================
@@ -117,7 +129,7 @@
 
 /* Hover Effect - Scale up and highlight border */
 .entity-card:hover {
-  transform: translateY(-2px) scale(1.02);
+  transform: translateY(-1px);
   border-color: var(--vscode-focusBorder, #007fd4);
   background: var(--vscode-list-hoverBackground, #2a2d2e);
 }
@@ -125,9 +137,10 @@
 /* Active/Click Effect - Scale down slightly */
 .entity-card:active,
 .entity-card.active {
-  transform: translateY(0) scale(0.98);
+  transform: translateY(0);
   border-color: var(--vscode-focusBorder, #007fd4);
-  background: var(--vscode-list-activeSelectionBackground, #094771);
+  background: color-mix(in srgb, var(--vscode-list-activeSelectionBackground, #094771) 60%, transparent);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 /* Entity Header */
@@ -178,9 +191,9 @@
 
 /* Info Button - Outline style with $(info) icon - Blocks main card click */
 .info-button {
-  width: 22px;
-  height: 22px;
-  min-width: 22px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
   border-radius: 4px;
   border: 1px solid transparent;
   background: transparent;
@@ -240,24 +253,89 @@
 }
 
 .entity-nudge-controls {
-  margin-top: 12px;
-  padding-top: 10px;
+  margin-top: auto;
+  padding-top: 12px;
   border-top: 1px solid var(--vscode-input-border, #3e3e3e);
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background, #252526) 55%, transparent);
+  border-radius: 10px;
+  padding: 10px;
 }
 
 .nudge-header {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--vscode-foreground, #cccccc);
 }
 
+.nudge-header-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nudge-control-pill {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+}
+
+.nudge-control-pill.enabled {
+  background: rgba(56, 189, 113, 0.18);
+  color: #84efb6;
+  border-color: rgba(80, 223, 141, 0.35);
+}
+
+.nudge-control-pill.locked {
+  background: rgba(234, 179, 8, 0.16);
+  color: #f3d06f;
+  border-color: rgba(234, 179, 8, 0.35);
+}
+
 .nudge-target {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, #999999);
+  font-weight: 500;
+}
+
+.nudge-target-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
   font-size: 11px;
   color: var(--vscode-descriptionForeground, #999999);
+}
+
+.nudge-target-meta code {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--vscode-foreground, #cccccc);
+  border-radius: 6px;
+  padding: 2px 6px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nudge-warning {
+  font-size: 12px;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--vscode-descriptionForeground, #999999) 65%, #f3d06f);
+  background: rgba(234, 179, 8, 0.07);
+  border: 1px solid rgba(234, 179, 8, 0.18);
+  border-radius: 8px;
+  padding: 8px 10px;
 }
 
 .nudge-step-label {
@@ -270,27 +348,54 @@
 }
 
 .nudge-step-label input {
-  width: 76px;
-  border-radius: 6px;
+  width: 84px;
+  border-radius: 8px;
   border: 1px solid var(--vscode-input-border, #3e3e3e);
   background: var(--vscode-input-background, #1f1f1f);
   color: var(--vscode-input-foreground, #cccccc);
-  padding: 4px 6px;
+  padding: 6px 8px;
+}
+
+.nudge-step-presets {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.nudge-step-presets button {
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 8px;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  padding: 6px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.nudge-step-presets button:hover:enabled {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.nudge-step-presets button.active {
+  background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 80%, black);
+  color: var(--vscode-button-foreground, #ffffff);
+  border-color: color-mix(in srgb, var(--vscode-button-background, #0e639c) 80%, white);
 }
 
 .nudge-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .nudge-grid button {
   border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--vscode-button-secondaryBackground, #3a3d41);
   color: var(--vscode-button-secondaryForeground, #cccccc);
-  padding: 6px 8px;
+  padding: 8px 10px;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -301,6 +406,15 @@
 .nudge-grid button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.nudge-hint {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #999999);
+}
+
+.nudge-hint.locked {
+  color: color-mix(in srgb, var(--vscode-descriptionForeground, #999999) 75%, #f3d06f);
 }
 
 /* ============================================================================
