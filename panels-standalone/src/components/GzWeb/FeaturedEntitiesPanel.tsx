@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
 import { fetchFeaturedEntities, FeaturedEntityData } from 'tensorfleet-util/ros/fetchFeaturedEntities';
 import './ESimViewPanel.css';
 import {
   EntityClickMessage,
   EntityNudgeMessage,
+  EntityNudgeStatusMessage,
   EntitySelectMessage,
   CARD_MESSAGES,
   ENTITY_CONTROL_MESSAGES,
@@ -15,57 +16,46 @@ import {
 } from './EntityInfoPopup';
 import { EntityInfoData } from './EntityInfoPopup';
 import { EntityCard } from './EntityCard';
+import { getGazeboEntityName, getPoseEditAccess } from './posePolicy';
 
 // Adapt FeaturedEntityData to EntityCardData
 type EntityCardData = FeaturedEntityData;
 const POC_MOVE_DISTANCE_XY = 4.0;
 const POC_MOVE_DISTANCE_Z = 2.0;
 
-const getGazeboEntityName = (entity: EntityCardData | null): string => {
-  if (!entity) return '';
-  const mapped = entity.params?.gazebo_entity;
-  if (typeof mapped === 'string' && mapped.trim().length > 0) {
-    return mapped.trim();
-  }
-  return entity.target;
+type MoveStatusTone = 'pending' | 'success' | 'error';
+
+type MoveStatusUi = {
+  tone: MoveStatusTone;
+  message: string;
 };
 
-type PoseEditAccess = {
-  enabled: boolean;
-  reason?: string;
-};
-
-const getPoseEditAccess = (entity: EntityCardData | null): PoseEditAccess => {
-  if (!entity) return { enabled: false };
-
-  const editable = entity.params?.runtime_pose_editable;
-  const policy = entity.params?.pose_edit_policy;
-  const note = entity.params?.pose_edit_note;
-  const gazeboEntity = getGazeboEntityName(entity);
-
-  if (typeof editable === 'boolean') {
-    return {
-      enabled: editable,
-      reason: !editable && typeof note === 'string' ? note : undefined,
-    };
+const toNudgeStatusMessage = (data: unknown): EntityNudgeStatusMessage | null => {
+  if (!data || typeof data !== 'object') return null;
+  const candidate = data as Partial<EntityNudgeStatusMessage>;
+  if (candidate.type !== ENTITY_CONTROL_MESSAGES.NUDGE_STATUS || !candidate.payload) {
+    return null;
   }
-
-  if (typeof policy === 'string' && policy.toLowerCase() === 'locked') {
-    return {
-      enabled: false,
-      reason: typeof note === 'string' ? note : 'Pose edits are disabled for this entity.',
-    };
+  const payload = candidate.payload as Partial<EntityNudgeStatusMessage['payload']>;
+  if (
+    typeof payload.entity !== 'string' ||
+    typeof payload.message !== 'string' ||
+    (payload.state !== 'pending' && payload.state !== 'success' && payload.state !== 'error')
+  ) {
+    return null;
   }
-
-  // Fallback until every featured entity explicitly declares its pose policy.
-  if (entity.type.toLowerCase() === 'arm' || gazeboEntity.startsWith('so101')) {
-    return {
-      enabled: false,
-      reason: 'Arm base is fixed in this simulation, so runtime nudging is disabled.',
-    };
-  }
-
-  return { enabled: true };
+  return {
+    type: ENTITY_CONTROL_MESSAGES.NUDGE_STATUS,
+    payload: {
+      entity: payload.entity,
+      message: payload.message,
+      state: payload.state,
+      timestamp: typeof payload.timestamp === 'number' ? payload.timestamp : Date.now(),
+      requestId: typeof payload.requestId === 'string' ? payload.requestId : undefined,
+      attempt: typeof payload.attempt === 'number' ? payload.attempt : undefined,
+      maxAttempts: typeof payload.maxAttempts === 'number' ? payload.maxAttempts : undefined,
+    },
+  };
 };
 
 // ============================================================================
@@ -81,6 +71,8 @@ export const FeaturedEntitiesPanel: React.FC = () => {
   // Track active card state for styling + nudge controls
   const [activeCard, setActiveCard] = useState<string | null>(null);
   const [selectedEntity, setSelectedEntity] = useState<EntityCardData | null>(null);
+  const [moveStatus, setMoveStatus] = useState<MoveStatusUi | null>(null);
+  const activeMoveRequestIdRef = useRef<string | null>(null);
   const poseEditAccess = useMemo(() => getPoseEditAccess(selectedEntity), [selectedEntity]);
   const nudgeControlsDisabled = !selectedEntity || !poseEditAccess.enabled;
 
@@ -130,22 +122,51 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     loadFeaturedEntities();
   }, [isConnected]);
 
-// Handle window messages for popup close from parent
+  // Handle window messages for popup close + move status updates.
   useEffect(() => {
-    const handleMessage = (event: MessageEvent<EntityInfoPopupMessage>) => {
+    const handleMessage = (event: MessageEvent<EntityInfoPopupMessage | EntityNudgeStatusMessage>) => {
       if (event.data.type === ENTITY_INFO_POPUP_MESSAGES.CLOSE) {
         // Popup was closed externally - nothing to do here
+        return;
+      }
+
+      const statusMessage = toNudgeStatusMessage(event.data);
+      if (!statusMessage) {
+        return;
+      }
+
+      const activeRequestId = activeMoveRequestIdRef.current;
+      if (activeRequestId && statusMessage.payload.requestId !== activeRequestId) {
+        return;
+      }
+
+      if (!activeRequestId) {
+        const selectedGazeboEntity = getGazeboEntityName(selectedEntity);
+        if (selectedGazeboEntity && statusMessage.payload.entity !== selectedGazeboEntity) {
+          return;
+        }
+      }
+
+      setMoveStatus({
+        tone: statusMessage.payload.state,
+        message: statusMessage.payload.message,
+      });
+
+      if (statusMessage.payload.state !== 'pending') {
+        activeMoveRequestIdRef.current = null;
       }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [selectedEntity]);
 
   // Handle main card click - sends window message for modularity
   const handleCardClick = useCallback((entity: EntityCardData) => {
     setActiveCard(entity.name);
     setSelectedEntity(entity);
+    setMoveStatus(null);
+    activeMoveRequestIdRef.current = null;
 
     const message: EntityClickMessage = {
       type: CARD_MESSAGES.CLICK,
@@ -199,6 +220,9 @@ export const FeaturedEntitiesPanel: React.FC = () => {
 
   const handlePocMove = useCallback((delta: { x: number; y: number; z: number }) => {
     if (!selectedEntity || !poseEditAccess.enabled) return;
+    const requestId = `nudge-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
+    activeMoveRequestIdRef.current = requestId;
+    setMoveStatus({ tone: 'pending', message: 'Sending move request...' });
 
     const appliedDelta = {
       x: delta.x * POC_MOVE_DISTANCE_XY,
@@ -210,6 +234,7 @@ export const FeaturedEntitiesPanel: React.FC = () => {
       type: ENTITY_CONTROL_MESSAGES.NUDGE,
       payload: {
         entity: selectedEntity,
+        requestId,
         delta: appliedDelta,
         step: POC_MOVE_DISTANCE_XY,
         timestamp: Date.now(),
@@ -305,6 +330,11 @@ export const FeaturedEntitiesPanel: React.FC = () => {
         <div className={`nudge-hint ${nudgeControlsDisabled ? 'locked' : ''}`}>
           {nudgeControlsDisabled ? 'Move disabled for current selection.' : 'Each click sends a large delta for clear visual proof of movement.'}
         </div>
+        {moveStatus && (
+          <div className={`nudge-status ${moveStatus.tone}`}>
+            {moveStatus.message}
+          </div>
+        )}
       </div>
     </div>
   );

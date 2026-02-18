@@ -417,6 +417,32 @@
   color: color-mix(in srgb, var(--vscode-descriptionForeground, #999999) 75%, #f3d06f);
 }
 
+.nudge-status {
+  font-size: 11px;
+  line-height: 1.35;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 8px 10px;
+}
+
+.nudge-status.pending {
+  color: #9dc8ff;
+  background: rgba(58, 136, 255, 0.12);
+  border-color: rgba(58, 136, 255, 0.28);
+}
+
+.nudge-status.success {
+  color: #84efb6;
+  background: rgba(56, 189, 113, 0.12);
+  border-color: rgba(80, 223, 141, 0.28);
+}
+
+.nudge-status.error {
+  color: #ffaeae;
+  background: rgba(229, 80, 80, 0.12);
+  border-color: rgba(229, 80, 80, 0.28);
+}
+
 /* ============================================================================
    Info Popup Styles - Large and Extensive with VSCode Theme Variables
    ============================================================================ */

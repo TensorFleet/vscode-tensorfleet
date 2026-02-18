@@ -1,7 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExpandLess, ExpandMore, Wifi, WifiOff } from '@mui/icons-material';
 import { IconButton, Tooltip } from '@mui/material';
-import { EntityCardData, ENTITY_CONTROL_MESSAGES } from './EntityCardData';
+import { EntityCardData, ENTITY_CONTROL_MESSAGES, EntityNudgeStatusState } from './EntityCardData';
+import {
+  addPoseVector,
+  buildPoseNameAliases,
+  GazeboPose,
+  getEntityNameCandidates,
+  isExpectedPoseObserved,
+  poseNameMatchesAliases,
+  resolvePoseEntry,
+  resolveVisualOffset,
+  toPoseQuaternion,
+  toPoseVector,
+  PoseQuaternion,
+  PoseVector,
+  unique,
+} from './moveControl';
+import { getGazeboEntityName } from './posePolicy';
 import './GzWebPanel.css';
 
 declare global {
@@ -9,10 +25,6 @@ declare global {
     OriginalWebSocket?: typeof WebSocket;
   }
 }
-
-type PoseVector = { x: number; y: number; z: number };
-type PoseQuaternion = { x: number; y: number; z: number; w: number };
-type GazeboPose = { name: string; position: PoseVector; orientation: PoseQuaternion; id?: number };
 
 type SceneManagerTransport = {
   root?: unknown;
@@ -67,6 +79,57 @@ declare global {
 
 const GZWEB_MODULE_URL = 'https://esm.sh/gzweb@2.0.14?bundle';
 const SCENE_ELEMENT_ID = 'gz-scene';
+const MOVE_RESULT_TIMEOUT_MS = 2500;
+const MOVE_MAX_ATTEMPTS = 3;
+const MOVE_POSITION_TOLERANCE_METERS = 0.75;
+
+type PendingMoveRequest = {
+  requestId: string;
+  entity: string;
+  aliases: string[];
+  expectedPosition: PoseVector;
+  expectedDelta: PoseVector;
+  expectedPoseId?: number;
+  baselineByName: Map<string, PoseVector>;
+  lastObserved?: {
+    name?: string;
+    id?: number;
+    position: PoseVector;
+    distanceToExpected: number;
+  };
+  attempt: number;
+  maxAttempts: number;
+  timeoutId?: ReturnType<typeof setTimeout>;
+};
+
+const shouldRequirePoseConfirmation = (entity: EntityCardData): boolean => {
+  const explicit = entity.params?.runtime_pose_confirm_required;
+  if (typeof explicit === 'boolean') {
+    return explicit;
+  }
+
+  const policy = entity.params?.pose_confirm_policy;
+  if (typeof policy === 'string') {
+    const normalized = policy.toLowerCase();
+    if (normalized === 'required' || normalized === 'strict') {
+      return true;
+    }
+    if (normalized === 'best_effort' || normalized === 'optional' || normalized === 'disabled') {
+      return false;
+    }
+  }
+
+  // PX4/flight-controlled vehicles can accept set_pose but immediately be driven
+  // by controllers, making dynamic_pose-based confirmation unreliable.
+  const entityType = entity.type.toLowerCase();
+  const mappedName = getGazeboEntityName(entity).toLowerCase();
+  const target = entity.target.toLowerCase();
+  if (entityType === 'drone' || mappedName.includes('x500') || target.includes('mavros')) {
+    return false;
+  }
+
+  return true;
+};
 
 const pixelFormatEnumJson = {
   gz: {
@@ -339,14 +402,6 @@ const getInitialFlag = (key: string, fallback: boolean) => {
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
 };
 
-const getGazeboEntityName = (entity: EntityCardData): string => {
-  const mapped = entity.params?.gazebo_entity;
-  if (typeof mapped === 'string' && mapped.trim().length > 0) {
-    return mapped.trim();
-  }
-  return entity.target;
-};
-
 const toEntityCardData = (payload: unknown): EntityCardData | null => {
   if (!payload || typeof payload !== 'object') return null;
   const entity = (payload as { entity?: unknown }).entity;
@@ -372,24 +427,6 @@ const toEntityCardData = (payload: unknown): EntityCardData | null => {
     };
   }
   return null;
-};
-
-const toPoseVector = (value: unknown): PoseVector | null => {
-  if (!value || typeof value !== 'object') return null;
-  const vector = value as Partial<PoseVector>;
-  if (typeof vector.x !== 'number' || typeof vector.y !== 'number' || typeof vector.z !== 'number') {
-    return null;
-  }
-  return { x: vector.x, y: vector.y, z: vector.z };
-};
-
-const toPoseQuaternion = (value: unknown): PoseQuaternion | null => {
-  if (!value || typeof value !== 'object') return null;
-  const q = value as Partial<PoseQuaternion>;
-  if (typeof q.x !== 'number' || typeof q.y !== 'number' || typeof q.z !== 'number' || typeof q.w !== 'number') {
-    return null;
-  }
-  return { x: q.x, y: q.y, z: q.z, w: q.w };
 };
 
 const POSE_MESSAGE_TYPE_CANDIDATES = [
@@ -444,59 +481,6 @@ const getOrderedPoseVectorMessageTypes = (transport: SceneManagerTransport, worl
   return defaultOrder.sort((a, b) => Number(b.startsWith(preferredPrefix)) - Number(a.startsWith(preferredPrefix)));
 };
 
-const getEntityNameCandidates = (entity: EntityCardData): string[] => {
-  const mapped = getGazeboEntityName(entity);
-  const includeBase = mapped.endsWith('_include')
-    ? mapped.slice(0, -'_include'.length)
-    : undefined;
-  const targetBase = entity.target.endsWith('_include')
-    ? entity.target.slice(0, -'_include'.length)
-    : undefined;
-  return unique([
-    mapped,
-    includeBase,
-    entity.target,
-    targetBase,
-    entity.name,
-  ]);
-};
-
-const resolvePoseEntry = (
-  poses: Map<string, GazeboPose>,
-  requestedName: string,
-): { poseName: string; pose: GazeboPose } | null => {
-  const direct = poses.get(requestedName);
-  if (direct) {
-    return { poseName: requestedName, pose: direct };
-  }
-
-  const candidates: Array<{ poseName: string; pose: GazeboPose; score: number }> = [];
-
-  for (const [poseName, pose] of poses.entries()) {
-    let score = -1;
-    if (poseName.endsWith(`::${requestedName}`)) {
-      // world::model
-      score = 30;
-    } else if (poseName.startsWith(`${requestedName}::`)) {
-      // model::link
-      score = 20;
-    } else if (poseName.includes(`::${requestedName}::`)) {
-      // world::model::link
-      score = 10;
-    }
-    if (score >= 0) {
-      candidates.push({ poseName, pose, score });
-    }
-  }
-
-  if (candidates.length === 0) return null;
-  candidates.sort((a, b) => {
-    if (a.score !== b.score) return b.score - a.score;
-    return a.poseName.length - b.poseName.length;
-  });
-  return { poseName: candidates[0].poseName, pose: candidates[0].pose };
-};
-
 const toOptionalNumber = (value: unknown): number | undefined => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
@@ -515,28 +499,6 @@ const toOptionalNumber = (value: unknown): number | undefined => {
     }
   }
   return undefined;
-};
-
-const addPoseVector = (a: PoseVector, b: PoseVector): PoseVector => ({
-  x: a.x + b.x,
-  y: a.y + b.y,
-  z: a.z + b.z,
-});
-
-const resolveVisualOffset = (
-  offsets: Map<string, PoseVector>,
-  world: string,
-  poseName: string,
-): PoseVector | null => {
-  const unscopedName = poseName.includes('::')
-    ? poseName.split('::').slice(1).join('::')
-    : undefined;
-  return (
-    offsets.get(poseName) ??
-    offsets.get(`${world}::${poseName}`) ??
-    (unscopedName ? offsets.get(unscopedName) : undefined) ??
-    null
-  );
 };
 
 const toPoseFromSceneObject = (obj: any): GazeboPose | null => {
@@ -646,10 +608,6 @@ const applyPoseToScene = (
   return false;
 };
 
-const unique = (items: Array<string | undefined>) => {
-  return [...new Set(items.filter((value): value is string => Boolean(value && value.trim().length > 0)))];
-};
-
 export const GzWebPanel: React.FC = () => {
   const originalWebSocket = useRef<typeof WebSocket | null>(null);
   const sceneManagerRef = useRef<SceneManagerInstance | null>(null);
@@ -729,24 +687,98 @@ export const GzWebPanel: React.FC = () => {
     tokenRef.current = token;
   }, [token]);
 
+  const moveRequestCounterRef = useRef(0);
+  const pendingMoveRef = useRef<PendingMoveRequest | null>(null);
+
+  const clearVisualOffsets = useCallback((aliases: string[]) => {
+    for (const alias of aliases) {
+      entityVisualOffsetRef.current.delete(alias);
+    }
+  }, []);
+
+  const clearPendingMoveTimer = useCallback((pending: PendingMoveRequest | null) => {
+    if (!pending?.timeoutId) return;
+    clearTimeout(pending.timeoutId);
+    pending.timeoutId = undefined;
+  }, []);
+
+  const clearPendingMove = useCallback((reason?: string) => {
+    const pending = pendingMoveRef.current;
+    if (!pending) return;
+    clearPendingMoveTimer(pending);
+    clearVisualOffsets(pending.aliases);
+    if (reason) {
+      const payload = {
+        requestId: pending.requestId,
+        entity: pending.entity,
+        state: 'error' as const,
+        message: reason,
+        attempt: pending.attempt,
+        maxAttempts: pending.maxAttempts,
+        timestamp: Date.now(),
+      };
+      setEntityControlStatus(payload.message);
+      window.parent.postMessage(
+        { type: ENTITY_CONTROL_MESSAGES.NUDGE_STATUS, payload },
+        '*',
+      );
+    }
+    pendingMoveRef.current = null;
+  }, [clearPendingMoveTimer, clearVisualOffsets]);
+
+  const emitNudgeStatus = useCallback((
+    state: EntityNudgeStatusState,
+    message: string,
+    details: {
+      requestId?: string;
+      entity: string;
+      attempt?: number;
+      maxAttempts?: number;
+    },
+  ) => {
+    const payload = {
+      requestId: details.requestId,
+      entity: details.entity,
+      state,
+      message,
+      attempt: details.attempt,
+      maxAttempts: details.maxAttempts,
+      timestamp: Date.now(),
+    };
+    setEntityControlStatus(payload.message);
+    window.parent.postMessage(
+      { type: ENTITY_CONTROL_MESSAGES.NUDGE_STATUS, payload },
+      '*',
+    );
+  }, []);
+
   const nudgeEntity = useCallback(
-    (entity: EntityCardData, delta: PoseVector) => {
+    (entity: EntityCardData, delta: PoseVector, requestIdFromMessage?: string) => {
       const manager = sceneManagerRef.current;
       const transport = manager?.transport;
+      const mappedEntityName = getGazeboEntityName(entity);
+      const requestId =
+        requestIdFromMessage ??
+        `nudge-${Date.now().toString(36)}-${(++moveRequestCounterRef.current).toString(36)}`;
       if (!manager || !transport) {
-        setEntityControlStatus('Move ignored: scene not ready');
+        emitNudgeStatus('error', 'Move ignored: scene not ready', { requestId, entity: mappedEntityName });
         return;
       }
       if (!transport.requestService) {
-        setEntityControlStatus('Move failed: transport service calls are unavailable');
+        emitNudgeStatus('error', 'Move failed: transport service calls are unavailable', {
+          requestId,
+          entity: mappedEntityName,
+        });
         return;
       }
 
       const world = transport.getWorld?.();
       if (!world) {
-        setEntityControlStatus('Move ignored: world is unavailable');
+        emitNudgeStatus('error', 'Move ignored: world is unavailable', { requestId, entity: mappedEntityName });
         return;
       }
+
+      clearPendingMove();
 
       const entityNameCandidates = getEntityNameCandidates(entity);
       let resolvedPoseEntry: { poseName: string; pose: GazeboPose } | null = null;
@@ -778,7 +810,7 @@ export const GzWebPanel: React.FC = () => {
           entityPoseRef.current.size === 0
             ? 'Move ignored: waiting for dynamic poses'
             : `Move ignored: no pose for ${entityNameCandidates.join(' / ')}`;
-        setEntityControlStatus(hint);
+        emitNudgeStatus('error', hint, { requestId, entity: mappedEntityName });
         console.warn('[GzWebPanel] No pose entry found for entity candidates', entityNameCandidates, [
           ...entityPoseRef.current.keys(),
         ]);
@@ -824,67 +856,80 @@ export const GzWebPanel: React.FC = () => {
         resolvedEntityName,
       ]);
 
-      for (const poseRequestName of requestNames) {
-        const nextPose: GazeboPose = {
-          name: poseRequestName,
-          position: {
-            x: canonicalNextPose.position.x,
-            y: canonicalNextPose.position.y,
-            z: canonicalNextPose.position.z,
-          },
-          orientation: canonicalNextPose.orientation,
-        };
-        if (typeof currentPose.id === 'number') {
-          nextPose.id = currentPose.id;
-        }
+      const sendMoveRequests = (attempt: number): boolean => {
+        let attemptRequested = false;
+        for (const poseRequestName of requestNames) {
+          const nextPose: GazeboPose = {
+            name: poseRequestName,
+            position: {
+              x: canonicalNextPose.position.x,
+              y: canonicalNextPose.position.y,
+              z: canonicalNextPose.position.z,
+            },
+            orientation: canonicalNextPose.orientation,
+          };
+          if (typeof currentPose.id === 'number') {
+            nextPose.id = currentPose.id;
+          }
 
-        for (const msgType of msgTypeCandidates) {
-          try {
-            transport.requestService(poseServiceName, msgType, nextPose);
-            requested = true;
-            console.info('[GzWebPanel] Requested set_pose', {
-              world,
-              serviceName: poseServiceName,
-              msgType,
-              poseName: poseRequestName,
-              mappedEntity: getGazeboEntityName(entity),
-              resolvedEntityName,
-              resolvedPoseName: poseName,
-              poseId: currentPose.id,
-            });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (!message.includes('no such type')) {
-              console.warn(`set_pose request failed for ${msgType}`, error);
+          for (const msgType of msgTypeCandidates) {
+            try {
+              transport.requestService(poseServiceName, msgType, nextPose);
+              attemptRequested = true;
+              console.info('[GzWebPanel] Requested set_pose', {
+                attempt,
+                world,
+                serviceName: poseServiceName,
+                msgType,
+                poseName: poseRequestName,
+                mappedEntity: getGazeboEntityName(entity),
+                resolvedEntityName,
+                resolvedPoseName: poseName,
+                poseId: currentPose.id,
+              });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (!message.includes('no such type')) {
+                console.warn(`set_pose request failed for ${msgType}`, error);
+              }
+            }
+          }
+
+          for (const msgType of msgVectorTypeCandidates) {
+            try {
+              transport.requestService(poseVectorServiceName, msgType, { pose: [nextPose] });
+              attemptRequested = true;
+              console.info('[GzWebPanel] Requested set_pose_vector', {
+                attempt,
+                world,
+                serviceName: poseVectorServiceName,
+                msgType,
+                poseName: poseRequestName,
+                mappedEntity: getGazeboEntityName(entity),
+                resolvedEntityName,
+                resolvedPoseName: poseName,
+                poseId: currentPose.id,
+              });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (!message.includes('no such type')) {
+                console.warn(`set_pose_vector request failed for ${msgType}`, error);
+              }
             }
           }
         }
+        return attemptRequested;
+      };
 
-        for (const msgType of msgVectorTypeCandidates) {
-          try {
-            transport.requestService(poseVectorServiceName, msgType, { pose: [nextPose] });
-            requested = true;
-            console.info('[GzWebPanel] Requested set_pose_vector', {
-              world,
-              serviceName: poseVectorServiceName,
-              msgType,
-              poseName: poseRequestName,
-              mappedEntity: getGazeboEntityName(entity),
-              resolvedEntityName,
-              resolvedPoseName: poseName,
-              poseId: currentPose.id,
-            });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (!message.includes('no such type')) {
-              console.warn(`set_pose_vector request failed for ${msgType}`, error);
-            }
-          }
-        }
-      }
+      requested = sendMoveRequests(1);
 
       if (!requested) {
-        setEntityControlStatus('Move failed: no compatible Pose / Pose_V protobuf message types in current gzweb root');
+        clearVisualOffsets(visualOffsetAliases);
+        emitNudgeStatus(
+          'error',
+          'Move failed: no compatible Pose / Pose_V protobuf message types in current gzweb root',
+          { requestId, entity: mappedEntityName, attempt: 1, maxAttempts: MOVE_MAX_ATTEMPTS },
+        );
         return;
       }
 
@@ -901,11 +946,86 @@ export const GzWebPanel: React.FC = () => {
         ]),
         canonicalNextPose,
       );
-      setEntityControlStatus(
-        `Move requested for ${resolvedEntityName || getGazeboEntityName(entity)} by (${delta.x.toFixed(2)}, ${delta.y.toFixed(2)}, ${delta.z.toFixed(2)})`,
+      const moveEntity = resolvedEntityName || mappedEntityName;
+      const aliases = buildPoseNameAliases(world, unique([
+        ...requestNames,
+        poseName,
+        worldScopedPoseName,
+        unscopedPoseName,
+      ]));
+      const requirePoseConfirmation = shouldRequirePoseConfirmation(entity);
+
+      if (!requirePoseConfirmation) {
+        // Keep the visual nudge briefly, then let authoritative stream win.
+        setTimeout(() => clearVisualOffsets(aliases), 800);
+        emitNudgeStatus(
+          'success',
+          `Move request sent for ${moveEntity} (stream confirmation optional for this entity)`,
+          { requestId, entity: moveEntity, attempt: 1, maxAttempts: 1 },
+        );
+        return;
+      }
+
+      const aliasSet = new Set(aliases);
+      const baselineByName = new Map<string, PoseVector>();
+      for (const [cachedPoseName, cachedPose] of entityPoseRef.current.entries()) {
+        if (poseNameMatchesAliases(cachedPoseName, aliasSet)) {
+          baselineByName.set(cachedPoseName, cachedPose.position);
+        }
+      }
+      const pendingMove: PendingMoveRequest = {
+        requestId,
+        entity: moveEntity,
+        aliases,
+        expectedPosition: canonicalNextPose.position,
+        expectedDelta: delta,
+        expectedPoseId: currentPose.id,
+        baselineByName,
+        attempt: 1,
+        maxAttempts: MOVE_MAX_ATTEMPTS,
+      };
+      pendingMoveRef.current = pendingMove;
+
+      emitNudgeStatus(
+        'pending',
+        `Move requested for ${moveEntity} by (${delta.x.toFixed(2)}, ${delta.y.toFixed(2)}, ${delta.z.toFixed(2)})`,
+        { requestId, entity: moveEntity, attempt: pendingMove.attempt, maxAttempts: pendingMove.maxAttempts },
       );
+
+      const scheduleTimeout = () => {
+        clearPendingMoveTimer(pendingMoveRef.current);
+        pendingMove.timeoutId = setTimeout(() => {
+          const active = pendingMoveRef.current;
+          if (!active || active.requestId !== requestId) {
+            return;
+          }
+
+          if (active.attempt >= active.maxAttempts) {
+            const timeoutMessage = active.lastObserved
+              ? `Move failed: timed out waiting for dynamic pose confirmation (last: ${active.lastObserved.name ?? 'unknown'} @ ${active.lastObserved.position.x.toFixed(2)}, ${active.lastObserved.position.y.toFixed(2)}, ${active.lastObserved.position.z.toFixed(2)}, dist ${active.lastObserved.distanceToExpected.toFixed(2)}m)`
+              : `Move failed: timed out waiting for dynamic pose confirmation (aliases: ${active.aliases.slice(0, 4).join(', ')})`;
+            clearPendingMove(timeoutMessage);
+            return;
+          }
+
+          active.attempt += 1;
+          emitNudgeStatus(
+            'pending',
+            `No pose update yet for ${active.entity}; retrying request`,
+            { requestId, entity: active.entity, attempt: active.attempt, maxAttempts: active.maxAttempts },
+          );
+          const retried = sendMoveRequests(active.attempt);
+          if (!retried) {
+            clearPendingMove('Move failed: retry could not send any compatible service request');
+            return;
+          }
+          scheduleTimeout();
+        }, MOVE_RESULT_TIMEOUT_MS);
+      };
+
+      scheduleTimeout();
     },
-    [],
+    [clearPendingMove, clearPendingMoveTimer, clearVisualOffsets, emitNudgeStatus],
   );
 
   const handleEntityControlMessage = useCallback(
@@ -932,14 +1052,15 @@ export const GzWebPanel: React.FC = () => {
         return;
       }
 
-      const payload = (message.payload ?? {}) as { delta?: unknown };
+      const payload = (message.payload ?? {}) as { delta?: unknown; requestId?: unknown };
       const delta = toPoseVector(payload.delta);
       if (!delta) {
         setEntityControlStatus('Move ignored: invalid delta payload');
         return;
       }
 
-      nudgeEntity(entity, delta);
+      const requestId = typeof payload.requestId === 'string' ? payload.requestId : undefined;
+      nudgeEntity(entity, delta, requestId);
     },
     [nudgeEntity, selectedEntity],
   );
@@ -965,6 +1086,8 @@ export const GzWebPanel: React.FC = () => {
     dynamicPoseTopicRef.current = null;
     dynamicPoseOriginalCbRef.current = null;
     dynamicPoseWrappedCbRef.current = null;
+    clearPendingMoveTimer(pendingMoveRef.current);
+    pendingMoveRef.current = null;
     entityPoseRef.current.clear();
     entityVisualOffsetRef.current.clear();
     if (sceneManagerRef.current) {
@@ -974,7 +1097,7 @@ export const GzWebPanel: React.FC = () => {
     setIsConnected(false);
     setStatusTone('muted');
     setStatusText('');
-  }, []);
+  }, [clearPendingMoveTimer]);
 
   const bindResize = useCallback((sceneMgr: SceneManagerInstance) => {
     const handler = () => sceneMgr?.resize();
@@ -1342,6 +1465,54 @@ export const GzWebPanel: React.FC = () => {
 
         originalCb(msgForRender);
 
+        const pendingMove = pendingMoveRef.current;
+        if (pendingMove) {
+          const aliasSet = new Set(pendingMove.aliases);
+          for (const poseEntry of msg.pose ?? []) {
+            const observedId = toOptionalNumber(poseEntry.id);
+            const idMatch =
+              typeof pendingMove.expectedPoseId === 'number' &&
+              typeof observedId === 'number' &&
+              observedId === pendingMove.expectedPoseId;
+            const nameMatch =
+              typeof poseEntry.name === 'string' &&
+              poseNameMatchesAliases(poseEntry.name, aliasSet);
+            if (!idMatch && !nameMatch) continue;
+            const observedPosition = toPoseVector(poseEntry.position);
+            if (!observedPosition) continue;
+            const dx = observedPosition.x - pendingMove.expectedPosition.x;
+            const dy = observedPosition.y - pendingMove.expectedPosition.y;
+            const dz = observedPosition.z - pendingMove.expectedPosition.z;
+            pendingMove.lastObserved = {
+              name: poseEntry.name,
+              id: observedId,
+              position: observedPosition,
+              distanceToExpected: Math.sqrt(dx * dx + dy * dy + dz * dz),
+            };
+          }
+
+          const observed = isExpectedPoseObserved(
+            msg.pose ?? [],
+            aliasSet,
+            pendingMove.expectedPosition,
+            MOVE_POSITION_TOLERANCE_METERS,
+            pendingMove.expectedPoseId,
+            pendingMove.expectedDelta,
+            pendingMove.baselineByName,
+          );
+          if (observed.matched) {
+            clearPendingMoveTimer(pendingMove);
+            clearVisualOffsets(pendingMove.aliases);
+            pendingMoveRef.current = null;
+            emitNudgeStatus('success', `Move confirmed for ${pendingMove.entity}`, {
+              requestId: pendingMove.requestId,
+              entity: pendingMove.entity,
+              attempt: pendingMove.attempt,
+              maxAttempts: pendingMove.maxAttempts,
+            });
+          }
+        }
+
         for (const poseEntry of msgForRender.pose ?? []) {
           if (!poseEntry.name) continue;
           const position = toPoseVector(poseEntry.position);
@@ -1364,7 +1535,7 @@ export const GzWebPanel: React.FC = () => {
     }, 250);
 
     return () => clearInterval(interval);
-  }, [isConnected]);
+  }, [clearPendingMoveTimer, clearVisualOffsets, emitNudgeStatus, isConnected]);
 
   useEffect(() => {
     if (hasAutoConnected.current) return;
