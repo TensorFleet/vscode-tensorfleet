@@ -10,6 +10,7 @@ import { EventEmitter2 } from "eventemitter2";
 import { GzObjLoader } from "./GzObjLoader";
 import { ModelUserData } from "./ModelUserData";
 import { OrbitControls } from "../include/OrbitControls";
+import { LayerMembershipManager } from "./LayerMembershipManager";
 
 import { createFuelUri } from "./FuelServer";
 import { Pose } from "./Pose";
@@ -145,6 +146,254 @@ export class Scene {
   private mousePointerDown: boolean = false;
   private currentFirstPersonLookAt = new THREE.Vector3();
 
+  // Layer management using LayerMembershipManager
+  private layerManager: LayerMembershipManager;
+
+  // Outline rendering targets
+  private outlineDepthTarget!: THREE.WebGLRenderTarget;
+  private outlineMaskTarget!: THREE.WebGLRenderTarget;
+
+  // Fullscreen quad for outline postprocessing
+  private outlinePostScene!: THREE.Scene;
+  private outlinePostCamera!: THREE.OrthographicCamera;
+  private outlinePostMaterial!: THREE.ShaderMaterial;
+  private outlinePostQuad!: THREE.Mesh;
+
+  // Outline clear colors
+  private outlineClearInfinity: THREE.Color = new THREE.Color(0x000000); // background for infinity
+
+  /**
+   * Add an object to the outline layer
+   * @param {THREE.Object3D} object - The object to outline
+   */
+  public addOutlineRoot(object: THREE.Object3D): void {
+    this.layerManager.addToLayer(object, VISUAL_LAYERS.OUTLINE);
+  }
+
+  /**
+   * Remove an object from the outline layer
+   * @param {THREE.Object3D} object - The object to stop outlining
+   */
+  public removeOutlineRoot(object: THREE.Object3D): void {
+    this.layerManager.removeFromLayer(object, VISUAL_LAYERS.OUTLINE);
+  }
+
+  /**
+   * Update layer membership for an object
+   * @param {THREE.Object3D} object - The object to update
+   * @param {number} layer - The layer number to update
+   * @param {boolean} enable - Whether to enable the layer
+   */
+  public updateLayerMembership(object: THREE.Object3D, layer: number, enable: boolean): void {
+    this.layerManager.updateLayerMembership(object, layer, enable);
+  }
+
+
+  /**
+   * Update outline layer membership for an object
+   * @param {THREE.Object3D} object - The object to update
+   * @param {boolean} enable - Whether to enable the outline layer
+   */
+  public updateOutlineLayerMembership(object: THREE.Object3D, enable: boolean): void {
+    this.layerManager.updateLayerMembership(object, VISUAL_LAYERS.OUTLINE, enable);
+  }
+
+  /**
+   * Render the outline mask to the stencil buffer
+   */
+  public renderOutlineMask(): void {
+    // Check if any objects have the outline layer enabled
+    let hasOutlineObjects = false;
+    let allObjects: THREE.Object3D[] = [];
+    getDescendants(this.scene, allObjects);
+    for (let i = 0; i < allObjects.length; ++i) {
+      if (allObjects[i].layers.test(VISUAL_LAYERS.OUTLINE)) {
+        hasOutlineObjects = true;
+        break;
+      }
+    }
+
+    if (!hasOutlineObjects) {
+      return;
+    }
+
+    // Render only the OUTLINE layer into outlineDepthTarget (with a black clear)
+    const prevTarget = this.renderer.getRenderTarget();
+    const prevClearColor = new THREE.Color();
+    this.renderer.getClearColor(prevClearColor);
+    const prevClearAlpha = this.renderer.getClearAlpha();
+
+    const prevAutoClear = this.renderer.autoClear;
+    this.renderer.autoClear = true;
+
+    // Use the main camera but restrict rendering to OUTLINE
+    this.camera.layers.enable(VISUAL_LAYERS.OUTLINE);
+
+    this.renderer.setRenderTarget(this.outlineDepthTarget);
+    this.renderer.setClearColor(this.outlineClearInfinity, 1.0);
+    this.renderer.clear(true, true, true);
+    this.renderer.render(this.scene, this.camera);
+
+    // Postprocess: depth -> mask (far = black, non-far = white)
+    this.renderer.setRenderTarget(this.outlineMaskTarget);
+    this.renderer.setClearColor(0x000000, 1.0);
+    this.renderer.clear(true, false, false);
+    this.renderer.render(this.outlinePostScene, this.outlinePostCamera);
+
+    // Restore camera layer for MAIN
+    this.camera.layers.set(VISUAL_LAYERS.MAIN);
+
+    // Restore renderer state
+    this.renderer.setRenderTarget(prevTarget);
+    this.renderer.setClearColor(prevClearColor, prevClearAlpha);
+    this.renderer.autoClear = prevAutoClear;
+  }
+
+  /**
+   * Resize outline render targets when the canvas size changes
+   */
+  public resizeOutlineTargets(): void {
+    const width = this.getDomElement().width;
+    const height = this.getDomElement().height;
+
+    // Dispose old targets
+    if (this.outlineDepthTarget) {
+      this.outlineDepthTarget.dispose();
+    }
+    if (this.outlineMaskTarget) {
+      this.outlineMaskTarget.dispose();
+    }
+
+    // Create new targets with updated size
+    this.outlineDepthTarget = new THREE.WebGLRenderTarget(width, height, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      depthBuffer: true,
+      stencilBuffer: true,
+    });
+
+    this.outlineMaskTarget = new THREE.WebGLRenderTarget(width, height, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      depthBuffer: true,
+      stencilBuffer: true,
+    });
+
+    // Update post-processing material uniforms
+    if (this.outlinePostMaterial) {
+      this.outlinePostMaterial.uniforms.tDepth.value = this.outlineDepthTarget.texture;
+      this.outlinePostMaterial.uniforms.tMask.value = this.outlineMaskTarget.texture;
+    }
+  }
+
+  /**
+   * Initialize the outline rendering pipeline
+   */
+  public initOutlinePipeline(): void {
+    const width = this.getDomElement().width;
+    const height = this.getDomElement().height;
+
+    // Create render targets for depth and mask
+    this.outlineDepthTarget = new THREE.WebGLRenderTarget(width, height, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      depthBuffer: true,
+      stencilBuffer: true,
+    });
+
+    this.outlineMaskTarget = new THREE.WebGLRenderTarget(width, height, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      depthBuffer: true,
+      stencilBuffer: true,
+    });
+
+    // Create post-processing scene
+    this.outlinePostScene = new THREE.Scene();
+    this.outlinePostCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    // Create fullscreen quad for outline post-processing
+    const quadGeometry = new THREE.PlaneGeometry(2, 2);
+    this.outlinePostMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        tDepth: { value: null },
+        tMask: { value: null },
+        cameraNear: { value: this.camera.near },
+        cameraFar: { value: this.camera.far },
+        outlineColor: { value: new THREE.Color(0xffffff) },
+        outlineThickness: { value: 2.0 },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDepth;
+        uniform sampler2D tMask;
+        uniform float cameraNear;
+        uniform float cameraFar;
+        uniform vec3 outlineColor;
+        uniform float outlineThickness;
+        
+        varying vec2 vUv;
+        
+        float readDepth(sampler2D depthSampler, vec2 uv) {
+          return texture2D(depthSampler, uv).r;
+        }
+        
+        void main() {
+          // Read depth and mask values
+          float depth = readDepth(tDepth, vUv);
+          vec4 mask = texture2D(tMask, vUv);
+          
+          // If this pixel is not part of any outline root, don't process
+          if (mask.a == 0.0) {
+            discard;
+          }
+          
+          // Check neighboring pixels for depth differences (edges)
+          float depthThreshold = 0.001;
+          float edge = 0.0;
+          
+          // Sample neighboring pixels
+          vec2 texelSize = 1.0 / vec2(textureSize(tDepth, 0));
+          
+          float depthRight = readDepth(tDepth, vUv + vec2(texelSize.x, 0.0));
+          float depthLeft = readDepth(tDepth, vUv - vec2(texelSize.x, 0.0));
+          float depthUp = readDepth(tDepth, vUv + vec2(0.0, texelSize.y));
+          float depthDown = readDepth(tDepth, vUv - vec2(0.0, texelSize.y));
+          
+          // Detect edges based on depth differences
+          edge = max(edge, abs(depth - depthRight));
+          edge = max(edge, abs(depth - depthLeft));
+          edge = max(edge, abs(depth - depthUp));
+          edge = max(edge, abs(depth - depthDown));
+          
+          // Apply outline if edge is detected
+          if (edge > depthThreshold) {
+            gl_FragColor = vec4(outlineColor, 1.0);
+          } else {
+            discard;
+          }
+        }
+      `,
+    });
+
+    this.outlinePostQuad = new THREE.Mesh(quadGeometry, this.outlinePostMaterial);
+    this.outlinePostScene.add(this.outlinePostQuad);
+  }
+
   constructor(config: SceneConfig) {
     this.emitter = new EventEmitter2({ verboseMemoryLeak: true });
     this.shaders = config.shaders;
@@ -169,6 +418,9 @@ export class Scene {
     }
 
     this.init();
+
+    // Initialize outline pipeline
+    this.initOutlinePipeline();
 
     /**
      * @member {string} selectEntity
@@ -423,6 +675,7 @@ export class Scene {
     let width: number = this.getDomElement().width;
     let height: number = this.getDomElement().height;
     this.camera = new THREE.PerspectiveCamera(60, width / height, 0.01, 1000);
+    this.camera.layers.enable(VISUAL_LAYERS.MAIN);
     this.resetView();
 
     // Clock used to time the camera 'move_to' motion.
@@ -1352,6 +1605,24 @@ export class Scene {
 
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
+
+    // Render outline if there are any outline roots
+    let hasOutlineObjects = false;
+    let allObjects: THREE.Object3D[] = [];
+    getDescendants(this.scene, allObjects);
+    for (let i = 0; i < allObjects.length; ++i) {
+      if (allObjects[i].layers.test(VISUAL_LAYERS.OUTLINE)) {
+        hasOutlineObjects = true;
+        break;
+      }
+    }
+
+    this.renderOutlineMask();
+    
+    // Render the outline post-processing effect
+    this.renderer.setRenderTarget(null);
+    this.renderer.clearDepth();
+    this.renderer.render(this.outlinePostScene, this.outlinePostCamera);
 
     this.renderer.clearDepth();
     if (this.sceneOrtho && this.cameraOrtho) {
