@@ -106,6 +106,10 @@ export default defineConfig({
         find: /^@types\/([^/]+)/,
         replacement: `${typesDir}/$1`,
       },
+      {
+        find: /^gzweb(\/.*)?$/,
+        replacement: `${packagesDir}/gzweb/src$1`,
+      },
     ],
   },
 

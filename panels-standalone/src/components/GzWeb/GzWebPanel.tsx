@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExpandLess, ExpandMore, Wifi, WifiOff } from '@mui/icons-material';
 import { IconButton, Tooltip } from '@mui/material';
+import { SceneManager } from 'gzweb';
 import './GzWebPanel.css';
 
 declare global {
@@ -667,10 +668,6 @@ export const GzWebPanel: React.FC = () => {
     setActiveWsUrl(websocketUrl);
 
     try {
-      const { SceneManager } = (await import(
-        /* @vite-ignore */ GZWEB_MODULE_URL
-      )) as { SceneManager: SceneManagerConstructor };
-
       const manager = new SceneManager({
         elementId: SCENE_ELEMENT_ID,
         websocketUrl,
