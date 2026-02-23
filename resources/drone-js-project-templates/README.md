@@ -45,7 +45,8 @@ Use the VSCode extension commands for local USB serial to VM MAVLink tunneling. 
    - **Connect/Disconnect Real Telemetry** (changes based on tunnel state)
 3. Configure tunnel once in project `.env`:
    - `TENSORFLEET_MAVLINK_SERIAL_PATH=/dev/ttyACM0`
-   - `TENSORFLEET_MAVLINK_BAUD_RATE=115200`
+   - `TENSORFLEET_MAVLINK_BAUD_RATE=115200` (direct USB flight-controller serial)
+   - `TENSORFLEET_MAVLINK_BAUD_RATE=57600` (telemetry radio links, typically `/dev/ttyUSB*`)
 4. After tunnel connection, run telemetry/tutorial scripts normally (for example `bun tutorial:02`).
    - `02_telemetry.js` now includes examples for monitoring **IMU data** (Linear Acceleration and Gyro) alongside standard MAVROS state.
 5. When done, use **Connect/Disconnect Real Telemetry** again to release serial + websocket cleanly.

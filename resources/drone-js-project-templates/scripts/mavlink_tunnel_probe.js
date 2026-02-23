@@ -49,10 +49,14 @@ function usage() {
       "Usage:",
       "  node scripts/mavlink_tunnel_probe.js \\",
       "    [--serial-path /dev/ttyACM0] \\",
-      "    [--baud-rate 115200] \\",
+      "    [--baud-rate 57600|115200] \\",
       "    [--target-port 14600] \\",
       "    [--duration-seconds 10] \\",
       "    [--require-ws-rx false]",
+      "",
+      "Default baud is inferred from serial path when omitted:",
+      "  - /dev/ttyUSB* (telemetry radios) -> 57600",
+      "  - otherwise -> 115200",
       "",
       "Connection fields (vm-manager-url, token, node-id) are auto-loaded",
       "from src/lib/tensorfleet_config.js by default.",
@@ -104,6 +108,24 @@ async function detectSerialPath() {
   }
 }
 
+function isLikelyTelemetryRadioSerialPath(serialPath) {
+  const normalized = String(serialPath || "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (/\/dev\/ttyusb\d+/.test(normalized)) {
+    return true;
+  }
+  if (normalized.includes("/dev/cu.usbserial") || normalized.includes("/dev/tty.usbserial")) {
+    return true;
+  }
+  return normalized.includes("telemetry") || normalized.includes("radio") || normalized.includes("sik");
+}
+
+function suggestBaudRate(serialPath) {
+  return isLikelyTelemetryRadioSerialPath(serialPath) ? 57600 : 115200;
+}
+
 async function main() {
   if (typeof Bun !== "undefined") {
     console.error(
@@ -120,7 +142,7 @@ async function main() {
   const autoSerialPath = await detectSerialPath();
 
   const serialPath = args["serial-path"] || autoSerialPath || "";
-  const baudRate = toNumber(args["baud-rate"], 115200);
+  const baudRate = toNumber(args["baud-rate"], suggestBaudRate(serialPath));
   const vmManagerUrl = args["vm-manager-url"] || settings.vmManagerUrl || settings.baseUrl || "";
   const token = args.token || settings.token || "";
   const nodeId = args["node-id"] || settings.nodeId || "";

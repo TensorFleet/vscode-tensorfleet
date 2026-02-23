@@ -758,6 +758,8 @@ let currentDroneRuntimeMode: DroneMode | 'UNKNOWN' = 'UNKNOWN';
 let lastDroneModeResolveAttemptMs = 0;
 let droneSetupNudgeInFlight = false;
 const DEFAULT_MAVLINK_TARGET_PORT = 14600;
+const DEFAULT_MAVLINK_BAUD_USB_SERIAL = 115200;
+const DEFAULT_MAVLINK_BAUD_TELEMETRY_RADIO = 57600;
 
 
 
@@ -2850,7 +2852,7 @@ async function ensureDroneTelemetryDeviceConfig(
   const serialPath = await promptForDroneTelemetrySerialPort();
   if (!serialPath) return undefined;
 
-  const baudRate = await promptForDroneTelemetryBaudRate();
+  const baudRate = await promptForDroneTelemetryBaudRate(serialPath);
   if (!baudRate) return undefined;
 
   await persistDroneTelemetryDeviceConfig(folder, serialPath, baudRate);
@@ -2933,11 +2935,35 @@ async function promptForDroneTelemetrySerialPort(): Promise<string | undefined> 
   });
 }
 
-async function promptForDroneTelemetryBaudRate(): Promise<number | undefined> {
+function isLikelyTelemetryRadioSerialPath(serialPath: string): boolean {
+  const normalized = serialPath.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (/\/dev\/ttyusb\d+/.test(normalized)) {
+    return true;
+  }
+
+  if (normalized.includes('/dev/cu.usbserial') || normalized.includes('/dev/tty.usbserial')) {
+    return true;
+  }
+
+  return normalized.includes('telemetry') || normalized.includes('radio') || normalized.includes('sik');
+}
+
+function suggestDroneTelemetryBaudRate(serialPath: string): number {
+  return isLikelyTelemetryRadioSerialPath(serialPath)
+    ? DEFAULT_MAVLINK_BAUD_TELEMETRY_RADIO
+    : DEFAULT_MAVLINK_BAUD_USB_SERIAL;
+}
+
+async function promptForDroneTelemetryBaudRate(serialPath: string): Promise<number | undefined> {
+  const suggestedBaudRate = suggestDroneTelemetryBaudRate(serialPath);
   const input = await vscode.window.showInputBox({
     title: 'TensorFleet: Connect Drone Telemetry',
-    prompt: 'Enter MAVLink serial baud rate',
-    value: '115200',
+    prompt: 'Enter MAVLink serial baud rate (USB serial often 115200, telemetry radios often 57600)',
+    value: String(suggestedBaudRate),
     ignoreFocusOut: true,
     validateInput: (value) => {
       const parsed = Number(value);
