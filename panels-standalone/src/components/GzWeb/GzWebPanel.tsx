@@ -4,6 +4,7 @@ import { IconButton, Tooltip } from '@mui/material';
 import { SceneManager } from 'gzweb';
 import { CARD_MESSAGES } from './EntityCardData';
 import './GzWebPanel.css';
+import { isModuleName } from 'typescript';
 
 declare global {
   interface Window {
@@ -549,7 +550,7 @@ export const GzWebPanel: React.FC = () => {
     };
   }, [setVmBase, setToken]);
 
-  // Handle hover messages to add/remove objects from outline layer
+    // Handle hover messages to add/remove objects from outline layer
   const handleHoverMessage = useCallback((msg: any) => {
     if (!sceneManagerRef.current) {
       console.warn('SceneManager not available for hover message:', msg);
@@ -557,46 +558,48 @@ export const GzWebPanel: React.FC = () => {
     }
 
     const { type, payload } = msg;
-    const { entityName } = payload;
+    const { entityName, modelNames } = payload;
 
-    try {
-      // Get the 3D object from the modelMap using the entity name
-      const modelObject = sceneManagerRef.current.getModelByName?.(entityName);
-      
-      if (!modelObject) {
-        console.warn(`Model object not found for entity: ${entityName}`);
-        return;
-      }
-
-      // Get the Scene instance to access outline functions
-      const scene = sceneManagerRef.current.scene;
-      
-      if (!scene) {
-        console.warn('Scene not available for outline operations');
-        return;
-      }
-
-      if (type === CARD_MESSAGES.HOVER_START) {
-        // Add object to outline layer
-        if (scene.addOutlineRoot) {
-          scene.addOutlineRoot(modelObject);
-          console.log(`Added ${entityName} to outline layer`);
-        } else if (scene.updateOutlineLayerMembership) {
-          scene.updateOutlineLayerMembership(modelObject, true);
-          console.log(`Enabled outline for ${entityName}`);
+    // Get the 3D object from the modelMap using the entity name
+    for (const modelName of modelNames) {
+      try {
+        const modelObject = sceneManagerRef.current.getModelByName?.(modelName);
+        
+        if (!modelObject) {
+          console.warn(`Model object not found for entity: ${entityName}/${modelName}`);
+          return;
         }
-      } else if (type === CARD_MESSAGES.HOVER_END) {
-        // Remove object from outline layer
-        if (scene.removeOutlineRoot) {
-          scene.removeOutlineRoot(modelObject);
-          console.log(`Removed ${entityName} from outline layer`);
-        } else if (scene.updateOutlineLayerMembership) {
-          scene.updateOutlineLayerMembership(modelObject, false);
-          console.log(`Disabled outline for ${entityName}`);
+
+        // Get the Scene instance to access outline functions
+        const scene = sceneManagerRef.current.scene;
+        
+        if (!scene) {
+          console.warn('Scene not available for outline operations');
+          return;
         }
+
+        if (type === CARD_MESSAGES.HOVER_START) {
+          // Add object to outline layer
+          if (scene.addOutlineRoot) {
+            scene.addOutlineRoot(modelObject);
+            console.log(`Added ${entityName} to outline layer`);
+          } else if (scene.updateOutlineLayerMembership) {
+            scene.updateOutlineLayerMembership(modelObject, true);
+            console.log(`Enabled outline for ${entityName}`);
+          }
+        } else if (type === CARD_MESSAGES.HOVER_END) {
+          // Remove object from outline layer
+          if (scene.removeOutlineRoot) {
+            scene.removeOutlineRoot(modelObject);
+            console.log(`Removed ${entityName} from outline layer`);
+          } else if (scene.updateOutlineLayerMembership) {
+            scene.updateOutlineLayerMembership(modelObject, false);
+            console.log(`Disabled outline for ${entityName}`);
+          }
+        }
+      } catch (error) {
+        console.error('Error handling hover message:', error);
       }
-    } catch (error) {
-      console.error('Error handling hover message:', error);
     }
   }, []);
 
