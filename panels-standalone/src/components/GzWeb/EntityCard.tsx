@@ -46,6 +46,7 @@ export const EntityCard: React.FC<EntityCardProps> = ({
       type: CARD_MESSAGES.HOVER_START,
       payload: {
         entityName: entity.name,
+        modelNames: entity.getModelNames(),
         timestamp: Date.now(),
       },
     };
