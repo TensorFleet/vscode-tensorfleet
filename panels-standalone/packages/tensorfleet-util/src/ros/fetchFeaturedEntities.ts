@@ -12,6 +12,7 @@ export interface FeaturedEntityData {
   type: string;
   target: string;
   params: Record<string, unknown>;
+  getModelNames(): string[];
 }
 
 /**
@@ -52,6 +53,13 @@ export async function fetchFeaturedEntities(bridge: ROS2BridgeApi): Promise<Feat
             type: params.type || 'unknown',
             target,
             params,
+            getModelNames() {
+              const modelNames = this.params.model_names;
+              if (Array.isArray(modelNames)) {
+                return modelNames.map(name => String(name));
+              }
+              return [];
+            }
           });
         } catch (parseError) {
           console.warn(`Failed to parse params for ${nodeName}:`, parseError);
@@ -76,6 +84,13 @@ export async function fetchFeaturedEntities(bridge: ROS2BridgeApi): Promise<Feat
             type: params.type || 'unknown',
             target: displayName,
             params,
+            getModelNames() {
+              const modelNames = this.params.model_names;
+              if (Array.isArray(modelNames)) {
+                return modelNames.map(name => String(name));
+              }
+              return [];
+            }
           });
         } catch (parseError) {
           console.warn(`Failed to parse params for ${nodeName}:`, parseError);
@@ -87,6 +102,13 @@ export async function fetchFeaturedEntities(bridge: ROS2BridgeApi): Promise<Feat
           type: 'unknown',
           target: displayName,
           params: {},
+          getModelNames() {
+            const modelNames = this.params.model_names;
+            if (Array.isArray(modelNames)) {
+              return modelNames.map(name => String(name));
+            }
+            return [];
+          }
         });
       }
     }

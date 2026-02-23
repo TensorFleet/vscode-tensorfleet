@@ -104,6 +104,11 @@ export class SceneManager {
   private models: any[] = [];
 
   /**
+   * Map of model name to 3D object for quick lookup.
+   */
+  private modelMap: Map<string, any> = new Map();
+
+  /**
    * A sun directional light for global illumination
    */
   private sunLight: object;
@@ -307,6 +312,57 @@ export class SceneManager {
   }
 
   /**
+   * Get a 3D model object by its name
+   * @param name The name of the model to retrieve
+   * @return The 3D model object, or undefined if not found
+   */
+  public getModelByName(name: string): any {
+    return this.modelMap.get(name);
+  }
+
+  /**
+   * Remove a model by name from both the models array and the modelMap
+   * @param name The name of the model to remove
+   * @return true if the model was found and removed, false otherwise
+   */
+  public removeModelByName(name: string): boolean {
+    // Find the model in the models array
+    const foundIndex = this.getModelIndex(name);
+    
+    if (foundIndex >= 0) {
+      // Remove from the models array
+      this.models.splice(foundIndex, 1);
+      
+      // Remove from the modelMap
+      this.modelMap.delete(name);
+      
+      // Remove from the scene
+      const modelObj = this.scene.getByName(name);
+      if (modelObj) {
+        this.scene.remove(modelObj);
+      }
+      
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Clear all models from the scene, models array, and modelMap
+   */
+  public clearAllModels(): void {
+    // Remove all models from the scene
+    this.scene.removeAll();
+    
+    // Clear the models array
+    this.models.length = 0;
+    
+    // Clear the modelMap
+    this.modelMap.clear();
+  }
+
+  /**
    * Disconnect from the Gazebo server
    */
   public disconnect(): void {
@@ -321,6 +377,9 @@ export class SceneManager {
     this.transport.disconnect();
     this.sceneInfo = {};
     this.connectionStatus = "disconnected";
+
+    // Clear all models and mappings
+    this.clearAllModels();
 
     // Unsubscribe from observables.
     if (this.sceneInfoSubscription) {
@@ -405,9 +464,10 @@ export class SceneManager {
             { model },
             { enableLights: this.enableLights },
           );
-
+          console.log("Gazebo visualization : adding ", modelObj.name);
           model["gz3dName"] = modelObj.name;
           this.models.push(model);
+          this.modelMap.set(model.name, modelObj);
           this.scene.add(modelObj);
         });
 
@@ -550,6 +610,7 @@ export class SceneManager {
               { enableLights: this.enableLights },
             );
             this.models.push(model);
+            this.modelMap.set(model.name, modelObj);
             this.scene.add(modelObj);
           } else {
             // Make sure to update the exisiting models so that future pose

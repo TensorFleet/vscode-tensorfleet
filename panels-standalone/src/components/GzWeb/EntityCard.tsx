@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { EntityCardData } from './EntityCardData';
+import { EntityCardData, CARD_MESSAGES } from './EntityCardData';
 
 // ============================================================================
 // EntityCard Component
@@ -41,10 +41,40 @@ export const EntityCard: React.FC<EntityCardProps> = ({
     e.stopPropagation();
   }, []);
 
+  const handleMouseEnter = useCallback(() => {
+    const message = {
+      type: CARD_MESSAGES.HOVER_START,
+      payload: {
+        entityName: entity.name,
+        timestamp: Date.now(),
+      },
+    };
+    
+    window.parent.postMessage(message, '*');
+    console.log(`EntityCard: Hover start - ${entity.name}`, message);
+  }, [entity.name]);
+
+  const handleMouseLeave = useCallback(() => {
+    const message = {
+      type: CARD_MESSAGES.HOVER_END,
+      payload: {
+        entityName: entity.name,
+        modelNames: entity.getModelNames(),
+        timestamp: Date.now(),
+      },
+    };
+    
+    window.parent.postMessage(message, '*');
+    
+    console.log(`EntityCard: Hover end - ${entity.name} -> ${message.payload.modelNames}`, message);
+  }, [entity.name]);
+
   return (
     <div
       className={`entity-card ${isActive ? 'active' : ''}`}
       onClick={() => onCardClick(entity)}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {

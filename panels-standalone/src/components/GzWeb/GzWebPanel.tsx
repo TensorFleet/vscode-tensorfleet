@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ExpandLess, ExpandMore, Wifi, WifiOff } from '@mui/icons-material';
 import { IconButton, Tooltip } from '@mui/material';
 import { SceneManager } from 'gzweb';
+import { CARD_MESSAGES } from './EntityCardData';
 import './GzWebPanel.css';
 
 declare global {
@@ -15,6 +16,8 @@ type SceneManagerInstance = {
   destroy: () => void;
   resize: () => void;
   transport?: SceneManagerTransport;
+  scene?: any; // The Scene instance
+  getModelByName?: (name: string) => any; // Method to get model by name
 };
 
 type SceneManagerConstructor = new (args: {
@@ -163,7 +166,7 @@ const installVmManagerWebSocketShim = (
     private _ws: WebSocket;
     private _ready = false;
     private _queue: unknown[] = [];
-    private _listeners: { [K in keyof WebSocketEventMap]: Array<(ev: WebSocketEventMap[K]) => void> } = {
+    private _listeners: { [K in keyof WebSocketEventMap]: Array<(ev: any) => void> } = {
       open: [],
       message: [],
       close: [],
@@ -250,12 +253,12 @@ const installVmManagerWebSocketShim = (
       return this._ws.bufferedAmount;
     }
 
-    send(data: unknown) {
+    send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
       if (!this._ready) {
         this._queue.push(data);
         return;
       }
-      this._ws.send(data as any);
+      this._ws.send(data);
     }
 
     close(code?: number, reason?: string) {
@@ -493,6 +496,14 @@ export const GzWebPanel: React.FC = () => {
 
     const handleMessage = (event: MessageEvent) => {
       const msg = event.data;
+      
+      // Handle hover messages for outline functionality
+      if (msg && (msg.type === CARD_MESSAGES.HOVER_START || msg.type === CARD_MESSAGES.HOVER_END)) {
+        handleHoverMessage(msg);
+        return;
+      }
+      
+      // Handle existing VM manager messages
       if (!msg || msg.command !== 'tensorfleet.vmManagerInfo') return;
       const payload = (msg.payload ?? {}) as HostVmInfo;
       hostVmInfoRef.current = payload;
@@ -537,6 +548,57 @@ export const GzWebPanel: React.FC = () => {
       hostVmResolversRef.current = [];
     };
   }, [setVmBase, setToken]);
+
+  // Handle hover messages to add/remove objects from outline layer
+  const handleHoverMessage = useCallback((msg: any) => {
+    if (!sceneManagerRef.current) {
+      console.warn('SceneManager not available for hover message:', msg);
+      return;
+    }
+
+    const { type, payload } = msg;
+    const { entityName } = payload;
+
+    try {
+      // Get the 3D object from the modelMap using the entity name
+      const modelObject = sceneManagerRef.current.getModelByName?.(entityName);
+      
+      if (!modelObject) {
+        console.warn(`Model object not found for entity: ${entityName}`);
+        return;
+      }
+
+      // Get the Scene instance to access outline functions
+      const scene = sceneManagerRef.current.scene;
+      
+      if (!scene) {
+        console.warn('Scene not available for outline operations');
+        return;
+      }
+
+      if (type === CARD_MESSAGES.HOVER_START) {
+        // Add object to outline layer
+        if (scene.addOutlineRoot) {
+          scene.addOutlineRoot(modelObject);
+          console.log(`Added ${entityName} to outline layer`);
+        } else if (scene.updateOutlineLayerMembership) {
+          scene.updateOutlineLayerMembership(modelObject, true);
+          console.log(`Enabled outline for ${entityName}`);
+        }
+      } else if (type === CARD_MESSAGES.HOVER_END) {
+        // Remove object from outline layer
+        if (scene.removeOutlineRoot) {
+          scene.removeOutlineRoot(modelObject);
+          console.log(`Removed ${entityName} from outline layer`);
+        } else if (scene.updateOutlineLayerMembership) {
+          scene.updateOutlineLayerMembership(modelObject, false);
+          console.log(`Disabled outline for ${entityName}`);
+        }
+      }
+    } catch (error) {
+      console.error('Error handling hover message:', error);
+    }
+  }, []);
 
   const requestHostVmInfo = useCallback(async (): Promise<HostVmInfo | null> => {
     const api = vscodeApiRef.current;
