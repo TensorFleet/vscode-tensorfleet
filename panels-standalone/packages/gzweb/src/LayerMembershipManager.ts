@@ -10,7 +10,6 @@ export class LayerMembershipManager {
   private layerObjects: Map<number, Set<THREE.Object3D>> = new Map();
 
   constructor() {
-    this.patchObject3DPrototype();
   }
 
   /**
@@ -49,29 +48,86 @@ export class LayerMembershipManager {
 
   /**
    * Update layer membership for an object
-   * @param {THREE.Object3D} object - The object to update
-   * @param {number} layer - The layer number (0-31)
-   * @param {boolean} enable - Whether to enable the layer
    */
   public updateLayerMembership(object: THREE.Object3D, layer: number, enable: boolean): void {
     if (enable) {
-      // Add to layer
-      object.traverse((child) => {
-        child.layers.enable(layer);
-      });
+      object.traverse((child) => child.layers.enable(layer));
     } else {
-      // Remove from layer
-      object.traverse((child) => {
-        child.layers.disable(layer);
-      });
+      object.traverse((child) => child.layers.disable(layer));
     }
   }
 
   /**
+   * Called when an object is added anywhere in the graph.
+   *
+   * Handles:
+   * ✔ ancestor tracked → new subtree inherits layers
+   * ✔ subtree contains tracked nodes → propagate down
+   */
+  public handleObjectAdd(object: THREE.Object3D) {
+    if (!object) return;
+
+    // accumulate tracked layers from ancestors
+    const inheritedLayers: number[] = [];
+
+    let parent = object.parent;
+    while (parent) {
+      this.layerObjects.forEach((set, layer) => {
+        if (set.has(parent)) inheritedLayers.push(layer);
+      });
+      parent = parent.parent;
+    }
+
+    const inheritedUnique = [...new Set(inheritedLayers)];
+
+    // single DFS traversal
+    const stack: THREE.Object3D[] = [object];
+
+    while (stack.length) {
+      const node = stack.pop()!;
+
+      // apply inherited layers
+      inheritedUnique.forEach(layer => node.layers.enable(layer));
+
+      // if node itself is tracked, propagate that layer downward
+      this.layerObjects.forEach((set, layer) => {
+        if (set.has(node)) {
+          node.traverse(child => child.layers.enable(layer));
+        }
+      });
+
+      for (const child of node.children) {
+        stack.push(child);
+      }
+    }
+  }
+
+  /**
+   * Called when an object is removed from the graph.
+   *
+   * Handles:
+   * ✔ removing tracked objects from sets
+   * ✔ removing orphaned tracked children
+   * ✔ disabling removed layer bits from subtree
+   */
+  public handleObjectRemove(object: THREE.Object3D) {
+    if (!object) return;
+
+    object.traverse((node) => {
+      this.layerObjects.forEach((layerSet, layer) => {
+        if (!layerSet.has(node)) return;
+
+        // remove node from tracking set
+        layerSet.delete(node);
+
+        // disable layer on node + descendants
+        node.traverse(child => child.layers.disable(layer));
+      });
+    });
+  }
+
+  /**
    * Check if an object is currently in a specific layer
-   * @param {THREE.Object3D} object - The object to check
-   * @param {number} layer - The layer number (0-31)
-   * @returns {boolean} True if the object is in the layer
    */
   public isInLayer(object: THREE.Object3D, layer: number): boolean {
     const layerSet = this.layerObjects.get(layer);
@@ -80,8 +136,6 @@ export class LayerMembershipManager {
 
   /**
    * Get all objects in a specific layer
-   * @param {number} layer - The layer number (0-31)
-   * @returns {Set<THREE.Object3D>} Set of objects in the layer
    */
   public getObjectsInLayer(layer: number): Set<THREE.Object3D> {
     return this.layerObjects.get(layer) || new Set();
@@ -92,49 +146,5 @@ export class LayerMembershipManager {
    */
   public clear(): void {
     this.layerObjects.clear();
-  }
-
-  /**
-   * Patch THREE.js Object3D prototype to track scene membership changes
-   * This ensures that when objects are added to or removed from the scene,
-   * we can automatically update their layer membership.
-   */
-  private patchObject3DPrototype(): void {
-    // Store original methods
-    const originalAdd = THREE.Object3D.prototype.add;
-    const originalRemove = THREE.Object3D.prototype.remove;
-    const layerManager = this;
-
-    // Patch add method
-    THREE.Object3D.prototype.add = function (...objects: THREE.Object3D[]) {
-      // Call original method
-      const result = originalAdd.apply(this, objects);
-      
-      // Update layer membership for any objects that are in any layer
-      objects.forEach(obj => {
-        layerManager.layerObjects.forEach((layerSet, layer) => {
-          if (layerSet.has(obj)) {
-            layerManager.updateLayerMembership(obj, layer, true);
-          }
-        });
-      });
-      
-      return result;
-    };
-
-    // Patch remove method
-    THREE.Object3D.prototype.remove = function (...objects: THREE.Object3D[]) {
-      // Update layer membership for any objects that are in any layer
-      objects.forEach(obj => {
-        layerManager.layerObjects.forEach((layerSet, layer) => {
-          if (layerSet.has(obj)) {
-            layerManager.updateLayerMembership(obj, layer, false);
-          }
-        });
-      });
-      
-      // Call original method
-      return originalRemove.apply(this, objects);
-    };
   }
 }

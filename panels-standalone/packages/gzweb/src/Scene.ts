@@ -1003,6 +1003,8 @@ export class Scene {
     mesh.name = "COM_VISUAL";
     mesh.rotation.z = -Math.PI / 2;
     this.COMvisual.add(mesh);
+
+    this.layerManager = new LayerMembershipManager();
   }
 
   public addSky(cubemap?: string): void {
@@ -1660,6 +1662,8 @@ export class Scene {
       model.userData = new ModelUserData();
     }
     this.scene.add(model);
+
+    this.layerManager.handleObjectAdd(model); 
   }
 
   /**
@@ -1667,6 +1671,7 @@ export class Scene {
    * @param {THREE.Object3D} model
    */
   public remove(model: THREE.Object3D): void {
+    this.layerManager.handleObjectRemove(model);
     this.scene.remove(model);
   }
 
