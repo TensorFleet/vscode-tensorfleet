@@ -218,7 +218,9 @@ export class DroneStateModel extends Emitter {
   private connectTime: number = 0;
 
   // Topics
-  private static readonly T_FIX = '/mavros/global_position/raw/fix';
+  // Prefer the fused global fix topic for UI telemetry; keep raw/fix as fallback.
+  private static readonly T_FIX = '/mavros/global_position/global';
+  private static readonly T_FIX_RAW = '/mavros/global_position/raw/fix';
   private static readonly T_HDG = '/mavros/global_position/compass_hdg';
   private static readonly T_STATE = '/mavros/state';
   private static readonly T_EXT_STATE = '/mavros/extended_state';
@@ -252,6 +254,7 @@ export class DroneStateModel extends Emitter {
 
     this.handlers = {
       [DroneStateModel.T_FIX]: this.handleGlobalFix,
+      [DroneStateModel.T_FIX_RAW]: this.handleGlobalFix,
       [DroneStateModel.T_HDG]: this.handleCompassHdg,
       [DroneStateModel.T_STATE]: this.handleVehicleState,
       [DroneStateModel.T_EXT_STATE]: this.handleExtendedState,
@@ -263,7 +266,19 @@ export class DroneStateModel extends Emitter {
       [DroneStateModel.T_HOME]: this.handleHomePosition,
     };
 
-    this.allTopics = new Set(Object.keys(this.handlers));
+    // Required topics for initial readiness. Raw GPS is optional fallback.
+    this.allTopics = new Set([
+      DroneStateModel.T_FIX,
+      DroneStateModel.T_HDG,
+      DroneStateModel.T_STATE,
+      DroneStateModel.T_EXT_STATE,
+      DroneStateModel.T_BATT,
+      DroneStateModel.T_POSE,
+      DroneStateModel.T_VEL,
+      DroneStateModel.T_IMU,
+      DroneStateModel.T_ALT,
+      DroneStateModel.T_HOME,
+    ]);
     this.buggyTopics = [DroneStateModel.T_BATT];
   }
 
@@ -279,6 +294,7 @@ export class DroneStateModel extends Emitter {
 
     const subs: Array<{ topic: string; type: string }> = [
       { topic: DroneStateModel.T_FIX, type: 'sensor_msgs/msg/NavSatFix' },
+      { topic: DroneStateModel.T_FIX_RAW, type: 'sensor_msgs/msg/NavSatFix' },
       { topic: DroneStateModel.T_HDG, type: 'std_msgs/msg/Float64' },
       { topic: DroneStateModel.T_STATE, type: 'mavros_msgs/msg/State' },
       { topic: DroneStateModel.T_EXT_STATE, type: 'mavros_msgs/msg/ExtendedState' },
@@ -506,6 +522,11 @@ export class DroneStateModel extends Emitter {
 
   private handleGlobalFix(msg: any) {
     if (!isNavSatFix(msg)) return;
+    // Ignore invalid fixes so stale/invalid raw streams do not overwrite UI coordinates.
+    if (msg.status && typeof msg.status.status === 'number' && msg.status.status < 0) return;
+    if (!Number.isFinite(msg.latitude) || !Number.isFinite(msg.longitude)) return;
+    if (msg.latitude < -90 || msg.latitude > 90) return;
+    if (msg.longitude < -180 || msg.longitude > 180) return;
     const t = this.msgTimeMs(msg);
     this.ensureGlobal();
     const oldGlobal = { ...this.state.global_position_int! };
@@ -857,7 +878,8 @@ export class DroneStateModel extends Emitter {
     const faults: string[] = [];
     if (!gcs) faults.push('vehicle.link.down');
     if (!seen(DroneStateModel.T_IMU)) faults.push('imu.stale');
-    if (!seen(DroneStateModel.T_FIX)) faults.push('gps.stale');
+    const gpsSeen = seen(DroneStateModel.T_FIX) || seen(DroneStateModel.T_FIX_RAW);
+    if (!gpsSeen) faults.push('gps.stale');
 
     const pct = this.state.battery?.percentage;
     const v = this.state.battery?.voltage;
@@ -878,7 +900,7 @@ export class DroneStateModel extends Emitter {
       armable = false;
       arm_reasons.push('imu.stale');
     }
-    if (!seen(DroneStateModel.T_FIX)) {
+    if (!gpsSeen) {
       armable = false;
       arm_reasons.push('gps.stale');
     }

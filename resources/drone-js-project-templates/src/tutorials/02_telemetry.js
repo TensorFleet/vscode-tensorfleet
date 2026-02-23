@@ -12,6 +12,7 @@
  *  - /mavros/vfr_hud (navigation summary)
  *  - /mavros/estimator_status (estimator health summary)
  *  - /mavros/gpsstatus/gps1/raw (GPS fix type + satellites)
+ *  - /mavros/global_position/global vs /mavros/global_position/raw/fix comparison
  *  - /mavros/statustext/recv (autopilot warnings/info)
  *  - Message "age" display so stale data is visible
  *
@@ -79,7 +80,8 @@ async function main() {
     let rawTelemetry = {
         state: null,
         pose: null,
-        fix: null,
+        fixGlobal: null,
+        fixRaw: null,
         altitude: null,
         battery: null,
         imu: null,
@@ -93,7 +95,8 @@ async function main() {
     let rawTelemetryTs = {
         state: 0,
         pose: 0,
-        fix: 0,
+        fixGlobal: 0,
+        fixRaw: 0,
         altitude: 0,
         battery: 0,
         imu: 0,
@@ -128,13 +131,24 @@ async function main() {
         )
     );
 
-    // Subscribe to GPS fix (/mavros/global_position/raw/fix)
+    // Subscribe to fused GPS fix (/mavros/global_position/global)
+    rawSubscriptions.push(
+        bridge.subscribe(
+            { topic: "/mavros/global_position/global", type: "sensor_msgs/NavSatFix" },
+            (msg) => {
+                rawTelemetry.fixGlobal = msg;
+                rawTelemetryTs.fixGlobal = nowMs();
+            }
+        )
+    );
+
+    // Subscribe to raw GPS fix (/mavros/global_position/raw/fix)
     rawSubscriptions.push(
         bridge.subscribe(
             { topic: "/mavros/global_position/raw/fix", type: "sensor_msgs/NavSatFix" },
             (msg) => {
-                rawTelemetry.fix = msg;
-                rawTelemetryTs.fix = nowMs();
+                rawTelemetry.fixRaw = msg;
+                rawTelemetryTs.fixRaw = nowMs();
             }
         )
     );
@@ -294,11 +308,11 @@ async function main() {
             console.log("Local Position (/mavros/local_position/pose): (no data yet)\n");
         }
 
-        // GPS position
-        if (rawTelemetry.fix) {
-            const f = rawTelemetry.fix;
+        // GPS position (fused)
+        if (rawTelemetry.fixGlobal) {
+            const f = rawTelemetry.fixGlobal;
             const validFix = isValidLatLon(f.latitude, f.longitude) && f.status?.status !== -1;
-            console.log(`GPS Position (/mavros/global_position/raw/fix) [age: ${ageStr(rawTelemetryTs.fix)}]:`);
+            console.log(`GPS Position (/mavros/global_position/global) [age: ${ageStr(rawTelemetryTs.fixGlobal)}]:`);
             if (!validFix) {
                 console.log("  Status:     NO FIX (values invalid)");
                 console.log(`  status:     ${f.status?.status}  service: ${f.status?.service}`);
@@ -311,7 +325,27 @@ async function main() {
             }
             console.log("");
         } else {
-            console.log("GPS Position (/mavros/global_position/raw/fix): (no data yet)\n");
+            console.log("GPS Position (/mavros/global_position/global): (no data yet)\n");
+        }
+
+        // GPS position (raw)
+        if (rawTelemetry.fixRaw) {
+            const f = rawTelemetry.fixRaw;
+            const validFix = isValidLatLon(f.latitude, f.longitude) && f.status?.status !== -1;
+            console.log(`GPS Position Raw (/mavros/global_position/raw/fix) [age: ${ageStr(rawTelemetryTs.fixRaw)}]:`);
+            if (!validFix) {
+                console.log("  Status:     NO FIX (values invalid)");
+                console.log(`  status:     ${f.status?.status}  service: ${f.status?.service}`);
+                console.log("  Lat/Lon:    n/a");
+                console.log(`  Altitude:   ${fmtNum(f.altitude, 3)} m`);
+            } else {
+                console.log(`  Latitude:   ${f.latitude.toFixed(7)} deg`);
+                console.log(`  Longitude:  ${f.longitude.toFixed(7)} deg`);
+                console.log(`  Altitude:   ${fmtNum(f.altitude, 2)} m`);
+            }
+            console.log("");
+        } else {
+            console.log("GPS Position Raw (/mavros/global_position/raw/fix): (no data yet)\n");
         }
 
         // Altitude breakdown
