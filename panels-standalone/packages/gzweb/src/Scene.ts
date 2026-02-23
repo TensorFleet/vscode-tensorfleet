@@ -202,48 +202,23 @@ export class Scene {
    * Render the outline mask to the stencil buffer
    */
   public renderOutlineMask(): void {
-    // Check if any objects have the outline layer enabled
-    let hasOutlineObjects = false;
-    let allObjects: THREE.Object3D[] = [];
-    getDescendants(this.scene, allObjects);
-    for (let i = 0; i < allObjects.length; ++i) {
-      if (allObjects[i].layers.test(VISUAL_LAYERS.OUTLINE)) {
-        hasOutlineObjects = true;
-        break;
-      }
-    }
-
-    if (!hasOutlineObjects) {
-      return;
-    }
-
-    // Render only the OUTLINE layer into outlineDepthTarget (with a black clear)
     const prevTarget = this.renderer.getRenderTarget();
-    const prevClearColor = new THREE.Color();
-    this.renderer.getClearColor(prevClearColor);
-    const prevClearAlpha = this.renderer.getClearAlpha();
-
     const prevAutoClear = this.renderer.autoClear;
+    const prevClearColor = this.renderer.getClearColor(new THREE.Color());
+    const prevClearAlpha = this.renderer.getClearAlpha();
+    const prevLayerMask = this.camera.layers.mask;
+
     this.renderer.autoClear = true;
 
-    // Use the main camera but restrict rendering to OUTLINE
-    this.camera.layers.enable(VISUAL_LAYERS.OUTLINE);
+    this.camera.layers.set(VISUAL_LAYERS.OUTLINE);
 
     this.renderer.setRenderTarget(this.outlineDepthTarget);
-    this.renderer.setClearColor(this.outlineClearInfinity, 1.0);
+    this.renderer.setClearColor(0xffffff, 1);
     this.renderer.clear(true, true, true);
     this.renderer.render(this.scene, this.camera);
 
-    // Postprocess: depth -> mask (far = black, non-far = white)
-    this.renderer.setRenderTarget(this.outlineMaskTarget);
-    this.renderer.setClearColor(0x000000, 1.0);
-    this.renderer.clear(true, false, false);
-    this.renderer.render(this.outlinePostScene, this.outlinePostCamera);
+    this.camera.layers.mask = prevLayerMask;
 
-    // Restore camera layer for MAIN
-    this.camera.layers.set(VISUAL_LAYERS.MAIN);
-
-    // Restore renderer state
     this.renderer.setRenderTarget(prevTarget);
     this.renderer.setClearColor(prevClearColor, prevClearAlpha);
     this.renderer.autoClear = prevAutoClear;
@@ -253,10 +228,12 @@ export class Scene {
    * Resize outline render targets when the canvas size changes
    */
   public resizeOutlineTargets(): void {
-    const width = this.getDomElement().width;
-    const height = this.getDomElement().height;
+    const size = new THREE.Vector2();
+    this.renderer.getSize(size);
 
-    // Dispose old targets
+    const width = Math.max(1, Math.floor(size.x));
+    const height = Math.max(1, Math.floor(size.y));
+
     if (this.outlineDepthTarget) {
       this.outlineDepthTarget.dispose();
     }
@@ -264,130 +241,125 @@ export class Scene {
       this.outlineMaskTarget.dispose();
     }
 
-    // Create new targets with updated size
     this.outlineDepthTarget = new THREE.WebGLRenderTarget(width, height, {
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
       format: THREE.RGBAFormat,
       type: THREE.UnsignedByteType,
       depthBuffer: true,
-      stencilBuffer: true,
+      stencilBuffer: false,
     });
+    this.outlineDepthTarget.depthTexture = new THREE.DepthTexture(width, height);
+    this.outlineDepthTarget.depthTexture.type = THREE.UnsignedShortType;
 
     this.outlineMaskTarget = new THREE.WebGLRenderTarget(width, height, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat,
       type: THREE.UnsignedByteType,
-      depthBuffer: true,
-      stencilBuffer: true,
+      depthBuffer: false,
+      stencilBuffer: false,
     });
 
-    // Update post-processing material uniforms
     if (this.outlinePostMaterial) {
-      this.outlinePostMaterial.uniforms.tDepth.value = this.outlineDepthTarget.texture;
-      this.outlinePostMaterial.uniforms.tMask.value = this.outlineMaskTarget.texture;
+      this.outlinePostMaterial.uniforms.tDepth.value = this.outlineDepthTarget.depthTexture;
+      this.outlinePostMaterial.uniforms.resolution.value.set(width, height);
     }
   }
 
   /**
    * Initialize the outline rendering pipeline
    */
+  /**
+   * Initialize the outline rendering pipeline
+   */
   public initOutlinePipeline(): void {
-    const width = this.getDomElement().width;
-    const height = this.getDomElement().height;
+    const size = new THREE.Vector2();
+    this.renderer.getSize(size);
 
-    // Create render targets for depth and mask
+    const width = Math.max(1, Math.floor(size.x));
+    const height = Math.max(1, Math.floor(size.y));
+
     this.outlineDepthTarget = new THREE.WebGLRenderTarget(width, height, {
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
       format: THREE.RGBAFormat,
       type: THREE.UnsignedByteType,
       depthBuffer: true,
-      stencilBuffer: true,
+      stencilBuffer: false,
     });
+    this.outlineDepthTarget.depthTexture = new THREE.DepthTexture(width, height);
+    this.outlineDepthTarget.depthTexture.type = THREE.UnsignedShortType;
 
     this.outlineMaskTarget = new THREE.WebGLRenderTarget(width, height, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat,
       type: THREE.UnsignedByteType,
-      depthBuffer: true,
-      stencilBuffer: true,
+      depthBuffer: false,
+      stencilBuffer: false,
     });
 
-    // Create post-processing scene
     this.outlinePostScene = new THREE.Scene();
     this.outlinePostCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-    // Create fullscreen quad for outline post-processing
     const quadGeometry = new THREE.PlaneGeometry(2, 2);
+
     this.outlinePostMaterial = new THREE.ShaderMaterial({
       uniforms: {
-        tDepth: { value: null },
-        tMask: { value: null },
-        cameraNear: { value: this.camera.near },
-        cameraFar: { value: this.camera.far },
+        tDepth: { value: this.outlineDepthTarget.depthTexture },
+        resolution: { value: new THREE.Vector2(width, height) },
         outlineColor: { value: new THREE.Color(0xffffff) },
-        outlineThickness: { value: 2.0 },
+        fillColor: { value: new THREE.Color(0xffffcc) },
+        fillOpacity: { value: 0.25 },
       },
       vertexShader: `
         varying vec2 vUv;
-        void main() {
+        void main(){
           vUv = uv;
           gl_Position = vec4(position, 1.0);
         }
       `,
       fragmentShader: `
         uniform sampler2D tDepth;
-        uniform sampler2D tMask;
-        uniform float cameraNear;
-        uniform float cameraFar;
+        uniform vec2 resolution;
         uniform vec3 outlineColor;
-        uniform float outlineThickness;
-        
+        uniform vec3 fillColor;
+        uniform float fillOpacity;
         varying vec2 vUv;
-        
-        float readDepth(sampler2D depthSampler, vec2 uv) {
-          return texture2D(depthSampler, uv).r;
+
+        float depthAt(vec2 uv){
+          return texture2D(tDepth, uv).r;
         }
-        
-        void main() {
-          // Read depth and mask values
-          float depth = readDepth(tDepth, vUv);
-          vec4 mask = texture2D(tMask, vUv);
+
+        void main(){
+          float d = depthAt(vUv);
           
-          // If this pixel is not part of any outline root, don't process
-          if (mask.a == 0.0) {
-            discard;
+          // If depth is 1.0 (nothing drawn in depth target), 
+          // we still show the pale fillColor.
+          if (d >= 1.0) {
+            gl_FragColor = vec4(fillColor, fillOpacity);
+            return;
           }
-          
-          // Check neighboring pixels for depth differences (edges)
-          float depthThreshold = 0.001;
+
+          vec2 px = vec2(1.0) / resolution;
+
           float edge = 0.0;
-          
-          // Sample neighboring pixels
-          vec2 texelSize = 1.0 / vec2(textureSize(tDepth, 0));
-          
-          float depthRight = readDepth(tDepth, vUv + vec2(texelSize.x, 0.0));
-          float depthLeft = readDepth(tDepth, vUv - vec2(texelSize.x, 0.0));
-          float depthUp = readDepth(tDepth, vUv + vec2(0.0, texelSize.y));
-          float depthDown = readDepth(tDepth, vUv - vec2(0.0, texelSize.y));
-          
-          // Detect edges based on depth differences
-          edge = max(edge, abs(depth - depthRight));
-          edge = max(edge, abs(depth - depthLeft));
-          edge = max(edge, abs(depth - depthUp));
-          edge = max(edge, abs(depth - depthDown));
-          
-          // Apply outline if edge is detected
-          if (edge > depthThreshold) {
+          edge += abs(d - depthAt(vUv + vec2(px.x, 0.0)));
+          edge += abs(d - depthAt(vUv - vec2(px.x, 0.0)));
+          edge += abs(d - depthAt(vUv + vec2(0.0, px.y)));
+          edge += abs(d - depthAt(vUv - vec2(0.0, px.y)));
+
+          if (edge > 0.002){
             gl_FragColor = vec4(outlineColor, 1.0);
           } else {
-            discard;
+            gl_FragColor = vec4(fillColor, fillOpacity);
           }
         }
       `,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
     });
 
     this.outlinePostQuad = new THREE.Mesh(quadGeometry, this.outlinePostMaterial);
@@ -1487,8 +1459,8 @@ export class Scene {
     // -pointer over menus
     // -spawning
     /* Disabling this for now so that mouse control stays enabled when the
-     * mouse leaves the viewport.
-     * if (this.modelManipulator.hovered ||
+    * mouse leaves the viewport.
+    * if (this.modelManipulator.hovered ||
         (this.radialMenu && this.radialMenu.showing) ||
         this.pointerOnMenu ||
         this.spawnModel.active)
@@ -1612,19 +1584,24 @@ export class Scene {
     let hasOutlineObjects = false;
     let allObjects: THREE.Object3D[] = [];
     getDescendants(this.scene, allObjects);
+    const outlineBit = 1 << VISUAL_LAYERS.OUTLINE;
     for (let i = 0; i < allObjects.length; ++i) {
-      if (allObjects[i].layers.test(VISUAL_LAYERS.OUTLINE)) {
+      if ((allObjects[i].layers.mask & outlineBit) !== 0) {
         hasOutlineObjects = true;
         break;
       }
     }
 
-    this.renderOutlineMask();
-    
-    // Render the outline post-processing effect
-    this.renderer.setRenderTarget(null);
-    this.renderer.clearDepth();
-    this.renderer.render(this.outlinePostScene, this.outlinePostCamera);
+    if (hasOutlineObjects) {
+      this.renderOutlineMask();
+
+      // Render the outline post-processing effect
+      this.renderer.setRenderTarget(null);
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.outlinePostScene, this.outlinePostCamera);
+      this.renderer.autoClear = true;
+    }
 
     this.renderer.clearDepth();
     if (this.sceneOrtho && this.cameraOrtho) {
@@ -1650,6 +1627,7 @@ export class Scene {
     }
 
     this.renderer.setSize(width, height);
+    this.resizeOutlineTargets();
     this.render(0);
   }
 
