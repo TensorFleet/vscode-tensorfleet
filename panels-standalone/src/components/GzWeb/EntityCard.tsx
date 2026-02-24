@@ -1,10 +1,6 @@
 import React, { useCallback } from 'react';
 import { EntityCardData, CARD_MESSAGES } from './EntityCardData';
 
-// ============================================================================
-// EntityCard Component
-// ============================================================================
-
 interface EntityCardProps {
   entity: EntityCardData;
   isActive: boolean;
@@ -33,13 +29,28 @@ export const EntityCard: React.FC<EntityCardProps> = ({
     return 'status-active';
   };
 
-  const handleInfoMouseDown = useCallback((e: React.MouseEvent) => {
+  const stop = useCallback((e: React.SyntheticEvent) => {
+    e.preventDefault();
     e.stopPropagation();
   }, []);
 
-  const handleInfoMouseUp = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-  }, []);
+  const handleInfoClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onInfoClick(entity, e);
+    },
+    [entity, onInfoClick]
+  );
+
+  const handleCardClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('.info-button')) return;
+      onCardClick(entity);
+    },
+    [entity, onCardClick]
+  );
 
   const handleMouseEnter = useCallback(() => {
     const message = {
@@ -50,10 +61,10 @@ export const EntityCard: React.FC<EntityCardProps> = ({
         timestamp: Date.now(),
       },
     };
-    
+
     window.parent.postMessage(message, '*');
     console.log(`EntityCard: Hover start - ${entity.name}`, message);
-  }, [entity.name]);
+  }, [entity]);
 
   const handleMouseLeave = useCallback(() => {
     const message = {
@@ -64,21 +75,22 @@ export const EntityCard: React.FC<EntityCardProps> = ({
         timestamp: Date.now(),
       },
     };
-    
+
     window.parent.postMessage(message, '*');
-    
     console.log(`EntityCard: Hover end - ${entity.name} -> ${message.payload.modelNames}`, message);
-  }, [entity.name]);
+  }, [entity]);
 
   return (
     <div
       className={`entity-card ${isActive ? 'active' : ''}`}
-      onClick={() => onCardClick(entity)}
+      onClick={handleCardClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest('.info-button')) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onCardClick(entity);
@@ -90,10 +102,16 @@ export const EntityCard: React.FC<EntityCardProps> = ({
         <span className="entity-name">{entity.name}</span>
         <span className={`entity-status ${getStatusIcon(entity)}`}>Active</span>
         <button
+          type="button"
           className="info-button"
-          onMouseDown={handleInfoMouseDown}
-          onMouseUp={handleInfoMouseUp}
-          onClick={(e) => onInfoClick(entity, e)}
+          onPointerDownCapture={stop}
+          onPointerUpCapture={stop}
+          onMouseDownCapture={stop}
+          onMouseUpCapture={stop}
+          onTouchStartCapture={stop}
+          onTouchEndCapture={stop}
+          onClickCapture={stop}
+          onClick={handleInfoClick}
           aria-label={`View info for ${entity.name}`}
           title="View detailed information"
         >
