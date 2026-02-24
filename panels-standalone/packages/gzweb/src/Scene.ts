@@ -23,6 +23,10 @@ import { WsLoadingManager } from "./WsLoadingManager";
 
 import * as JSZip from "jszip";
 
+// Import GLSL shader files as raw text assets
+import vertexShader from "./shaders/outline-vertex.glsl?raw";
+import fragmentShader from "./shaders/outline-fragment.glsl?raw";
+
 export type FindResourceCb = (uri: string, cb: any) => void;
 
 enum JointTypes {
@@ -231,8 +235,9 @@ export class Scene {
     const size = new THREE.Vector2();
     this.renderer.getSize(size);
 
-    const width = Math.max(1, Math.floor(size.x));
-    const height = Math.max(1, Math.floor(size.y));
+    const dpr = this.renderer.getPixelRatio();
+    const width = Math.max(1, Math.floor(size.x * dpr));
+    const height = Math.max(1, Math.floor(size.y * dpr));
 
     if (this.outlineDepthTarget) {
       this.outlineDepthTarget.dispose();
@@ -249,6 +254,10 @@ export class Scene {
       depthBuffer: true,
       stencilBuffer: false,
     });
+
+    // ✅ MSAA (replacement for deprecated WebGLMultisampleRenderTarget)
+    this.outlineDepthTarget.samples = 4;
+
     this.outlineDepthTarget.depthTexture = new THREE.DepthTexture(width, height);
     this.outlineDepthTarget.depthTexture.type = THREE.UnsignedShortType;
 
@@ -277,8 +286,9 @@ export class Scene {
     const size = new THREE.Vector2();
     this.renderer.getSize(size);
 
-    const width = Math.max(1, Math.floor(size.x));
-    const height = Math.max(1, Math.floor(size.y));
+    const dpr = this.renderer.getPixelRatio();
+    const width = Math.max(1, Math.floor(size.x * dpr));
+    const height = Math.max(1, Math.floor(size.y * dpr));
 
     this.outlineDepthTarget = new THREE.WebGLRenderTarget(width, height, {
       minFilter: THREE.NearestFilter,
@@ -288,6 +298,10 @@ export class Scene {
       depthBuffer: true,
       stencilBuffer: false,
     });
+
+    // ✅ MSAA (replacement for deprecated WebGLMultisampleRenderTarget)
+    this.outlineDepthTarget.samples = 4;
+
     this.outlineDepthTarget.depthTexture = new THREE.DepthTexture(width, height);
     this.outlineDepthTarget.depthTexture.type = THREE.UnsignedShortType;
 
@@ -313,50 +327,8 @@ export class Scene {
         fillColor: { value: new THREE.Color(0xffffcc) },
         fillOpacity: { value: 0.25 },
       },
-      vertexShader: `
-        varying vec2 vUv;
-        void main(){
-          vUv = uv;
-          gl_Position = vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform sampler2D tDepth;
-        uniform vec2 resolution;
-        uniform vec3 outlineColor;
-        uniform vec3 fillColor;
-        uniform float fillOpacity;
-        varying vec2 vUv;
-
-        float depthAt(vec2 uv){
-          return texture2D(tDepth, uv).r;
-        }
-
-        void main(){
-          float d = depthAt(vUv);
-          
-          // If depth is 1.0 (nothing drawn in depth target), 
-          // we still show the pale fillColor.
-          if (d >= 1.0) {
-            gl_FragColor = vec4(fillColor, fillOpacity);
-            return;
-          }
-
-          vec2 px = vec2(1.0) / resolution;
-
-          float edge = 0.0;
-          edge += abs(d - depthAt(vUv + vec2(px.x, 0.0)));
-          edge += abs(d - depthAt(vUv - vec2(px.x, 0.0)));
-          edge += abs(d - depthAt(vUv + vec2(0.0, px.y)));
-          edge += abs(d - depthAt(vUv - vec2(0.0, px.y)));
-
-          if (edge > 0.002){
-            gl_FragColor = vec4(outlineColor, 1.0);
-          } else {
-            gl_FragColor = vec4(fillColor, fillOpacity);
-          }
-        }
-      `,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
       transparent: true,
       depthWrite: false,
       depthTest: false,

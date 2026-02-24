@@ -2,6 +2,7 @@
 // import typescript from '@rollup/plugin-typescript';
 import { terser } from "rollup-plugin-terser";
 import babel from "@rollup/plugin-babel";
+import glsl from "rollup-plugin-glsl";
 // import { nodeResolve } from '@rollup/plugin-node-resolve';
 //import commonjs from '@rollup/plugin-commonjs';
 
@@ -9,7 +10,12 @@ let builds = [
   // Module
   {
     input: "tsc-out/src/gzweb.js",
-    plugins: [],
+    plugins: [
+      glsl({
+        include: "**/*.glsl",
+        sourceMap: false,
+      }),
+    ],
     external: [
       "eventemitter2",
       "jszip",
@@ -40,6 +46,10 @@ let builds = [
   {
     input: "tsc-out/src/gzweb.js",
     plugins: [
+      glsl({
+        include: "**/*.glsl",
+        sourceMap: false,
+      }),
       /*commonjs(),
       nodeResolve({
         browser: true,
@@ -81,6 +91,10 @@ let builds = [
   {
     input: "tsc-out/src/gzweb.js",
     plugins: [
+      glsl({
+        include: "**/*.glsl",
+        sourceMap: false,
+      }),
       /*commonjs(),
       nodeResolve({
         browser: true,
