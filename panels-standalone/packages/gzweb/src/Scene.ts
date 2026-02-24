@@ -50,6 +50,13 @@ export const VISUAL_LAYERS = {
 } as const;
 
 /**
+ * Outline color transition constants
+ */
+export const OUTLINE_COLOR_A = new THREE.Color(0xffffff); // start color
+export const OUTLINE_COLOR_B = new THREE.Color(0x00ffff); // end color
+export const OUTLINE_TRANSITION_INTERVAL = 1400; // ms for full cycle
+
+/**
  * Interface of arguments for the Scene's constructor.
  */
 export interface SceneConfig {
@@ -166,6 +173,9 @@ export class Scene {
   // Outline clear colors
   private outlineClearInfinity: THREE.Color = new THREE.Color(0x000000); // background for infinity
 
+  // Outline color transition time tracking
+  private outlineColorTime = 0;
+
   /**
    * Add an object to the outline layer
    * @param {THREE.Object3D} object - The object to outline
@@ -200,6 +210,25 @@ export class Scene {
    */
   public updateOutlineLayerMembership(object: THREE.Object3D, enable: boolean): void {
     this.layerManager.updateLayerMembership(object, VISUAL_LAYERS.OUTLINE, enable);
+  }
+
+  /**
+   * Update outline color transition based on time
+   */
+  private updateOutlineColor(deltaMs: number): void {
+    if (!this.outlinePostMaterial) return;
+
+    this.outlineColorTime += deltaMs;
+
+    const t =
+      (this.outlineColorTime % OUTLINE_TRANSITION_INTERVAL) /
+      OUTLINE_TRANSITION_INTERVAL;
+
+    const blend = 0.5 - 0.5 * Math.cos(t * Math.PI * 2);
+
+    const color = OUTLINE_COLOR_A.clone().lerp(OUTLINE_COLOR_B, blend);
+
+    this.outlinePostMaterial.uniforms.outlineColor.value.copy(color);
   }
 
   /**
@@ -345,7 +374,7 @@ export class Scene {
         tDepth: { value: this.outlineDepthTarget.depthTexture },
         resolution: { value: new THREE.Vector2(width, height) },
         px: { value: new THREE.Vector2(1 / width, 1 / height) }, // ADD
-        outlineColor: { value: new THREE.Color(0xffffff) },
+        outlineColor: { value: OUTLINE_COLOR_A.clone() },
         fillColor: { value: new THREE.Color(0xffffcc) },
         fillOpacity: { value: 0.25 },
       },
@@ -1593,6 +1622,9 @@ export class Scene {
 
       // Update pixel size uniforms before rendering
       this.updateOutlinePixelSize();
+
+      // Update outline color transition
+      this.updateOutlineColor(timeElapsedMs);
 
       // Render the outline post-processing effect
       this.renderer.setRenderTarget(null);
