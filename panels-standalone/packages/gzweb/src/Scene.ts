@@ -203,6 +203,26 @@ export class Scene {
   }
 
   /**
+   * Update outline pixel size uniforms
+   */
+  private updateOutlinePixelSize(): void {
+    if (!this.outlinePostMaterial || !this.outlineDepthTarget?.depthTexture) return;
+
+    const tex = this.outlineDepthTarget.depthTexture.image as any;
+
+    const w = tex.width;
+    const h = tex.height;
+
+    this.outlinePostMaterial.uniforms.resolution.value.set(w, h);
+
+    // ADD THIS UNIFORM
+    this.outlinePostMaterial.uniforms.px.value.set(
+      1 / w,
+      1 / h
+    );
+  }
+
+  /**
    * Render the outline mask to the stencil buffer
    */
   public renderOutlineMask(): void {
@@ -273,6 +293,7 @@ export class Scene {
     if (this.outlinePostMaterial) {
       this.outlinePostMaterial.uniforms.tDepth.value = this.outlineDepthTarget.depthTexture;
       this.outlinePostMaterial.uniforms.resolution.value.set(width, height);
+      this.updateOutlinePixelSize();
     }
   }
 
@@ -323,6 +344,7 @@ export class Scene {
       uniforms: {
         tDepth: { value: this.outlineDepthTarget.depthTexture },
         resolution: { value: new THREE.Vector2(width, height) },
+        px: { value: new THREE.Vector2(1 / width, 1 / height) }, // ADD
         outlineColor: { value: new THREE.Color(0xffffff) },
         fillColor: { value: new THREE.Color(0xffffcc) },
         fillOpacity: { value: 0.25 },
@@ -336,6 +358,8 @@ export class Scene {
 
     this.outlinePostQuad = new THREE.Mesh(quadGeometry, this.outlinePostMaterial);
     this.outlinePostScene.add(this.outlinePostQuad);
+
+    this.updateOutlinePixelSize();
   }
 
   constructor(config: SceneConfig) {
@@ -1566,6 +1590,9 @@ export class Scene {
 
     if (hasOutlineObjects) {
       this.renderOutlineMask();
+
+      // Update pixel size uniforms before rendering
+      this.updateOutlinePixelSize();
 
       // Render the outline post-processing effect
       this.renderer.setRenderTarget(null);

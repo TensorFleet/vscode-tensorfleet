@@ -1,6 +1,6 @@
 uniform sampler2D tDepth;
-uniform vec2 resolution;
-uniform vec3 outlineColor;
+uniform vec2 px; // Pre-calculated pixel size (1.0 / resolution)
+uniform vec3 outlineColor; // Interpolated outline color
 uniform vec3 fillColor;
 uniform float fillOpacity;
 varying vec2 vUv;
@@ -11,7 +11,6 @@ float depthAt(vec2 uv){
 
 void main(){
     float d = depthAt(vUv);
-    vec2 px = vec2(1.0) / resolution;
 
     if (d <= 0.9999) {
         discard;
