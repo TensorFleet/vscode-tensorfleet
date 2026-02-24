@@ -1,5 +1,6 @@
 import React, { useCallback } from 'react';
 import { EntityCardData, CARD_MESSAGES } from './EntityCardData';
+import { ENTITY_INFO_POPUP_MESSAGES } from './EntityInfoPopup';
 
 interface EntityCardProps {
   entity: EntityCardData;
@@ -29,8 +30,7 @@ export const EntityCard: React.FC<EntityCardProps> = ({
     return 'status-active';
   };
 
-  const stop = useCallback((e: React.SyntheticEvent) => {
-    e.preventDefault();
+  const stopPropagation = useCallback((e: React.SyntheticEvent) => {
     e.stopPropagation();
   }, []);
 
@@ -38,6 +38,24 @@ export const EntityCard: React.FC<EntityCardProps> = ({
     (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      console.log('EntityCard info button requesting popup open');
+
+      const popupMessage = {
+        type: ENTITY_INFO_POPUP_MESSAGES.OPEN,
+        payload: {
+          name: entity.name,
+          type: entity.type,
+          target: entity.target,
+          params: entity.params,
+          timestamp: Date.now(),
+        },
+      };
+
+      window.postMessage(popupMessage, '*');
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(popupMessage, '*');
+      }
+
       onInfoClick(entity, e);
     },
     [entity, onInfoClick]
@@ -104,13 +122,12 @@ export const EntityCard: React.FC<EntityCardProps> = ({
         <button
           type="button"
           className="info-button"
-          onPointerDownCapture={stop}
-          onPointerUpCapture={stop}
-          onMouseDownCapture={stop}
-          onMouseUpCapture={stop}
-          onTouchStartCapture={stop}
-          onTouchEndCapture={stop}
-          onClickCapture={stop}
+          onPointerDownCapture={stopPropagation}
+          onPointerUpCapture={stopPropagation}
+          onMouseDownCapture={stopPropagation}
+          onMouseUpCapture={stopPropagation}
+          onTouchStartCapture={stopPropagation}
+          onTouchEndCapture={stopPropagation}
           onClick={handleInfoClick}
           aria-label={`View info for ${entity.name}`}
           title="View detailed information"
