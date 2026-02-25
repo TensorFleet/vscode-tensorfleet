@@ -11,6 +11,7 @@ import { GzObjLoader } from "./GzObjLoader";
 import { ModelUserData } from "./ModelUserData";
 import { OrbitControls } from "../include/OrbitControls";
 import { LayerMembershipManager } from "./LayerMembershipManager";
+import { CameraLerpController } from "./CameraLerpController";
 
 import { createFuelUri } from "./FuelServer";
 import { Pose } from "./Pose";
@@ -156,6 +157,7 @@ export class Scene {
   private currentThirdPersonCameraOffset: THREE.Vector3 = new THREE.Vector3();
   private mousePointerDown: boolean = false;
   private currentFirstPersonLookAt = new THREE.Vector3();
+  private cameraLerp: CameraLerpController;
 
   // Layer management using LayerMembershipManager
   private layerManager: LayerMembershipManager;
@@ -419,6 +421,11 @@ export class Scene {
     // Initialize outline pipeline
     this.initOutlinePipeline();
 
+    // Auto-focus on scene content after initialization
+    setTimeout(() => {
+      this.autoFocus();
+    }, 100);
+
     /**
      * @member {string} selectEntity
      * The select entity event name.
@@ -586,13 +593,9 @@ export class Scene {
       var endRotMat = new THREE.Matrix4();
       endRotMat.lookAt(endPos, targetCenter, new THREE.Vector3(0, 0, 1));
 
-      // Start the camera moving.
+      // Use the camera lerp controller for move_to_entity
+      that.cameraLerp.startMoveTo(startPos, endPos, endRotMat);
       that.cameraMode = that.moveToEntityEvent;
-      that.cameraMoveToClock.start();
-      that.cameraLerpStart.copy(startPos);
-      that.cameraLerpEnd.copy(endPos);
-      that.camera.getWorldQuaternion(that.cameraSlerpStart);
-      that.cameraSlerpEnd.setFromRotationMatrix(endRotMat);
     });
   }
 
@@ -776,6 +779,8 @@ export class Scene {
     // an animation loop is required with damping
     this.controls.enableDamping = false;
     this.controls.screenSpacePanning = true;
+
+    this.cameraLerp = new CameraLerpController(this.camera, this.controls);
 
     // Bounding Box
     var indices = new Uint16Array([
@@ -1497,6 +1502,9 @@ export class Scene {
       this.controls.enabled = true;
     }*/
     this.controls.update();
+
+    // Use the camera lerp controller for all camera modes
+    this.cameraLerp.update(timeElapsedMs);
 
     // If 'follow' mode, then track the specific object.
     if (this.cameraMode === this.followEntityEvent) {
@@ -4409,6 +4417,72 @@ export class Scene {
       console.groupEnd();
     };
     printGraph(this.scene);
+  }
+
+  /**
+   * Auto-focus on scene content by fitting all objects in view
+   */
+  public autoFocus(): void {
+    const allObjects: THREE.Object3D[] = [];
+    getDescendants(this.scene, allObjects);
+
+    // Filter out non-visual objects
+    const visualObjects = allObjects.filter(obj => 
+      obj instanceof THREE.Mesh && 
+      obj.name !== "grid" && 
+      obj.name !== "boundingBox" &&
+      obj.name !== "JOINT_VISUAL" &&
+      obj.name !== "INERTIA_VISUAL" &&
+      obj.name !== "COM_VISUAL" &&
+      obj.name !== "plane"
+    );
+
+    if (visualObjects.length === 0) {
+      // No objects to focus on, reset to default view
+      this.resetView();
+      return;
+    }
+
+    // Compute bounding box of all visual objects
+    const box = new THREE.Box3();
+    visualObjects.forEach(obj => {
+      box.expandByObject(obj);
+    });
+
+    if (box.isEmpty()) {
+      this.resetView();
+      return;
+    }
+
+    // Get center and size of bounding box
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+
+    // Calculate radius to fit the entire scene
+    const radius = size.length() * 0.5;
+
+    // Calculate distance needed to fit the scene in view
+    const fov = THREE.MathUtils.degToRad(this.camera.fov);
+    const distance = radius / Math.tan(fov / 2);
+
+    // Position camera to look at the center
+    const cameraPosition = new THREE.Vector3();
+    cameraPosition.copy(center);
+    cameraPosition.z += distance + radius; // Add some padding
+
+    // Use the camera lerp controller for smooth transition
+    this.cameraLerp.focus(visualObjects, 800, 1.2);
+  }
+
+  /**
+   * Disable all camera modes and reset to orbit mode
+   */
+  public disableCameraModes(): void {
+    this.cameraMode = "";
+    this.cameraLerp.cancel();
+    this.cameraMoveToClock.stop();
   }
 
   public loadTexture(

@@ -193,7 +193,7 @@ const installVmManagerWebSocketShim = (
 
       this._ws.addEventListener('open', (ev) => {
         const loginMsg = { type: 'login', token: token ?? '', nodeId };
-        this._ws.send(JSON.stringify(loginMsg));
+        this._ws.send(JSON.stringify(loginMsg) as any);
         this._emit('open', ev);
       });
 
@@ -259,7 +259,7 @@ const installVmManagerWebSocketShim = (
         this._queue.push(data);
         return;
       }
-      this._ws.send(data);
+      this._ws.send(data as any);
     }
 
     close(code?: number, reason?: string) {
@@ -504,6 +504,12 @@ export const GzWebPanel: React.FC = () => {
         return;
       }
       
+      // Handle focus messages for camera focusing
+      if (msg && msg.type === 'FOCUS_ON_MODELS') {
+        handleFocusMessage(msg);
+        return;
+      }
+      
       // Handle existing VM manager messages
       if (!msg || msg.command !== 'tensorfleet.vmManagerInfo') return;
       const payload = (msg.payload ?? {}) as HostVmInfo;
@@ -600,6 +606,35 @@ export const GzWebPanel: React.FC = () => {
       } catch (error) {
         console.error('Error handling hover message:', error);
       }
+    }
+  }, []);
+
+  const handleFocusMessage = useCallback((msg: any) => {
+    if (!sceneManagerRef.current) {
+      console.warn('SceneManager not available for focus message:', msg);
+      return;
+    }
+
+    const { payload } = msg;
+    const { modelNames, entityName } = payload;
+
+    console.log(`[GzWebPanel][FOCUS_MESSAGE]`, {
+      entityName,
+      modelNames,
+      timestamp: payload.timestamp,
+    });
+
+    try {
+      // Use the SceneManager's focusOnModels method
+      const sceneManager = sceneManagerRef.current as any;
+      if (sceneManager.focusOnModels) {
+        sceneManager.focusOnModels(modelNames, 800, 1.2);
+        console.log(`Focused camera on models: ${modelNames.join(', ')}`);
+      } else {
+        console.warn('focusOnModels method not available on SceneManager');
+      }
+    } catch (error) {
+      console.error('Error focusing on models:', error);
     }
   }, []);
 

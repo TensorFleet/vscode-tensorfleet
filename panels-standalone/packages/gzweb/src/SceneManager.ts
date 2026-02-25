@@ -321,6 +321,41 @@ export class SceneManager {
   }
 
   /**
+   * Get multiple 3D model objects by their names
+   * @param names Array of model names to retrieve
+   * @return Array of 3D model objects, with undefined for any names not found
+   */
+  public getModelsByNames(names: string[]): any[] {
+    return names.map(name => this.modelMap.get(name));
+  }
+
+  /**
+   * Focus camera on multiple models by their names
+   * @param modelNames Array of model names to focus on
+   * @param durationMs Duration of the camera movement in milliseconds (default: 800)
+   * @param paddingFactor Additional padding factor for the camera view (default: 1.2)
+   */
+  public focusOnModels(modelNames: string[], durationMs: number = 800, paddingFactor: number = 1.2): void {
+    if (!this.scene || !modelNames || modelNames.length === 0) {
+      return;
+    }
+
+    // Get all model objects
+    const models = this.getModelsByNames(modelNames);
+    
+    // Filter out undefined models and get their 3D objects
+    const validModels = models.filter(model => model !== undefined);
+    
+    if (validModels.length === 0) {
+      console.warn('No valid models found for focus:', modelNames);
+      return;
+    }
+
+    // Use the scene's focus method which handles the camera lerp
+    this.scene.cameraLerp.focus(validModels, durationMs, paddingFactor);
+  }
+
+  /**
    * Remove a model by name from both the models array and the modelMap
    * @param name The name of the model to remove
    * @return true if the model was found and removed, false otherwise

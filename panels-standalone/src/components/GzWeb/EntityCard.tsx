@@ -329,6 +329,22 @@ export const EntityCard: React.FC<EntityCardProps> = ({
       }
 
       try {
+        // Get model names from the entity
+        const modelNames = entity.getModelNames();
+        
+        // Send focus message to parent window
+        const message = {
+          type: 'FOCUS_ON_MODELS',
+          payload: {
+            modelNames: modelNames,
+            entityName: entity.name,
+            timestamp: nowMs(),
+          },
+        };
+
+        window.parent.postMessage(message, '*');
+        
+        // Call the original onCardClick if it exists
         entity.onCardClick?.();
       } catch (err) {
         console.error('[EntityCard][CARD_ONCLICK_ERROR]', { entity: entity.name, err });
