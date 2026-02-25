@@ -2,32 +2,12 @@
 // Entity Card Data Types
 // ============================================================================
 
-export interface EntityCardData {
-  name: string;
-  type: string;
-  target: string;
-  params: Record<string, unknown>;
-  getModelNames(): string[];
-}
+import { EntityData, EntityCardDataImpl } from 'tensorfleet-util/ros/fetchFeaturedEntities';
 
-export class EntityCardDataImpl implements EntityCardData {
-  constructor(
-    public name: string,
-    public type: string,
-    public target: string,
-    public params: Record<string, unknown>
-  ) {}
+export interface EntityCardData extends EntityData {}
 
-  getModelNames(): string[] {
-    const modelNames = this.params.model_names;
-    
-    if (Array.isArray(modelNames)) {
-      return modelNames.map(name => String(name));
-    }
-    
-    return [];
-  }
-}
+// Re-export the implementation for convenience
+export { EntityCardDataImpl };
 
 export interface EntityClickMessage {
   type: 'ENTITY_CLICK' | 'ENTITY_INFO_CLICK';

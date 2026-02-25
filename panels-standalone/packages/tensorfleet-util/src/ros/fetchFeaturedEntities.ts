@@ -5,14 +5,86 @@
 import type { ROS2BridgeApi } from "./ros-bridge-api";
 
 /**
- * Data type representing a featured entity card.
+ * Data type representing an entity card with predefined callbacks
  */
-export interface FeaturedEntityData {
+export interface EntityData {
   name: string;
   type: string;
   target: string;
   params: Record<string, unknown>;
   getModelNames(): string[];
+  onCardClick(): void;
+  onInfoClick(): void;
+}
+
+/**
+ * Data type representing a featured entity card.
+ */
+export interface FeaturedEntityData extends EntityData {}
+
+/**
+ * EntityCardData implementation with built-in callback methods
+ */
+export class EntityCardDataImpl implements EntityData {
+  constructor(
+    public name: string,
+    public type: string,
+    public target: string,
+    public params: Record<string, unknown>
+  ) {}
+
+  getModelNames(): string[] {
+    const modelNames = this.params.model_names;
+    
+    if (Array.isArray(modelNames)) {
+      return modelNames.map(name => String(name));
+    }
+    
+    return [];
+  }
+
+  onCardClick(): void {
+    const message = {
+      type: 'ENTITY_CLICK',
+      payload: {
+        entity: this,
+        timestamp: Date.now(),
+      },
+    };
+    
+    // Send message to parent window for external module communication
+    window.parent.postMessage(message, '*');
+    
+    // Log for debugging
+    console.log(`EntityCardDataImpl: Card clicked - ${this.name}`, message);
+  }
+
+  onInfoClick(): void {
+    const popupData = {
+      ...this,
+      timestamp: Date.now(),
+    };
+    
+    // Send message to parent window to open the popup
+    const message = {
+      type: 'ENTITY_INFO_POPUP_OPEN',
+      payload: popupData,
+    };
+    
+    window.parent.postMessage(message, '*');
+    
+    // Also send card info click message
+    const clickMessage = {
+      type: 'ENTITY_INFO_CLICK',
+      payload: {
+        entity: this,
+        timestamp: Date.now(),
+      },
+    };
+    
+    window.parent.postMessage(clickMessage, '*');
+    console.log(`EntityCardDataImpl: Info button clicked - ${this.name}`, message);
+  }
 }
 
 /**
@@ -48,19 +120,12 @@ export async function fetchFeaturedEntities(bridge: ROS2BridgeApi): Promise<Feat
       if (target && paramsStr) {
         try {
           const params = JSON.parse(paramsStr);
-          featured.push({
-            name: target,
-            type: params.type || 'unknown',
+          featured.push(new EntityCardDataImpl(
             target,
-            params,
-            getModelNames() {
-              const modelNames = this.params.model_names;
-              if (Array.isArray(modelNames)) {
-                return modelNames.map(name => String(name));
-              }
-              return [];
-            }
-          });
+            params.type || 'unknown',
+            target,
+            params
+          ));
         } catch (parseError) {
           console.warn(`Failed to parse params for ${nodeName}:`, parseError);
         }
@@ -79,37 +144,23 @@ export async function fetchFeaturedEntities(bridge: ROS2BridgeApi): Promise<Feat
       if (paramsStr) {
         try {
           const params = JSON.parse(paramsStr);
-          featured.push({
-            name: displayName,
-            type: params.type || 'unknown',
-            target: displayName,
-            params,
-            getModelNames() {
-              const modelNames = this.params.model_names;
-              if (Array.isArray(modelNames)) {
-                return modelNames.map(name => String(name));
-              }
-              return [];
-            }
-          });
+          featured.push(new EntityCardDataImpl(
+            displayName,
+            params.type || 'unknown',
+            displayName,
+            params
+          ));
         } catch (parseError) {
           console.warn(`Failed to parse params for ${nodeName}:`, parseError);
         }
       } else {
         // No params, just add with basic info
-        featured.push({
-          name: displayName,
-          type: 'unknown',
-          target: displayName,
-          params: {},
-          getModelNames() {
-            const modelNames = this.params.model_names;
-            if (Array.isArray(modelNames)) {
-              return modelNames.map(name => String(name));
-            }
-            return [];
-          }
-        });
+        featured.push(new EntityCardDataImpl(
+          displayName,
+          'unknown',
+          displayName,
+          {}
+        ));
       }
     }
   }
