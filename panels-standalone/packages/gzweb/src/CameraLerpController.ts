@@ -3,6 +3,15 @@ import type { OrbitControls } from "../include/OrbitControls";
 
 export type FocusInput = THREE.Object3D | THREE.Object3D[];
 
+export interface ViewSubRect {
+  fullWidth: number;
+  fullHeight: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+}
+
 interface Transition {
   active: boolean;
 
@@ -34,6 +43,8 @@ export class CameraLerpController {
     elapsed: 0,
   };
 
+  private viewSubRect: ViewSubRect | null = null;
+
   private tmpBox = new THREE.Box3();
   private tmpBox2 = new THREE.Box3();
   private tmpSize = new THREE.Vector3();
@@ -44,6 +55,45 @@ export class CameraLerpController {
   constructor(camera: THREE.PerspectiveCamera, controls: OrbitControls) {
     this.camera = camera;
     this.controls = controls;
+  }
+
+  /**
+   * @param view Sub-rectangle of the full view; pass null/undefined to clear.
+   */
+  setViewSubRect(view?: ViewSubRect | null) {
+    if (view) {
+      this.viewSubRect = {
+        fullWidth: view.fullWidth,
+        fullHeight: view.fullHeight,
+        offsetX: view.offsetX,
+        offsetY: view.offsetY,
+        width: view.width,
+        height: view.height,
+      };
+    } else {
+      this.viewSubRect = null;
+    }
+
+    this.applyViewSubRect();
+  }
+
+  private applyViewSubRect() {
+    const v = this.viewSubRect;
+
+    if (v) {
+      this.camera.setViewOffset(
+        v.fullWidth,
+        v.fullHeight,
+        v.offsetX,
+        v.offsetY,
+        v.width,
+        v.height
+      );
+    } else {
+      this.camera.clearViewOffset();
+    }
+
+    this.camera.updateProjectionMatrix();
   }
 
   cancel() {
@@ -78,10 +128,46 @@ export class CameraLerpController {
     const radius = this.tmpSize.length() * 0.5 * padding;
 
     const fov = THREE.MathUtils.degToRad(this.camera.fov);
-    const hFov = 2 * Math.atan(Math.tan(fov / 2) * this.camera.aspect);
 
-    const distV = radius / Math.sin(fov / 2);
-    const distH = radius / Math.sin(hFov / 2);
+    let halfV = fov / 2;
+    let halfH = Math.atan(Math.tan(halfV) * this.camera.aspect);
+
+    if (this.viewSubRect) {
+      const v = this.viewSubRect;
+
+      const near = 1;
+      const topFull = Math.tan(halfV) * near;
+      const heightFull = 2 * topFull;
+      const widthFull = heightFull * this.camera.aspect;
+
+      let left = -0.5 * widthFull;
+      let top = topFull;
+      let width = widthFull;
+      let height = heightFull;
+
+      left += (v.offsetX / v.fullWidth) * widthFull;
+      top -= (v.offsetY / v.fullHeight) * heightFull;
+      width *= v.width / v.fullWidth;
+      height *= v.height / v.fullHeight;
+
+      const right = left + width;
+      const bottom = top - height;
+
+      const hx = Math.min(
+        Math.atan(Math.max(1e-6, right) / near),
+        Math.atan(Math.max(1e-6, -left) / near)
+      );
+      const hy = Math.min(
+        Math.atan(Math.max(1e-6, top) / near),
+        Math.atan(Math.max(1e-6, -bottom) / near)
+      );
+
+      halfH = Math.max(1e-6, hx);
+      halfV = Math.max(1e-6, hy);
+    }
+
+    const distV = radius / Math.sin(halfV);
+    const distH = radius / Math.sin(halfH);
 
     const distance = Math.max(distV, distH) * 2;
 
@@ -100,6 +186,7 @@ export class CameraLerpController {
   }
 
   update(deltaMs: number) {
+    if (this.viewSubRect) this.applyViewSubRect();
     if (!this.transition.active) return;
 
     this.transition.elapsed += deltaMs;

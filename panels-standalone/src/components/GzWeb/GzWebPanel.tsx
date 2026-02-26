@@ -638,6 +638,30 @@ export const GzWebPanel: React.FC = () => {
     }
   }, []);
 
+  // Handle viewport size updates from ViewportDetector
+  const handleViewportSizeUpdate = useCallback((msg: any) => {
+    if (!sceneManagerRef.current) {
+      console.warn('SceneManager not available for viewport update:', msg);
+      return;
+    }
+
+    const { payload } = msg;
+    console.log(`[GzWebPanel][VIEWPORT_UPDATE]`, payload);
+
+    try {
+      // Use the SceneManager's setViewSubRect method
+      const sceneManager = sceneManagerRef.current as any;
+      if (sceneManager.setViewSubRect) {
+        sceneManager.setViewSubRect(payload);
+        console.log('Applied viewport clipping:', payload);
+      } else {
+        console.warn('setViewSubRect method not available on SceneManager');
+      }
+    } catch (error) {
+      console.error('Error applying viewport clipping:', error);
+    }
+  }, []);
+
   const requestHostVmInfo = useCallback(async (): Promise<HostVmInfo | null> => {
     const api = vscodeApiRef.current;
     if (!api) return null;

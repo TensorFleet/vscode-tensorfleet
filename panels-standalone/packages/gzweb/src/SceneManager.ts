@@ -8,6 +8,9 @@ import { map, Observable, Subscription } from "rxjs";
 import { Topic } from "./Topic";
 import { Transport } from "./Transport";
 
+// Import ViewSubRect interface from CameraLerpController
+import { ViewSubRect } from "./CameraLerpController";
+
 /**
  * Interface used to pass arguments to the SceneManager constructor.
  */
@@ -353,6 +356,25 @@ export class SceneManager {
 
     // Use the scene's focus method which handles the camera lerp
     this.scene.cameraLerp.focus(validModels, durationMs, paddingFactor);
+  }
+
+  /**
+   * Set the viewport clipping rectangle for the camera
+   * @param viewSubRect ViewSubRect object containing clipping information
+   */
+  public setViewSubRect(viewSubRect: ViewSubRect): void {
+    if (!this.scene || !this.scene.cameraLerp) {
+      console.warn('Scene or cameraLerp not available for setViewSubRect');
+      return;
+    }
+
+    try {
+      // Use the camera lerp controller's setViewSubRect method
+      this.scene.cameraLerp.setViewSubRect(viewSubRect);
+      console.log('Applied viewport clipping:', viewSubRect);
+    } catch (error) {
+      console.error('Error applying viewport clipping:', error);
+    }
   }
 
   /**
