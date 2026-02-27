@@ -17,9 +17,11 @@ import { fromLonLat } from 'ol/proj';
 import { unByKey } from 'ol/Observable';
 import type { EventsKey } from 'ol/events';
 
+import { FlightPlannerMap, type FlightPlan } from './FlightPlannerMap'; // <- adjust path
+
+
 import type { DroneStateModel, DroneState } from '../../../../packages/tensorfleet-util/src/drone/drone-state-model';
 import { MapButtonsStack, FollowLockButton } from './MapButtons';
-import { FlightPathTools } from './FlightPathTools';
 
 type Props = {
   model: DroneStateModel;
@@ -102,6 +104,8 @@ const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<HTMLDivElement | null>(null);
+
+  const [plan, setPlan] = useState<FlightPlan>({ points: [], closed: false });  
 
   const mapObjRef = useRef<Map | null>(null);
   const vectorSourceRef = useRef<VectorSource | null>(null);
@@ -290,12 +294,14 @@ export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) =
     >
       <div ref={mapRef} style={{ position: 'absolute', inset: 0 }} />
 
-      <FlightPathTools
-        map={olMap}
-        onPathChange={(coords) => {
-          // coords are in EPSG:3857
-        }}
-      />
+      <div style={{ position: 'absolute', inset: 0, zIndex: 50, pointerEvents: 'auto' }}>
+        <FlightPlannerMap
+          initialCenterLonLat={{ lon: 0, lat: 0 }} // optional
+          initialZoom={2} // optional
+          value={plan}
+          onChange={setPlan}
+        />
+      </div>
 
       <MapButtonsStack corner="bottom-right">
         <FollowLockButton locked={isLocked} onToggle={() => setIsLocked((v) => !v)} />
