@@ -9,6 +9,9 @@ import MissionControlBridge from './drone/MissionControlBridge';
 import SimulationControlBridge from '../SimulationControl/SimulationControlBridge';
 import { SimulationController } from '@/simulation/simulation_controller';
 import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
+import SidePanel from '../GzWeb/SidePanel';
+import FlightPlanList from './map/FlightPlanList';
+
 
 const droneState = new DroneStateModel();
 const droneController = new DroneController(droneState, ros2Bridge);
@@ -49,6 +52,9 @@ export const MissionControlPanel: React.FC = () => {
         </div>
         <MissionControlBridge controller={droneController} />
         <SimulationControlBridge controller={simulationController} />
+      <SidePanel side="left" width={320}>
+        <FlightPlanList />
+      </SidePanel>
         <DroneMap
             model = {droneState}
             >

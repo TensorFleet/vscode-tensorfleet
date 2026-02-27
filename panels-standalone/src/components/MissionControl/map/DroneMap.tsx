@@ -17,8 +17,10 @@ import { fromLonLat } from 'ol/proj';
 import { unByKey } from 'ol/Observable';
 import type { EventsKey } from 'ol/events';
 
-import { FlightPlannerMap, type FlightPlan } from './FlightPlannerMap'; // <- adjust path
-
+import { FlightPlannerMap, type FlightPlan } from './FlightPlannerMap';
+import SidePanel from '../../GzWeb/SidePanel';
+import FlightPlanList from './FlightPlanList';
+import '../../GzWeb/SidePanel.css';
 
 import type { DroneStateModel, DroneState } from '../../../../packages/tensorfleet-util/src/drone/drone-state-model';
 import { MapButtonsStack, FollowLockButton } from './MapButtons';
@@ -289,23 +291,33 @@ export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) =
         height: '100%',
         minHeight: '320px',
         borderRadius: 12,
-        overflow: 'hidden',
+        overflow: 'hidden'
       }}
     >
-      <div ref={mapRef} style={{ position: 'absolute', inset: 0 }} />
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+        }}
+      >
+        <div ref={mapRef} style={{ position: 'absolute', inset: 0 }} />
 
-      <div style={{ position: 'absolute', inset: 0, zIndex: 50, pointerEvents: 'auto' }}>
-        <FlightPlannerMap
-          initialCenterLonLat={{ lon: 0, lat: 0 }} // optional
-          initialZoom={2} // optional
-          value={plan}
-          onChange={setPlan}
-        />
+        <div style={{ position: 'absolute', inset: 0, zIndex: 50, pointerEvents: 'auto' }}>
+          <FlightPlannerMap
+            initialCenterLonLat={{ lon: 0, lat: 0 }} // optional
+            initialZoom={2} // optional
+            value={plan}
+            onChange={setPlan}
+          />
+        </div>
+
+        <MapButtonsStack corner="bottom-right">
+          <FollowLockButton locked={isLocked} onToggle={() => setIsLocked((v) => !v)} />
+        </MapButtonsStack>
       </div>
-
-      <MapButtonsStack corner="bottom-right">
-        <FollowLockButton locked={isLocked} onToggle={() => setIsLocked((v) => !v)} />
-      </MapButtonsStack>
     </div>
   );
 };
