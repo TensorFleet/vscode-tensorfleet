@@ -11,6 +11,7 @@ import { SimulationController } from '@/simulation/simulation_controller';
 import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
 import SidePanel from '../GzWeb/SidePanel';
 import FlightPlanList from './map/FlightPlanList';
+import { FlightPlanProvider } from './map/FlightPlanContext';
 
 
 const droneState = new DroneStateModel();
@@ -46,22 +47,24 @@ export const MissionControlPanel: React.FC = () => {
       console.log('Connection settings changed:', settings);
       // TODO: Implement reconnection logic if needed
     }}>
-      <div className="mission-control-panel">
-        <div className="mission-control-header">
-          <ConnectionSettingsTrigger />
+      <FlightPlanProvider>
+        <div className="mission-control-panel">
+          <div className="mission-control-header">
+            <ConnectionSettingsTrigger />
+          </div>
+          <MissionControlBridge controller={droneController} />
+          <SimulationControlBridge controller={simulationController} />
+        <SidePanel side="left" width={320}>
+          <FlightPlanList />
+        </SidePanel>
+          <DroneMap
+              model = {droneState}
+              >
+          </DroneMap>
+          <DroneStatusPanel
+            model = {droneState}>
+          </DroneStatusPanel>
         </div>
-        <MissionControlBridge controller={droneController} />
-        <SimulationControlBridge controller={simulationController} />
-      <SidePanel side="left" width={320}>
-        <FlightPlanList />
-      </SidePanel>
-        <DroneMap
-            model = {droneState}
-            >
-        </DroneMap>
-        <DroneStatusPanel
-          model = {droneState}>
-        </DroneStatusPanel>
-      </div>
+      </FlightPlanProvider>
     </ConnectionSettingsProvider>);
 }

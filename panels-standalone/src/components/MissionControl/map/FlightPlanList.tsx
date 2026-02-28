@@ -1,17 +1,10 @@
 import React from 'react';
-
-interface FlightPlanData {
-  id: string;
-  name: string;
-  plan: {
-    points: { lon: number; lat: number }[];
-    closed: boolean;
-  };
-  createdAt: Date;
-}
+import { useFlightPlans } from './FlightPlanContext';
 
 const FlightPlanList: React.FC = () => {
-  const flightPlans = (window as any).flightPlanner?.list() || [];
+  console.log('FlightPlanList: Component rendering');
+  const { plans } = useFlightPlans();
+  console.log('FlightPlanList: Received plans from context:', plans);
 
   const formatDateTime = (date: Date) => {
     return date.toLocaleString();
@@ -20,13 +13,13 @@ const FlightPlanList: React.FC = () => {
   return (
     <div style={{ padding: '16px', height: '100%', overflow: 'auto' }}>
       <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '600' }}>Flight Plans</h3>
-      {flightPlans.length === 0 ? (
+      {plans.length === 0 ? (
         <div style={{ color: '#666', fontSize: '14px', textAlign: 'center', marginTop: '40px' }}>
           No flight plans yet
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {flightPlans.map((plan: FlightPlanData) => (
+          {plans.map((plan) => (
             <div
               key={plan.id}
               style={{

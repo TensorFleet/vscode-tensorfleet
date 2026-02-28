@@ -17,6 +17,7 @@ import Stroke from 'ol/style/Stroke';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import type { EventsKey } from 'ol/events';
 import { unByKey } from 'ol/Observable';
+import { useFlightPlans } from './FlightPlanContext';
 
 type TopRightButtonsStackProps = { children: React.ReactNode };
 
@@ -305,7 +306,12 @@ export const FlightPlannerMap: React.FC<Props> = ({
   const downPixelRef = useRef<[number, number] | null>(null);
   const movedRef = useRef<boolean>(false);
 
+  // Use the flight plans context
+  const { addPlan, plans } = useFlightPlans();
+  console.log('FlightPlannerMap: Context initialized, current plans count:', plans.length);
+
   const setModeSafe = (m: Mode) => {
+    console.log('FlightPlannerMap: Setting mode to:', m);
     modeRef.current = m;
     setMode(m);
   };
@@ -384,9 +390,27 @@ export const FlightPlannerMap: React.FC<Props> = ({
   };
 
   const finishDrawing = () => {
+    console.log('FlightPlannerMap: finishDrawing called, current mode:', modeRef.current);
     setModeSafe('idle');
     const preview = previewLineRef.current;
     if (preview) (preview.getGeometry() as LineString).setCoordinates([]);
+    
+    // Convert the current drawing to a flight plan and add it to context
+    if (drawingPtsRef.current.length > 0) {
+      console.log('FlightPlannerMap: Converting drawing to flight plan, points count:', drawingPtsRef.current.length);
+      const plan: FlightPlan = toFlightPlan(sourceRef.current!);
+      console.log('FlightPlannerMap: Converted plan:', plan);
+      const planData = {
+        name: `Flight Plan ${plans.length + 1}`,
+        plan: plan
+      };
+      console.log('FlightPlannerMap: Calling addPlan with:', planData);
+      addPlan(planData);
+      console.log('FlightPlannerMap: addPlan completed');
+    } else {
+      console.log('FlightPlannerMap: No points to convert, skipping plan creation');
+    }
+    
     emitChange();
   };
 

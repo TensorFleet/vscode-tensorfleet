@@ -8,8 +8,11 @@ export interface FlightPlanData {
   createdAt: Date;
 }
 
+type FlightPlanEvent = 'planAdded' | 'planRemoved' | 'planUpdated' | 'listChanged';
+
 class FlightPlanManager {
   private plans: FlightPlanData[] = [];
+  private listeners: Map<FlightPlanEvent, Set<() => void>> = new Map();
 
   add(planData: Omit<FlightPlanData, 'id' | 'createdAt'>): FlightPlanData {
     const newPlan: FlightPlanData = {
@@ -18,13 +21,17 @@ class FlightPlanManager {
       createdAt: new Date()
     };
     this.plans.push(newPlan);
+    this.emit('planAdded', newPlan);
+    this.emit('listChanged');
     return newPlan;
   }
 
   remove(id: string): boolean {
     const index = this.plans.findIndex(plan => plan.id === id);
     if (index !== -1) {
-      this.plans.splice(index, 1);
+      const removedPlan = this.plans.splice(index, 1)[0];
+      this.emit('planRemoved', removedPlan);
+      this.emit('listChanged');
       return true;
     }
     return false;
@@ -36,6 +43,25 @@ class FlightPlanManager {
 
   get(id: string): FlightPlanData | undefined {
     return this.plans.find(plan => plan.id === id);
+  }
+
+  subscribe(event: FlightPlanEvent, callback: () => void): () => void {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, new Set());
+    }
+    this.listeners.get(event)!.add(callback);
+    
+    // Return unsubscribe function
+    return () => {
+      this.listeners.get(event)?.delete(callback);
+    };
+  }
+
+  private emit(event: FlightPlanEvent, data?: any): void {
+    const callbacks = this.listeners.get(event);
+    if (callbacks) {
+      callbacks.forEach(callback => callback());
+    }
   }
 
   private generateId(): string {
@@ -50,6 +76,7 @@ declare global {
       add: (planData: Omit<FlightPlanData, 'id' | 'createdAt'>) => FlightPlanData;
       remove: (id: string) => boolean;
       list: () => FlightPlanData[];
+      subscribe: (event: FlightPlanEvent, callback: () => void) => () => void;
     };
   }
 }
@@ -57,18 +84,19 @@ declare global {
 const globalWindow = globalThis as unknown as Window;
 
 if (!globalWindow.flightPlanner) {
+  const manager = new FlightPlanManager();
   globalWindow.flightPlanner = {
     add: (planData: Omit<FlightPlanData, 'id' | 'createdAt'>) => {
-      const manager = new FlightPlanManager();
       return manager.add(planData);
     },
     remove: (id: string) => {
-      const manager = new FlightPlanManager();
       return manager.remove(id);
     },
     list: () => {
-      const manager = new FlightPlanManager();
       return manager.list();
+    },
+    subscribe: (event: FlightPlanEvent, callback: () => void) => {
+      return manager.subscribe(event, callback);
     }
   };
 }
