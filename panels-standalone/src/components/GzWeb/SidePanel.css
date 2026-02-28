@@ -4,6 +4,7 @@
   bottom: 0;
   width: 0;
   pointer-events: none;
+  z-index: 1000;
 }
 
 .sp-anchor.right { right: 0; }
