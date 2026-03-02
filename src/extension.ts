@@ -10,6 +10,8 @@ import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
 import * as regions from './regions';
 import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
+import { WorkspaceFileService } from './file-api';
+import { injectFsApi } from './file-api-bootstrap';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -753,6 +755,7 @@ let projectWatcher: vscode.FileSystemWatcher | null = null;
 
 // Unified status coordinator
 let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
+let workspaceFileService: WorkspaceFileService | null = null;
 
 // Panel registry for unique panels (to enable refresh on auth changes)
 const uniquePanelRegistry = new Map<string, UniqueViewProvider>();
@@ -812,6 +815,22 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     unifiedStatusCoordinator.onStateChange(() => scheduleEnvRefresh(context, 'unified-status'))
   );
+
+  // Initialize Workspace File Service
+  console.log('[Tensorfleet][FileAPI] Initializing WorkspaceFileService');
+  workspaceFileService = new WorkspaceFileService({
+    maxReadSize: 5 * 1024 * 1024, // 5MB
+    maxWriteSize: 5 * 1024 * 1024, // 5MB
+    maxSearchResults: 200,
+    maxWatchersPerWebview: 25,
+    requestTimeout: 30000
+  });
+  context.subscriptions.push(new vscode.Disposable(() => {
+    if (workspaceFileService) {
+      workspaceFileService.dispose();
+      workspaceFileService = null;
+    }
+  }));
 
   // Initialize auth state
   vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "")
@@ -1204,6 +1223,17 @@ class DashboardViewProvider implements vscode.WebviewViewProvider {
 
       const command = message.command as string;
 
+      // Route to Workspace File Service if it's a file operation
+      if (workspaceFileService && message.channel === 'tensorfleet.fs') {
+        const ctx = {
+          webview: webviewView.webview,
+          webviewIdentity: webviewView.webview.html || 'unknown',
+          telemetry
+        };
+        workspaceFileService.handleMessage(message, ctx);
+        return;
+      }
+
       if (command === 'openPanel') {
         telemetry?.trackEvent('webview.action', { viewId: this.config.id, action: 'openPanel' });
         vscode.commands.executeCommand(this.config.command).then(undefined, (error) => {
@@ -1326,6 +1356,17 @@ class UniqueViewProvider implements vscode.WebviewViewProvider {
       const telemetry = getTelemetry();
 
       try {
+        // Route to Workspace File Service if it's a file operation
+        if (workspaceFileService && message.channel === 'tensorfleet.fs') {
+          const ctx = {
+            webview: webviewView.webview,
+            webviewIdentity: webviewView.webview.html || 'unknown',
+            telemetry
+          };
+          workspaceFileService.handleMessage(message, ctx);
+          return;
+        }
+
         if (this.def.onMessage) {
           await this.def.onMessage(message, {
             context: this.context,
@@ -1572,6 +1613,17 @@ class ToolingViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this.renderHtml(webviewView.webview);
     webviewView.webview.onDidReceiveMessage((message) => {
+      // Route to Workspace File Service if it's a file operation
+      if (workspaceFileService && message.channel === 'tensorfleet.fs') {
+        const ctx = {
+          webview: webviewView.webview,
+          webviewIdentity: webviewView.webview.html || 'unknown',
+          telemetry: getTelemetry()
+        };
+        workspaceFileService.handleMessage(message, ctx);
+        return;
+      }
+
       if (message?.command === 'createProjectWizard') {
         getTelemetry()?.trackEvent('webview.action', { viewId: 'tensorfleet-tooling-view', action: 'createProjectWizard' });
         vscode.commands.executeCommand('tensorfleet.createNewProject');
