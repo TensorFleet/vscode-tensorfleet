@@ -177,7 +177,7 @@
 }
 
 /* Info Button - Outline style with $(info) icon - Blocks main card click */
-.info-button {
+.fentity-sub-button {
   width: 22px;
   height: 22px;
   min-width: 22px;
@@ -196,14 +196,14 @@
   opacity: 0.7;
 }
 
-.info-button:hover {
+.fentity-sub-button:hover {
   opacity: 1;
   border-color: var(--vscode-focusBorder, #007fd4);
   background: var(--vscode-toolbar-hoverBackground, #3a3d41);
   transform: scale(1.1);
 }
 
-.info-button:active {
+.fentity-sub-button:active {
   transform: scale(0.95);
   background: var(--vscode-toolbar-activeBackground, #4548a0);
 }

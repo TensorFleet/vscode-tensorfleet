@@ -87,53 +87,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
-  // Handle main card click - sends window message for modularity
-  const handleCardClick = useCallback((entity: EntityCardData) => {
-    const message: EntityClickMessage = {
-      type: CARD_MESSAGES.CLICK,
-      payload: {
-        entity,
-        timestamp: Date.now(),
-      },
-    };
-    
-    // Send message to parent window for external module communication
-    window.parent.postMessage(message, '*');
-    
-    // Log for debugging
-    console.log(`FeaturedEntitiesPanel: Card clicked - ${entity.name}`, message);
-  }, []);
-
-  // Handle info button click - sends window message to open popup
-  const handleInfoClick = useCallback((entity: EntityCardData, e: React.MouseEvent) => {
-    e.stopPropagation();
-    
-    const popupData: EntityInfoData = {
-      ...entity,
-      timestamp: Date.now(),
-    };
-    
-    // Send message to parent window to open the popup
-    const message: EntityInfoPopupMessage = {
-      type: ENTITY_INFO_POPUP_MESSAGES.OPEN,
-      payload: popupData,
-    };
-    
-    window.parent.postMessage(message, '*');
-    
-    // Also send card info click message
-    const clickMessage: EntityClickMessage = {
-      type: CARD_MESSAGES.INFO_CLICK,
-      payload: {
-        entity,
-        timestamp: Date.now(),
-      },
-    };
-    
-    window.parent.postMessage(clickMessage, '*');
-    console.log(`FeaturedEntitiesPanel: Info button clicked - ${entity.name}`, message);
-  }, []);
-
   if (loading) {
     return (
       <div className="featured-entities-container">
@@ -164,8 +117,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
               key={entity.name}
               entity={entity}
               isActive={activeCard === entity.name}
-              onCardClick={handleCardClick}
-              onInfoClick={handleInfoClick}
             />
           ))
         )}
