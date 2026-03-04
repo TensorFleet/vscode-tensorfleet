@@ -299,6 +299,7 @@
   },
   "scripts": {
     "vscode:prepublish": "bun run compile",
+    "sync:panels-deps": "bun install --cwd panels-standalone --frozen-lockfile",
     "prepare:telemetry": "bun scripts/write-telemetry-config.ts",
     "build:panels": "bun run --cwd panels-standalone build",
     "watch:panels": "bun run --cwd panels-standalone build --watch",
@@ -307,7 +308,7 @@
     "compile": "bun run build:panels && bun run build:extension",
     "compile:dev": "TENSORFLEET_BUILD=development bun run compile",
     "compile:prod": "TENSORFLEET_BUILD=production bun run compile",
-    "watch": "TENSORFLEET_BUILD=development bun run watch:panels & TENSORFLEET_BUILD=development bun run watch:extension",
+    "watch": "bun run sync:panels-deps && (TENSORFLEET_BUILD=development bun run watch:panels & TENSORFLEET_BUILD=development bun run watch:extension & wait)",
     "typecheck": "bunx tsc -p ./ --noEmit",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
