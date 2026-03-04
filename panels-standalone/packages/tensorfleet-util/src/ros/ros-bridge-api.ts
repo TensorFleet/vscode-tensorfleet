@@ -39,8 +39,11 @@ export interface ROS2BridgeApi {
    */
   registerSetupROSParameterSet(name: string, value: any): void;
 
-  /** ROS parameter set API (immediate) */
+  /** ROS parameter APIs */
   setROSParameter(name: string, value: any): Promise<void>;
+  getROSParameter(name: string, opts?: { force?: boolean; timeoutMs?: number }): Promise<unknown>;
+  getROSParameters(names: string[], opts?: { timeoutMs?: number }): Promise<Record<string, unknown>>;
+  getAllROSParameters(opts?: { timeoutMs?: number }): Promise<Record<string, unknown>>;
 
   /** Topic discovery & helpers */
   getAvailableTopics(): Subscription[];

@@ -116,7 +116,8 @@ export class VMManagerIntegration implements vscode.Disposable {
       description: 'Basic ground robot with Gazebo simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "static_bodies_01;simple_bot_include"
+        world_components: "static_bodies_01;simple_bot_include",
+        simple_robot_enabled: "true"
       }
     },
     'lerobot': {

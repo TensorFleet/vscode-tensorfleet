@@ -1,0 +1,181 @@
+.sp-anchor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  pointer-events: none;
+}
+
+.sp-anchor.right { right: 0; }
+.sp-anchor.left { left: 0; }
+
+/* panel */
+
+.sp-clip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  transition: width 160ms ease;
+  pointer-events: none;
+}
+
+.sp-anchor.right .sp-clip { right: 0; }
+.sp-anchor.left .sp-clip { left: 0; }
+
+.sp-clip.open { width: var(--sp-width); }
+.sp-clip.closed { width: 0; }
+
+.sp-panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--sp-width);
+  background: var(--vscode-sideBar-background);
+  color: var(--vscode-sideBar-foreground);
+  pointer-events: auto;
+}
+
+.sp-anchor.right .sp-panel {
+  right: 0;
+  border-left: 1px solid var(--vscode-panel-border);
+}
+
+.sp-anchor.left .sp-panel {
+  left: 0;
+  border-right: 1px solid var(--vscode-panel-border);
+}
+
+.sp-content {
+  height: 100%;
+  overflow: auto;
+}
+
+/* toggle */
+
+.sp-toggle {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+
+  width: 14px;
+  height: calc(var(--sp-btn) * 1.9);
+
+  padding: 0;
+  min-width: 0;
+  box-sizing: border-box;
+
+  display: grid;
+  place-items: center;
+
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+
+  cursor: pointer;
+  pointer-events: auto;
+
+  box-shadow: 0 2px 6px var(--vscode-widget-shadow);
+
+  transition:
+    left 160ms ease,
+    right 160ms ease,
+    background 120ms ease;
+
+  border-radius: 0;
+
+  --sp-trap: 22%;
+}
+
+.sp-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--vscode-sideBar-background);
+  opacity: 0.38;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.sp-toggle:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.sp-toggle:hover::before {
+  opacity: 0;
+}
+
+.sp-toggle:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+/* geometry */
+
+.sp-anchor.right .sp-toggle {
+  right: 0;
+  clip-path: polygon(
+    0 var(--sp-trap),
+    100% 0,
+    100% 100%,
+    0 calc(100% - var(--sp-trap))
+  );
+}
+
+.sp-anchor.left .sp-toggle {
+  left: 0;
+  clip-path: polygon(
+    0 0,
+    100% var(--sp-trap),
+    100% calc(100% - var(--sp-trap)),
+    0 100%
+  );
+}
+
+.sp-anchor.right .sp-toggle.open {
+  right: calc(var(--sp-width) + 1px);
+}
+
+.sp-anchor.left .sp-toggle.open {
+  left: calc(var(--sp-width) + 1px);
+}
+
+/* prevent closed state from contributing overflow */
+.sp-anchor.right .sp-toggle.closed {
+  right: 0;
+}
+
+.sp-anchor.left .sp-toggle.closed {
+  left: 0;
+}
+
+/* svg icon: centered + flips in place */
+
+.sp-icon {
+  width: 10px;
+  height: 18px;
+  display: block;
+  pointer-events: none;
+  transform-origin: 50% 50%;
+}
+
+.sp-anchor.right .sp-icon {
+  transform: scaleX(-1);
+}
+
+.sp-anchor.right .sp-toggle.open .sp-icon {
+  transform: scaleX(1);
+}
+
+.sp-anchor.left .sp-icon {
+  transform: scaleX(1);
+}
+
+.sp-anchor.left .sp-toggle.open .sp-icon {
+  transform: scaleX(-1);
+}
+
+/* optional: kill accidental layout overflow from the anchor itself */
+.sp-anchor {
+  overflow: visible;
+}

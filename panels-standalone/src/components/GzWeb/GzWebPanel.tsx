@@ -1,13 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExpandLess, ExpandMore, Wifi, WifiOff } from '@mui/icons-material';
 import { IconButton, Tooltip } from '@mui/material';
+import { SceneManager } from 'gzweb';
+import { CARD_MESSAGES } from './EntityCardData';
 import './GzWebPanel.css';
+import { isModuleName } from 'typescript';
+
+declare global {
+  interface Window {
+    OriginalWebSocket?: typeof WebSocket;
+  }
+}
 
 type SceneManagerTransport = { root?: unknown };
 type SceneManagerInstance = {
   destroy: () => void;
   resize: () => void;
   transport?: SceneManagerTransport;
+  scene?: any; // The Scene instance
+  getModelByName?: (name: string) => any; // Method to get model by name
 };
 
 type SceneManagerConstructor = new (args: {
@@ -156,7 +167,7 @@ const installVmManagerWebSocketShim = (
     private _ws: WebSocket;
     private _ready = false;
     private _queue: unknown[] = [];
-    private _listeners: { [K in keyof WebSocketEventMap]: Array<(ev: WebSocketEventMap[K]) => void> } = {
+    private _listeners: { [K in keyof WebSocketEventMap]: Array<(ev: any) => void> } = {
       open: [],
       message: [],
       close: [],
@@ -182,7 +193,7 @@ const installVmManagerWebSocketShim = (
 
       this._ws.addEventListener('open', (ev) => {
         const loginMsg = { type: 'login', token: token ?? '', nodeId };
-        this._ws.send(JSON.stringify(loginMsg));
+        this._ws.send(JSON.stringify(loginMsg) as any);
         this._emit('open', ev);
       });
 
@@ -243,7 +254,7 @@ const installVmManagerWebSocketShim = (
       return this._ws.bufferedAmount;
     }
 
-    send(data: unknown) {
+    send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
       if (!this._ready) {
         this._queue.push(data);
         return;
@@ -284,6 +295,10 @@ const installVmManagerWebSocketShim = (
         this._ws.send(msg as any);
       }
     }
+  }
+
+  if (!window.OriginalWebSocket) {
+    window.OriginalWebSocket = window.WebSocket;
   }
 
   window.WebSocket = VmManagerWebSocket as unknown as typeof WebSocket;
@@ -349,7 +364,9 @@ export const GzWebPanel: React.FC = () => {
   const [autoVmId, setAutoVmId] = useState<string | null>(null);
   const [vmIdFetchState, setVmIdFetchState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [vmIdFetchError, setVmIdFetchError] = useState('');
-  const [hasVsCodeBridge, setHasVsCodeBridge] = useState(false);
+  const [hasVsCodeBridge, setHasVsCodeBridge] = useState(
+    () => typeof window !== 'undefined' && typeof window.acquireVsCodeApi === 'function',
+  );
 
   if (!vmBaseRef.current) {
     vmBaseRef.current = vmBase;
@@ -482,6 +499,20 @@ export const GzWebPanel: React.FC = () => {
 
     const handleMessage = (event: MessageEvent) => {
       const msg = event.data;
+      
+      // Handle hover messages for outline functionality
+      if (msg && (msg.type === CARD_MESSAGES.HOVER_START || msg.type === CARD_MESSAGES.HOVER_END)) {
+        handleHoverMessage(msg);
+        return;
+      }
+      
+      // Handle focus messages for camera focusing
+      if (msg && msg.type === 'FOCUS_ON_MODELS') {
+        handleFocusMessage(msg);
+        return;
+      }
+      
+      // Handle existing VM manager messages
       if (!msg || msg.command !== 'tensorfleet.vmManagerInfo') return;
       const payload = (msg.payload ?? {}) as HostVmInfo;
       hostVmInfoRef.current = payload;
@@ -526,6 +557,88 @@ export const GzWebPanel: React.FC = () => {
       hostVmResolversRef.current = [];
     };
   }, [setVmBase, setToken]);
+
+    // Handle hover messages to add/remove objects from outline layer
+  const handleHoverMessage = useCallback((msg: any) => {
+    if (!sceneManagerRef.current) {
+      console.warn('SceneManager not available for hover message:', msg);
+      return;
+    }
+
+    const { type, payload } = msg;
+    const { entityName, modelNames } = payload;
+
+    // Get the 3D object from the modelMap using the entity name
+    for (const modelName of modelNames) {
+      try {
+        const modelObject = sceneManagerRef.current.getModelByName?.(modelName);
+        
+        if (!modelObject) {
+          console.warn(`Model object not found for entity: ${entityName}/${modelName}`);
+          return;
+        }
+
+        // Get the Scene instance to access outline functions
+        const scene = sceneManagerRef.current.scene;
+        
+        if (!scene) {
+          console.warn('Scene not available for outline operations');
+          return;
+        }
+
+        if (type === CARD_MESSAGES.HOVER_START) {
+          // Add object to outline layer
+          if (scene.addOutlineRoot) {
+            scene.addOutlineRoot(modelObject);
+            console.log(`Added ${entityName} to outline layer`);
+          } else if (scene.updateOutlineLayerMembership) {
+            scene.updateOutlineLayerMembership(modelObject, true);
+            console.log(`Enabled outline for ${entityName}`);
+          }
+        } else if (type === CARD_MESSAGES.HOVER_END) {
+          // Remove object from outline layer
+          if (scene.removeOutlineRoot) {
+            scene.removeOutlineRoot(modelObject);
+            console.log(`Removed ${entityName} from outline layer`);
+          } else if (scene.updateOutlineLayerMembership) {
+            scene.updateOutlineLayerMembership(modelObject, false);
+            console.log(`Disabled outline for ${entityName}`);
+          }
+        }
+      } catch (error) {
+        console.error('Error handling hover message:', error);
+      }
+    }
+  }, []);
+
+  const handleFocusMessage = useCallback((msg: any) => {
+    if (!sceneManagerRef.current) {
+      console.warn('SceneManager not available for focus message:', msg);
+      return;
+    }
+
+    const { payload } = msg;
+    const { modelNames, entityName } = payload;
+
+    console.log(`[GzWebPanel][FOCUS_MESSAGE]`, {
+      entityName,
+      modelNames,
+      timestamp: payload.timestamp,
+    });
+
+    try {
+      // Use the SceneManager's focusOnModels method
+      const sceneManager = sceneManagerRef.current as any;
+      if (sceneManager.focusOnModels) {
+        sceneManager.focusOnModels(modelNames, 800, 1.2);
+        console.log(`Focused camera on models: ${modelNames.join(', ')}`);
+      } else {
+        console.warn('focusOnModels method not available on SceneManager');
+      }
+    } catch (error) {
+      console.error('Error focusing on models:', error);
+    }
+  }, []);
 
   const requestHostVmInfo = useCallback(async (): Promise<HostVmInfo | null> => {
     const api = vscodeApiRef.current;
@@ -657,10 +770,6 @@ export const GzWebPanel: React.FC = () => {
     setActiveWsUrl(websocketUrl);
 
     try {
-      const { SceneManager } = (await import(
-        /* @vite-ignore */ GZWEB_MODULE_URL
-      )) as { SceneManager: SceneManagerConstructor };
-
       const manager = new SceneManager({
         elementId: SCENE_ELEMENT_ID,
         websocketUrl,
@@ -727,6 +836,7 @@ export const GzWebPanel: React.FC = () => {
 
   useEffect(() => {
     if (hasVsCodeBridge) return;
+    if (typeof window !== 'undefined' && typeof window.acquireVsCodeApi === 'function') return;
     if (!vmBase.trim()) return;
     void fetchVmIdFromManager({ quiet: true });
     return () => vmIdAbortRef.current?.abort();

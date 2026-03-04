@@ -1,10 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './global.css';
-import { GzWebPanel } from './components/GzWeb/GzWebPanel';
+import { ESimViewPanel } from './components/GzWeb/ESimViewPanel';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <GzWebPanel />
+    <ESimViewPanel />
   </React.StrictMode>,
 );

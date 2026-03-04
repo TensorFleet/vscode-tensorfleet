@@ -14,6 +14,9 @@ import { ROS_PORTS } from "./ws-proxy-client";
 import * as RosTypes from "tensorfleet-util/ros/ros-types";
 import { ROS2BridgeApi } from "tensorfleet-util/ros/ros-bridge-api";
 
+// (optional but nice) local type for the rosapi response
+type RosapiNodesResponse = { nodes: string[] };
+
 export type ConnectionMode = "foxglove";
 
 interface ConnectionSettings {
@@ -68,12 +71,22 @@ export class ROS2Bridge {
   // Timer for checking settings changes
   private settingsCheckTimer: number | null = null;
 
+  // Server info readiness promise
+  private serverInfoReady: Promise<void> | null = null;
+  private serverInfoResolver: (() => void) | null = null;
+
   constructor() {
     this._configureDefault();
     this._startSettingsWatcher();
   }
 
   connect(_mode: ConnectionMode = "foxglove", targetPort?: number, settings?: ConnectionSettings) {
+    console.log('ROS2Bridge: Starting connection process...');
+    // Reset server info readiness for new connection
+    this.serverInfoReady = new Promise<void>((resolve) => {
+      this.serverInfoResolver = resolve;
+    });
+
     // Use provided settings or fall back to window globals
     const proxyUrl = settings?.proxyUrl ?? (window as any).TENSORFLEET_PROXY_URL;
     const vmManagerUrl = settings?.vmManagerUrl ?? (window as any).TENSORFLEET_VM_MANAGER_URL;
@@ -162,6 +175,27 @@ export class ROS2Bridge {
       this._startTopicsWatcher(1000);
     };
 
+    // Print all ROS parameters after server capabilities are received
+    this.client.onServerInfo = async () => {
+      console.log('ROS2Bridge: onServerInfo callback fired - server capabilities received');
+      // Mark server info as ready
+      this.serverInfoResolver?.();
+      console.log('ROS2Bridge: serverInfoReady promise resolved');
+
+      if (!this.client) return;
+      try {
+        await this.client.waitForService("/rosapi/nodes");
+        console.log("[Tensorfleet] All nodes :", await this.listNodes());
+      } catch (error) {
+        console.warn("[Tensorfleet] Failed to get nodes (service not available):", error);
+      }
+      try {
+        console.log("[Tensorfleet] All params :", await this.getAllROSParameters());
+      } catch (error) {
+        console.warn("[Tensorfleet] Failed to get params:", error);
+      }
+    };
+
     this.client.onClose = () => {
       // eslint-disable-next-line no-console
       console.log("[ROS2Bridge] Foxglove connection closed");
@@ -211,6 +245,9 @@ export class ROS2Bridge {
     }
     this.client = null;
     this.discoveredTopics.clear();
+    // Clear server info on disconnect
+    this.serverInfoReady = null;
+    this.serverInfoResolver = null;
   }
 
   /** Update connection settings and reconnect if they changed. */
@@ -298,6 +335,72 @@ export class ROS2Bridge {
     return Promise.resolve();
   }
 
+  /** Read one ROS 2 parameter value */
+  async getROSParameter(name: string, opts?: { force?: boolean; timeoutMs?: number }): Promise<unknown> {
+    if (!this.client) throw new Error("getROSParameter() before connect");
+    if (!this.client.isConnected()) throw new Error("getROSParameter() while disconnected");
+    return await this.client.getParameter(name, opts);
+  }
+
+  /** Read many ROS 2 parameters */
+  async getROSParameters(names: string[], opts?: { timeoutMs?: number }): Promise<Record<string, unknown>> {
+    if (!this.client) throw new Error("getROSParameters() before connect");
+    if (!this.client.isConnected()) throw new Error("getROSParameters() while disconnected");
+    const map = await this.client.getParameters(names, opts);
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of map.entries()) out[k] = v;
+    return out;
+  }
+
+  /** Fetch all params (Foxglove bridge: empty list means all) */
+  async getAllROSParameters(opts?: { timeoutMs?: number }): Promise<Record<string, unknown>> {
+    console.log('ROS2Bridge: getAllROSParameters called');
+    if (!this.serverInfoReady) throw new Error("getAllROSParameters() before connect");
+
+    // Add timeout to prevent infinite hanging when connection fails
+    const timeoutMs = opts?.timeoutMs ?? 15000; // 15 second default timeout
+    console.log('ROS2Bridge: waiting for serverInfoReady with timeout...', timeoutMs, 'ms');
+
+    try {
+      await Promise.race([
+        this.serverInfoReady,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`getAllROSParameters timeout after ${timeoutMs}ms - WebSocket connection failed`)), timeoutMs)
+        )
+      ]);
+      console.log('ROS2Bridge: serverInfoReady resolved');
+    } catch (timeoutError) {
+      console.error('ROS2Bridge: serverInfoReady timeout - connection failed');
+      throw timeoutError;
+    }
+
+    if (!this.client) throw new Error("getAllROSParameters() before connect");
+    if (!this.client.isConnected()) throw new Error("getAllROSParameters() while disconnected");
+    console.log('ROS2Bridge: calling client.getAllParameters...');
+    const map = await this.client.getAllParameters(opts);
+    console.log('ROS2Bridge: client.getAllParameters returned', map.size, 'parameters');
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of map.entries()) out[k] = v;
+    console.log('ROS2Bridge: getAllROSParameters completed');
+    return out;
+  }
+
+  /** Local-only: list what we've seen so far */
+  listCachedROSParameters(): string[] {
+    return this.client?.listCachedParameters() ?? [];
+  }
+
+  /** Local-only: return cached value if present */
+  getCachedROSParameter(name: string): unknown | undefined {
+    return this.client?.getCachedParameter(name);
+  }
+
+  /** Optional: subscribe to param changes */
+  onROSParameterChanged(cb: (changed: { name: string; value: unknown }[]) => void): () => void {
+    if (!this.client) return () => {};
+    return this.client.onParameterChanged(cb);
+  }
+
   /** Arrange for a service call to run once on every (re)connect before normal ops. */
   registerSetupServiceCall(name: string, request: any) {
     this.setupServiceCalls.push({
@@ -356,6 +459,8 @@ export class ROS2Bridge {
 
   /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
   async callService<T = any>(name: string, request: any): Promise<T> {
+    if (!this.serverInfoReady) throw new Error("callService() before connect");
+    await this.serverInfoReady;
     if (!this.client) throw new Error("callService() before connect");
     if (typeof (this.client as any).callService !== "function") {
       throw new Error("FoxgloveWsClient.callService() not available");
@@ -364,6 +469,40 @@ export class ROS2Bridge {
       serviceName: name,
       request: request
     }) as T;
+  }
+
+  /**
+   * Return ROS2 node names via rosapi:
+   *   ros2 service call /rosapi/nodes rosapi_msgs/srv/Nodes "{}"
+   *
+   * Requires /rosapi/nodes to be advertised by Foxglove Bridge (services enabled).
+   */
+  async listNodes(): Promise<string[]> {
+    if (!this.serverInfoReady) throw new Error("listNodes() before connect");
+    await this.serverInfoReady;
+    if (!this.client) throw new Error("listNodes() before connect");
+    if (!this.client.isConnected()) throw new Error("listNodes() while disconnected");
+
+    const resp = await this.client.callService<RosapiNodesResponse>({
+      serviceName: "/rosapi/nodes",
+      request: {}, // rosapi_msgs/srv/Nodes_Request has no fields
+    });
+
+    // Be defensive in case bridge returns a slightly different shape
+    const nodes = (resp as any)?.nodes;
+    if (!Array.isArray(nodes)) {
+      throw new Error(`Unexpected /rosapi/nodes response: ${JSON.stringify(resp)}`);
+    }
+    return nodes;
+  }
+
+  /**
+   * Convenience wrapper matching your grep use-case:
+   * returns only node names containing `substr`
+   */
+  async listNodesMatching(substr: string): Promise<string[]> {
+    const nodes = await this.listNodes();
+    return nodes.filter((n) => n.includes(substr));
   }
 
 
