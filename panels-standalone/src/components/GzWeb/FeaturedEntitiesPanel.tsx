@@ -189,22 +189,20 @@ export const FeaturedEntitiesPanel: React.FC = () => {
   }, []);
 
   // Handle info button click - sends window message to open popup
-  const handleInfoClick = useCallback((entity: EntityCardData, e: React.MouseEvent) => {
-    e.stopPropagation();
-    
+  const handleInfoClick = useCallback((entity: EntityCardData) => {
     const popupData: EntityInfoData = {
       ...entity,
       timestamp: Date.now(),
     };
-    
+
     // Send message to parent window to open the popup
     const message: EntityInfoPopupMessage = {
       type: ENTITY_INFO_POPUP_MESSAGES.OPEN,
       payload: popupData,
     };
-    
+
     window.parent.postMessage(message, '*');
-    
+
     // Also send card info click message
     const clickMessage: EntityClickMessage = {
       type: CARD_MESSAGES.INFO_CLICK,
@@ -213,7 +211,7 @@ export const FeaturedEntitiesPanel: React.FC = () => {
         timestamp: Date.now(),
       },
     };
-    
+
     window.parent.postMessage(clickMessage, '*');
     console.log(`FeaturedEntitiesPanel: Info button clicked - ${entity.name}`, message);
   }, []);
@@ -245,6 +243,15 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     console.log(`FeaturedEntitiesPanel: POC move requested - ${selectedEntity.name}`, message);
   }, [poseEditAccess.enabled, selectedEntity]);
 
+  const bindCardCallbacks = useCallback(
+    (entity: EntityCardData): EntityCardData => {
+      const cardEntity = Object.create(entity) as EntityCardData;
+      cardEntity.onCardClick = () => handleCardClick(entity);
+      cardEntity.onInfoClick = () => handleInfoClick(entity);
+      return cardEntity;
+    },
+    [handleCardClick, handleInfoClick]
+  );
   if (loading) {
     return (
       <div className="featured-entities-container">
@@ -276,10 +283,8 @@ export const FeaturedEntitiesPanel: React.FC = () => {
           featuredEntities.map((entity) => (
             <EntityCard
               key={entity.name}
-              entity={entity}
+              entity={bindCardCallbacks(entity)}
               isActive={activeCard === entity.name}
-              onCardClick={handleCardClick}
-              onInfoClick={handleInfoClick}
             />
           ))
         )}

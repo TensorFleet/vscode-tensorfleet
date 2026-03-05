@@ -37,6 +37,7 @@ export const EntityInfoPopup: React.FC = () => {
   // Handle window messages for self-contained popup control
   const handleMessage = useCallback((event: MessageEvent<EntityInfoPopupMessage>) => {
     if (event.data.type === ENTITY_INFO_POPUP_MESSAGES.OPEN && event.data.payload) {
+      console.log("EntityInfoPopup received open signal");
       setData(event.data.payload);
       setIsVisible(true);
     } else if (event.data.type === ENTITY_INFO_POPUP_MESSAGES.CLOSE) {
