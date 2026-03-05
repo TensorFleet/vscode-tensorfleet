@@ -329,3 +329,102 @@
   transform: none;
   box-shadow: none;
 }
+
+.gzweb-manip-overlay {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  width: 260px;
+  background: rgba(8, 10, 16, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.gzweb-manip-overlay.armed {
+  border-color: rgba(66, 167, 255, 0.55);
+}
+
+.gzweb-manip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.gzweb-manip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  opacity: 0.9;
+}
+
+.gzweb-manip-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.gzweb-manip-controls > button,
+.gzweb-manip-axis button {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--vscode-foreground, #e5e5e5);
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.gzweb-manip-controls > button:hover:enabled,
+.gzweb-manip-axis button:hover:enabled {
+  background: rgba(43, 124, 255, 0.2);
+  border-color: rgba(66, 167, 255, 0.6);
+}
+
+.gzweb-manip-controls > button.active,
+.gzweb-manip-axis button.active {
+  background: rgba(43, 124, 255, 0.34);
+  border-color: rgba(66, 167, 255, 0.72);
+}
+
+.gzweb-manip-controls > button:disabled,
+.gzweb-manip-axis button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gzweb-manip-axis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.gzweb-manip-hint {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground, #b0b8c5);
+}
+
+.gzweb-manip-status {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--vscode-foreground, #e5e5e5);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  padding: 6px 8px;
+  word-break: break-word;
+}
+
+.gzweb-manip-status code {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 4px;
+  padding: 1px 5px;
+}

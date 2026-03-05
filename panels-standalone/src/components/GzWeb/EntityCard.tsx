@@ -268,7 +268,7 @@ export const EntityCard: React.FC<EntityCardProps> = ({
     return () => {
       console.log('[EntityCard][UNMOUNT]', { entity: entity.name, infoShield: infoShield.debugDump() });
     };
-  }, [entity.name, infoShield]);
+  }, []);
 
   const handleInfoClickStable = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {

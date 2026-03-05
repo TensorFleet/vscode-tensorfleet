@@ -6,7 +6,14 @@ import {
   EntityClickMessage,
   EntityNudgeMessage,
   EntityNudgeStatusMessage,
+  EntityResetAllPosesMessage,
+  EntityResetPoseMessage,
   EntitySelectMessage,
+  EntityUndoMessage,
+  ScenePresetListMessage,
+  ScenePresetListRequestMessage,
+  ScenePresetLoadMessage,
+  ScenePresetSaveMessage,
   CARD_MESSAGES,
   ENTITY_CONTROL_MESSAGES,
 } from './EntityCardData';
@@ -20,8 +27,6 @@ import { getGazeboEntityName, getPoseEditAccess } from './posePolicy';
 
 // Adapt FeaturedEntityData to EntityCardData
 type EntityCardData = FeaturedEntityData;
-const POC_MOVE_DISTANCE_XY = 4.0;
-const POC_MOVE_DISTANCE_Z = 2.0;
 
 type MoveStatusTone = 'pending' | 'success' | 'error';
 
@@ -29,6 +34,10 @@ type MoveStatusUi = {
   tone: MoveStatusTone;
   message: string;
 };
+
+const DEFAULT_XY_STEP_METERS = 0.25;
+const DEFAULT_Z_STEP_METERS = 0.1;
+const STEP_PRESETS_METERS = [0.05, 0.1, 0.25, 1, 4] as const;
 
 const toNudgeStatusMessage = (data: unknown): EntityNudgeStatusMessage | null => {
   if (!data || typeof data !== 'object') return null;
@@ -58,6 +67,36 @@ const toNudgeStatusMessage = (data: unknown): EntityNudgeStatusMessage | null =>
   };
 };
 
+const clampStep = (value: number, fallback: number): number => {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(25, Math.max(0.01, value));
+};
+
+const isEditableElement = (target: EventTarget | null): boolean => {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+};
+
+const toScenePresetListMessage = (data: unknown): ScenePresetListMessage | null => {
+  if (!data || typeof data !== 'object') return null;
+  const candidate = data as Partial<ScenePresetListMessage>;
+  if (candidate.type !== ENTITY_CONTROL_MESSAGES.SCENE_PRESET_LIST || !candidate.payload) {
+    return null;
+  }
+  const payload = candidate.payload as Partial<ScenePresetListMessage['payload']>;
+  if (!Array.isArray(payload.names)) return null;
+  const names = payload.names.filter((name): name is string => typeof name === 'string');
+  return {
+    type: ENTITY_CONTROL_MESSAGES.SCENE_PRESET_LIST,
+    payload: {
+      names,
+      timestamp: typeof payload.timestamp === 'number' ? payload.timestamp : Date.now(),
+    },
+  };
+};
+
 // ============================================================================
 // FeaturedEntitiesPanel Component
 // ============================================================================
@@ -68,13 +107,32 @@ export const FeaturedEntitiesPanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(() => ros2Bridge.isConnected());
 
-  // Track active card state for styling + nudge controls
+  // Track active card state for styling + setup controls
   const [activeCard, setActiveCard] = useState<string | null>(null);
   const [selectedEntity, setSelectedEntity] = useState<EntityCardData | null>(null);
   const [moveStatus, setMoveStatus] = useState<MoveStatusUi | null>(null);
+  const [xyStepMeters, setXyStepMeters] = useState(DEFAULT_XY_STEP_METERS);
+  const [zStepMeters, setZStepMeters] = useState(DEFAULT_Z_STEP_METERS);
+  const [scenePresetName, setScenePresetName] = useState('');
+  const [scenePresetNames, setScenePresetNames] = useState<string[]>([]);
+  const [selectedScenePreset, setSelectedScenePreset] = useState('');
+  const pendingScenePresetSaveNameRef = useRef<string | null>(null);
   const activeMoveRequestIdRef = useRef<string | null>(null);
   const poseEditAccess = useMemo(() => getPoseEditAccess(selectedEntity), [selectedEntity]);
   const nudgeControlsDisabled = !selectedEntity || !poseEditAccess.enabled;
+
+  const refreshScenePresetNames = useCallback((preferredName?: string) => {
+    if (preferredName) {
+      pendingScenePresetSaveNameRef.current = preferredName;
+    }
+    const message: ScenePresetListRequestMessage = {
+      type: ENTITY_CONTROL_MESSAGES.SCENE_PRESET_LIST_REQUEST,
+      payload: {
+        timestamp: Date.now(),
+      },
+    };
+    window.parent.postMessage(message, '*');
+  }, []);
 
   // Monitor connection status like other components do
   useEffect(() => {
@@ -96,37 +154,92 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     const loadFeaturedEntities = async () => {
       console.log(`FeaturedEntitiesPanel: Starting fetch, connection status: ${isConnected}`);
       try {
-        console.log('Starting to fetch featured entities...');
         const featured = await fetchFeaturedEntities(ros2Bridge);
-        console.log(`Fetched ${featured.length} featured entities`);
-        
-        console.log('Setting featured entities state...');
         setFeaturedEntities(featured);
         setError(null);
-        console.log('Featured entities state set successfully');
       } catch (err) {
         console.error('Failed to fetch featured entities:', err);
-        console.error('Error details:', {
-          message: err instanceof Error ? err.message : String(err),
-          name: err instanceof Error ? err.name : 'Unknown',
-          stack: err instanceof Error ? err.stack : undefined
-        });
         setError('Failed to load featured entities');
       } finally {
-        console.log('Setting loading to false...');
         setLoading(false);
-        console.log('Loading complete');
       }
     };
 
     loadFeaturedEntities();
   }, [isConnected]);
 
+  useEffect(() => {
+    refreshScenePresetNames();
+  }, [refreshScenePresetNames]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    refreshScenePresetNames();
+  }, [isConnected, refreshScenePresetNames]);
+
   // Handle window messages for popup close + move status updates.
   useEffect(() => {
-    const handleMessage = (event: MessageEvent<EntityInfoPopupMessage | EntityNudgeStatusMessage>) => {
+    const handleMessage = (
+      event: MessageEvent<
+      EntityInfoPopupMessage | EntityNudgeStatusMessage | EntitySelectMessage | ScenePresetListMessage
+      >,
+    ) => {
+      const presetListMessage = toScenePresetListMessage(event.data);
+      if (presetListMessage) {
+        const names = [...presetListMessage.payload.names];
+        setScenePresetNames(names);
+        setSelectedScenePreset((current) => {
+          const preferredName = pendingScenePresetSaveNameRef.current;
+          if (preferredName && names.includes(preferredName)) {
+            pendingScenePresetSaveNameRef.current = null;
+            return preferredName;
+          }
+          pendingScenePresetSaveNameRef.current = null;
+          return names.includes(current) ? current : (names[0] ?? '');
+        });
+        return;
+      }
+
+      if (event.data.type === ENTITY_CONTROL_MESSAGES.SELECT) {
+        const incoming = event.data.payload?.entity;
+        if (incoming && typeof incoming === 'object') {
+          const candidate = incoming as Partial<EntityCardData>;
+          const incomingName = typeof candidate.name === 'string' ? candidate.name : '';
+          const incomingTarget = typeof candidate.target === 'string' ? candidate.target : '';
+          const match = featuredEntities.find((entity) => {
+            const gazeboName = getGazeboEntityName(entity);
+            if (gazeboName && (gazeboName === incomingTarget || gazeboName === incomingName)) {
+              return true;
+            }
+            if (entity.name === incomingName || entity.target === incomingTarget) {
+              return true;
+            }
+            const modelNames = entity.getModelNames?.() ?? [];
+            return modelNames.includes(incomingTarget) || modelNames.includes(incomingName);
+          });
+
+          if (match) {
+            setSelectedEntity(match);
+            setActiveCard(match.name);
+          } else {
+            const fallbackEntity = ({
+              name: incomingName || incomingTarget || 'selected_entity',
+              type: typeof candidate.type === 'string' ? candidate.type : 'object',
+              target: incomingTarget || incomingName,
+              params: (candidate.params && typeof candidate.params === 'object')
+                ? candidate.params as Record<string, unknown>
+                : {},
+            } as unknown as EntityCardData);
+            setSelectedEntity(fallbackEntity);
+            setActiveCard(null);
+          }
+          setMoveStatus(null);
+          activeMoveRequestIdRef.current = null;
+        }
+        return;
+      }
+
       if (event.data.type === ENTITY_INFO_POPUP_MESSAGES.CLOSE) {
-        // Popup was closed externally - nothing to do here
         return;
       }
 
@@ -135,16 +248,18 @@ export const FeaturedEntitiesPanel: React.FC = () => {
         return;
       }
 
+      const selectedGazeboEntity = getGazeboEntityName(selectedEntity);
+      const isSceneWideStatus = statusMessage.payload.entity === '__scene__';
+      const isFromSelectedEntity = selectedGazeboEntity
+        ? statusMessage.payload.entity === selectedGazeboEntity
+        : true;
       const activeRequestId = activeMoveRequestIdRef.current;
-      if (activeRequestId && statusMessage.payload.requestId !== activeRequestId) {
-        return;
-      }
+      const isActiveRequest = activeRequestId
+        ? statusMessage.payload.requestId === activeRequestId
+        : false;
 
-      if (!activeRequestId) {
-        const selectedGazeboEntity = getGazeboEntityName(selectedEntity);
-        if (selectedGazeboEntity && statusMessage.payload.entity !== selectedGazeboEntity) {
-          return;
-        }
+      if (!isSceneWideStatus && !isFromSelectedEntity && !isActiveRequest) {
+        return;
       }
 
       setMoveStatus({
@@ -155,11 +270,20 @@ export const FeaturedEntitiesPanel: React.FC = () => {
       if (statusMessage.payload.state !== 'pending') {
         activeMoveRequestIdRef.current = null;
       }
+
+      if (isSceneWideStatus && statusMessage.payload.state !== 'pending') {
+        const pendingSaveName = pendingScenePresetSaveNameRef.current;
+        if (statusMessage.payload.state === 'success') {
+          refreshScenePresetNames(pendingSaveName ?? undefined);
+        } else {
+          pendingScenePresetSaveNameRef.current = null;
+        }
+      }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [selectedEntity]);
+  }, [featuredEntities, refreshScenePresetNames, selectedEntity]);
 
   // Handle main card click - sends window message for modularity
   const handleCardClick = useCallback((entity: EntityCardData) => {
@@ -195,7 +319,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
       timestamp: Date.now(),
     };
 
-    // Send message to parent window to open the popup
     const message: EntityInfoPopupMessage = {
       type: ENTITY_INFO_POPUP_MESSAGES.OPEN,
       payload: popupData,
@@ -203,7 +326,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
 
     window.parent.postMessage(message, '*');
 
-    // Also send card info click message
     const clickMessage: EntityClickMessage = {
       type: CARD_MESSAGES.INFO_CLICK,
       payload: {
@@ -213,19 +335,18 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     };
 
     window.parent.postMessage(clickMessage, '*');
-    console.log(`FeaturedEntitiesPanel: Info button clicked - ${entity.name}`, message);
   }, []);
 
-  const handlePocMove = useCallback((delta: { x: number; y: number; z: number }) => {
+  const handleNudge = useCallback((delta: { x: number; y: number; z: number }) => {
     if (!selectedEntity || !poseEditAccess.enabled) return;
     const requestId = `nudge-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
     activeMoveRequestIdRef.current = requestId;
     setMoveStatus({ tone: 'pending', message: 'Sending move request...' });
 
     const appliedDelta = {
-      x: delta.x * POC_MOVE_DISTANCE_XY,
-      y: delta.y * POC_MOVE_DISTANCE_XY,
-      z: delta.z * POC_MOVE_DISTANCE_Z,
+      x: delta.x * xyStepMeters,
+      y: delta.y * xyStepMeters,
+      z: delta.z * zStepMeters,
     };
 
     const message: EntityNudgeMessage = {
@@ -234,14 +355,132 @@ export const FeaturedEntitiesPanel: React.FC = () => {
         entity: selectedEntity,
         requestId,
         delta: appliedDelta,
-        step: POC_MOVE_DISTANCE_XY,
+        step: Math.max(xyStepMeters, zStepMeters),
         timestamp: Date.now(),
       },
     };
 
     window.parent.postMessage(message, '*');
-    console.log(`FeaturedEntitiesPanel: POC move requested - ${selectedEntity.name}`, message);
-  }, [poseEditAccess.enabled, selectedEntity]);
+  }, [poseEditAccess.enabled, selectedEntity, xyStepMeters, zStepMeters]);
+
+  const handleUndo = useCallback(() => {
+    if (!selectedEntity) return;
+    setMoveStatus({ tone: 'pending', message: 'Undoing last move...' });
+    const message: EntityUndoMessage = {
+      type: ENTITY_CONTROL_MESSAGES.UNDO_LAST_MOVE,
+      payload: {
+        entity: selectedEntity,
+        timestamp: Date.now(),
+      },
+    };
+    window.parent.postMessage(message, '*');
+  }, [selectedEntity]);
+
+  const handleResetEntityPose = useCallback(() => {
+    if (!selectedEntity) return;
+    setMoveStatus({ tone: 'pending', message: 'Resetting entity pose...' });
+    const message: EntityResetPoseMessage = {
+      type: ENTITY_CONTROL_MESSAGES.RESET_ENTITY_POSE,
+      payload: {
+        entity: selectedEntity,
+        timestamp: Date.now(),
+      },
+    };
+    window.parent.postMessage(message, '*');
+  }, [selectedEntity]);
+
+  const handleResetAllPoses = useCallback(() => {
+    setMoveStatus({ tone: 'pending', message: 'Resetting all scene objects to session start...' });
+    const message: EntityResetAllPosesMessage = {
+      type: ENTITY_CONTROL_MESSAGES.RESET_ALL_POSES,
+      payload: {
+        entities: featuredEntities,
+        timestamp: Date.now(),
+      },
+    };
+    window.parent.postMessage(message, '*');
+  }, [featuredEntities]);
+
+  const handleSaveScenePreset = useCallback(() => {
+    const name = scenePresetName.trim();
+    if (!name) {
+      setMoveStatus({ tone: 'error', message: 'Preset name is required.' });
+      return;
+    }
+
+    setMoveStatus({ tone: 'pending', message: `Saving preset "${name}"...` });
+    const message: ScenePresetSaveMessage = {
+      type: ENTITY_CONTROL_MESSAGES.SCENE_PRESET_SAVE,
+      payload: {
+        name,
+        timestamp: Date.now(),
+      },
+    };
+    pendingScenePresetSaveNameRef.current = name;
+    window.parent.postMessage(message, '*');
+  }, [scenePresetName]);
+
+  const handleLoadScenePreset = useCallback(() => {
+    const name = selectedScenePreset.trim();
+    if (!name) {
+      setMoveStatus({ tone: 'error', message: 'Select a preset to load.' });
+      return;
+    }
+
+    setMoveStatus({ tone: 'pending', message: `Loading preset "${name}"...` });
+    const message: ScenePresetLoadMessage = {
+      type: ENTITY_CONTROL_MESSAGES.SCENE_PRESET_LOAD,
+      payload: {
+        name,
+        timestamp: Date.now(),
+      },
+    };
+    window.parent.postMessage(message, '*');
+  }, [selectedScenePreset]);
+
+  useEffect(() => {
+    const handleKeyboardMove = (event: KeyboardEvent) => {
+      if (nudgeControlsDisabled) return;
+      if (isEditableElement(event.target)) return;
+
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === 'z') {
+        event.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      switch (event.key) {
+        case 'ArrowRight':
+          event.preventDefault();
+          handleNudge({ x: 1, y: 0, z: 0 });
+          break;
+        case 'ArrowLeft':
+          event.preventDefault();
+          handleNudge({ x: -1, y: 0, z: 0 });
+          break;
+        case 'ArrowUp':
+          event.preventDefault();
+          handleNudge({ x: 0, y: 1, z: 0 });
+          break;
+        case 'ArrowDown':
+          event.preventDefault();
+          handleNudge({ x: 0, y: -1, z: 0 });
+          break;
+        case 'PageUp':
+          event.preventDefault();
+          handleNudge({ x: 0, y: 0, z: 1 });
+          break;
+        case 'PageDown':
+          event.preventDefault();
+          handleNudge({ x: 0, y: 0, z: -1 });
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyboardMove);
+    return () => window.removeEventListener('keydown', handleKeyboardMove);
+  }, [handleNudge, handleUndo, nudgeControlsDisabled]);
 
   const bindCardCallbacks = useCallback(
     (entity: EntityCardData): EntityCardData => {
@@ -250,8 +489,9 @@ export const FeaturedEntitiesPanel: React.FC = () => {
       cardEntity.onInfoClick = () => handleInfoClick(entity);
       return cardEntity;
     },
-    [handleCardClick, handleInfoClick]
+    [handleCardClick, handleInfoClick],
   );
+
   if (loading) {
     return (
       <div className="featured-entities-container">
@@ -274,7 +514,7 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     <div className="featured-entities-container">
       <h3>Featured entities</h3>
       <p className="featured-entities-subtitle">
-        Select an entity, then send a large POC move in Gazebo.
+        Select an entity and use Scene Setup to position it for training data.
       </p>
       <div className="featured-entities-list">
         {featuredEntities.length === 0 ? (
@@ -292,7 +532,7 @@ export const FeaturedEntitiesPanel: React.FC = () => {
 
       <div className={`entity-nudge-controls ${nudgeControlsDisabled ? 'locked' : ''}`}>
         <div className="nudge-header">
-          POC Move
+          Scene Setup
           <div className="nudge-header-right">
             {!nudgeControlsDisabled && <span className="nudge-control-pill enabled">enabled</span>}
             {nudgeControlsDisabled && selectedEntity && <span className="nudge-control-pill locked">locked</span>}
@@ -301,6 +541,7 @@ export const FeaturedEntitiesPanel: React.FC = () => {
             </span>
           </div>
         </div>
+
         <div className="nudge-target-meta">
           <span>Entity</span>
           <code>{getGazeboEntityName(selectedEntity) || 'unset'}</code>
@@ -312,29 +553,120 @@ export const FeaturedEntitiesPanel: React.FC = () => {
           </div>
         )}
 
+        <label className="nudge-step-label">
+          <span>XY step (m)</span>
+          <input
+            type="number"
+            min={0.01}
+            max={25}
+            step={0.01}
+            value={xyStepMeters}
+            onChange={(event) => setXyStepMeters(clampStep(Number(event.target.value), DEFAULT_XY_STEP_METERS))}
+          />
+        </label>
+
+        <label className="nudge-step-label">
+          <span>Z step (m)</span>
+          <input
+            type="number"
+            min={0.01}
+            max={25}
+            step={0.01}
+            value={zStepMeters}
+            onChange={(event) => setZStepMeters(clampStep(Number(event.target.value), DEFAULT_Z_STEP_METERS))}
+          />
+        </label>
+
+        <div className="nudge-step-presets">
+          {STEP_PRESETS_METERS.map((preset) => {
+            const isActive = Math.abs(xyStepMeters - preset) < 0.0001 && Math.abs(zStepMeters - preset) < 0.0001;
+            return (
+              <button
+                key={preset}
+                type="button"
+                className={isActive ? 'active' : ''}
+                onClick={() => {
+                  setXyStepMeters(preset);
+                  setZStepMeters(preset);
+                }}
+              >
+                {preset}m
+              </button>
+            );
+          })}
+        </div>
+
         <div className="nudge-grid">
-          <button type="button" onClick={() => handlePocMove({ x: 1, y: 0, z: 0 })} disabled={nudgeControlsDisabled}>
-            Move +X (4m)
+          <button type="button" onClick={() => handleNudge({ x: 1, y: 0, z: 0 })} disabled={nudgeControlsDisabled}>
+            Move +X ({xyStepMeters}m)
           </button>
-          <button type="button" onClick={() => handlePocMove({ x: -1, y: 0, z: 0 })} disabled={nudgeControlsDisabled}>
-            Move -X (4m)
+          <button type="button" onClick={() => handleNudge({ x: -1, y: 0, z: 0 })} disabled={nudgeControlsDisabled}>
+            Move -X ({xyStepMeters}m)
           </button>
-          <button type="button" onClick={() => handlePocMove({ x: 0, y: 1, z: 0 })} disabled={nudgeControlsDisabled}>
-            Move +Y (4m)
+          <button type="button" onClick={() => handleNudge({ x: 0, y: 1, z: 0 })} disabled={nudgeControlsDisabled}>
+            Move +Y ({xyStepMeters}m)
           </button>
-          <button type="button" onClick={() => handlePocMove({ x: 0, y: -1, z: 0 })} disabled={nudgeControlsDisabled}>
-            Move -Y (4m)
+          <button type="button" onClick={() => handleNudge({ x: 0, y: -1, z: 0 })} disabled={nudgeControlsDisabled}>
+            Move -Y ({xyStepMeters}m)
           </button>
-          <button type="button" onClick={() => handlePocMove({ x: 0, y: 0, z: 1 })} disabled={nudgeControlsDisabled}>
-            Lift +Z (2m)
+          <button type="button" onClick={() => handleNudge({ x: 0, y: 0, z: 1 })} disabled={nudgeControlsDisabled}>
+            Lift +Z ({zStepMeters}m)
           </button>
-          <button type="button" onClick={() => handlePocMove({ x: 0, y: 0, z: -1 })} disabled={nudgeControlsDisabled}>
-            Drop -Z (2m)
+          <button type="button" onClick={() => handleNudge({ x: 0, y: 0, z: -1 })} disabled={nudgeControlsDisabled}>
+            Drop -Z ({zStepMeters}m)
           </button>
         </div>
+
+        <div className="nudge-grid nudge-grid-secondary">
+          <button type="button" onClick={handleUndo} disabled={!selectedEntity}>
+            Undo move
+          </button>
+          <button type="button" onClick={handleResetEntityPose} disabled={!selectedEntity}>
+            Reset entity
+          </button>
+        </div>
+
+        <div className="scene-preset-controls">
+          <label className="nudge-step-label">
+            <span>Preset name</span>
+            <input
+              type="text"
+              value={scenePresetName}
+              onChange={(event) => setScenePresetName(event.target.value)}
+              placeholder="kitchen-clutter-a"
+            />
+          </label>
+          <div className="nudge-grid nudge-grid-secondary">
+            <button type="button" onClick={handleSaveScenePreset}>Save scene</button>
+            <button type="button" onClick={() => refreshScenePresetNames()}>Refresh</button>
+          </div>
+          <label className="scene-preset-select">
+            <span>Saved presets (session)</span>
+            <select
+              value={selectedScenePreset}
+              onChange={(event) => setSelectedScenePreset(event.target.value)}
+              disabled={scenePresetNames.length === 0}
+            >
+              {scenePresetNames.length === 0 && <option value="">No presets yet</option>}
+              {scenePresetNames.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </label>
+          <button type="button" onClick={handleLoadScenePreset} disabled={!selectedScenePreset}>
+            Load scene
+          </button>
+          <button type="button" onClick={handleResetAllPoses} disabled={!isConnected}>
+            Reset all objects
+          </button>
+        </div>
+
         <div className={`nudge-hint ${nudgeControlsDisabled ? 'locked' : ''}`}>
-          {nudgeControlsDisabled ? 'Move disabled for current selection.' : 'Each click sends a large delta for clear visual proof of movement.'}
+          {nudgeControlsDisabled
+            ? 'Move disabled for current selection.'
+            : 'Axis map: +X/-X, +Y/-Y, +Z/-Z. Shortcuts: arrows = XY, PgUp/PgDn = Z, Ctrl/Cmd+Z = undo.'}
         </div>
+
         {moveStatus && (
           <div className={`nudge-status ${moveStatus.tone}`}>
             {moveStatus.message}

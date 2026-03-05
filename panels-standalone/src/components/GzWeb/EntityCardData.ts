@@ -63,6 +63,61 @@ export interface EntityNudgeStatusMessage {
   };
 }
 
+export interface EntityUndoMessage {
+  type: 'ENTITY_UNDO_LAST_MOVE';
+  payload: {
+    entity?: EntityCardData;
+    timestamp: number;
+  };
+}
+
+export interface EntityResetPoseMessage {
+  type: 'ENTITY_RESET_ENTITY_POSE';
+  payload: {
+    entity?: EntityCardData;
+    timestamp: number;
+  };
+}
+
+export interface EntityResetAllPosesMessage {
+  type: 'ENTITY_RESET_ALL_POSES';
+  payload: {
+    entities?: EntityCardData[];
+    timestamp: number;
+  };
+}
+
+export interface ScenePresetSaveMessage {
+  type: 'ENTITY_SCENE_PRESET_SAVE';
+  payload: {
+    name: string;
+    timestamp: number;
+  };
+}
+
+export interface ScenePresetLoadMessage {
+  type: 'ENTITY_SCENE_PRESET_LOAD';
+  payload: {
+    name: string;
+    timestamp: number;
+  };
+}
+
+export interface ScenePresetListRequestMessage {
+  type: 'ENTITY_SCENE_PRESET_LIST_REQUEST';
+  payload: {
+    timestamp: number;
+  };
+}
+
+export interface ScenePresetListMessage {
+  type: 'ENTITY_SCENE_PRESET_LIST';
+  payload: {
+    names: string[];
+    timestamp: number;
+  };
+}
+
 // Message type constants for card actions
 export const CARD_MESSAGES = {
   CLICK: 'ENTITY_CLICK' as const,
@@ -75,4 +130,11 @@ export const ENTITY_CONTROL_MESSAGES = {
   SELECT: 'ENTITY_SELECT' as const,
   NUDGE: 'ENTITY_NUDGE' as const,
   NUDGE_STATUS: 'ENTITY_NUDGE_STATUS' as const,
+  UNDO_LAST_MOVE: 'ENTITY_UNDO_LAST_MOVE' as const,
+  RESET_ENTITY_POSE: 'ENTITY_RESET_ENTITY_POSE' as const,
+  RESET_ALL_POSES: 'ENTITY_RESET_ALL_POSES' as const,
+  SCENE_PRESET_SAVE: 'ENTITY_SCENE_PRESET_SAVE' as const,
+  SCENE_PRESET_LOAD: 'ENTITY_SCENE_PRESET_LOAD' as const,
+  SCENE_PRESET_LIST_REQUEST: 'ENTITY_SCENE_PRESET_LIST_REQUEST' as const,
+  SCENE_PRESET_LIST: 'ENTITY_SCENE_PRESET_LIST' as const,
 };
