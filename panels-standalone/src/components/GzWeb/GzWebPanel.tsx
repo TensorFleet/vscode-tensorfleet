@@ -133,6 +133,11 @@ const shouldRequirePoseConfirmation = (entity: EntityCardData): boolean => {
   const entityType = entity.type.toLowerCase();
   const mappedName = getGazeboEntityName(entity).toLowerCase();
   const target = entity.target.toLowerCase();
+  // World props often move successfully via set_pose but do not produce
+  // reliable dynamic_pose updates, so strict confirmation causes false failures.
+  if (entityType === 'object' || entityType === 'static') {
+    return false;
+  }
   if (entityType === 'drone' || mappedName.includes('x500') || target.includes('mavros')) {
     return false;
   }
@@ -765,6 +770,7 @@ export const GzWebPanel: React.FC = () => {
 
   const moveRequestCounterRef = useRef(0);
   const pendingMoveRef = useRef<PendingMoveRequest | null>(null);
+  const hoverOutlineRefs = useRef<Map<string, Set<any>>>(new Map());
 
   const clearVisualOffsets = useCallback((aliases: string[]) => {
     for (const alias of aliases) {
@@ -801,6 +807,27 @@ export const GzWebPanel: React.FC = () => {
     }
     pendingMoveRef.current = null;
   }, [clearPendingMoveTimer, clearVisualOffsets]);
+
+  const clearHoverOutlineRefs = useCallback((manager?: SceneManagerInstance | null) => {
+    const activeManager = manager ?? sceneManagerRef.current;
+    const scene = (activeManager as any)?.scene;
+    if (!scene || hoverOutlineRefs.current.size === 0) return;
+
+    for (const objects of hoverOutlineRefs.current.values()) {
+      for (const obj of objects) {
+        try {
+          if (scene.removeOutlineRoot) {
+            scene.removeOutlineRoot(obj);
+          } else if (scene.updateOutlineLayerMembership) {
+            scene.updateOutlineLayerMembership(obj, false);
+          }
+        } catch {
+          // Ignore cleanup failures during teardown/reconnect.
+        }
+      }
+    }
+    hoverOutlineRefs.current.clear();
+  }, []);
 
   const emitNudgeStatus = useCallback((
     state: EntityNudgeStatusState,
@@ -1032,11 +1059,11 @@ export const GzWebPanel: React.FC = () => {
       const requirePoseConfirmation = shouldRequirePoseConfirmation(entity);
 
       if (!requirePoseConfirmation) {
-        // Keep the visual nudge briefly, then let authoritative stream win.
-        setTimeout(() => clearVisualOffsets(aliases), 800);
+        // Keep the visual nudge latched for best-effort entities. Some world
+        // props do not reliably publish dynamic pose confirmations.
         emitNudgeStatus(
           'success',
-          `Move request sent for ${moveEntity} (stream confirmation optional for this entity)`,
+          `Move request sent for ${moveEntity} (best-effort pose latch enabled)`,
           { requestId, entity: moveEntity, attempt: 1, maxAttempts: 1 },
         );
         return;
@@ -1166,6 +1193,7 @@ export const GzWebPanel: React.FC = () => {
     pendingMoveRef.current = null;
     entityPoseRef.current.clear();
     entityVisualOffsetRef.current.clear();
+    clearHoverOutlineRefs(sceneManagerRef.current);
     if (sceneManagerRef.current) {
       sceneManagerRef.current.destroy();
       sceneManagerRef.current = null;
@@ -1173,7 +1201,7 @@ export const GzWebPanel: React.FC = () => {
     setIsConnected(false);
     setStatusTone('muted');
     setStatusText('');
-  }, [clearPendingMoveTimer]);
+  }, [clearHoverOutlineRefs, clearPendingMoveTimer]);
 
   const bindResize = useCallback((sceneMgr: SceneManagerInstance) => {
     const handler = () => sceneMgr?.resize();
@@ -1335,26 +1363,36 @@ export const GzWebPanel: React.FC = () => {
       return;
     }
 
-    // Get the 3D object from the modelMap using the entity name
+    // Track exact outlined object refs; do not re-resolve on HOVER_END.
     for (const modelName of modelNames) {
       try {
-        const modelObject = resolveSceneModelObject(manager, modelName);
-        
-        if (!modelObject) {
-          console.warn(`Model object not found for entity: ${entityName}/${modelName}`);
-          continue;
-        }
-
-        // Get the Scene instance to access outline functions
+        const hoverKey = `${entityName}::${modelName}`;
         const scene = manager.scene;
-        
+
         if (!scene) {
           console.warn('Scene not available for outline operations');
           continue;
         }
 
         if (type === CARD_MESSAGES.HOVER_START) {
-          // Add object to outline layer
+          const previousObjects = hoverOutlineRefs.current.get(hoverKey);
+          if (previousObjects) {
+            for (const prev of previousObjects) {
+              if (scene.removeOutlineRoot) {
+                scene.removeOutlineRoot(prev);
+              } else if (scene.updateOutlineLayerMembership) {
+                scene.updateOutlineLayerMembership(prev, false);
+              }
+            }
+            hoverOutlineRefs.current.delete(hoverKey);
+          }
+
+          const modelObject = resolveSceneModelObject(manager, modelName);
+          if (!modelObject) {
+            console.warn(`Model object not found for entity: ${entityName}/${modelName}`);
+            continue;
+          }
+
           if (scene.addOutlineRoot) {
             scene.addOutlineRoot(modelObject);
             console.log(`Added ${entityName} to outline layer`);
@@ -1362,15 +1400,22 @@ export const GzWebPanel: React.FC = () => {
             scene.updateOutlineLayerMembership(modelObject, true);
             console.log(`Enabled outline for ${entityName}`);
           }
+          hoverOutlineRefs.current.set(hoverKey, new Set([modelObject]));
         } else if (type === CARD_MESSAGES.HOVER_END) {
-          // Remove object from outline layer
-          if (scene.removeOutlineRoot) {
-            scene.removeOutlineRoot(modelObject);
-            console.log(`Removed ${entityName} from outline layer`);
-          } else if (scene.updateOutlineLayerMembership) {
-            scene.updateOutlineLayerMembership(modelObject, false);
-            console.log(`Disabled outline for ${entityName}`);
+          const outlinedObjects = hoverOutlineRefs.current.get(hoverKey);
+          if (!outlinedObjects || outlinedObjects.size === 0) {
+            continue;
           }
+          for (const obj of outlinedObjects) {
+            if (scene.removeOutlineRoot) {
+              scene.removeOutlineRoot(obj);
+              console.log(`Removed ${entityName} from outline layer`);
+            } else if (scene.updateOutlineLayerMembership) {
+              scene.updateOutlineLayerMembership(obj, false);
+              console.log(`Disabled outline for ${entityName}`);
+            }
+          }
+          hoverOutlineRefs.current.delete(hoverKey);
         }
       } catch (error) {
         console.error('Error handling hover message:', error);
