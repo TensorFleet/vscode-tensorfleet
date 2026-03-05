@@ -45,6 +45,7 @@ type SceneManagerInstance = {
   destroy: () => void;
   resize: () => void;
   select?: (entityName: string) => void;
+  getModels?: () => Array<{ name?: string }>;
   transport?: SceneManagerTransport;
   scene?: any; // The Scene instance
   getModelByName?: (name: string) => any; // Method to get model by name
@@ -631,6 +632,56 @@ const applyPoseToScene = (
   }
 
   return false;
+};
+
+const resolveSceneModelObject = (
+  manager: SceneManagerInstance,
+  requestedName: string,
+): any | null => {
+  const world = manager.transport?.getWorld?.();
+  const sceneApi = (manager as any)?.scene;
+  const getByName = typeof sceneApi?.getByName === 'function'
+    ? sceneApi.getByName.bind(sceneApi)
+    : null;
+  const getModelByName = typeof manager.getModelByName === 'function'
+    ? manager.getModelByName.bind(manager)
+    : null;
+
+  const includeBase = requestedName.endsWith('_include')
+    ? requestedName.slice(0, -'_include'.length)
+    : undefined;
+  const includeVariant = requestedName.endsWith('_include')
+    ? undefined
+    : `${requestedName}_include`;
+  const unscoped = requestedName.includes('::')
+    ? requestedName.split('::').slice(1).join('::')
+    : undefined;
+  const candidates = unique([
+    requestedName,
+    includeBase,
+    includeVariant,
+    unscoped,
+    world ? `${world}::${requestedName}` : undefined,
+    world && includeBase ? `${world}::${includeBase}` : undefined,
+  ]);
+
+  for (const candidate of candidates) {
+    const byModel = getModelByName?.(candidate);
+    if (byModel) return byModel;
+    const bySceneName = getByName?.(candidate);
+    if (bySceneName) return bySceneName;
+  }
+
+  const models = manager.getModels?.() ?? [];
+  for (const model of models) {
+    const modelName = typeof model?.name === 'string' ? model.name : '';
+    if (!modelName) continue;
+    if (candidates.some((candidate) => modelName === candidate || modelName.endsWith(`::${candidate}`))) {
+      return getModelByName?.(modelName) ?? getByName?.(modelName) ?? null;
+    }
+  }
+
+  return null;
 };
 
 export const GzWebPanel: React.FC = () => {
@@ -1268,30 +1319,38 @@ export const GzWebPanel: React.FC = () => {
 
     // Handle hover messages to add/remove objects from outline layer
   const handleHoverMessage = useCallback((msg: any) => {
-    if (!sceneManagerRef.current) {
+    const manager = sceneManagerRef.current;
+    if (!manager) {
       console.warn('SceneManager not available for hover message:', msg);
       return;
     }
 
     const { type, payload } = msg;
-    const { entityName, modelNames } = payload;
+    const entityName = typeof payload?.entityName === 'string' ? payload.entityName : 'unknown';
+    const modelNames = Array.isArray(payload?.modelNames)
+      ? payload.modelNames.filter((name: unknown): name is string => typeof name === 'string' && name.length > 0)
+      : [];
+    if (modelNames.length === 0) {
+      console.warn(`No model names provided for hover: ${entityName}`, payload);
+      return;
+    }
 
     // Get the 3D object from the modelMap using the entity name
     for (const modelName of modelNames) {
       try {
-        const modelObject = sceneManagerRef.current.getModelByName?.(modelName);
+        const modelObject = resolveSceneModelObject(manager, modelName);
         
         if (!modelObject) {
           console.warn(`Model object not found for entity: ${entityName}/${modelName}`);
-          return;
+          continue;
         }
 
         // Get the Scene instance to access outline functions
-        const scene = sceneManagerRef.current.scene;
+        const scene = manager.scene;
         
         if (!scene) {
           console.warn('Scene not available for outline operations');
-          return;
+          continue;
         }
 
         if (type === CARD_MESSAGES.HOVER_START) {
@@ -1320,13 +1379,21 @@ export const GzWebPanel: React.FC = () => {
   }, []);
 
   const handleFocusMessage = useCallback((msg: any) => {
-    if (!sceneManagerRef.current) {
+    const manager = sceneManagerRef.current;
+    if (!manager) {
       console.warn('SceneManager not available for focus message:', msg);
       return;
     }
 
     const { payload } = msg;
-    const { modelNames, entityName } = payload;
+    const entityName = typeof payload?.entityName === 'string' ? payload.entityName : 'unknown';
+    const modelNames = Array.isArray(payload?.modelNames)
+      ? payload.modelNames.filter((name: unknown): name is string => typeof name === 'string' && name.length > 0)
+      : [];
+    if (modelNames.length === 0) {
+      console.warn(`No model names provided for focus: ${entityName}`, payload);
+      return;
+    }
 
     console.log(`[GzWebPanel][FOCUS_MESSAGE]`, {
       entityName,
@@ -1335,13 +1402,33 @@ export const GzWebPanel: React.FC = () => {
     });
 
     try {
-      // Use the SceneManager's focusOnModels method
-      const sceneManager = sceneManagerRef.current as any;
-      if (sceneManager.focusOnModels) {
-        sceneManager.focusOnModels(modelNames, 800, 1.2);
-        console.log(`Focused camera on models: ${modelNames.join(', ')}`);
+      const resolvedObjects = modelNames
+        .map((name: string) => resolveSceneModelObject(manager, name))
+        .filter(Boolean);
+      if (resolvedObjects.length === 0) {
+        console.warn(`No model objects found for focus: ${entityName}`, modelNames);
+        return;
+      }
+
+      const resolvedNames = resolvedObjects
+        .map((obj: { name?: string }) => obj?.name)
+        .filter((name: unknown): name is string => typeof name === 'string' && name.length > 0);
+      const sceneManager = manager as any;
+
+      // Prefer SceneManager helper when available, but pass resolved names.
+      if (sceneManager.focusOnModels && resolvedNames.length > 0) {
+        sceneManager.focusOnModels(resolvedNames, 800, 1.2);
+        console.log(`Focused camera on models: ${resolvedNames.join(', ')}`);
+        return;
+      }
+
+      // Fallback when helper is unavailable: focus camera directly on resolved objects.
+      const scene = sceneManager.scene;
+      if (scene?.cameraLerp?.focus) {
+        scene.cameraLerp.focus(resolvedObjects, 800, 1.2);
+        console.log(`Focused camera on model objects for: ${entityName}`);
       } else {
-        console.warn('focusOnModels method not available on SceneManager');
+        console.warn('focusOnModels/cameraLerp.focus not available on SceneManager');
       }
     } catch (error) {
       console.error('Error focusing on models:', error);
