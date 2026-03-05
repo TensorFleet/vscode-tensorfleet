@@ -14,10 +14,11 @@ export type PoseEditAccess = {
 
 export const getGazeboEntityName = (entity: GazeboEntityTarget | null | undefined): string => {
   if (!entity) return '';
-  const mapped = entity.params?.gazebo_entity;
-  if (typeof mapped === 'string' && mapped.trim().length > 0) {
-    return mapped.trim();
+  const modelNames = entity.params?.model_names;
+  if (Array.isArray(modelNames) && typeof modelNames[0] === 'string' && modelNames[0].trim().length > 0) {
+    return modelNames[0].trim();
   }
+  // Safety fallback for malformed cards missing model_names.
   return entity.target;
 };
 

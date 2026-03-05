@@ -415,12 +415,29 @@ const toEntityCardData = (payload: unknown): EntityCardData | null => {
   const entity = (payload as { entity?: unknown }).entity;
   if (entity && typeof entity === 'object') {
     const candidate = entity as Partial<EntityCardData>;
-    if (typeof candidate.name === 'string' && typeof candidate.target === 'string') {
+    const params = (candidate.params ?? {}) as Record<string, unknown>;
+    const directTarget = typeof candidate.target === 'string' && candidate.target.trim().length > 0
+      ? candidate.target.trim()
+      : undefined;
+    const modelNames = params.model_names;
+    const modelTarget = Array.isArray(modelNames) && typeof modelNames[0] === 'string' && modelNames[0].trim().length > 0
+      ? modelNames[0].trim()
+      : undefined;
+    const resolvedTarget = modelTarget ?? directTarget;
+    const directName = typeof candidate.name === 'string' && candidate.name.trim().length > 0
+      ? candidate.name.trim()
+      : undefined;
+    const displayName = typeof params.display_name === 'string' && params.display_name.trim().length > 0
+      ? params.display_name.trim()
+      : undefined;
+    const resolvedName = directName ?? displayName ?? resolvedTarget;
+
+    if (resolvedName && resolvedTarget) {
       return {
-        name: candidate.name,
+        name: resolvedName,
         type: typeof candidate.type === 'string' ? candidate.type : 'unknown',
-        target: candidate.target,
-        params: (candidate.params ?? {}) as Record<string, unknown>,
+        target: resolvedTarget,
+        params,
       };
     }
   }

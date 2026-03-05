@@ -11,9 +11,9 @@ import {
 const sampleEntity: EntityCardData = {
   name: 'X500',
   type: 'drone',
-  target: 'x500_0',
+  target: 'x500_0_include',
   params: {
-    gazebo_entity: 'x500_0_include',
+    model_names: ['x500_0_include'],
   },
 };
 

@@ -4,6 +4,47 @@
 
 import type { ROS2BridgeApi } from "./ros-bridge-api";
 
+const trimIfNonEmpty = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const toEntityParams = (value: unknown): Record<string, unknown> | null => {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+};
+
+const getModelNames = (params: Record<string, unknown>): string[] => {
+  const modelNames = params.model_names;
+  if (!Array.isArray(modelNames)) return [];
+  return modelNames
+    .map((name) => String(name).trim())
+    .filter((name) => name.length > 0);
+};
+
+const resolveDisplayName = (params: Record<string, unknown>, fallbacks: Array<unknown>): string => {
+  return (
+    trimIfNonEmpty(params.display_name) ??
+    trimIfNonEmpty(params.preferred_name) ??
+    fallbacks.map(trimIfNonEmpty).find(Boolean) ??
+    "unknown_entity"
+  );
+};
+
+const resolvePrimaryTarget = (params: Record<string, unknown>, fallback: unknown): string => {
+  const modelNames = getModelNames(params);
+  return modelNames[0] ?? trimIfNonEmpty(fallback) ?? "unknown_entity";
+};
+
 /**
  * Data type representing an entity card with predefined callbacks
  */
@@ -35,11 +76,12 @@ export class EntityCardDataImpl implements EntityData {
 
   getModelNames(): string[] {
     const modelNames = this.params.model_names;
-    
     if (Array.isArray(modelNames)) {
-      return modelNames.map(name => String(name));
+      return modelNames
+        .map((name) => String(name).trim())
+        .filter((name) => name.length > 0);
     }
-    
+
     return [];
   }
 
@@ -89,19 +131,20 @@ export class EntityCardDataImpl implements EntityData {
 
 /**
  * Fetch featured entities from ROS parameters.
- * 
+ *
  * Featured entities can be identified in two ways:
- * 
+ *
  * 1. Proxy featured nodes (when we can't modify the node's implementation):
  *    - `proxy_featured`: boolean flag to mark the entity
- *    - `proxy_target`: the display name of the entity
- *    - `params`: JSON string containing entity parameters (including `type`)
- * 
+ *    - `proxy_target`: fallback display name of the entity
+ *    - `params`: JSON string containing entity parameters
+ *      - preferred fields: `display_name`, `type`, `model_names`
+ *
  * 2. Direct featured nodes (when the node itself has the flag):
  *    - `featured`: boolean flag on the node
- *    - name/target: the node name itself (strips leading `/`)
+ *    - node name is used as fallback label when `display_name` is absent
  *    - `params`: optional JSON string containing entity parameters
- * 
+ *
  * @param bridge - ROS2BridgeApi instance to fetch parameters from
  * @returns Promise<FeaturedEntityData[]> Array of featured entity data
  */
@@ -114,22 +157,19 @@ export async function fetchFeaturedEntities(bridge: ROS2BridgeApi): Promise<Feat
   for (const [key, value] of Object.entries(allParams)) {
     if (key.endsWith('.proxy_featured') && value === true) {
       const nodeName = key.replace('.proxy_featured', '');
-      const target = allParams[`${nodeName}.proxy_target`] as string;
-      const paramsStr = allParams[`${nodeName}.params`] as string;
-      
-      if (target && paramsStr) {
-        try {
-          const params = JSON.parse(paramsStr);
-          featured.push(new EntityCardDataImpl(
-            target,
-            params.type || 'unknown',
-            target,
-            params
-          ));
-        } catch (parseError) {
-          console.warn(`Failed to parse params for ${nodeName}:`, parseError);
-        }
+      const fallbackLabel = allParams[`${nodeName}.proxy_target`];
+      const paramsStr = allParams[`${nodeName}.params`];
+      const params = toEntityParams(paramsStr);
+      if (!params) {
+        console.warn(`Failed to parse params for ${nodeName}: expected JSON object string`);
+        continue;
       }
+
+      const nodeLabel = nodeName.startsWith('/') ? nodeName.slice(1) : nodeName;
+      const name = resolveDisplayName(params, [fallbackLabel, nodeLabel]);
+      const target = resolvePrimaryTarget(params, nodeLabel);
+      const type = trimIfNonEmpty(params.type) ?? 'unknown';
+      featured.push(new EntityCardDataImpl(name, type, target, params));
     }
   }
   
@@ -137,31 +177,29 @@ export async function fetchFeaturedEntities(bridge: ROS2BridgeApi): Promise<Feat
   for (const [key, value] of Object.entries(allParams)) {
     if (key.endsWith('.featured') && value === true) {
       const nodeName = key.replace('.featured', '');
-      // Use node name (strip leading /) as both name and target
-      const displayName = nodeName.startsWith('/') ? nodeName.slice(1) : nodeName;
-      const paramsStr = allParams[`${nodeName}.params`] as string;
-      
-      if (paramsStr) {
-        try {
-          const params = JSON.parse(paramsStr);
-          featured.push(new EntityCardDataImpl(
-            displayName,
-            params.type || 'unknown',
-            displayName,
-            params
-          ));
-        } catch (parseError) {
-          console.warn(`Failed to parse params for ${nodeName}:`, parseError);
-        }
-      } else {
-        // No params, just add with basic info
-        featured.push(new EntityCardDataImpl(
-          displayName,
-          'unknown',
-          displayName,
-          {}
-        ));
+      const fallbackName = nodeName.startsWith('/') ? nodeName.slice(1) : nodeName;
+      const paramsStr = allParams[`${nodeName}.params`];
+      const params = toEntityParams(paramsStr);
+
+      if (params) {
+        const name = resolveDisplayName(params, [fallbackName]);
+        const target = resolvePrimaryTarget(params, fallbackName);
+        const type = trimIfNonEmpty(params.type) ?? 'unknown';
+        featured.push(new EntityCardDataImpl(name, type, target, params));
+        continue;
       }
+
+      if (paramsStr) {
+        console.warn(`Failed to parse params for ${nodeName}: expected JSON object string`);
+      }
+
+      // No params, just add with basic info
+      featured.push(new EntityCardDataImpl(
+        fallbackName,
+        'unknown',
+        fallbackName,
+        {}
+      ));
     }
   }
   

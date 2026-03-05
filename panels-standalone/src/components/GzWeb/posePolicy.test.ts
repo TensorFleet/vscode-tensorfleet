@@ -2,11 +2,11 @@ import { describe, expect, it } from 'bun:test';
 import { getGazeboEntityName, getPoseEditAccess } from './posePolicy';
 
 describe('posePolicy', () => {
-  it('prefers explicit gazebo_entity mapping', () => {
+  it('uses first model_names entry as gazebo entity name', () => {
     expect(
       getGazeboEntityName({
         target: 'fallback_target',
-        params: { gazebo_entity: 'x500_0' },
+        params: { model_names: ['x500_0', 'x500_0::base_link'] },
       }),
     ).toBe('x500_0');
   });
