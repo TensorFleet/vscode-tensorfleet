@@ -150,6 +150,11 @@ export class EntityCardDataImpl implements EntityData {
  */
 export async function fetchFeaturedEntities(bridge: ROS2BridgeApi): Promise<FeaturedEntityData[]> {
   const allParams = await bridge.getAllROSParameters();
+  const featuredFlagKeys = Object.entries(allParams)
+    .filter(([key, value]) => (key.endsWith('.proxy_featured') || key.endsWith('.featured')) && value === true)
+    .map(([key]) => key)
+    .sort();
+  console.log('[fetchFeaturedEntities] Featured flags from current ROS parameter snapshot', featuredFlagKeys);
   
   const featured: FeaturedEntityData[] = [];
   

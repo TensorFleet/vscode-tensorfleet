@@ -457,10 +457,44 @@ export class FoxgloveWsClient {
       // Foxglove ws-protocol typically includes { id, parameters }
       const parameters = event?.parameters;
       const requestId: string | undefined = event?.id;
+      const pendingRead = requestId ? this.pendingParamReads.get(requestId) : undefined;
+      const isAllParamsResponse = pendingRead?.namesKey === "";
+      const hasPendingAllParamsRead =
+        !requestId &&
+        Array.from(this.pendingParamReads.values()).some((pending) => pending.namesKey === "");
+      const isAuthoritativeAllParamsSnapshot = isAllParamsResponse || hasPendingAllParamsRead;
 
       if (!Array.isArray(parameters)) return;
 
       const changed: { name: string; value: unknown }[] = [];
+
+      // A response to getParameters([]) is treated as the authoritative snapshot.
+      // Prune stale cached keys that are not present anymore.
+      if (isAuthoritativeAllParamsSnapshot) {
+        if (!requestId && hasPendingAllParamsRead) {
+          console.log("[FoxgloveWsClient] Treating id-less parameterValues as all-params snapshot");
+        }
+        const incomingNames = new Set<string>();
+        for (const param of parameters as Array<{ name?: unknown }>) {
+          if (typeof param?.name === "string") {
+            incomingNames.add(param.name);
+          }
+        }
+        const prunedNames: string[] = [];
+        for (const existingName of Array.from(this.parameters.keys())) {
+          if (!incomingNames.has(existingName)) {
+            this.parameters.delete(existingName);
+            changed.push({ name: existingName, value: undefined });
+            prunedNames.push(existingName);
+          }
+        }
+        if (prunedNames.length > 0) {
+          console.log("[FoxgloveWsClient] Pruned stale parameter cache entries", {
+            count: prunedNames.length,
+            sample: prunedNames.slice(0, 20),
+          });
+        }
+      }
 
       for (const p of parameters as Array<{ name: string; value: unknown; type?: Parameter["type"] }>) {
         let val: unknown = (p as any).value;
