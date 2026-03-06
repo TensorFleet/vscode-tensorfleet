@@ -123,6 +123,8 @@ export interface SceneSetupTraceConfigMessage {
   payload: {
     enabled: boolean;
     filter?: string;
+    moveThrottleMs?: number;
+    maxNudgeDeltaMeters?: number;
     timestamp: number;
   };
 }

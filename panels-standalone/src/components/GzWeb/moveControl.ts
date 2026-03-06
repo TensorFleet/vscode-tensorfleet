@@ -33,6 +33,23 @@ export const addPoseVector = (a: PoseVector, b: PoseVector): PoseVector => ({
   z: a.z + b.z,
 });
 
+export const isFinitePoseVector = (value: PoseVector): boolean => {
+  return Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.z);
+};
+
+export const poseVectorMagnitude = (value: PoseVector): number => {
+  return Math.sqrt((value.x * value.x) + (value.y * value.y) + (value.z * value.z));
+};
+
+export const roundPoseVector = (value: PoseVector, decimals = 4): PoseVector => {
+  const factor = Math.pow(10, decimals);
+  return {
+    x: Math.round(value.x * factor) / factor,
+    y: Math.round(value.y * factor) / factor,
+    z: Math.round(value.z * factor) / factor,
+  };
+};
+
 export const resolveVisualOffset = (
   offsets: Map<string, PoseVector>,
   world: string,

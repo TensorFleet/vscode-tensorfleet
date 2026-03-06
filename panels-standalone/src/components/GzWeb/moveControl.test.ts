@@ -4,7 +4,10 @@ import {
   addPoseVector,
   buildPoseNameAliases,
   getEntityNameCandidates,
+  isFinitePoseVector,
   isExpectedPoseObserved,
+  poseVectorMagnitude,
+  roundPoseVector,
   resolvePoseEntry,
 } from './moveControl';
 
@@ -108,5 +111,24 @@ describe('moveControl', () => {
       0.25,
     );
     expect(observed.matched).toBe(false);
+  });
+
+  it('validates finite move vectors', () => {
+    expect(isFinitePoseVector({ x: 1, y: 2, z: 3 })).toBe(true);
+    expect(isFinitePoseVector({ x: Number.NaN, y: 2, z: 3 })).toBe(false);
+    expect(isFinitePoseVector({ x: 1, y: Number.POSITIVE_INFINITY, z: 3 })).toBe(false);
+  });
+
+  it('computes vector magnitude', () => {
+    expect(poseVectorMagnitude({ x: 3, y: 4, z: 0 })).toBe(5);
+    expect(poseVectorMagnitude({ x: 0, y: 0, z: 0 })).toBe(0);
+  });
+
+  it('rounds vectors for stable dispatch payloads', () => {
+    expect(roundPoseVector({ x: 1.23456, y: -2.34567, z: 0.00009 })).toEqual({
+      x: 1.2346,
+      y: -2.3457,
+      z: 0.0001,
+    });
   });
 });

@@ -15,6 +15,9 @@ import {
   buildPoseNameAliases,
   GazeboPose,
   getEntityNameCandidates,
+  isFinitePoseVector,
+  poseVectorMagnitude,
+  roundPoseVector,
   resolvePoseEntry,
   resolveVisualOffset,
   toPoseQuaternion,
@@ -51,12 +54,6 @@ type SceneManagerInstance = {
   getModelByName?: (name: string) => any; // Method to get model by name
 };
 
-type SceneManagerConstructor = new (args: {
-  elementId: string;
-  websocketUrl: string;
-  enableLights?: boolean;
-}) => SceneManagerInstance;
-
 type LoginStatus = 'muted' | 'pending' | 'ok' | 'error';
 type VmStatusResponse = {
   vm_id?: string;
@@ -87,12 +84,15 @@ declare global {
   }
 }
 
-const GZWEB_MODULE_URL = 'https://esm.sh/gzweb@2.0.14?bundle';
 const SCENE_ELEMENT_ID = 'gz-scene';
 const SESSION_BASELINE_CAPTURE_WINDOW_MS = 8000;
 const CONTACT_WARN_WINDOW_MS = 3000;
 const CONTACT_WARN_COOLDOWN_MS = 1500;
-const NUDGE_THROTTLE_MS = 120;
+const DEFAULT_NUDGE_THROTTLE_MS = 120;
+const MIN_NUDGE_THROTTLE_MS = 16;
+const MAX_NUDGE_THROTTLE_MS = 1000;
+const DEFAULT_MAX_NUDGE_DELTA_METERS = 3;
+const MIN_MOVE_EPSILON_METERS = 0.0001;
 
 type MoveHistoryAction = 'append' | 'undo' | 'reset' | 'none';
 
@@ -128,6 +128,13 @@ const DRAG_METERS_PER_PIXEL = 0.01;
 const DRAG_MIN_DELTA_METERS = 0.02;
 
 type SelectionSource = 'panel' | 'viewport' | 'none';
+
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 const isTruthyFlag = (value: unknown): boolean => {
   if (typeof value === 'boolean') return value;
@@ -190,6 +197,53 @@ const getMoveTraceFilter = (): string => {
   }
 
   return '';
+};
+
+const getConfiguredNudgeThrottleMs = (): number => {
+  if (typeof window === 'undefined') return DEFAULT_NUDGE_THROTTLE_MS;
+  let configured: number | null = null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    configured = toFiniteNumber(
+      params.get('moveThrottleMs') ??
+      params.get('move_throttle_ms'),
+    );
+  } catch {
+    // Ignore malformed query string parsing.
+  }
+  if (configured === null) {
+    try {
+      configured = toFiniteNumber(window.localStorage.getItem('tf.move.throttle.ms'));
+    } catch {
+      // Ignore localStorage access failures.
+    }
+  }
+  if (configured === null) return DEFAULT_NUDGE_THROTTLE_MS;
+  const rounded = Math.round(configured);
+  return Math.min(MAX_NUDGE_THROTTLE_MS, Math.max(MIN_NUDGE_THROTTLE_MS, rounded));
+};
+
+const getConfiguredMaxNudgeDeltaMeters = (): number => {
+  if (typeof window === 'undefined') return DEFAULT_MAX_NUDGE_DELTA_METERS;
+  let configured: number | null = null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    configured = toFiniteNumber(
+      params.get('maxNudgeDeltaMeters') ??
+      params.get('max_nudge_delta_meters'),
+    );
+  } catch {
+    // Ignore malformed query string parsing.
+  }
+  if (configured === null) {
+    try {
+      configured = toFiniteNumber(window.localStorage.getItem('tf.move.max_delta_m'));
+    } catch {
+      // Ignore localStorage access failures.
+    }
+  }
+  if (configured === null || configured <= 0) return DEFAULT_MAX_NUDGE_DELTA_METERS;
+  return configured;
 };
 
 const matchesMoveTraceFilter = (phase: string, payload: Record<string, unknown>, filter: string): boolean => {
@@ -575,32 +629,8 @@ const POSE_MESSAGE_TYPE_CANDIDATES = [
   'gz.msgs.Pose',
 ] as const;
 
-const POSE_VECTOR_MESSAGE_TYPE_CANDIDATES = [
-  'gz.msgs.Pose_V',
-] as const;
-
 const getOrderedPoseMessageTypes = (transport: SceneManagerTransport, world: string): string[] => {
   const defaultOrder = [...POSE_MESSAGE_TYPE_CANDIDATES];
-  const topicName = `/world/${world}/dynamic_pose/info`;
-  const availableTopics = transport.getAvailableTopics?.();
-  if (!Array.isArray(availableTopics)) return defaultOrder;
-
-  const topicMeta = availableTopics.find((topic) => topic?.topic === topicName);
-  const msgType = typeof topicMeta?.msg_type === 'string' ? topicMeta.msg_type : '';
-  const preferredPrefix = msgType.startsWith('ignition.msgs.')
-    ? 'ignition.msgs.'
-    : msgType.startsWith('gazebo.msgs.')
-      ? 'gazebo.msgs.'
-      : msgType.startsWith('gz.msgs.')
-        ? 'gz.msgs.'
-        : '';
-
-  if (!preferredPrefix) return defaultOrder;
-  return defaultOrder.sort((a, b) => Number(b.startsWith(preferredPrefix)) - Number(a.startsWith(preferredPrefix)));
-};
-
-const getOrderedPoseVectorMessageTypes = (transport: SceneManagerTransport, world: string): string[] => {
-  const defaultOrder = [...POSE_VECTOR_MESSAGE_TYPE_CANDIDATES];
   const topicName = `/world/${world}/dynamic_pose/info`;
   const availableTopics = transport.getAvailableTopics?.();
   if (!Array.isArray(availableTopics)) return defaultOrder;
@@ -639,6 +669,10 @@ const resolveContactTopicName = (transport: SceneManagerTransport, world: string
     (name) => name.startsWith(`/world/${world}/`) && (name.includes('/contact') || name.endsWith('contact')),
   );
   return fallback ?? preferred[0];
+};
+
+const moveEntityCacheKey = (world: string, entityName: string): string => {
+  return `${world}::${entityName}`;
 };
 
 const toOptionalNumber = (value: unknown): number | undefined => {
@@ -935,6 +969,7 @@ export const GzWebPanel: React.FC = () => {
   const moveRequestCounterRef = useRef(0);
   const pendingThrottledNudgesRef = useRef<Map<string, PendingThrottledNudge>>(new Map());
   const lastNudgeDispatchAtRef = useRef<Map<string, number>>(new Map());
+  const poseNameCacheRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (!isMoveTraceEnabled()) return;
@@ -943,6 +978,8 @@ export const GzWebPanel: React.FC = () => {
       filter: getMoveTraceFilter(),
       vmBase: vmBaseRef.current,
       nodeId: nodeIdRef.current,
+      throttleMs: getConfiguredNudgeThrottleMs(),
+      maxNudgeDeltaMeters: getConfiguredMaxNudgeDeltaMeters(),
     });
   }, []);
   const moveHistoryRef = useRef<Map<string, EntityMoveHistory>>(new Map());
@@ -1074,6 +1111,53 @@ export const GzWebPanel: React.FC = () => {
     }
   }, []);
 
+  const requestSetPose = useCallback((
+    transport: SceneManagerTransport,
+    world: string,
+    msgType: string,
+    pose: GazeboPose,
+    traceMeta: {
+      requestId?: string;
+      entity?: string;
+      phasePrefix: string;
+    },
+  ): { ok: true; serviceName: string } | { ok: false; serviceName: string; error: string } => {
+    const serviceName = `/world/${world}/set_pose`;
+    try {
+      moveTrace(`${traceMeta.phasePrefix}.set_pose`, {
+        requestId: traceMeta.requestId,
+        attempt: 1,
+        world,
+        serviceName,
+        msgType,
+        entity: traceMeta.entity,
+        pose: {
+          name: pose.name,
+          id: pose.id,
+          position: toTracePosition(pose.position),
+          orientation: toTraceOrientation(pose.orientation),
+        },
+      });
+      transport.requestService!(serviceName, msgType, pose);
+      return { ok: true, serviceName };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes('no such type')) {
+        console.warn(`set_pose request failed for ${msgType}`, error);
+      }
+      moveTrace(`${traceMeta.phasePrefix}.set_pose.error`, {
+        requestId: traceMeta.requestId,
+        attempt: 1,
+        world,
+        serviceName,
+        msgType,
+        poseName: pose.name,
+        error: message,
+      });
+      return { ok: false, serviceName, error: message };
+    }
+  }, []);
+
   const dispatchNudgeEntity = useCallback(
     (
       entity: EntityCardData,
@@ -1100,6 +1184,38 @@ export const GzWebPanel: React.FC = () => {
         });
         return false;
       }
+      if (!isFinitePoseVector(delta)) {
+        emitNudgeStatus('error', 'Move ignored: delta contains non-finite values', {
+          requestId,
+          entity: mappedEntityName,
+        });
+        return false;
+      }
+      const deltaMagnitude = poseVectorMagnitude(delta);
+      if (deltaMagnitude <= MIN_MOVE_EPSILON_METERS) {
+        moveTrace('move.dispatch.ignored_zero_delta', {
+          requestId,
+          entity: mappedEntityName,
+          delta: toTracePosition(delta),
+          epsilonMeters: MIN_MOVE_EPSILON_METERS,
+        });
+        return true;
+      }
+      const maxNudgeDeltaMeters = getConfiguredMaxNudgeDeltaMeters();
+      if (deltaMagnitude > maxNudgeDeltaMeters) {
+        emitNudgeStatus(
+          'error',
+          `Move ignored: delta ${deltaMagnitude.toFixed(3)}m exceeds max ${maxNudgeDeltaMeters.toFixed(3)}m`,
+          { requestId, entity: mappedEntityName },
+        );
+        moveTrace('move.dispatch.rejected_delta_too_large', {
+          requestId,
+          entity: mappedEntityName,
+          deltaMagnitudeMeters: Number(deltaMagnitude.toFixed(4)),
+          maxNudgeDeltaMeters,
+        });
+        return false;
+      }
 
       const world = transport.getWorld?.();
       if (!world) {
@@ -1110,11 +1226,32 @@ export const GzWebPanel: React.FC = () => {
       const entityNameCandidates = getEntityNameCandidates(entity);
       let resolvedPoseEntry: { poseName: string; pose: GazeboPose } | null = null;
       let resolvedEntityName = '';
-      for (const entityName of entityNameCandidates) {
-        resolvedPoseEntry = resolvePoseEntry(entityPoseRef.current, entityName);
-        if (resolvedPoseEntry) {
-          resolvedEntityName = entityName;
-          break;
+      const cacheKey = moveEntityCacheKey(world, mappedEntityName);
+      const cachedPoseName = poseNameCacheRef.current.get(cacheKey);
+      if (cachedPoseName) {
+        const cachedPose = entityPoseRef.current.get(cachedPoseName);
+        if (cachedPose) {
+          resolvedPoseEntry = { poseName: cachedPoseName, pose: cachedPose };
+          resolvedEntityName = cachedPoseName;
+          moveTrace('move.resolve.cache_hit', {
+            requestId,
+            world,
+            mappedEntityName,
+            cacheKey,
+            cachedPoseName,
+          });
+        } else {
+          poseNameCacheRef.current.delete(cacheKey);
+        }
+      }
+
+      if (!resolvedPoseEntry) {
+        for (const entityName of entityNameCandidates) {
+          resolvedPoseEntry = resolvePoseEntry(entityPoseRef.current, entityName);
+          if (resolvedPoseEntry) {
+            resolvedEntityName = entityName;
+            break;
+          }
         }
       }
 
@@ -1129,17 +1266,14 @@ export const GzWebPanel: React.FC = () => {
         ]);
         return false;
       }
+      poseNameCacheRef.current.set(cacheKey, resolvedPoseEntry.poseName);
+
       const msgTypeCandidates = getOrderedPoseMessageTypes(transport, world);
       const msgType = msgTypeCandidates[0];
-      const poseServiceName = `/world/${world}/set_pose`;
       const { poseName, pose: currentPose } = resolvedPoseEntry;
       const canonicalNextPose: GazeboPose = {
         name: poseName,
-        position: {
-          x: currentPose.position.x + delta.x,
-          y: currentPose.position.y + delta.y,
-          z: currentPose.position.z + delta.z,
-        },
+        position: roundPoseVector(addPoseVector(currentPose.position, delta)),
         orientation: currentPose.orientation,
         id: currentPose.id,
       };
@@ -1187,41 +1321,18 @@ export const GzWebPanel: React.FC = () => {
           position: toTracePosition(canonicalNextPose.position),
           orientation: toTraceOrientation(canonicalNextPose.orientation),
         },
-        poseServiceName,
+        poseServiceName: `/world/${world}/set_pose`,
         msgTypeCandidates,
         selectedMsgType: msgType,
       });
 
-      try {
-        moveTrace('move.dispatch.set_pose', {
-          requestId,
-          attempt: 1,
-          world,
-          serviceName: poseServiceName,
-          msgType,
-          entity: moveEntity,
-          pose: {
-            name: canonicalNextPose.name,
-            position: toTracePosition(canonicalNextPose.position),
-            orientation: toTraceOrientation(canonicalNextPose.orientation),
-          },
-        });
-        transport.requestService(poseServiceName, msgType, canonicalNextPose);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!message.includes('no such type')) {
-          console.warn(`set_pose request failed for ${msgType}`, error);
-        }
-        moveTrace('move.dispatch.set_pose.error', {
-          requestId,
-          attempt: 1,
-          world,
-          serviceName: poseServiceName,
-          msgType,
-          poseName,
-          error: message,
-        });
-        emitNudgeStatus('error', `Move failed: set_pose request error (${message})`, {
+      const response = requestSetPose(transport, world, msgType, canonicalNextPose, {
+        requestId,
+        entity: moveEntity,
+        phasePrefix: 'move.dispatch',
+      });
+      if (!response.ok) {
+        emitNudgeStatus('error', `Move failed: set_pose request error (${response.error})`, {
           requestId,
           entity: mappedEntityName,
           attempt: 1,
@@ -1236,7 +1347,7 @@ export const GzWebPanel: React.FC = () => {
         unique([
           poseName,
           worldScopedPoseName,
-          getGazeboEntityName(entity),
+          mappedEntityName,
           resolvedEntityName,
         ]),
         canonicalNextPose,
@@ -1260,7 +1371,7 @@ export const GzWebPanel: React.FC = () => {
       moveTrace('move.dispatch.accepted', {
         requestId,
         world,
-        serviceName: poseServiceName,
+        serviceName: response.serviceName,
         msgType,
         entity: moveEntity,
         aliases,
@@ -1273,7 +1384,7 @@ export const GzWebPanel: React.FC = () => {
       );
       return true;
     },
-    [applyMoveHistoryAction, emitNudgeStatus],
+    [applyMoveHistoryAction, emitNudgeStatus, requestSetPose],
   );
 
   const flushThrottledNudge = useCallback((entityKey: string, reason: string): boolean => {
@@ -1289,6 +1400,15 @@ export const GzWebPanel: React.FC = () => {
       queuedForMs: Date.now() - pending.queuedAtMs,
       delta: toTracePosition(pending.delta),
     });
+    const pendingMagnitude = poseVectorMagnitude(pending.delta);
+    if (pendingMagnitude <= MIN_MOVE_EPSILON_METERS) {
+      moveTrace('move.throttle.drop_zero_delta', {
+        entity: entityKey,
+        reason,
+        deltaMagnitudeMeters: Number(pendingMagnitude.toFixed(6)),
+      });
+      return true;
+    }
     const accepted = dispatchNudgeEntity(
       pending.entity,
       pending.delta,
@@ -1328,8 +1448,19 @@ export const GzWebPanel: React.FC = () => {
     ): boolean => {
       const historyAction = options?.historyAction ?? 'append';
       const entityKey = getGazeboEntityName(entity);
+      if (!isFinitePoseVector(delta)) {
+        return dispatchNudgeEntity(entity, delta, requestIdFromMessage, { historyAction });
+      }
       if (!entityKey) {
         return dispatchNudgeEntity(entity, delta, requestIdFromMessage, { historyAction });
+      }
+      if (poseVectorMagnitude(delta) <= MIN_MOVE_EPSILON_METERS) {
+        moveTrace('move.throttle.ignored_zero_delta', {
+          entity: entityKey,
+          delta: toTracePosition(delta),
+          epsilonMeters: MIN_MOVE_EPSILON_METERS,
+        });
+        return true;
       }
 
       if (historyAction !== 'append') {
@@ -1338,9 +1469,10 @@ export const GzWebPanel: React.FC = () => {
       }
 
       const now = Date.now();
+      const throttleMs = getConfiguredNudgeThrottleMs();
       const lastDispatchAt = lastNudgeDispatchAtRef.current.get(entityKey) ?? 0;
       const elapsedMs = now - lastDispatchAt;
-      if (elapsedMs >= NUDGE_THROTTLE_MS) {
+      if (elapsedMs >= throttleMs) {
         const accepted = dispatchNudgeEntity(entity, delta, requestIdFromMessage, { historyAction: 'append' });
         if (accepted) {
           lastNudgeDispatchAtRef.current.set(entityKey, Date.now());
@@ -1348,7 +1480,7 @@ export const GzWebPanel: React.FC = () => {
         return accepted;
       }
 
-      const remainingMs = Math.max(0, NUDGE_THROTTLE_MS - elapsedMs);
+      const remainingMs = Math.max(0, throttleMs - elapsedMs);
       const existing = pendingThrottledNudgesRef.current.get(entityKey);
       const pending: PendingThrottledNudge = existing
         ? {
@@ -1373,6 +1505,7 @@ export const GzWebPanel: React.FC = () => {
       pendingThrottledNudgesRef.current.set(entityKey, pending);
       moveTrace('move.throttle.queued', {
         entity: entityKey,
+        throttleMs,
         remainingMs: Math.round(remainingMs),
         queuedDelta: toTracePosition(pending.delta),
       });
@@ -1410,14 +1543,14 @@ export const GzWebPanel: React.FC = () => {
     if (!world) return false;
 
     const poseTypes = getOrderedPoseMessageTypes(transport, world);
-    const poseVectorTypes = getOrderedPoseVectorMessageTypes(transport, world);
+    const msgType = poseTypes[0];
     const poseServiceName = `/world/${world}/set_pose`;
-    const poseVectorServiceName = `/world/${world}/set_pose_vector`;
     const requestNames = unique([
       pose.name,
       ...poseNames,
       ...poseNames.map((name) => (name.includes('::') ? undefined : `${world}::${name}`)),
     ]);
+    if (!msgType) return false;
     moveTrace('reset.apply.prepare', {
       world,
       poseName: pose.name,
@@ -1430,56 +1563,23 @@ export const GzWebPanel: React.FC = () => {
         orientation: toTraceOrientation(pose.orientation),
       },
       poseServiceName,
-      poseVectorServiceName,
       poseTypes,
-      poseVectorTypes,
+      selectedMsgType: msgType,
     });
 
     let totalRequests = 0;
     for (const requestName of requestNames) {
       const nextPose: GazeboPose = {
         name: requestName,
-        position: { ...pose.position },
+        position: roundPoseVector(pose.position),
         orientation: { ...pose.orientation },
         id: pose.id,
       };
-      for (const msgType of poseTypes) {
-        try {
-          moveTrace('reset.apply.set_pose', {
-            world,
-            serviceName: poseServiceName,
-            msgType,
-            pose: {
-              name: nextPose.name,
-              id: nextPose.id,
-              position: toTracePosition(nextPose.position),
-              orientation: toTraceOrientation(nextPose.orientation),
-            },
-          });
-          transport.requestService(poseServiceName, msgType, nextPose);
-          totalRequests += 1;
-        } catch {
-          // Ignore incompatible protobuf message variants.
-        }
-      }
-      for (const msgType of poseVectorTypes) {
-        try {
-          moveTrace('reset.apply.set_pose_vector', {
-            world,
-            serviceName: poseVectorServiceName,
-            msgType,
-            pose: {
-              name: nextPose.name,
-              id: nextPose.id,
-              position: toTracePosition(nextPose.position),
-              orientation: toTraceOrientation(nextPose.orientation),
-            },
-          });
-          transport.requestService(poseVectorServiceName, msgType, { pose: [nextPose] });
-          totalRequests += 1;
-        } catch {
-          // Ignore incompatible protobuf message variants.
-        }
+      const response = requestSetPose(transport, world, msgType, nextPose, {
+        phasePrefix: 'reset.apply',
+      });
+      if (response.ok) {
+        totalRequests += 1;
       }
     }
 
@@ -1494,7 +1594,7 @@ export const GzWebPanel: React.FC = () => {
       aliases,
     });
     return totalRequests > 0;
-  }, [clearVisualOffsets]);
+  }, [clearVisualOffsets, requestSetPose]);
 
   const resetEntityPose = useCallback((entity: EntityCardData): boolean => {
     const entityKey = getGazeboEntityName(entity);
@@ -1730,35 +1830,28 @@ export const GzWebPanel: React.FC = () => {
     }
 
     const poseTypes = getOrderedPoseMessageTypes(transport, world);
-    const poseVectorTypes = getOrderedPoseVectorMessageTypes(transport, world);
-    const poseServiceName = `/world/${world}/set_pose`;
-    const poseVectorServiceName = `/world/${world}/set_pose_vector`;
+    const msgType = poseTypes[0];
+    if (!msgType) {
+      emitNudgeStatus('error', `Scene preset \"${trimmedName}\" could not be applied (no compatible pose message type)`, {
+        entity: '__scene__',
+      });
+      return false;
+    }
 
     let totalRequests = 0;
     for (const [poseName, pose] of Object.entries(preset.poses ?? {})) {
       const nextPose: GazeboPose = {
         name: poseName,
-        position: { ...pose.position },
+        position: roundPoseVector(pose.position),
         orientation: { ...pose.orientation },
         id: pose.id,
       };
 
-      for (const msgType of poseTypes) {
-        try {
-          transport.requestService(poseServiceName, msgType, nextPose);
-          totalRequests += 1;
-        } catch {
-          // Ignore incompatible protobuf msg types.
-        }
-      }
-
-      for (const msgType of poseVectorTypes) {
-        try {
-          transport.requestService(poseVectorServiceName, msgType, { pose: [nextPose] });
-          totalRequests += 1;
-        } catch {
-          // Ignore incompatible protobuf msg types.
-        }
+      const response = requestSetPose(transport, world, msgType, nextPose, {
+        phasePrefix: 'scene_preset.load',
+      });
+      if (response.ok) {
+        totalRequests += 1;
       }
 
       applyPoseToScene(manager, world, [poseName], nextPose);
@@ -1777,7 +1870,7 @@ export const GzWebPanel: React.FC = () => {
       entity: '__scene__',
     });
     return true;
-  }, [emitNudgeStatus]);
+  }, [emitNudgeStatus, requestSetPose]);
 
   useEffect(() => {
     if (!directManipulationEnabled) {
@@ -1995,12 +2088,20 @@ export const GzWebPanel: React.FC = () => {
         const payload = (message.payload ?? {}) as Partial<SceneSetupTraceConfigMessage['payload']>;
         const enabled = typeof payload.enabled === 'boolean' ? payload.enabled : false;
         const filter = typeof payload.filter === 'string' ? payload.filter.trim() : '';
+        const moveThrottleMs = toFiniteNumber(payload.moveThrottleMs);
+        const maxNudgeDeltaMeters = toFiniteNumber(payload.maxNudgeDeltaMeters);
         try {
           window.localStorage.setItem('tf.move.trace', enabled ? '1' : '0');
           if (filter.length > 0) {
             window.localStorage.setItem('tf.move.trace.filter', filter);
           } else {
             window.localStorage.removeItem('tf.move.trace.filter');
+          }
+          if (moveThrottleMs !== null && moveThrottleMs > 0) {
+            window.localStorage.setItem('tf.move.throttle.ms', String(moveThrottleMs));
+          }
+          if (maxNudgeDeltaMeters !== null && maxNudgeDeltaMeters > 0) {
+            window.localStorage.setItem('tf.move.max_delta_m', String(maxNudgeDeltaMeters));
           }
         } catch {
           // Ignore localStorage access failures.
@@ -2014,6 +2115,8 @@ export const GzWebPanel: React.FC = () => {
         moveTrace('trace.config.updated', {
           enabled,
           filter: filter || undefined,
+          moveThrottleMs: moveThrottleMs ?? undefined,
+          maxNudgeDeltaMeters: maxNudgeDeltaMeters ?? undefined,
           source: 'scene_setup',
         });
         return;
@@ -2022,6 +2125,7 @@ export const GzWebPanel: React.FC = () => {
       if (message.type === ENTITY_CONTROL_MESSAGES.SCENE_PRESET_SAVE) {
         const payload = (message.payload ?? {}) as { name?: unknown };
         const name = typeof payload.name === 'string' ? payload.name : '';
+        clearAllThrottledNudges('scene_preset_save');
         saveScenePreset(name);
         return;
       }
@@ -2127,6 +2231,7 @@ export const GzWebPanel: React.FC = () => {
     recentMoveRef.current = null;
     clearAllThrottledNudges('destroy_scene');
     lastNudgeDispatchAtRef.current.clear();
+    poseNameCacheRef.current.clear();
     moveHistoryRef.current.clear();
     entityPoseRef.current.clear();
     sessionInitialPoseRef.current.clear();
