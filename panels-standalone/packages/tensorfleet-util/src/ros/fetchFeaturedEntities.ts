@@ -41,6 +41,10 @@ const resolveDisplayName = (params: Record<string, unknown>, fallbacks: Array<un
 };
 
 const resolvePrimaryTarget = (params: Record<string, unknown>, fallback: unknown): string => {
+  const canonicalGazeboEntity = trimIfNonEmpty(params.gazebo_entity);
+  if (canonicalGazeboEntity) {
+    return canonicalGazeboEntity;
+  }
   const modelNames = getModelNames(params);
   return modelNames[0] ?? trimIfNonEmpty(fallback) ?? "unknown_entity";
 };

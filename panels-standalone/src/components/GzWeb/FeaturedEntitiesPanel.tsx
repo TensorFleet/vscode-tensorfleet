@@ -10,6 +10,7 @@ import {
   EntityResetPoseMessage,
   EntitySelectMessage,
   EntityUndoMessage,
+  SceneSetupTraceConfigMessage,
   ScenePresetListMessage,
   ScenePresetListRequestMessage,
   ScenePresetLoadMessage,
@@ -28,7 +29,7 @@ import { getGazeboEntityName, getPoseEditAccess } from './posePolicy';
 // Adapt FeaturedEntityData to EntityCardData
 type EntityCardData = FeaturedEntityData;
 
-type MoveStatusTone = 'pending' | 'success' | 'error';
+type MoveStatusTone = 'pending' | 'success' | 'error' | 'warning';
 
 type MoveStatusUi = {
   tone: MoveStatusTone;
@@ -49,7 +50,10 @@ const toNudgeStatusMessage = (data: unknown): EntityNudgeStatusMessage | null =>
   if (
     typeof payload.entity !== 'string' ||
     typeof payload.message !== 'string' ||
-    (payload.state !== 'pending' && payload.state !== 'success' && payload.state !== 'error')
+    (payload.state !== 'pending' &&
+      payload.state !== 'success' &&
+      payload.state !== 'error' &&
+      payload.state !== 'warning')
   ) {
     return null;
   }
@@ -97,6 +101,36 @@ const toScenePresetListMessage = (data: unknown): ScenePresetListMessage | null 
   };
 };
 
+const getStoredTraceEnabled = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = window.localStorage.getItem('tf.move.trace');
+    if (!raw) return false;
+    const normalized = raw.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+  } catch {
+    return false;
+  }
+};
+
+const getStoredTraceFilter = (): string => {
+  if (typeof window === 'undefined') return '';
+  try {
+    return window.localStorage.getItem('tf.move.trace.filter')?.trim() ?? '';
+  } catch {
+    return '';
+  }
+};
+
+const toPositiveNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+};
+
 // ============================================================================
 // FeaturedEntitiesPanel Component
 // ============================================================================
@@ -116,10 +150,38 @@ export const FeaturedEntitiesPanel: React.FC = () => {
   const [scenePresetName, setScenePresetName] = useState('');
   const [scenePresetNames, setScenePresetNames] = useState<string[]>([]);
   const [selectedScenePreset, setSelectedScenePreset] = useState('');
+  const [traceEnabled, setTraceEnabled] = useState(() => getStoredTraceEnabled());
+  const [traceFilter, setTraceFilter] = useState(() => getStoredTraceFilter());
   const pendingScenePresetSaveNameRef = useRef<string | null>(null);
   const activeMoveRequestIdRef = useRef<string | null>(null);
   const poseEditAccess = useMemo(() => getPoseEditAccess(selectedEntity), [selectedEntity]);
   const nudgeControlsDisabled = !selectedEntity || !poseEditAccess.enabled;
+
+  const publishTraceConfig = useCallback((enabled: boolean, filter: string) => {
+    try {
+      window.localStorage.setItem('tf.move.trace', enabled ? '1' : '0');
+      const trimmedFilter = filter.trim();
+      if (trimmedFilter.length > 0) {
+        window.localStorage.setItem('tf.move.trace.filter', trimmedFilter);
+      } else {
+        window.localStorage.removeItem('tf.move.trace.filter');
+      }
+    } catch {
+      // Ignore localStorage access failures.
+    }
+    const payload: SceneSetupTraceConfigMessage['payload'] = {
+      enabled,
+      filter: filter.trim() || undefined,
+      timestamp: Date.now(),
+    };
+    window.parent.postMessage(
+      {
+        type: ENTITY_CONTROL_MESSAGES.SCENE_SETUP_TRACE_CONFIG,
+        payload,
+      } satisfies SceneSetupTraceConfigMessage,
+      '*',
+    );
+  }, []);
 
   const refreshScenePresetNames = useCallback((preferredName?: string) => {
     if (preferredName) {
@@ -177,11 +239,26 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     refreshScenePresetNames();
   }, [isConnected, refreshScenePresetNames]);
 
+  useEffect(() => {
+    if (!selectedEntity) {
+      return;
+    }
+    const configuredStep = toPositiveNumber(selectedEntity.params?.nudge_step);
+    if (configuredStep !== null) {
+      const clamped = clampStep(configuredStep, DEFAULT_XY_STEP_METERS);
+      setXyStepMeters(clamped);
+      setZStepMeters(clamped);
+    }
+  }, [selectedEntity]);
+
   // Handle window messages for popup close + move status updates.
   useEffect(() => {
     const handleMessage = (
       event: MessageEvent<
-      EntityInfoPopupMessage | EntityNudgeStatusMessage | EntitySelectMessage | ScenePresetListMessage
+      EntityInfoPopupMessage |
+      EntityNudgeStatusMessage |
+      EntitySelectMessage |
+      ScenePresetListMessage
       >,
     ) => {
       const presetListMessage = toScenePresetListMessage(event.data);
@@ -222,16 +299,9 @@ export const FeaturedEntitiesPanel: React.FC = () => {
             setSelectedEntity(match);
             setActiveCard(match.name);
           } else {
-            const fallbackEntity = ({
-              name: incomingName || incomingTarget || 'selected_entity',
-              type: typeof candidate.type === 'string' ? candidate.type : 'object',
-              target: incomingTarget || incomingName,
-              params: (candidate.params && typeof candidate.params === 'object')
-                ? candidate.params as Record<string, unknown>
-                : {},
-            } as unknown as EntityCardData);
-            setSelectedEntity(fallbackEntity);
-            setActiveCard(null);
+            // Ignore viewport/non-featured selections so only featured cards
+            // can drive movement controls.
+            return;
           }
           setMoveStatus(null);
           activeMoveRequestIdRef.current = null;
@@ -438,6 +508,15 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     window.parent.postMessage(message, '*');
   }, [selectedScenePreset]);
 
+  const handleTraceToggle = useCallback((enabled: boolean) => {
+    setTraceEnabled(enabled);
+    publishTraceConfig(enabled, traceFilter);
+  }, [publishTraceConfig, traceFilter]);
+
+  const handleApplyTraceFilter = useCallback(() => {
+    publishTraceConfig(traceEnabled, traceFilter);
+  }, [publishTraceConfig, traceEnabled, traceFilter]);
+
   useEffect(() => {
     const handleKeyboardMove = (event: KeyboardEvent) => {
       if (nudgeControlsDisabled) return;
@@ -492,6 +571,8 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     [handleCardClick, handleInfoClick],
   );
 
+  const selectedConfiguredStep = toPositiveNumber(selectedEntity?.params?.nudge_step);
+
   if (loading) {
     return (
       <div className="featured-entities-container">
@@ -545,6 +626,45 @@ export const FeaturedEntitiesPanel: React.FC = () => {
         <div className="nudge-target-meta">
           <span>Entity</span>
           <code>{getGazeboEntityName(selectedEntity) || 'unset'}</code>
+        </div>
+        {selectedConfiguredStep !== null && (
+          <div className="nudge-target-meta">
+            <span>VM nudge_step</span>
+            <code>{selectedConfiguredStep} m</code>
+          </div>
+        )}
+
+        <div className="scene-setup-orientation">
+          <div className="scene-setup-section-title">Axes</div>
+          <div className="axis-guide">
+            <span className="axis-guide-item axis-x">X: Right / Left</span>
+            <span className="axis-guide-item axis-y">Y: Forward / Back</span>
+            <span className="axis-guide-item axis-z">Z: Up / Down</span>
+          </div>
+        </div>
+
+        <div className="scene-setup-trace">
+          <div className="scene-setup-section-title">Trace</div>
+          <label className="scene-setup-trace-toggle">
+            <input
+              type="checkbox"
+              checked={traceEnabled}
+              onChange={(event) => handleTraceToggle(event.target.checked)}
+            />
+            <span>Enable move trace</span>
+          </label>
+          <label className="nudge-step-label">
+            <span>Filter</span>
+            <input
+              type="text"
+              value={traceFilter}
+              onChange={(event) => setTraceFilter(event.target.value)}
+              placeholder="simple_bot_include / move.confirmed / requestId"
+            />
+          </label>
+          <button type="button" onClick={handleApplyTraceFilter}>
+            Apply trace filter
+          </button>
         </div>
 
         {selectedEntity && !poseEditAccess.enabled && (
@@ -663,8 +783,8 @@ export const FeaturedEntitiesPanel: React.FC = () => {
 
         <div className={`nudge-hint ${nudgeControlsDisabled ? 'locked' : ''}`}>
           {nudgeControlsDisabled
-            ? 'Move disabled for current selection.'
-            : 'Axis map: +X/-X, +Y/-Y, +Z/-Z. Shortcuts: arrows = XY, PgUp/PgDn = Z, Ctrl/Cmd+Z = undo.'}
+            ? 'Scene Setup move controls are disabled for this selection.'
+            : 'Scene Setup axis map: +X/-X, +Y/-Y, +Z/-Z. Shortcuts: arrows = XY, PgUp/PgDn = Z, Ctrl/Cmd+Z = undo.'}
         </div>
 
         {moveStatus && (

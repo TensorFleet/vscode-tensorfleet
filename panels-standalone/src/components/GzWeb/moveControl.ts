@@ -57,11 +57,15 @@ export const getEntityNameCandidates = (entity: EntityCardData): string[] => {
   const targetBase = entity.target.endsWith('_include')
     ? entity.target.slice(0, -'_include'.length)
     : undefined;
+  const mappedNestedInclude = includeBase ? `${mapped}::${includeBase}` : undefined;
+  const targetNestedInclude = targetBase ? `${entity.target}::${targetBase}` : undefined;
   return unique([
     mapped,
     includeBase,
+    mappedNestedInclude,
     entity.target,
     targetBase,
+    targetNestedInclude,
     entity.name,
   ]);
 };

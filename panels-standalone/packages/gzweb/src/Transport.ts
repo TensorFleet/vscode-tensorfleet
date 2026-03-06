@@ -108,7 +108,7 @@ export class Transport {
       topic,
       msgTypeName,
       msgDef,
-      (topic: string, msgTypeName: string, msg: string) => {
+      (topic: string, msgTypeName: string, msg: Uint8Array) => {
         this.publish(topic, msgTypeName, msg);
       },
     );
@@ -121,8 +121,17 @@ export class Transport {
    * @param msgTypeName The message type.
    * @param msg The message to publish.
    */
-  public publish(topic: string, msgTypeName: string, msg: string): void {
-    this.sendMessage(["pub_in", topic, msgTypeName, msg]);
+  public publish(
+    topic: string,
+    msgTypeName: string,
+    msg: string | Uint8Array,
+  ): void {
+    if (typeof msg === "string") {
+      this.sendMessage(["pub_in", topic, msgTypeName, msg]);
+      return;
+    }
+
+    this.sendBinaryMessage("pub_in", topic, msgTypeName, msg);
   }
 
   /**
@@ -164,9 +173,7 @@ export class Transport {
       return;
     }
 
-    const strBuf = new TextDecoder().decode(buffer);
-
-    this.sendMessage(["req", topic, msgTypeName, strBuf]);
+    this.sendBinaryMessage("req", topic, msgTypeName, buffer);
   }
 
   /**
@@ -277,41 +284,56 @@ export class Transport {
       return;
     }
 
-    // Only send the message when the connection allows it.
-    // Note: Some messages need to be sent during the connection process.
+    const operation = msg[0];
+    if (!this.canSendOperation(operation, msg)) {
+      return;
+    }
+
+    this.ws.send(this.buildMsg(msg));
+  }
+
+  private sendBinaryMessage(
+    operation: string,
+    topic: string,
+    msgTypeName: string,
+    payload: Uint8Array,
+  ): void {
+    if (!this.canSendOperation(operation, [operation, topic, msgTypeName, "<binary>"])) {
+      return;
+    }
+
+    this.ws.send(this.buildBinaryMsg(operation, topic, msgTypeName, payload));
+  }
+
+  private canSendOperation(operation: string, message: string[]): boolean {
     const connectionStatus = this.status$.getValue();
 
     if (connectionStatus === "error") {
       console.error("Cannot send the message. Connection failed.", {
         status: connectionStatus,
-        message: msg,
+        message,
       });
-      return;
+      return false;
     }
 
-    // In order to properly establish a connection, we need to send certain messages, such as
-    // authentication messages, world name, etc.
-    const operation = msg[0];
     if (
       operation === "auth" ||
       operation === "protos" ||
       operation === "topics-types" ||
       operation === "worlds"
     ) {
-      this.ws.send(this.buildMsg(msg));
-      return;
+      return true;
     }
 
-    // Other messages should be sent when the connection status is connected or ready.
     if (connectionStatus === "disconnected") {
       console.error(
         "Trying to send a message but the websocket is disconnected.",
-        msg,
+        message,
       );
-      return;
+      return false;
     }
 
-    this.ws.send(this.buildMsg(msg));
+    return true;
   }
 
   /**
@@ -535,5 +557,20 @@ export class Transport {
    */
   private buildMsg(parts: string[]): string {
     return parts.join(",");
+  }
+
+  private buildBinaryMsg(
+    operation: string,
+    topic: string,
+    msgTypeName: string,
+    payload: Uint8Array,
+  ): ArrayBuffer {
+    const header = new TextEncoder().encode(
+      `${operation},${topic},${msgTypeName},`,
+    );
+    const frame = new Uint8Array(header.length + payload.length);
+    frame.set(header, 0);
+    frame.set(payload, header.length);
+    return frame.buffer;
   }
 }

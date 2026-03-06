@@ -329,6 +329,91 @@
   text-overflow: ellipsis;
 }
 
+.scene-setup-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vscode-descriptionForeground, #999999);
+  font-weight: 700;
+}
+
+.scene-setup-orientation {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.axis-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.axis-guide-item {
+  font-size: 10px;
+  text-align: center;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--vscode-foreground, #cccccc);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.axis-guide-item.axis-x {
+  border-color: rgba(242, 98, 98, 0.5);
+  color: #f8a9a9;
+}
+
+.axis-guide-item.axis-y {
+  border-color: rgba(97, 213, 124, 0.45);
+  color: #9be8af;
+}
+
+.axis-guide-item.axis-z {
+  border-color: rgba(105, 161, 255, 0.5);
+  color: #a9c8ff;
+}
+
+.scene-setup-trace {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.scene-setup-trace-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.scene-setup-trace-toggle input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+}
+
+.scene-setup-trace button {
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 8px;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.scene-setup-trace button:hover:enabled {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
 .nudge-warning {
   font-size: 12px;
   line-height: 1.35;
@@ -491,6 +576,12 @@
   color: #ffaeae;
   background: rgba(229, 80, 80, 0.12);
   border-color: rgba(229, 80, 80, 0.28);
+}
+
+.nudge-status.warning {
+  color: #f5d17a;
+  background: rgba(234, 179, 8, 0.13);
+  border-color: rgba(234, 179, 8, 0.32);
 }
 
 /* ============================================================================

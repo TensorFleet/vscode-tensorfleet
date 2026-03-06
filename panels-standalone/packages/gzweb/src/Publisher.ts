@@ -23,7 +23,11 @@ export class Publisher {
    * Function used to publish a message. This acts as a pass through to
    * Transport.
    */
-  private pubFunc: (topic: string, msgTypeName: string, msg: string) => void;
+  private pubFunc: (
+    topic: string,
+    msgTypeName: string,
+    msg: Uint8Array,
+  ) => void;
 
   /**
    * This constructor should be called by Transport.
@@ -37,7 +41,7 @@ export class Publisher {
     topic: string,
     msgTypeName: string,
     def: Type,
-    pub: (topic: string, msgTypeName: string, msg: string) => void,
+    pub: (topic: string, msgTypeName: string, msg: Uint8Array) => void,
   ) {
     this.topic = topic;
     this.msgTypeName = msgTypeName;
@@ -62,10 +66,9 @@ export class Publisher {
    */
   public publish(msg: Message): void {
     // Serialized the message
-    let buffer = this.messageDef.encode(msg).finish();
-    let strBuf = new TextDecoder().decode(buffer);
+    const buffer = this.messageDef.encode(msg).finish();
 
     // Publish the message over the websocket
-    this.pubFunc(this.topic, this.msgTypeName, strBuf);
+    this.pubFunc(this.topic, this.msgTypeName, buffer);
   }
 }

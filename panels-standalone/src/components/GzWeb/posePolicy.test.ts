@@ -2,7 +2,19 @@ import { describe, expect, it } from 'bun:test';
 import { getGazeboEntityName, getPoseEditAccess } from './posePolicy';
 
 describe('posePolicy', () => {
-  it('uses first model_names entry as gazebo entity name', () => {
+  it('prefers canonical gazebo_entity over model_names aliases', () => {
+    expect(
+      getGazeboEntityName({
+        target: 'fallback_target',
+        params: {
+          gazebo_entity: 'simple_bot_include',
+          model_names: ['simple_bot', 'simple_bot_include'],
+        },
+      }),
+    ).toBe('simple_bot_include');
+  });
+
+  it('uses first model_names entry as fallback gazebo entity name', () => {
     expect(
       getGazeboEntityName({
         target: 'fallback_target',

@@ -14,6 +14,10 @@ export type PoseEditAccess = {
 
 export const getGazeboEntityName = (entity: GazeboEntityTarget | null | undefined): string => {
   if (!entity) return '';
+  const gazeboEntity = entity.params?.gazebo_entity;
+  if (typeof gazeboEntity === 'string' && gazeboEntity.trim().length > 0) {
+    return gazeboEntity.trim();
+  }
   const modelNames = entity.params?.model_names;
   if (Array.isArray(modelNames) && typeof modelNames[0] === 'string' && modelNames[0].trim().length > 0) {
     return modelNames[0].trim();

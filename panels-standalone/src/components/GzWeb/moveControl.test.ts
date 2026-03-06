@@ -22,6 +22,7 @@ describe('moveControl', () => {
     expect(getEntityNameCandidates(sampleEntity)).toEqual([
       'x500_0_include',
       'x500_0',
+      'x500_0_include::x500_0',
       'X500',
     ]);
   });
