@@ -370,8 +370,7 @@
   gap: 8px;
 }
 
-.gzweb-manip-controls > button,
-.gzweb-manip-axis button {
+.gzweb-manip-controls > button {
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.05);
@@ -382,28 +381,19 @@
   cursor: pointer;
 }
 
-.gzweb-manip-controls > button:hover:enabled,
-.gzweb-manip-axis button:hover:enabled {
+.gzweb-manip-controls > button:hover:enabled {
   background: rgba(43, 124, 255, 0.2);
   border-color: rgba(66, 167, 255, 0.6);
 }
 
-.gzweb-manip-controls > button.active,
-.gzweb-manip-axis button.active {
+.gzweb-manip-controls > button.active {
   background: rgba(43, 124, 255, 0.34);
   border-color: rgba(66, 167, 255, 0.72);
 }
 
-.gzweb-manip-controls > button:disabled,
-.gzweb-manip-axis button:disabled {
+.gzweb-manip-controls > button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.gzweb-manip-axis {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
 }
 
 .gzweb-manip-hint {

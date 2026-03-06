@@ -1,15 +1,12 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
 import { fetchFeaturedEntities, FeaturedEntityData } from 'tensorfleet-util/ros/fetchFeaturedEntities';
 import './ESimViewPanel.css';
 import {
   EntityClickMessage,
-  EntityNudgeMessage,
   EntityNudgeStatusMessage,
   EntityResetAllPosesMessage,
-  EntityResetPoseMessage,
   EntitySelectMessage,
-  EntityUndoMessage,
   SceneSetupTraceConfigMessage,
   ScenePresetListMessage,
   ScenePresetListRequestMessage,
@@ -24,7 +21,7 @@ import {
 } from './EntityInfoPopup';
 import { EntityInfoData } from './EntityInfoPopup';
 import { EntityCard } from './EntityCard';
-import { getGazeboEntityName, getPoseEditAccess } from './posePolicy';
+import { getGazeboEntityName } from './posePolicy';
 
 // Adapt FeaturedEntityData to EntityCardData
 type EntityCardData = FeaturedEntityData;
@@ -35,10 +32,6 @@ type MoveStatusUi = {
   tone: MoveStatusTone;
   message: string;
 };
-
-const DEFAULT_XY_STEP_METERS = 0.25;
-const DEFAULT_Z_STEP_METERS = 0.1;
-const STEP_PRESETS_METERS = [0.05, 0.1, 0.25, 1, 4] as const;
 
 const toNudgeStatusMessage = (data: unknown): EntityNudgeStatusMessage | null => {
   if (!data || typeof data !== 'object') return null;
@@ -69,18 +62,6 @@ const toNudgeStatusMessage = (data: unknown): EntityNudgeStatusMessage | null =>
       maxAttempts: typeof payload.maxAttempts === 'number' ? payload.maxAttempts : undefined,
     },
   };
-};
-
-const clampStep = (value: number, fallback: number): number => {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(25, Math.max(0.01, value));
-};
-
-const isEditableElement = (target: EventTarget | null): boolean => {
-  const el = target as HTMLElement | null;
-  if (!el) return false;
-  const tag = el.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 };
 
 const toScenePresetListMessage = (data: unknown): ScenePresetListMessage | null => {
@@ -122,15 +103,6 @@ const getStoredTraceFilter = (): string => {
   }
 };
 
-const toPositiveNumber = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
-  return null;
-};
-
 // ============================================================================
 // FeaturedEntitiesPanel Component
 // ============================================================================
@@ -141,12 +113,10 @@ export const FeaturedEntitiesPanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(() => ros2Bridge.isConnected());
 
-  // Track active card state for styling + setup controls
+  // Track active card state for styling and selection sync
   const [activeCard, setActiveCard] = useState<string | null>(null);
   const [selectedEntity, setSelectedEntity] = useState<EntityCardData | null>(null);
   const [moveStatus, setMoveStatus] = useState<MoveStatusUi | null>(null);
-  const [xyStepMeters, setXyStepMeters] = useState(DEFAULT_XY_STEP_METERS);
-  const [zStepMeters, setZStepMeters] = useState(DEFAULT_Z_STEP_METERS);
   const [scenePresetName, setScenePresetName] = useState('');
   const [scenePresetNames, setScenePresetNames] = useState<string[]>([]);
   const [selectedScenePreset, setSelectedScenePreset] = useState('');
@@ -154,8 +124,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
   const [traceFilter, setTraceFilter] = useState(() => getStoredTraceFilter());
   const pendingScenePresetSaveNameRef = useRef<string | null>(null);
   const activeMoveRequestIdRef = useRef<string | null>(null);
-  const poseEditAccess = useMemo(() => getPoseEditAccess(selectedEntity), [selectedEntity]);
-  const nudgeControlsDisabled = !selectedEntity || !poseEditAccess.enabled;
 
   const publishTraceConfig = useCallback((enabled: boolean, filter: string) => {
     try {
@@ -238,18 +206,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     if (!isConnected) return;
     refreshScenePresetNames();
   }, [isConnected, refreshScenePresetNames]);
-
-  useEffect(() => {
-    if (!selectedEntity) {
-      return;
-    }
-    const configuredStep = toPositiveNumber(selectedEntity.params?.nudge_step);
-    if (configuredStep !== null) {
-      const clamped = clampStep(configuredStep, DEFAULT_XY_STEP_METERS);
-      setXyStepMeters(clamped);
-      setZStepMeters(clamped);
-    }
-  }, [selectedEntity]);
 
   // Handle window messages for popup close + move status updates.
   useEffect(() => {
@@ -407,69 +363,16 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     window.parent.postMessage(clickMessage, '*');
   }, []);
 
-  const handleNudge = useCallback((delta: { x: number; y: number; z: number }) => {
-    if (!selectedEntity || !poseEditAccess.enabled) return;
-    const requestId = `nudge-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
-    activeMoveRequestIdRef.current = requestId;
-    setMoveStatus({ tone: 'pending', message: 'Sending move request...' });
-
-    const appliedDelta = {
-      x: delta.x * xyStepMeters,
-      y: delta.y * xyStepMeters,
-      z: delta.z * zStepMeters,
-    };
-
-    const message: EntityNudgeMessage = {
-      type: ENTITY_CONTROL_MESSAGES.NUDGE,
-      payload: {
-        entity: selectedEntity,
-        requestId,
-        delta: appliedDelta,
-        step: Math.max(xyStepMeters, zStepMeters),
-        timestamp: Date.now(),
-      },
-    };
-
-    window.parent.postMessage(message, '*');
-  }, [poseEditAccess.enabled, selectedEntity, xyStepMeters, zStepMeters]);
-
-  const handleUndo = useCallback(() => {
-    if (!selectedEntity) return;
-    setMoveStatus({ tone: 'pending', message: 'Undoing last move...' });
-    const message: EntityUndoMessage = {
-      type: ENTITY_CONTROL_MESSAGES.UNDO_LAST_MOVE,
-      payload: {
-        entity: selectedEntity,
-        timestamp: Date.now(),
-      },
-    };
-    window.parent.postMessage(message, '*');
-  }, [selectedEntity]);
-
-  const handleResetEntityPose = useCallback(() => {
-    if (!selectedEntity) return;
-    setMoveStatus({ tone: 'pending', message: 'Resetting entity pose...' });
-    const message: EntityResetPoseMessage = {
-      type: ENTITY_CONTROL_MESSAGES.RESET_ENTITY_POSE,
-      payload: {
-        entity: selectedEntity,
-        timestamp: Date.now(),
-      },
-    };
-    window.parent.postMessage(message, '*');
-  }, [selectedEntity]);
-
   const handleResetAllPoses = useCallback(() => {
     setMoveStatus({ tone: 'pending', message: 'Resetting all scene objects to session start...' });
     const message: EntityResetAllPosesMessage = {
       type: ENTITY_CONTROL_MESSAGES.RESET_ALL_POSES,
       payload: {
-        entities: featuredEntities,
         timestamp: Date.now(),
       },
     };
     window.parent.postMessage(message, '*');
-  }, [featuredEntities]);
+  }, []);
 
   const handleSaveScenePreset = useCallback(() => {
     const name = scenePresetName.trim();
@@ -517,50 +420,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     publishTraceConfig(traceEnabled, traceFilter);
   }, [publishTraceConfig, traceEnabled, traceFilter]);
 
-  useEffect(() => {
-    const handleKeyboardMove = (event: KeyboardEvent) => {
-      if (nudgeControlsDisabled) return;
-      if (isEditableElement(event.target)) return;
-
-      const key = event.key.toLowerCase();
-      if ((event.ctrlKey || event.metaKey) && key === 'z') {
-        event.preventDefault();
-        handleUndo();
-        return;
-      }
-
-      switch (event.key) {
-        case 'ArrowRight':
-          event.preventDefault();
-          handleNudge({ x: 1, y: 0, z: 0 });
-          break;
-        case 'ArrowLeft':
-          event.preventDefault();
-          handleNudge({ x: -1, y: 0, z: 0 });
-          break;
-        case 'ArrowUp':
-          event.preventDefault();
-          handleNudge({ x: 0, y: 1, z: 0 });
-          break;
-        case 'ArrowDown':
-          event.preventDefault();
-          handleNudge({ x: 0, y: -1, z: 0 });
-          break;
-        case 'PageUp':
-          event.preventDefault();
-          handleNudge({ x: 0, y: 0, z: 1 });
-          break;
-        case 'PageDown':
-          event.preventDefault();
-          handleNudge({ x: 0, y: 0, z: -1 });
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyboardMove);
-    return () => window.removeEventListener('keydown', handleKeyboardMove);
-  }, [handleNudge, handleUndo, nudgeControlsDisabled]);
-
   const bindCardCallbacks = useCallback(
     (entity: EntityCardData): EntityCardData => {
       const cardEntity = Object.create(entity) as EntityCardData;
@@ -570,8 +429,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     },
     [handleCardClick, handleInfoClick],
   );
-
-  const selectedConfiguredStep = toPositiveNumber(selectedEntity?.params?.nudge_step);
 
   if (loading) {
     return (
@@ -595,7 +452,7 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     <div className="featured-entities-container">
       <h3>Featured entities</h3>
       <p className="featured-entities-subtitle">
-        Select an entity and use Scene Setup to position it for training data.
+        Entity cards are for selection and info. Scene controls below apply to the whole world.
       </p>
       <div className="featured-entities-list">
         {featuredEntities.length === 0 ? (
@@ -611,36 +468,9 @@ export const FeaturedEntitiesPanel: React.FC = () => {
         )}
       </div>
 
-      <div className={`entity-nudge-controls ${nudgeControlsDisabled ? 'locked' : ''}`}>
+      <div className="entity-nudge-controls">
         <div className="nudge-header">
-          Scene Setup
-          <div className="nudge-header-right">
-            {!nudgeControlsDisabled && <span className="nudge-control-pill enabled">enabled</span>}
-            {nudgeControlsDisabled && selectedEntity && <span className="nudge-control-pill locked">locked</span>}
-            <span className="nudge-target">
-              {selectedEntity?.name ?? 'Select an entity'}
-            </span>
-          </div>
-        </div>
-
-        <div className="nudge-target-meta">
-          <span>Entity</span>
-          <code>{getGazeboEntityName(selectedEntity) || 'unset'}</code>
-        </div>
-        {selectedConfiguredStep !== null && (
-          <div className="nudge-target-meta">
-            <span>VM nudge_step</span>
-            <code>{selectedConfiguredStep} m</code>
-          </div>
-        )}
-
-        <div className="scene-setup-orientation">
-          <div className="scene-setup-section-title">Axes</div>
-          <div className="axis-guide">
-            <span className="axis-guide-item axis-x">X: Right / Left</span>
-            <span className="axis-guide-item axis-y">Y: Forward / Back</span>
-            <span className="axis-guide-item axis-z">Z: Up / Down</span>
-          </div>
+          Scene Controls
         </div>
 
         <div className="scene-setup-trace">
@@ -664,85 +494,6 @@ export const FeaturedEntitiesPanel: React.FC = () => {
           </label>
           <button type="button" onClick={handleApplyTraceFilter}>
             Apply trace filter
-          </button>
-        </div>
-
-        {selectedEntity && !poseEditAccess.enabled && (
-          <div className="nudge-warning">
-            {poseEditAccess.reason ?? 'Pose edits are disabled for this entity.'}
-          </div>
-        )}
-
-        <label className="nudge-step-label">
-          <span>XY step (m)</span>
-          <input
-            type="number"
-            min={0.01}
-            max={25}
-            step={0.01}
-            value={xyStepMeters}
-            onChange={(event) => setXyStepMeters(clampStep(Number(event.target.value), DEFAULT_XY_STEP_METERS))}
-          />
-        </label>
-
-        <label className="nudge-step-label">
-          <span>Z step (m)</span>
-          <input
-            type="number"
-            min={0.01}
-            max={25}
-            step={0.01}
-            value={zStepMeters}
-            onChange={(event) => setZStepMeters(clampStep(Number(event.target.value), DEFAULT_Z_STEP_METERS))}
-          />
-        </label>
-
-        <div className="nudge-step-presets">
-          {STEP_PRESETS_METERS.map((preset) => {
-            const isActive = Math.abs(xyStepMeters - preset) < 0.0001 && Math.abs(zStepMeters - preset) < 0.0001;
-            return (
-              <button
-                key={preset}
-                type="button"
-                className={isActive ? 'active' : ''}
-                onClick={() => {
-                  setXyStepMeters(preset);
-                  setZStepMeters(preset);
-                }}
-              >
-                {preset}m
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="nudge-grid">
-          <button type="button" onClick={() => handleNudge({ x: 1, y: 0, z: 0 })} disabled={nudgeControlsDisabled}>
-            Move +X ({xyStepMeters}m)
-          </button>
-          <button type="button" onClick={() => handleNudge({ x: -1, y: 0, z: 0 })} disabled={nudgeControlsDisabled}>
-            Move -X ({xyStepMeters}m)
-          </button>
-          <button type="button" onClick={() => handleNudge({ x: 0, y: 1, z: 0 })} disabled={nudgeControlsDisabled}>
-            Move +Y ({xyStepMeters}m)
-          </button>
-          <button type="button" onClick={() => handleNudge({ x: 0, y: -1, z: 0 })} disabled={nudgeControlsDisabled}>
-            Move -Y ({xyStepMeters}m)
-          </button>
-          <button type="button" onClick={() => handleNudge({ x: 0, y: 0, z: 1 })} disabled={nudgeControlsDisabled}>
-            Lift +Z ({zStepMeters}m)
-          </button>
-          <button type="button" onClick={() => handleNudge({ x: 0, y: 0, z: -1 })} disabled={nudgeControlsDisabled}>
-            Drop -Z ({zStepMeters}m)
-          </button>
-        </div>
-
-        <div className="nudge-grid nudge-grid-secondary">
-          <button type="button" onClick={handleUndo} disabled={!selectedEntity}>
-            Undo move
-          </button>
-          <button type="button" onClick={handleResetEntityPose} disabled={!selectedEntity}>
-            Reset entity
           </button>
         </div>
 
@@ -781,10 +532,8 @@ export const FeaturedEntitiesPanel: React.FC = () => {
           </button>
         </div>
 
-        <div className={`nudge-hint ${nudgeControlsDisabled ? 'locked' : ''}`}>
-          {nudgeControlsDisabled
-            ? 'Scene Setup move controls are disabled for this selection.'
-            : 'Scene Setup axis map: +X/-X, +Y/-Y, +Z/-Z. Shortcuts: arrows = XY, PgUp/PgDn = Z, Ctrl/Cmd+Z = undo.'}
+        <div className="nudge-hint">
+          Presets and reset operate on the full scene and are not tied to the selected entity.
         </div>
 
         {moveStatus && (

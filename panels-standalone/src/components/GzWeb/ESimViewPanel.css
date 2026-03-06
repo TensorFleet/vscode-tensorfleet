@@ -337,46 +337,6 @@
   font-weight: 700;
 }
 
-.scene-setup-orientation {
-  display: grid;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.axis-guide {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.axis-guide-item {
-  font-size: 10px;
-  text-align: center;
-  padding: 4px 6px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: var(--vscode-foreground, #cccccc);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.axis-guide-item.axis-x {
-  border-color: rgba(242, 98, 98, 0.5);
-  color: #f8a9a9;
-}
-
-.axis-guide-item.axis-y {
-  border-color: rgba(97, 213, 124, 0.45);
-  color: #9be8af;
-}
-
-.axis-guide-item.axis-z {
-  border-color: rgba(105, 161, 255, 0.5);
-  color: #a9c8ff;
-}
-
 .scene-setup-trace {
   display: grid;
   gap: 8px;
