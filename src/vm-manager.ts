@@ -109,13 +109,24 @@ export class VMManagerIntegration implements vscode.Disposable {
         gazebo_px4_enabled: "true"
       }
     },
+    'ardupilot': {
+      id: 'ardupilot',
+      name: 'ArduPilot',
+      description: 'ArduPilot flight stack with Gazebo simulation',
+      sim_config: {
+        config_version: "0.0.1",
+        world_components: "static_bodies_01",
+        gazebo_ardupilot_enabled: "true"
+      }
+    },
     'simple_robot': {
       id: 'simple_robot',
       name: 'Simple Robot',
       description: 'Basic ground robot with Gazebo simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "static_bodies_01;simple_bot_include"
+        world_components: "static_bodies_01;simple_bot_include",
+        simple_robot_enabled: "true"
       }
     },
     'lerobot': {

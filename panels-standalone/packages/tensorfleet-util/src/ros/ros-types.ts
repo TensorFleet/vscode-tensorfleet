@@ -127,6 +127,12 @@ export interface MavrosMsgsExtendedState {
   vtol_state: number;
 }
 
+export interface MavrosMsgsStatusText {
+  header?: StdHeader;
+  severity: number;
+  text: string;
+}
+
 /** Battery & IMU */
 export interface SensorMsgsBatteryState {
   header: StdHeader;

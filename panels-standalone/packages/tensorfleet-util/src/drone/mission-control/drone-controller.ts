@@ -124,20 +124,34 @@ export class DroneController {
 
     console.log("[DRONE_CONTROLLER] Sending arm command...");
 
-    // Workaround. arm might fail due to unsupported state for arm.
-    if (await this.model.isLanded()) {
-      console.log("[DRONE_CONTROLLER] Is in landed state while trying to arm. Switching vehicle mode to AUTO.LOITER");
-      await this.setMode("AUTO.LOITER");  
+    const autopilot = this.getAutopilotFamily();
+    const shouldPrepareMode =
+      autopilot === "ardupilot" || (await this.model.isLanded());
+    const armingModeCandidates = this.getArmingModeCandidates();
+    if (shouldPrepareMode) {
+      console.log(`[DRONE_CONTROLLER] Preparing arm with compatible modes: ${armingModeCandidates.join(", ")}`);
+      await this.ensureMode(armingModeCandidates);
     }
 
     const result = await this.mavrosArmDisarm(true);
+    this.assertCommandSuccess(result.success, "Arm", result.result);
+    await this.waitForArmedState(true, "Arm");
     console.log("[DRONE_CONTROLLER] Arm command result:", result);
   }
 
   async disarm(): Promise<void> {
     await this._requireConnected();
+    if (!(await this.model.isArmed())) {
+      console.log("[DRONE_CONTROLLER] Drone already disarmed. Skipping disarm command");
+      return;
+    }
+    if (!(await this.isSafeToDisarm())) {
+      throw new Error("Refusing to disarm while airborne. Land and wait for ground state first.");
+    }
     console.log("[DRONE_CONTROLLER] Sending disarm command...");
     const result = await this.mavrosArmDisarm(false);
+    this.assertCommandSuccess(result.success, "Disarm", result.result);
+    await this.waitForArmedState(false, "Disarm");
     console.log("[DRONE_CONTROLLER] Disarm command result:", result);
   }
 
@@ -147,13 +161,21 @@ export class DroneController {
       console.log(`[DRONE_CONTROLLER] Setting mode to ${mode} (base=${base})...`);
     }
     const result = await this.mavrosSetMode(mode, base);
+    if (!result.mode_sent) {
+      throw new Error(`Set mode to ${mode} was rejected by the FCU`);
+    }
     if(debug) {
       console.log("[DRONE_CONTROLLER] Set mode result:", result);
     }
   }
 
   async takeoff(altMeters: number = 3, yawRad = 0): Promise<void> {
+    const takeoffModeCandidates = this.getTakeoffModeCandidates();
+    console.log(`[DRONE_CONTROLLER] Preparing takeoff with compatible modes: ${takeoffModeCandidates.join(", ")}`);
+    await this.ensureMode(takeoffModeCandidates);
+
     await this.arm();
+    await this.waitForArmedState(true, "Takeoff");
 
     const gp = (await this.model.getState()).global_position_int;
     if (!gp) throw new Error("No GPS fix");
@@ -175,6 +197,7 @@ export class DroneController {
       confirmation: 0,
       broadcast: false,
     });
+    this.assertCommandSuccess(result.success, "Takeoff", result.result);
     console.log("[DRONE_CONTROLLER] Takeoff command result:", result);
   }
 
@@ -182,14 +205,15 @@ export class DroneController {
     await this._requireConnected();
     console.log("[DRONE_CONTROLLER] Sending land command...");
     const result = await this.mavrosLand();
+    this.assertCommandSuccess(result.success, "Land", result.result);
     console.log("[DRONE_CONTROLLER] Land command result:", result);
   }
 
   async rtl(): Promise<void> {
     await this._requireConnected();
     console.log("[DRONE_CONTROLLER] Sending return-to-launch (RTL) command...");
-    const result = await this.mavrosSetMode("AUTO.RTL", 0);
-    console.log("[DRONE_CONTROLLER] RTL command result:", result);
+    const mode = await this.ensureMode(this.getRtlModeCandidates());
+    console.log("[DRONE_CONTROLLER] RTL mode selected:", mode);
   }
 
   // -------- Requested state / auto state management --------
@@ -219,7 +243,6 @@ export class DroneController {
       const landed = DroneStateModel.isStateLanded(currentState);
       const landing = DroneStateModel.isStateLanding(currentState);
       const takingOff = DroneStateModel.isStateTakingOff(currentState);
-      const offboard = DroneStateModel.isStateOffboard(currentState);
       const onGround = currentState.extended?.landed_state === LANDED.ON_GROUND;
 
     if(debug) {
@@ -236,12 +259,12 @@ export class DroneController {
         return (currentState.vehicle?.armed && !( landed || landing || takingOff || onGround)) ?? false;
       }
       case "offboard": {
+        const offboardTarget = this.targetAutoState.target;
+        const offboard = this.isInExternalControlMode(currentState, offboardTarget);
         // TODO : add offboard target checks
         if (!(currentState.vehicle?.armed && offboard)) {
           return false;
         }
-
-        const offboardTarget = this.targetAutoState.target;
         switch(offboardTarget.kind) {
           case "position_local": {
             const currPos = currentState.local?.position;
@@ -389,10 +412,10 @@ export class DroneController {
             return;
           }
 
-          if(currentState.vehicle?.mode != "AUTO.LOITER") {
-            // TODO : add more checks.
-            console.log("[AUTO_STATE] airborne requested. vehicle mode not in AUTO.LOTIER mode. Setting it to AUTO.LOTIER");
-            await this.setMode("AUTO.LOITER");
+          const holdModeCandidates = this.getHoldModeCandidates(currentState);
+          if (!holdModeCandidates.includes(DroneStateModel.normalizeMode(currentState.vehicle?.mode))) {
+            console.log(`[AUTO_STATE] airborne requested. vehicle mode not in compatible hold modes (${holdModeCandidates.join(", ")}).`);
+            await this.ensureMode(holdModeCandidates);
           }
           
           return;
@@ -432,7 +455,6 @@ export class DroneController {
       const takingOff = DroneStateModel.isStateTakingOff(currentState);
       const landing = DroneStateModel.isStateLanding(currentState);
       const landed = DroneStateModel.isStateLanded(currentState);
-      const isOffboard = DroneStateModel.isStateOffboard(currentState);
       const armed = DroneStateModel.isStateArmed(currentState);
 
       if (!armed) {
@@ -440,8 +462,8 @@ export class DroneController {
       }
 
 
-      if (!isOffboard) {
-        await this.setMode("OFFBOARD", 0, false);
+      if (!this.isInExternalControlMode(currentState, offboardTarget)) {
+        await this.ensureMode(this.getExternalControlModeCandidates(currentState, offboardTarget), 0, false);
       }
 
       this.publishOffboardTarget(offboardTarget);
@@ -455,7 +477,7 @@ export class DroneController {
       case "position_local": {
         const yaw = (typeof target.yawRad === "number" && Number.isFinite(target.yawRad))
           ? target.yawRad
-          : (typeof (this.latestState as any)?.yaw === "number" ? (this.latestState as any).yaw : 0);
+          : this.getDefaultLocalYawRad();
 
         const msg = {
           header: this._header(this.opts.localFrameId),
@@ -569,6 +591,182 @@ export class DroneController {
     const s = await this.model.getState();
     if (!s?.vehicle?.connected) {
       throw new Error("FCU not connected");
+    }
+  }
+
+  private assertCommandSuccess(success: boolean | undefined, action: string, result?: number) {
+    if (success) {
+      return;
+    }
+    const suffix = typeof result === "number" ? ` (result=${result})` : "";
+    const statusText = this.getRecentFcuStatusText();
+    const reason = statusText ? `: ${statusText}` : "";
+    throw new Error(`${action} command rejected by the FCU${suffix}${reason}`);
+  }
+
+  private getNormalizedMode(): string {
+    return DroneStateModel.normalizeMode(this.model.getCurrentState().vehicle?.mode);
+  }
+
+  private getAutopilotFamily(state = this.model.getCurrentState()) {
+    return DroneStateModel.getAutopilotFamily(state);
+  }
+
+  private getArmingModeCandidates(state = this.model.getCurrentState()): string[] {
+    const family = this.getAutopilotFamily(state);
+    if (family === "ardupilot") {
+      return ["GUIDED"];
+    }
+    if (family === "px4") {
+      return ["AUTO.LOITER"];
+    }
+    return ["GUIDED", "AUTO.LOITER"];
+  }
+
+  private getHoldModeCandidates(state = this.model.getCurrentState()): string[] {
+    const family = this.getAutopilotFamily(state);
+    if (family === "ardupilot") {
+      return ["GUIDED"];
+    }
+    if (family === "px4") {
+      return ["AUTO.LOITER"];
+    }
+    return ["GUIDED", "AUTO.LOITER"];
+  }
+
+  private getTakeoffModeCandidates(state = this.model.getCurrentState()): string[] {
+    return this.getHoldModeCandidates(state);
+  }
+
+  private getRtlModeCandidates(state = this.model.getCurrentState()): string[] {
+    const family = this.getAutopilotFamily(state);
+    if (family === "ardupilot") {
+      return ["RTL"];
+    }
+    if (family === "px4") {
+      return ["AUTO.RTL"];
+    }
+    return ["AUTO.RTL", "RTL"];
+  }
+
+  private getExternalControlModeCandidates(state = this.model.getCurrentState(), target?: OffboardTarget): string[] {
+    const family = this.getAutopilotFamily(state);
+    if (family === "px4") {
+      return ["OFFBOARD"];
+    }
+
+    if (family === "ardupilot") {
+      if (target?.kind === "raw_attitude") {
+        return ["GUIDED_NOGPS"];
+      }
+      return ["GUIDED"];
+    }
+
+    if (target?.kind === "raw_attitude") {
+      return ["GUIDED_NOGPS", "OFFBOARD", "GUIDED"];
+    }
+
+    if (target?.kind === "velocity_local" || target?.kind === "position_local" || target?.kind === "raw_local") {
+      return ["GUIDED", "OFFBOARD"];
+    }
+
+    return ["OFFBOARD", "GUIDED"];
+  }
+
+  private isInExternalControlMode(state = this.model.getCurrentState(), target?: OffboardTarget): boolean {
+    const currentMode = DroneStateModel.normalizeMode(state.vehicle?.mode);
+    return this.getExternalControlModeCandidates(state, target).includes(currentMode);
+  }
+
+  private async ensureMode(candidates: string[], base = 0, debug = true): Promise<string> {
+    const normalizedCandidates = Array.from(
+      new Set(candidates.map((mode) => DroneStateModel.normalizeMode(mode)).filter(Boolean)),
+    );
+    const currentMode = this.getNormalizedMode();
+
+    if (normalizedCandidates.includes(currentMode)) {
+      return currentMode;
+    }
+
+    let lastError: unknown;
+    for (const mode of normalizedCandidates) {
+      try {
+        await this.setMode(mode, base, debug);
+        return mode;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError instanceof Error) {
+      throw lastError;
+    }
+    throw new Error(`Failed to set any compatible mode: ${normalizedCandidates.join(", ")}`);
+  }
+
+  private getDefaultLocalYawRad(): number {
+    const orientation =
+      this.latestState?.local?.orientation ??
+      this.latestState?.imu?.orientation;
+    if (orientation) {
+      return this._quatToYaw(orientation);
+    }
+    return 0;
+  }
+
+  private getRecentFcuStatusText(maxAgeMs = 10_000): string | null {
+    const statustext = this.model.getCurrentState().statustext;
+    if (!statustext?.text) {
+      return null;
+    }
+    if ((Date.now() - (statustext.last_seen_ms ?? 0)) > maxAgeMs) {
+      return null;
+    }
+    return statustext.text.trim() || null;
+  }
+
+  private async waitForArmedState(armed: boolean, action: string, timeoutMs = 5_000): Promise<void> {
+    await this.waitForState(
+      () => DroneStateModel.isStateArmed(this.model.getCurrentState()) === armed,
+      `${action} state confirmation timed out`,
+      timeoutMs,
+    );
+  }
+
+  private async isSafeToDisarm(): Promise<boolean> {
+    const state = this.model.getCurrentState();
+    if (!DroneStateModel.isStateArmed(state)) {
+      return true;
+    }
+
+    const landedState = state.extended?.landed_state;
+    if (landedState === LANDED.ON_GROUND) {
+      return true;
+    }
+
+    const relativeAlt = state.altitude?.relative ?? state.global_position_int?.relative_alt;
+    const verticalSpeed = state.local?.linear?.z;
+    const nearGround =
+      typeof relativeAlt === "number" &&
+      Number.isFinite(relativeAlt) &&
+      Math.abs(relativeAlt) <= 0.15;
+    const nearlyStationary =
+      typeof verticalSpeed !== "number" ||
+      !Number.isFinite(verticalSpeed) ||
+      Math.abs(verticalSpeed) <= 0.2;
+
+    return nearGround && nearlyStationary && !DroneStateModel.isStateTakingOff(state);
+  }
+
+  private async waitForState(check: () => boolean, timeoutMessage: string, timeoutMs: number): Promise<void> {
+    const startedAt = Date.now();
+    while (!check()) {
+      if ((Date.now() - startedAt) > timeoutMs) {
+        const statusText = this.getRecentFcuStatusText();
+        const suffix = statusText ? `: ${statusText}` : "";
+        throw new Error(`${timeoutMessage}${suffix}`);
+      }
+      await this.sleep(100);
     }
   }
 
