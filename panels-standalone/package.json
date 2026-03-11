@@ -41,7 +41,7 @@
     "@lichtblick/wasm-lz4": "^1.0.0",
     "@lichtblick/wasm-zstd": "^1.0.0",
     "@mcap/core": "^2.1.7",
-    "@mui/icons-material": "^5.15.0",
+    "@mui/icons-material": "^7.3.9",
     "@mui/material": "^7.3.5",
     "@protobufjs/base64": "^1.1.2",
     "@types/babel__core": "^7.20.3",
