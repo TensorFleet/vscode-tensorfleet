@@ -46,6 +46,8 @@
     "onCommand:tensorfleet.setDroneMode",
     "onCommand:tensorfleet.switchDroneModeReal",
     "onCommand:tensorfleet.switchDroneModeSITL",
+    "onCommand:tensorfleet.connectDroneTelemetry",
+    "onCommand:tensorfleet.disconnectDroneTelemetry",
     "onCommand:tensorfleet.showVMManagerMenu",
     "onCommand:tensorfleet.selectRegion",
     "onCommand:tensorfleet.showUnifiedMenu",

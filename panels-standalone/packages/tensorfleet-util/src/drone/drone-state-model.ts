@@ -273,6 +273,20 @@ function isHomePosition(x: any): x is MavrosMsgsHomePosition {
 type RosStamp = { sec: number; nanosec: number };
 type HasHeaderStamp = { header?: { stamp?: RosStamp } };
 
+export function hdgDegrees(raw: number): number {
+  return Math.abs(raw) > 360 ? raw / 100 : raw;
+}
+
+export function quatToYaw(quat: { x: number; y: number; z: number; w: number }): number {
+  const { x, y, z, w } = quat;
+  return Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
+}
+
+export function normalizeAngle(angle: number): number {
+  const twoPi = Math.PI * 2;
+  return ((angle % twoPi) + twoPi) % twoPi;
+}
+
 /**
  * Maintains a unified drone state from MAVROS topics.
  * No heartbeat or parameter setting is performed here.
@@ -972,14 +986,14 @@ export class DroneStateModel extends Emitter {
 
   private updateRotationFromHeading() {
     const raw = this.state.global_position_int?.hdg ?? 0.0;
-    const hdgDeg = this.hdgDegrees(raw);
+    const hdgDeg = hdgDegrees(raw);
     const hdgRad = (hdgDeg * Math.PI) / 180.0;
     this.setCompassHeading(hdgRad);
   }
 
   private updateHeadingFromOrientation(quat: { x: number; y: number; z: number; w: number }) {
-    const yawEnu = this.quatToYaw(quat);
-    const headingRad = this.normalizeAngle((Math.PI / 2) - yawEnu);
+    const yawEnu = quatToYaw(quat);
+    const headingRad = normalizeAngle((Math.PI / 2) - yawEnu);
     this.state.heading = {
       yaw: headingRad,
       last_seen_ms: Date.now(),
@@ -997,20 +1011,6 @@ export class DroneStateModel extends Emitter {
       source: 'compass',
     };
     if (this.state.attitude) this.state.attitude.yaw = headingRad;
-  }
-
-  private hdgDegrees(raw: number): number {
-    return Math.abs(raw) > 360 ? raw / 100 : raw;
-  }
-
-  private quatToYaw(quat: { x: number; y: number; z: number; w: number }): number {
-    const { x, y, z, w } = quat;
-    return Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
-  }
-
-  private normalizeAngle(angle: number): number {
-    const twoPi = Math.PI * 2;
-    return ((angle % twoPi) + twoPi) % twoPi;
   }
 
   // -------- Update loop / health --------

@@ -17,6 +17,11 @@ import { fromLonLat } from 'ol/proj';
 import { unByKey } from 'ol/Observable';
 import type { EventsKey } from 'ol/events';
 
+import {
+  hdgDegrees,
+  normalizeAngle,
+  quatToYaw,
+} from '../../../../packages/tensorfleet-util/src/drone/drone-state-model';
 import type { DroneStateModel, DroneState } from '../../../../packages/tensorfleet-util/src/drone/drone-state-model';
 import { MapButtonsStack, FollowLockButton } from './MapButtons';
 import { FlightPathTools } from './FlightPathTools';
@@ -40,7 +45,7 @@ function headingRadiansFromState(state: Partial<DroneState>): number {
 
   const rawHeading = state.global_position_int?.hdg;
   if (typeof rawHeading === 'number' && Number.isFinite(rawHeading)) {
-    const headingDeg = Math.abs(rawHeading) > 360 ? rawHeading / 100 : rawHeading;
+    const headingDeg = hdgDegrees(rawHeading);
     return (headingDeg * Math.PI) / 180;
   }
 
@@ -50,17 +55,7 @@ function headingRadiansFromState(state: Partial<DroneState>): number {
   }
 
   const yawEnu = quatToYaw(orientation);
-  return normalizeHeading((Math.PI / 2) - yawEnu);
-}
-
-function quatToYaw(quat: { x: number; y: number; z: number; w: number }): number {
-  const { x, y, z, w } = quat;
-  return Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
-}
-
-function normalizeHeading(angle: number): number {
-  const twoPi = Math.PI * 2;
-  return ((angle % twoPi) + twoPi) % twoPi;
+  return normalizeAngle((Math.PI / 2) - yawEnu);
 }
 
 
