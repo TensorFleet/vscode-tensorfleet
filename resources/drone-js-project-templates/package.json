@@ -20,6 +20,7 @@
     "tutorial:05": "bun src/tutorials/05_offboard_hover.js",
     "tutorial:06": "bun src/tutorials/06_move_forward.js",
     "tutorial:07": "bun src/tutorials/07_goto_waypoint.js",
+    "mavlink:probe": "node scripts/mavlink_tunnel_probe.js",
     "postinstall": "cd packages/tensorfleet-util && bun run build"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "js-yaml": "^4.1.0",
     "onnxruntime-node": "^1.18.0",
     "roslib": "^1.3.0",
+    "serialport": "^12.0.0",
     "tensorfleet-util": "^1.0.0",
     "ws": "^8.18.0"
   }

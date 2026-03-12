@@ -25,7 +25,6 @@ interface VmStatusResponse {
   vm_id?: string;
   ip_address?: string;
   updated_at?: string;
-  vm_id?: string;
   vmId?: string;
 }
 
@@ -953,7 +952,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     return null;
   }
 
-  private getApiBaseUrl(): string {
+  public getApiBaseUrl(): string {
     const regionDefault = getVmManagerUrl().trim().replace(/\/+$/, '');
     const configuredUrl = vscode.workspace
       .getConfiguration('tensorfleet.vmManager')
@@ -976,6 +975,13 @@ export class VMManagerIntegration implements vscode.Disposable {
       this.outputChannel.appendLine(`[VM Manager] Failed to get auth token: ${this.formatError(error)}`);
       return undefined;
     }
+  }
+
+  /**
+   * Return the currently selected VM ID from live VM Manager snapshot.
+   */
+  public getSelectedVmId(): string | undefined {
+    return this.currentSnapshot.nodeId;
   }
 
   private isNotFoundError(error: unknown): boolean {

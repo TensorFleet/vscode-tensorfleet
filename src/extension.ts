@@ -10,6 +10,9 @@ import { UnifiedStatusCoordinator } from './unified-status';
 import { TelemetryService } from './telemetry';
 import * as regions from './regions';
 import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
+import { MavlinkTunnelManager } from './mavlink-tunnel-manager';
+import { DroneModeApiClient, DroneModeResponse, DroneMode, DroneFlightStack, normalizeDroneFlightStack, normalizeDroneMode, toDroneModeRequest } from './drone-mode-api';
+import { executeDroneModeCommand } from './drone-mode-command';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -738,18 +741,32 @@ const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
 };
 
 const terminalRegistry = new Map<string, vscode.Terminal>();
+const COMMAND_DRONE_SETUP = 'tensorfleet.droneSetup';
+const COMMAND_SET_DRONE_MODE = 'tensorfleet.setDroneMode';
+const COMMAND_SWITCH_DRONE_MODE_REAL = 'tensorfleet.switchDroneModeReal';
+const COMMAND_SWITCH_DRONE_MODE_SITL = 'tensorfleet.switchDroneModeSITL';
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 let vmManagerIntegration: VMManagerIntegration | null = null;
 let telemetryService: TelemetryService | null = null;
+let extensionContextRef: vscode.ExtensionContext | null = null;
 let envRefreshTimer: NodeJS.Timeout | null = null;
+let droneTelemetryOutputChannel: vscode.OutputChannel | null = null;
+let droneModeOutputChannel: vscode.OutputChannel | null = null;
+let mavlinkTunnelManager: MavlinkTunnelManager | null = null;
+let currentDroneRuntimeMode: DroneMode | 'UNKNOWN' = 'UNKNOWN';
+let currentDroneFlightStack: DroneFlightStack = 'unknown';
+let lastDroneModeResolveAttemptMs = 0;
+let droneSetupNudgeInFlight = false;
+const DEFAULT_MAVLINK_TARGET_PORT = 14600;
+const DEFAULT_MAVLINK_BAUD_USB_SERIAL = 115200;
+const DEFAULT_MAVLINK_BAUD_TELEMETRY_RADIO = 57600;
 
 
 
 // Status bar items for TensorFleet projects
 let rosVersionStatusBar: vscode.StatusBarItem | null = null;
 let droneStatusBar: vscode.StatusBarItem | null = null;
-let projectWatcher: vscode.FileSystemWatcher | null = null;
 
 // Unified status coordinator
 let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
@@ -764,6 +781,7 @@ const uniquePanelRegistry = new Map<string, UniqueViewProvider>();
 // -----------------------------------------------------------------------------
 
 export function activate(context: vscode.ExtensionContext) {
+  extensionContextRef = context;
   // Initialize environment/mode detection first (must be before any isDev() calls)
   initializeEnv(context);
 
@@ -781,6 +799,17 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(telemetryService);
   telemetryService.trackEvent('extension.activate', { mode: getMode() });
   help.ensureOnboardingProgressInitialized(context);
+  droneTelemetryOutputChannel = vscode.window.createOutputChannel('TensorFleet Drone Telemetry');
+  context.subscriptions.push(droneTelemetryOutputChannel);
+  mavlinkTunnelManager = new MavlinkTunnelManager((message) => {
+    droneTelemetryOutputChannel?.appendLine(`[Tunnel] ${message}`);
+  });
+  context.subscriptions.push(
+    new vscode.Disposable(() => {
+      void mavlinkTunnelManager?.disconnect();
+      mavlinkTunnelManager = null;
+    })
+  );
 
   // Start MCP bridge for communication between MCP server and VS Code
   mcpBridge = new MCPBridge(context);
@@ -937,7 +966,24 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('tensorfleet.showDroneStatus', () => showDroneStatus())
+    registerTensorFleetCommand(COMMAND_DRONE_SETUP, () => showDroneSetup(context), { feature: 'drone-mode' })
+  );
+  context.subscriptions.push(
+    registerTensorFleetCommand(COMMAND_SET_DRONE_MODE, () => setDroneMode(context), { feature: 'drone-mode' })
+  );
+  context.subscriptions.push(
+    registerTensorFleetCommand(COMMAND_SWITCH_DRONE_MODE_REAL, () => setDroneMode(context, 'REAL'), { feature: 'drone-mode' })
+  );
+  context.subscriptions.push(
+    registerTensorFleetCommand(COMMAND_SWITCH_DRONE_MODE_SITL, () => setDroneMode(context, 'SITL'), { feature: 'drone-mode' })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.connectDroneTelemetry', () => connectDroneTelemetry(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tensorfleet.disconnectDroneTelemetry', () => disconnectDroneTelemetry())
   );
 
   // Unified menu command (replaces separate auth and VM menu commands)
@@ -1119,6 +1165,19 @@ export function deactivate() {
     mcpServerProcess = null;
   }
 
+  if (mavlinkTunnelManager) {
+    void mavlinkTunnelManager.disconnect();
+    mavlinkTunnelManager = null;
+  }
+  if (droneModeOutputChannel) {
+    droneModeOutputChannel.dispose();
+    droneModeOutputChannel = null;
+  }
+  if (droneTelemetryOutputChannel) {
+    droneTelemetryOutputChannel.dispose();
+    droneTelemetryOutputChannel = null;
+  }
+
   // Clean up status bar items
   if (rosVersionStatusBar) {
     rosVersionStatusBar.dispose();
@@ -1127,10 +1186,6 @@ export function deactivate() {
   if (droneStatusBar) {
     droneStatusBar.dispose();
     droneStatusBar = null;
-  }
-  if (projectWatcher) {
-    projectWatcher.dispose();
-    projectWatcher = null;
   }
 
   if (unifiedStatusCoordinator) {
@@ -2616,6 +2671,693 @@ function scheduleEnvRefresh(
   }, 300);
 }
 
+function getDroneTelemetryOutputChannel(): vscode.OutputChannel {
+  if (!droneTelemetryOutputChannel) {
+    droneTelemetryOutputChannel = vscode.window.createOutputChannel('TensorFleet Drone Telemetry');
+  }
+  return droneTelemetryOutputChannel;
+}
+
+async function resolveDroneTelemetryProjectFolder(): Promise<vscode.Uri | undefined> {
+  const tensorfleetFolders = await getTensorfleetProjectFolders();
+  if (tensorfleetFolders.length > 0) {
+    return tensorfleetFolders[0];
+  }
+  return vscode.workspace.workspaceFolders?.[0]?.uri;
+}
+
+async function hasDroneTelemetryRuntimeDeps(projectFolder: vscode.Uri): Promise<boolean> {
+  const serialportPkg = path.join(projectFolder.fsPath, 'node_modules', 'serialport', 'package.json');
+  try {
+    await fs.promises.access(serialportPkg, fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runBunInstallForProject(projectFolder: vscode.Uri, output: vscode.OutputChannel): Promise<boolean> {
+  return await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'TensorFleet: Installing project dependencies (bun install)'
+    },
+    async () => {
+      return await new Promise<boolean>((resolve) => {
+        output.appendLine(`[Tunnel] Running bun install in ${projectFolder.fsPath}`);
+        const child = spawn('bun', ['install'], {
+          cwd: projectFolder.fsPath,
+          env: { ...process.env }
+        });
+
+        child.stdout?.on('data', (data) => {
+          const text = data.toString('utf8').trimEnd();
+          if (text) {
+            output.appendLine(`[bun] ${text}`);
+          }
+        });
+
+        child.stderr?.on('data', (data) => {
+          const text = data.toString('utf8').trimEnd();
+          if (text) {
+            output.appendLine(`[bun][stderr] ${text}`);
+          }
+        });
+
+        child.on('error', (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          output.appendLine(`[Tunnel] bun install failed to start: ${message}`);
+          resolve(false);
+        });
+
+        child.on('close', (code) => {
+          output.appendLine(`[Tunnel] bun install exited with code ${code ?? -1}`);
+          resolve(code === 0);
+        });
+      });
+    }
+  );
+}
+
+async function ensureDroneTelemetryRuntimeDeps(projectFolder: vscode.Uri, output: vscode.OutputChannel): Promise<boolean> {
+  if (await hasDroneTelemetryRuntimeDeps(projectFolder)) {
+    return true;
+  }
+
+  const choice = await vscode.window.showWarningMessage(
+    'Project dependencies are missing for real telemetry tunnel (serialport not installed). Run bun install now?',
+    'Run bun install',
+    'Cancel'
+  );
+  if (choice !== 'Run bun install') {
+    return false;
+  }
+
+  const installed = await runBunInstallForProject(projectFolder, output);
+  if (!installed) {
+    vscode.window.showErrorMessage('Failed to install project dependencies with bun install.');
+    return false;
+  }
+
+  if (await hasDroneTelemetryRuntimeDeps(projectFolder)) {
+    return true;
+  }
+
+  vscode.window.showErrorMessage(
+    'Dependencies still missing after bun install (serialport). Please run bun install in the project and retry.'
+  );
+  return false;
+}
+
+async function readEnvForFolder(folder: vscode.Uri): Promise<Record<string, string>> {
+  const envUri = vscode.Uri.joinPath(folder, '.env');
+  try {
+    const content = await vscode.workspace.fs.readFile(envUri);
+    return parseEnvFile(Buffer.from(content).toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function normalizeEnvValue(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+async function resolveDroneTelemetryDeviceConfig(
+  folder: vscode.Uri
+): Promise<{ serialPath: string; baudRate: number } | undefined> {
+  const envValues = await readEnvForFolder(folder);
+
+  const serialPath = [
+    envValues.TENSORFLEET_MAVLINK_SERIAL_PATH,
+    envValues.MAVLINK_SERIAL_PATH,
+    envValues.TENSORFLEET_MAVLINK_SERIAL
+  ]
+    .map((v) => normalizeEnvValue(v))
+    .find((v) => Boolean(v && v.length > 0));
+
+  const baudRaw = [
+    envValues.TENSORFLEET_MAVLINK_BAUD_RATE,
+    envValues.MAVLINK_BAUD_RATE
+  ]
+    .map((v) => normalizeEnvValue(v))
+    .find((v) => Boolean(v && v.length > 0));
+
+  const baudParsed = Number(baudRaw);
+  if (!serialPath || !Number.isFinite(baudParsed) || baudParsed <= 0) {
+    return undefined;
+  }
+
+  return {
+    serialPath,
+    baudRate: Math.trunc(baudParsed)
+  };
+}
+
+function upsertEnvLine(content: string, key: string, value: string): string {
+  const normalized = content.replace(/\r\n/g, '\n');
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^\\s*(?:export\\s+)?${escapedKey}=.*$`, 'm');
+  const line = `${key}=${value}`;
+  if (re.test(normalized)) {
+    return normalized.replace(re, line);
+  }
+  const sep = normalized.endsWith('\n') || normalized.length === 0 ? '' : '\n';
+  return `${normalized}${sep}${line}\n`;
+}
+
+async function persistDroneTelemetryDeviceConfig(
+  folder: vscode.Uri,
+  serialPath: string,
+  baudRate: number
+): Promise<void> {
+  const envUri = vscode.Uri.joinPath(folder, '.env');
+  let existing = '';
+  try {
+    const buf = await vscode.workspace.fs.readFile(envUri);
+    existing = Buffer.from(buf).toString('utf8');
+  } catch {
+    existing = '';
+  }
+
+  let next = upsertEnvLine(existing, 'TENSORFLEET_MAVLINK_SERIAL_PATH', serialPath);
+  next = upsertEnvLine(next, 'TENSORFLEET_MAVLINK_BAUD_RATE', String(baudRate));
+  await vscode.workspace.fs.writeFile(envUri, Buffer.from(next, 'utf8'));
+}
+
+async function ensureDroneTelemetryDeviceConfig(
+  folder: vscode.Uri
+): Promise<{ serialPath: string; baudRate: number } | undefined> {
+  const configured = await resolveDroneTelemetryDeviceConfig(folder);
+  if (configured) {
+    return await maybeRepairDroneTelemetryDeviceConfig(folder, configured);
+  }
+
+  const choice = await vscode.window.showInformationMessage(
+    'Real telemetry config is missing in .env. Configure serial path and baud once now?',
+    'Configure Now',
+    'Open .env',
+    'Cancel'
+  );
+  if (choice === 'Open .env') {
+    const envUri = vscode.Uri.joinPath(folder, '.env');
+    await vscode.commands.executeCommand('vscode.open', envUri);
+    return undefined;
+  }
+  if (choice !== 'Configure Now') {
+    return undefined;
+  }
+
+  const serialPath = await promptForDroneTelemetrySerialPort();
+  if (!serialPath) return undefined;
+
+  const baudRate = await promptForDroneTelemetryBaudRate(serialPath);
+  if (!baudRate) return undefined;
+
+  await persistDroneTelemetryDeviceConfig(folder, serialPath, baudRate);
+  return { serialPath, baudRate };
+}
+
+async function maybeRepairDroneTelemetryDeviceConfig(
+  folder: vscode.Uri,
+  configured: { serialPath: string; baudRate: number }
+): Promise<{ serialPath: string; baudRate: number } | undefined> {
+  const suggestedBaudRate = suggestDroneTelemetryBaudRate(configured.serialPath);
+  const looksLikeTelemetryRadio = isLikelyTelemetryRadioSerialPath(configured.serialPath);
+  if (!looksLikeTelemetryRadio || configured.baudRate === suggestedBaudRate) {
+    return configured;
+  }
+
+  const selection = await vscode.window.showWarningMessage(
+    `Configured MAVLink baud ${configured.baudRate} looks wrong for telemetry-radio device ${configured.serialPath}. Use ${suggestedBaudRate} instead and update .env?`,
+    'Use Recommended',
+    'Keep Current',
+    'Open .env'
+  );
+
+  if (selection === 'Open .env') {
+    const envUri = vscode.Uri.joinPath(folder, '.env');
+    await vscode.commands.executeCommand('vscode.open', envUri);
+    return undefined;
+  }
+
+  if (selection === 'Use Recommended') {
+    await persistDroneTelemetryDeviceConfig(folder, configured.serialPath, suggestedBaudRate);
+    return {
+      serialPath: configured.serialPath,
+      baudRate: suggestedBaudRate
+    };
+  }
+
+  return configured;
+}
+
+function resolveMavlinkTargetPort(markerEnv: Record<string, any>, existingEnv: Record<string, string>): number {
+  const candidates = [
+    existingEnv.TENSORFLEET_MAVLINK_TARGET_PORT,
+    existingEnv.MAVLINK_TARGET_PORT,
+    markerEnv.mavlinkTargetPort,
+    markerEnv.mavlink_port
+  ];
+  for (const candidate of candidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.trunc(parsed);
+    }
+  }
+  return DEFAULT_MAVLINK_TARGET_PORT;
+}
+
+async function resolveDroneTelemetryConnection(
+  context: vscode.ExtensionContext,
+  folder: vscode.Uri
+): Promise<{ vmManagerUrl: string; nodeId: string; token: string; targetPort: number }> {
+  const metadata = await readTensorfleetMetadata(folder);
+  const markerEnv = metadata.env ?? {};
+  const envValues = await readEnvForFolder(folder);
+  const region = regions.getSelectedRegion();
+  const snapshot = vmManagerIntegration?.snapshot;
+  const token = (await auth.getToken(context)) || envValues.TENSORFLEET_JWT || '';
+
+  const nodeId = snapshot?.nodeId || markerEnv.nodeId || envValues.TENSORFLEET_NODE_ID || '';
+  const vmManagerUrl =
+    region.vmManagerUrl ||
+    markerEnv.vmManagerUrl ||
+    envValues.TENSORFLEET_VM_MANAGER_URL ||
+    envValues.TENSORFLEET_BASE_URL ||
+    markerEnv.baseUrl ||
+    '';
+  const targetPort = resolveMavlinkTargetPort(markerEnv, envValues);
+
+  return { vmManagerUrl, nodeId, token, targetPort };
+}
+
+async function promptForDroneTelemetrySerialPort(): Promise<string | undefined> {
+  const manualOption = 'Enter serial port manually...';
+  let detectedPorts: string[] = [];
+
+  if (process.platform === 'linux') {
+    try {
+      const entries = await fs.promises.readdir('/dev');
+      detectedPorts = entries
+        .filter((entry) => /^tty(ACM|USB)\d+$/.test(entry))
+        .map((entry) => `/dev/${entry}`)
+        .sort();
+    } catch {
+      detectedPorts = [];
+    }
+  }
+
+  if (detectedPorts.length > 0) {
+    const selected = await vscode.window.showQuickPick([...detectedPorts, manualOption], {
+      title: 'TensorFleet: Connect Drone Telemetry',
+      placeHolder: 'Select the local serial device connected to Pixhawk/radio'
+    });
+    if (!selected) return undefined;
+    if (selected !== manualOption) {
+      return selected;
+    }
+  }
+
+  return vscode.window.showInputBox({
+    title: 'TensorFleet: Connect Drone Telemetry',
+    prompt: 'Enter serial device path',
+    value: detectedPorts[0] || '/dev/ttyACM0',
+    ignoreFocusOut: true,
+    validateInput: (value) => (value.trim() ? null : 'Serial device path is required')
+  });
+}
+
+function isLikelyTelemetryRadioSerialPath(serialPath: string): boolean {
+  const normalized = serialPath.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (/\/dev\/ttyusb\d+/.test(normalized)) {
+    return true;
+  }
+
+  if (normalized.includes('/dev/cu.usbserial') || normalized.includes('/dev/tty.usbserial')) {
+    return true;
+  }
+
+  return normalized.includes('telemetry') || normalized.includes('radio') || normalized.includes('sik');
+}
+
+function suggestDroneTelemetryBaudRate(serialPath: string): number {
+  return isLikelyTelemetryRadioSerialPath(serialPath)
+    ? DEFAULT_MAVLINK_BAUD_TELEMETRY_RADIO
+    : DEFAULT_MAVLINK_BAUD_USB_SERIAL;
+}
+
+async function promptForDroneTelemetryBaudRate(serialPath: string): Promise<number | undefined> {
+  const suggestedBaudRate = suggestDroneTelemetryBaudRate(serialPath);
+  const input = await vscode.window.showInputBox({
+    title: 'TensorFleet: Connect Drone Telemetry',
+    prompt: 'Enter MAVLink serial baud rate (USB serial often 115200, telemetry radios often 57600)',
+    value: String(suggestedBaudRate),
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return 'Baud rate must be a positive number';
+      }
+      return null;
+    }
+  });
+
+  if (!input) return undefined;
+  return Math.trunc(Number(input));
+}
+
+async function connectDroneTelemetry(context: vscode.ExtensionContext): Promise<void> {
+  if (!mavlinkTunnelManager) {
+    mavlinkTunnelManager = new MavlinkTunnelManager((message) => {
+      getDroneTelemetryOutputChannel().appendLine(`[Tunnel] ${message}`);
+    });
+  }
+
+  const output = getDroneTelemetryOutputChannel();
+  output.show(true);
+
+  if (mavlinkTunnelManager.isConnected()) {
+    output.appendLine('[Tunnel] Already connected.');
+    return;
+  }
+
+  const projectFolder = await resolveDroneTelemetryProjectFolder();
+  if (!projectFolder) {
+    vscode.window.showErrorMessage('Open a workspace folder before connecting drone telemetry.');
+    return;
+  }
+
+  const depsReady = await ensureDroneTelemetryRuntimeDeps(projectFolder, output);
+  if (!depsReady) {
+    output.appendLine('[Tunnel] Aborting connect because required runtime dependencies are missing.');
+    return;
+  }
+
+  const deviceConfig = await ensureDroneTelemetryDeviceConfig(projectFolder);
+  if (!deviceConfig) {
+    return;
+  }
+  const serialPath = deviceConfig.serialPath;
+  const baudRate = deviceConfig.baudRate;
+
+  const { vmManagerUrl, nodeId, token, targetPort } = await resolveDroneTelemetryConnection(context, projectFolder);
+  if (!vmManagerUrl) {
+    vscode.window.showErrorMessage('No VM Manager URL configured for telemetry tunnel.');
+    return;
+  }
+  if (!nodeId) {
+    vscode.window.showErrorMessage('No VM nodeId available. Start VM and retry.');
+    return;
+  }
+  if (!token) {
+    vscode.window.showErrorMessage('No TensorFleet JWT token available. Login and retry.');
+    return;
+  }
+
+  output.appendLine(
+    `[Tunnel] Connecting serial=${serialPath} baud=${baudRate} nodeId=${nodeId} targetPort=${targetPort}`
+  );
+
+  try {
+    await mavlinkTunnelManager.connect({
+      projectDir: projectFolder.fsPath,
+      serialPath,
+      baudRate,
+      vmManagerUrl,
+      token,
+      nodeId,
+      targetPort
+    });
+    output.appendLine('[Tunnel] Connected and ready.');
+    await updateDroneStatus();
+    vscode.window.showInformationMessage('Drone telemetry tunnel connected.');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    output.appendLine(`[Tunnel] Connect failed: ${message}`);
+    vscode.window.showErrorMessage(`Failed to connect drone telemetry tunnel: ${message}`);
+  }
+}
+
+async function disconnectDroneTelemetry(): Promise<void> {
+  const output = getDroneTelemetryOutputChannel();
+  output.show(true);
+
+  if (!mavlinkTunnelManager || !mavlinkTunnelManager.isRunning()) {
+    output.appendLine('[Tunnel] Already disconnected.');
+    return;
+  }
+
+  try {
+    await mavlinkTunnelManager.disconnect();
+    output.appendLine('[Tunnel] Disconnected.');
+    await updateDroneStatus();
+    vscode.window.showInformationMessage('Drone telemetry tunnel disconnected.');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    output.appendLine(`[Tunnel] Disconnect failed: ${message}`);
+    vscode.window.showErrorMessage(`Failed to disconnect drone telemetry tunnel: ${message}`);
+  }
+}
+
+function getDroneModeOutputChannel(): vscode.OutputChannel {
+  if (!droneModeOutputChannel) {
+    droneModeOutputChannel = vscode.window.createOutputChannel('TensorFleet Drone Mode');
+  }
+  return droneModeOutputChannel;
+}
+
+async function setDroneMode(context: vscode.ExtensionContext, forcedMode?: DroneMode): Promise<void> {
+  const output = getDroneModeOutputChannel();
+
+  await executeDroneModeCommand(
+    {
+      resolveVmId: () => vmManagerIntegration?.getSelectedVmId(),
+      pickMode: async () => {
+        const selected = await vscode.window.showQuickPick(
+          [
+            {
+              label: 'Real Drone',
+              description: 'Switch MAVROS target to telemetry tunnel endpoint (127.0.0.1:14541)',
+              value: 'REAL' as const
+            },
+            {
+              label: 'SITL',
+              description: 'Switch MAVROS target to local simulator endpoint (127.0.0.1:14557)',
+              value: 'SITL' as const
+            }
+          ],
+          {
+            title: 'TensorFleet: Set Drone Mode',
+            placeHolder: 'Select drone mode'
+          }
+        );
+        return selected?.value;
+      },
+      runWithProgress: async <T>(title: string, task: () => Promise<T>): Promise<T> => {
+        return await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title
+          },
+          async () => await task()
+        );
+      },
+      setDroneMode: async (vmId: string, mode: DroneMode): Promise<DroneModeResponse> => {
+        const apiBaseUrl = vmManagerIntegration?.getApiBaseUrl();
+        if (!apiBaseUrl) {
+          throw new Error('No VM Manager API URL available.');
+        }
+
+        const token = await auth.getToken(context);
+        if (!token) {
+          throw new Error('No TensorFleet JWT token available. Login and retry.');
+        }
+
+        const client = new DroneModeApiClient({
+          baseUrl: apiBaseUrl,
+          token,
+          timeoutMs: 30_000,
+          log: (line: string) => output.appendLine(line)
+        });
+
+        const response = await client.setDroneMode(vmId, { mode: toDroneModeRequest(mode) });
+        let existing: DroneModeResponse | undefined;
+        try {
+          existing = await client.getDroneMode(vmId);
+        } catch (error) {
+          const refreshMessage = error instanceof Error ? error.message : String(error);
+          output.appendLine(`[DroneMode] Status refresh after successful mode switch failed: ${refreshMessage}`);
+        }
+
+        return {
+          ...response,
+          appliedMode: existing?.appliedMode ?? response.appliedMode,
+          requestedMode: existing?.requestedMode ?? response.requestedMode,
+          stack: existing?.stack ?? response.stack,
+          mavrosStatus: existing?.mavrosStatus ?? response.mavrosStatus,
+          px4Status: existing?.px4Status ?? response.px4Status,
+          ardupilotStatus: existing?.ardupilotStatus ?? response.ardupilotStatus,
+          mavrosActive: existing?.mavrosActive ?? response.mavrosActive,
+          px4Active: existing?.px4Active ?? response.px4Active,
+          ardupilotActive: existing?.ardupilotActive ?? response.ardupilotActive,
+          droneService: existing?.droneService ?? response.droneService,
+          droneActive: existing?.droneActive ?? response.droneActive,
+          warnings: mergeWarnings(response.warnings, existing?.warnings)
+        };
+      },
+      isTelemetryTunnelActive: () => Boolean(mavlinkTunnelManager?.isConnected()),
+      onModeApplied: ({ appliedMode, flightStack }) => {
+        currentDroneRuntimeMode = appliedMode;
+        currentDroneFlightStack = flightStack;
+      },
+      onSitlModeWithTunnel: async () => {
+        await disconnectDroneTelemetry();
+      },
+      onRealModeWithoutTunnel: async () => {
+        const selection = await vscode.window.showInformationMessage(
+          'Real drone mode is active, but telemetry tunnel is not connected.',
+          'Connect Tunnel',
+          'Later'
+        );
+        if (selection === 'Connect Tunnel') {
+          await connectDroneTelemetry(context);
+        }
+      },
+      showInfo: (message: string) => {
+        void vscode.window.showInformationMessage(message);
+      },
+      showError: (message: string) => {
+        void vscode.window.showErrorMessage(message);
+      },
+      log: (message: string) => {
+        output.appendLine(message);
+      }
+    },
+    forcedMode
+  );
+
+  await updateDroneStatus();
+}
+
+async function showDroneSetup(context: vscode.ExtensionContext): Promise<void> {
+  type SetupAction = 'set-mode' | 'set-real' | 'set-sitl' | 'toggle-telemetry';
+
+  const items: Array<vscode.QuickPickItem & { action: SetupAction }> = [
+    {
+      label: 'Set Drone Mode',
+      description: 'Choose between REAL and SITL mode',
+      action: 'set-mode'
+    },
+    {
+      label: 'Use REAL Mode',
+      description: 'Switch to REAL and prompt/connect telemetry tunnel if needed',
+      action: 'set-real'
+    },
+    {
+      label: 'Use SITL Mode',
+      description: 'Switch to SITL and auto-disconnect telemetry tunnel if active',
+      action: 'set-sitl'
+    },
+    {
+      label: mavlinkTunnelManager?.isConnected() ? 'Disconnect Real Telemetry' : 'Connect Real Telemetry',
+      description: mavlinkTunnelManager?.isConnected()
+        ? 'Disconnect local serial to VM MAVLink tunnel'
+        : 'Connect local serial to VM MAVLink tunnel using project .env config',
+      action: 'toggle-telemetry'
+    }
+  ];
+
+  const selected = await vscode.window.showQuickPick(items, {
+    title: 'TensorFleet: Drone Setup',
+    placeHolder: 'Select an action'
+  });
+  if (!selected) {
+    return;
+  }
+
+  switch (selected.action) {
+    case 'set-mode':
+      await setDroneMode(context);
+      break;
+    case 'set-real':
+      await setDroneMode(context, 'REAL');
+      break;
+    case 'set-sitl':
+      await setDroneMode(context, 'SITL');
+      break;
+    case 'toggle-telemetry': {
+      if (mavlinkTunnelManager?.isConnected()) {
+        await disconnectDroneTelemetry();
+      } else {
+        await connectDroneTelemetry(context);
+      }
+      break;
+    }
+  }
+}
+
+function mergeWarnings(first?: string[], second?: string[]): string[] {
+  const normalized: string[] = [];
+  for (const source of [first, second]) {
+    if (!Array.isArray(source)) {
+      continue;
+    }
+    for (const warning of source) {
+      if (typeof warning !== 'string') {
+        continue;
+      }
+      const trimmed = warning.trim();
+      if (!trimmed || normalized.includes(trimmed)) {
+        continue;
+      }
+      normalized.push(trimmed);
+    }
+  }
+  return normalized;
+}
+
+async function maybeShowDroneSetupNudge(context: vscode.ExtensionContext): Promise<void> {
+  if (droneSetupNudgeInFlight) {
+    return;
+  }
+  if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+    return;
+  }
+
+  const workspaceId = vscode.workspace.workspaceFolders[0].uri.toString();
+  const key = `tensorfleet.droneSetupNudgeShown:${workspaceId}`;
+  if (context.workspaceState.get<boolean>(key)) {
+    return;
+  }
+
+  droneSetupNudgeInFlight = true;
+  await context.workspaceState.update(key, true);
+  try {
+    const selection = await vscode.window.showInformationMessage(
+      'Set drone mode and telemetry quickly from Drone Setup.',
+      'Open Drone Setup',
+      'Later'
+    );
+    if (selection === 'Open Drone Setup') {
+      await showDroneSetup(context);
+    }
+  } finally {
+    droneSetupNudgeInFlight = false;
+  }
+}
 
 async function createNewProjectInternal(
   context: vscode.ExtensionContext,
@@ -2999,14 +3741,6 @@ function stopMCPServer() {
 // Status Bar Items for TensorFleet Projects
 // ============================================================================
 
-type DroneInfo = {
-  id: string;
-  name: string;
-  status: 'idle' | 'armed' | 'flying' | 'offline';
-  battery: number;
-  mode: string;
-};
-
 type RosVersion = {
   name: string;
   distro: string;
@@ -3022,7 +3756,6 @@ const AVAILABLE_ROS_VERSIONS: RosVersion[] = [
 ];
 
 let currentRosVersion: RosVersion = AVAILABLE_ROS_VERSIONS[0];
-let drones: DroneInfo[] = [];
 
 async function initializeStatusBarItems(context: vscode.ExtensionContext) {
   console.log('[TensorFleet] Initializing status bar items...');
@@ -3037,13 +3770,12 @@ async function initializeStatusBarItems(context: vscode.ExtensionContext) {
   context.subscriptions.push(rosVersionStatusBar);
   console.log('[TensorFleet] ROS version status bar created');
 
-  // Create drone status bar item
   droneStatusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
     99
   );
-  droneStatusBar.command = 'tensorfleet.showDroneStatus';
-  droneStatusBar.tooltip = 'Click to view drone details';
+  droneStatusBar.command = COMMAND_DRONE_SETUP;
+  droneStatusBar.tooltip = 'Drone mode and real-drone tunnel status (click for Drone Setup)';
   context.subscriptions.push(droneStatusBar);
   console.log('[TensorFleet] Drone status bar created');
 
@@ -3056,23 +3788,20 @@ async function initializeStatusBarItems(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeWorkspaceFolders(() => updateStatusBars())
   );
 
-  // Watch for config file changes
+  // Watch for config changes to keep ROS label current
   const configPattern = '**/config/drone_config.yaml';
-  projectWatcher = vscode.workspace.createFileSystemWatcher(configPattern);
+  const watcher = vscode.workspace.createFileSystemWatcher(configPattern);
+  watcher.onDidCreate(() => updateStatusBars());
+  watcher.onDidChange(() => updateStatusBars());
+  watcher.onDidDelete(() => updateStatusBars());
+  context.subscriptions.push(watcher);
 
-  projectWatcher.onDidCreate(() => updateStatusBars());
-  projectWatcher.onDidChange(() => updateStatusBars());
-  projectWatcher.onDidDelete(() => updateStatusBars());
-
-  context.subscriptions.push(projectWatcher);
-
-  // Update status periodically (every 5 seconds)
+  // Periodic refresh for tunnel/mode state.
   const interval = setInterval(async () => {
     if (await isTensorFleetProject()) {
       await updateDroneStatus();
     }
   }, 5000);
-
   context.subscriptions.push(new vscode.Disposable(() => clearInterval(interval)));
 }
 
@@ -3112,29 +3841,25 @@ async function isTensorFleetProject(): Promise<boolean> {
 }
 
 async function updateStatusBars() {
-  console.log('[TensorFleet] Updating status bars...');
   const isTFProject = await isTensorFleetProject();
+  const context = extensionContextRef;
 
   if (isTFProject) {
-    console.log('[TensorFleet] TensorFleet project detected, showing status bars');
-
     // Detect ROS version from config or system
     await detectRosVersion();
-
-    // Initialize drone status
     await updateDroneStatus();
+    if (context) {
+      await maybeShowDroneSetupNudge(context);
+    }
 
     // Show status bars
     if (rosVersionStatusBar) {
       rosVersionStatusBar.show();
-      console.log('[TensorFleet] ROS version status bar shown:', rosVersionStatusBar.text);
     }
     if (droneStatusBar) {
       droneStatusBar.show();
-      console.log('[TensorFleet] Drone status bar shown:', droneStatusBar.text);
     }
   } else {
-    console.log('[TensorFleet] Not a TensorFleet project, hiding status bars');
     // Hide status bars when not in a TensorFleet project
     rosVersionStatusBar?.hide();
     droneStatusBar?.hide();
@@ -3181,76 +3906,106 @@ async function detectRosVersion() {
   }
 }
 
-async function updateDroneStatus() {
-  if (!vscode.workspace.workspaceFolders) {
+async function maybeResolveDroneRuntimeModeFromVm(): Promise<void> {
+  if (currentDroneRuntimeMode !== 'UNKNOWN') {
+    return;
+  }
+
+  const snapshot = vmManagerIntegration?.snapshot;
+  const vmId = vmManagerIntegration?.getSelectedVmId();
+  const apiBaseUrl = vmManagerIntegration?.getApiBaseUrl();
+  const now = Date.now();
+  if (!snapshot || snapshot.vmState !== 'running' || !vmId || !apiBaseUrl) {
+    return;
+  }
+
+  if (now - lastDroneModeResolveAttemptMs < 10_000) {
+    return;
+  }
+  lastDroneModeResolveAttemptMs = now;
+
+  const context = extensionContextRef;
+  if (!context) {
     return;
   }
 
   try {
-    // Try to read from config to get drone info
-    const configPath = vscode.Uri.joinPath(
-      vscode.workspace.workspaceFolders[0].uri,
-      'config',
-      'drone_config.yaml'
-    );
-
-    const configContent = await vscode.workspace.fs.readFile(configPath);
-    const configText = Buffer.from(configContent).toString('utf8');
-
-    // Extract drone ID/name from config
-    const idMatch = configText.match(/id:\s*["']?([^"'\n]+)["']?/);
-    const modelMatch = configText.match(/model:\s*["']?([^"'\n]+)["']?/);
-
-    const droneId = idMatch ? idMatch[1] : 'drone_1';
-    const droneModel = modelMatch ? modelMatch[1] : 'iris';
-
-    // Default status (panels handle live telemetry via Foxglove inside webviews)
-    let droneStatus: 'idle' | 'armed' | 'flying' | 'offline' = 'offline';
-    let battery = 0;
-    let mode = 'UNKNOWN';
-
-    drones = [
-      {
-        id: droneId,
-        name: droneModel,
-        status: droneStatus,
-        battery: battery,
-        mode: mode
-      }
-    ];
-
-    // Update status bar
-    if (droneStatusBar) {
-      const activeCount = drones.filter((d) => d.status !== 'offline').length;
-      const flyingCount = drones.filter((d) => d.status === 'flying').length;
-
-      let statusText = `$(radio-tower) ${activeCount} Drone${activeCount !== 1 ? 's' : ''}`;
-
-      if (flyingCount > 0) {
-        statusText += ` (${flyingCount} Flying)`;
-      }
-
-      droneStatusBar.text = statusText;
-      console.log('[TensorFleet] Drone status set to:', statusText);
+    const token = await auth.getToken(context);
+    if (!token) {
+      return;
     }
-  } catch (error) {
-    getTelemetry()?.captureError(error, { source: 'updateDroneStatus' });
-    // Config not found, show default
-    drones = [
-      {
-        id: 'drone_1',
-        name: 'iris',
-        status: 'offline',
-        battery: 0,
-        mode: 'UNKNOWN'
-      }
-    ];
-
-    if (droneStatusBar) {
-      droneStatusBar.text = '$(radio-tower) 0 Drones';
+    const client = new DroneModeApiClient({
+      baseUrl: apiBaseUrl,
+      token,
+      timeoutMs: 10_000
+    });
+    const status = await client.getDroneMode(vmId);
+    const resolved = normalizeDroneMode(status.appliedMode ?? status.requestedMode);
+    if (resolved !== 'UNKNOWN') {
+      currentDroneRuntimeMode = resolved;
     }
+    currentDroneFlightStack = resolveDroneFlightStack(status);
+  } catch {
+    // Keep UNKNOWN until a mode can be resolved.
   }
 }
+
+function resolveDroneFlightStack(status: DroneModeResponse): DroneFlightStack {
+  const explicit = normalizeDroneFlightStack(status.stack);
+  if (explicit !== 'unknown') {
+    return explicit;
+  }
+  if (status.ardupilotStatus !== undefined || status.ardupilotActive !== undefined) {
+    return 'ardupilot';
+  }
+  if (status.px4Status !== undefined || status.px4Active !== undefined) {
+    return 'px4';
+  }
+  return 'unknown';
+}
+
+function formatDroneFlightStackLabel(stack: DroneFlightStack): string {
+  switch (stack) {
+    case 'ardupilot':
+      return 'ArduPilot';
+    case 'px4':
+      return 'PX4';
+    default:
+      return 'Unknown';
+  }
+}
+
+async function updateDroneStatus() {
+  if (!droneStatusBar) {
+    return;
+  }
+
+  await maybeResolveDroneRuntimeModeFromVm();
+  if (currentDroneRuntimeMode === 'UNKNOWN') {
+    droneStatusBar.hide();
+    return;
+  }
+
+  const tunnelActive = Boolean(mavlinkTunnelManager?.isConnected());
+  const stackLabel = formatDroneFlightStackLabel(currentDroneFlightStack);
+  if (currentDroneRuntimeMode === 'SITL') {
+    droneStatusBar.text = '$(radio-tower) SITL';
+    droneStatusBar.tooltip =
+      currentDroneFlightStack === 'unknown'
+        ? 'SITL mode active. Real-drone tunnel is not required in this mode.'
+        : `SITL mode active. Flight stack: ${stackLabel}. Real-drone tunnel is not required in this mode.`;
+  } else {
+    const tunnelIcon = tunnelActive ? '$(plug)' : '$(debug-disconnect)';
+    const tunnelText = tunnelActive ? 'Connected' : 'Disconnected';
+    droneStatusBar.text = `$(radio-tower) REAL ${tunnelIcon}`;
+    droneStatusBar.tooltip =
+      currentDroneFlightStack === 'unknown'
+        ? `REAL mode active. Telemetry tunnel: ${tunnelText}.`
+        : `REAL mode active. Flight stack: ${stackLabel}. Telemetry tunnel: ${tunnelText}.`;
+  }
+  droneStatusBar.show();
+}
+
 
 async function selectRosVersion() {
   const telemetry = getTelemetry();
@@ -3348,95 +4103,6 @@ async function updateConfigWithRosVersion(version: RosVersion) {
   }
 }
 
-async function showDroneStatus() {
-  const telemetry = getTelemetry();
-  telemetry?.trackEvent('droneStatus.show', { phase: 'start', droneCount: drones.length.toString() });
-  if (drones.length === 0) {
-    telemetry?.trackEvent('droneStatus.show', { phase: 'empty' });
-    vscode.window.showInformationMessage('No drones detected. Start a simulation to see drone status.');
-    return;
-  }
-
-  const items = drones.map((drone) => {
-    const statusIcon =
-      drone.status === 'flying' ? '$(rocket)' :
-        drone.status === 'armed' ? '$(target)' :
-          drone.status === 'idle' ? '$(circle-outline)' :
-            '$(circle-slash)';
-
-    const batteryIcon =
-      drone.battery > 50 ? '$(pulse)' :
-        drone.battery > 25 ? '$(warning)' :
-          '$(alert)';
-
-    return {
-      label: `${statusIcon} ${drone.name}`,
-      description: `${drone.mode} | ${batteryIcon} ${drone.battery}%`,
-      detail: `ID: ${drone.id} | Status: ${drone.status}`,
-      drone
-    };
-  });
-
-  items.push({
-    label: '$(refresh) Refresh Status',
-    description: 'Update drone information',
-    detail: '',
-    // @ts-ignore
-    drone: null
-  });
-
-  items.push({
-    label: '$(debug-start) Start Simulation',
-    description: 'Launch Gazebo with drones',
-    detail: '',
-    // @ts-ignore
-    drone: null
-  });
-
-  const selected = await vscode.window.showQuickPick(items, {
-    placeHolder: 'Drone Status',
-    title: 'TensorFleet: Connected Drones'
-  });
-
-  if (!selected) {
-    telemetry?.trackEvent('droneStatus.show', { phase: 'dismissed' });
-    return;
-  }
-
-  if (selected.label.includes('Refresh')) {
-    telemetry?.trackEvent('droneStatus.action', { action: 'refresh' });
-    await updateDroneStatus();
-    vscode.window.showInformationMessage('Drone status refreshed');
-  } else if (selected.label.includes('Start Simulation')) {
-    telemetry?.trackEvent('droneStatus.action', { action: 'openSimulation' });
-    vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
-  } else if (selected.drone) {
-    telemetry?.trackEvent('droneStatus.action', { action: 'details', droneId: selected.drone.id });
-    // Show detailed drone info
-    showDetailedDroneInfo(selected.drone);
-  }
-}
-
-function showDetailedDroneInfo(drone: DroneInfo) {
-  const info = `
-**Drone Information**
-
-**ID:** ${drone.id}
-**Model:** ${drone.name}
-**Status:** ${drone.status}
-**Battery:** ${drone.battery}%
-**Mode:** ${drone.mode}
-
-Click "Open Gazebo Workspace" to view in simulation.
-  `.trim();
-
-  vscode.window.showInformationMessage(info, 'Open Gazebo Workspace', 'Close').then((choice) => {
-    if (choice === 'Open Gazebo Workspace') {
-      getTelemetry()?.trackEvent('droneStatus.action', { action: 'openGazebo', droneId: drone.id });
-      vscode.commands.executeCommand('tensorfleet.openGazeboPanel');
-    }
-  });
-}
 
 // ============================================================================
 // ROS2 Connection Management

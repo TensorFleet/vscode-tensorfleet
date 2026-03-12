@@ -81,10 +81,13 @@ async function main() {
     // Keep running until Ctrl+C
     console.log("Press Ctrl+C to exit\n");
 
-    process.on("SIGINT", () => {
+    process.on("SIGINT", async () => {
         console.log("\n[EXIT] Shutting down...");
         unsubscribeRaw();
         droneState.disconnect();
+        if (typeof bridge.disconnect === "function") {
+            await bridge.disconnect();
+        }
         process.exit(0);
     });
 }

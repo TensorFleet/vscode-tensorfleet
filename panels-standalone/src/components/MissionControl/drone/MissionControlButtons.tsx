@@ -177,7 +177,6 @@ export default function MissionControlPanel() {
   }, []);
 
   const disabledGoto = useMemo(() => lat === "" || lon === "" || alt === "", [lat, lon, alt]);
-
   return (
     <div style={styles.container}>
       <div style={styles.card}>

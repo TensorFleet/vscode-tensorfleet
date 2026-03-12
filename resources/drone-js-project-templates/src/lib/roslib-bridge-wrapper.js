@@ -31,11 +31,16 @@ class ROSLibBridgeWrapper {
     this._mavrosParamsTimer = null;
     this._mavrosParamsSet = false;
 
-    this.connect();
+    try {
+      this.connect();
+    } catch (error) {
+      console.error("[ROS] Initial connection failed:", error?.message || error);
+    }
   }
 
   connect() {
     console.log("[ROS] Connected")
+
     const settings = getTensorfleetSettings();
 
     const useProxy = settings.useProxy && settings.proxyUrl;
@@ -506,6 +511,25 @@ class ROSLibBridgeWrapper {
       };
       check();
     });
+  }
+
+  disconnect() {
+    if (this.ros) {
+      try {
+        this.ros.close();
+      } catch (_) {}
+    }
+
+    this.isConnectedFlag = false;
+
+    if (this._resubscribeTimer) {
+      clearInterval(this._resubscribeTimer);
+      this._resubscribeTimer = null;
+    }
+    if (this._mavrosParamsTimer) {
+      clearInterval(this._mavrosParamsTimer);
+      this._mavrosParamsTimer = null;
+    }
   }
 }
 
