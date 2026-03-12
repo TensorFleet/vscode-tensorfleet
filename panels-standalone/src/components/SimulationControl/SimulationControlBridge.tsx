@@ -1,6 +1,6 @@
 // SimulationControlBridge.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SimulationController } from "@/mission-control/simulation_controller";
+import { SimulationController } from "@/simulation/simulation_controller";
 
 /** Keep this in sync with the UI emitter */
 interface SimulationRequestDetail<T = any> {
