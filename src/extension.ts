@@ -11,7 +11,7 @@ import { TelemetryService } from './telemetry';
 import * as regions from './regions';
 import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
 import { MavlinkTunnelManager } from './mavlink-tunnel-manager';
-import { DroneModeApiClient, DroneModeResponse, DroneMode, normalizeDroneMode, toDroneModeRequest } from './drone-mode-api';
+import { DroneModeApiClient, DroneModeResponse, DroneMode, DroneFlightStack, normalizeDroneFlightStack, normalizeDroneMode, toDroneModeRequest } from './drone-mode-api';
 import { executeDroneModeCommand } from './drone-mode-command';
 
 // -----------------------------------------------------------------------------
@@ -755,6 +755,7 @@ let droneTelemetryOutputChannel: vscode.OutputChannel | null = null;
 let droneModeOutputChannel: vscode.OutputChannel | null = null;
 let mavlinkTunnelManager: MavlinkTunnelManager | null = null;
 let currentDroneRuntimeMode: DroneMode | 'UNKNOWN' = 'UNKNOWN';
+let currentDroneFlightStack: DroneFlightStack = 'unknown';
 let lastDroneModeResolveAttemptMs = 0;
 let droneSetupNudgeInFlight = false;
 const DEFAULT_MAVLINK_TARGET_PORT = 14600;
@@ -2857,7 +2858,7 @@ async function ensureDroneTelemetryDeviceConfig(
 ): Promise<{ serialPath: string; baudRate: number } | undefined> {
   const configured = await resolveDroneTelemetryDeviceConfig(folder);
   if (configured) {
-    return configured;
+    return await maybeRepairDroneTelemetryDeviceConfig(folder, configured);
   }
 
   const choice = await vscode.window.showInformationMessage(
@@ -2883,6 +2884,40 @@ async function ensureDroneTelemetryDeviceConfig(
 
   await persistDroneTelemetryDeviceConfig(folder, serialPath, baudRate);
   return { serialPath, baudRate };
+}
+
+async function maybeRepairDroneTelemetryDeviceConfig(
+  folder: vscode.Uri,
+  configured: { serialPath: string; baudRate: number }
+): Promise<{ serialPath: string; baudRate: number } | undefined> {
+  const suggestedBaudRate = suggestDroneTelemetryBaudRate(configured.serialPath);
+  const looksLikeTelemetryRadio = isLikelyTelemetryRadioSerialPath(configured.serialPath);
+  if (!looksLikeTelemetryRadio || configured.baudRate === suggestedBaudRate) {
+    return configured;
+  }
+
+  const selection = await vscode.window.showWarningMessage(
+    `Configured MAVLink baud ${configured.baudRate} looks wrong for telemetry-radio device ${configured.serialPath}. Use ${suggestedBaudRate} instead and update .env?`,
+    'Use Recommended',
+    'Keep Current',
+    'Open .env'
+  );
+
+  if (selection === 'Open .env') {
+    const envUri = vscode.Uri.joinPath(folder, '.env');
+    await vscode.commands.executeCommand('vscode.open', envUri);
+    return undefined;
+  }
+
+  if (selection === 'Use Recommended') {
+    await persistDroneTelemetryDeviceConfig(folder, configured.serialPath, suggestedBaudRate);
+    return {
+      serialPath: configured.serialPath,
+      baudRate: suggestedBaudRate
+    };
+  }
+
+  return configured;
 }
 
 function resolveMavlinkTargetPort(markerEnv: Record<string, any>, existingEnv: Record<string, string>): number {
@@ -3171,16 +3206,22 @@ async function setDroneMode(context: vscode.ExtensionContext, forcedMode?: Drone
           ...response,
           appliedMode: existing?.appliedMode ?? response.appliedMode,
           requestedMode: existing?.requestedMode ?? response.requestedMode,
+          stack: existing?.stack ?? response.stack,
           mavrosStatus: existing?.mavrosStatus ?? response.mavrosStatus,
           px4Status: existing?.px4Status ?? response.px4Status,
+          ardupilotStatus: existing?.ardupilotStatus ?? response.ardupilotStatus,
           mavrosActive: existing?.mavrosActive ?? response.mavrosActive,
           px4Active: existing?.px4Active ?? response.px4Active,
+          ardupilotActive: existing?.ardupilotActive ?? response.ardupilotActive,
+          droneService: existing?.droneService ?? response.droneService,
+          droneActive: existing?.droneActive ?? response.droneActive,
           warnings: mergeWarnings(response.warnings, existing?.warnings)
         };
       },
       isTelemetryTunnelActive: () => Boolean(mavlinkTunnelManager?.isConnected()),
-      onModeApplied: ({ appliedMode }) => {
+      onModeApplied: ({ appliedMode, flightStack }) => {
         currentDroneRuntimeMode = appliedMode;
+        currentDroneFlightStack = flightStack;
       },
       onSitlModeWithTunnel: async () => {
         await disconnectDroneTelemetry();
@@ -3903,8 +3944,34 @@ async function maybeResolveDroneRuntimeModeFromVm(): Promise<void> {
     if (resolved !== 'UNKNOWN') {
       currentDroneRuntimeMode = resolved;
     }
+    currentDroneFlightStack = resolveDroneFlightStack(status);
   } catch {
     // Keep UNKNOWN until a mode can be resolved.
+  }
+}
+
+function resolveDroneFlightStack(status: DroneModeResponse): DroneFlightStack {
+  const explicit = normalizeDroneFlightStack(status.stack);
+  if (explicit !== 'unknown') {
+    return explicit;
+  }
+  if (status.ardupilotStatus !== undefined || status.ardupilotActive !== undefined) {
+    return 'ardupilot';
+  }
+  if (status.px4Status !== undefined || status.px4Active !== undefined) {
+    return 'px4';
+  }
+  return 'unknown';
+}
+
+function formatDroneFlightStackLabel(stack: DroneFlightStack): string {
+  switch (stack) {
+    case 'ardupilot':
+      return 'ArduPilot';
+    case 'px4':
+      return 'PX4';
+    default:
+      return 'Unknown';
   }
 }
 
@@ -3920,14 +3987,21 @@ async function updateDroneStatus() {
   }
 
   const tunnelActive = Boolean(mavlinkTunnelManager?.isConnected());
+  const stackLabel = formatDroneFlightStackLabel(currentDroneFlightStack);
   if (currentDroneRuntimeMode === 'SITL') {
     droneStatusBar.text = '$(radio-tower) SITL';
-    droneStatusBar.tooltip = 'SITL mode active. Real-drone tunnel is not required in this mode.';
+    droneStatusBar.tooltip =
+      currentDroneFlightStack === 'unknown'
+        ? 'SITL mode active. Real-drone tunnel is not required in this mode.'
+        : `SITL mode active. Flight stack: ${stackLabel}. Real-drone tunnel is not required in this mode.`;
   } else {
     const tunnelIcon = tunnelActive ? '$(plug)' : '$(debug-disconnect)';
     const tunnelText = tunnelActive ? 'Connected' : 'Disconnected';
     droneStatusBar.text = `$(radio-tower) REAL ${tunnelIcon}`;
-    droneStatusBar.tooltip = `REAL mode active. Telemetry tunnel: ${tunnelText}.`;
+    droneStatusBar.tooltip =
+      currentDroneFlightStack === 'unknown'
+        ? `REAL mode active. Telemetry tunnel: ${tunnelText}.`
+        : `REAL mode active. Flight stack: ${stackLabel}. Telemetry tunnel: ${tunnelText}.`;
   }
   droneStatusBar.show();
 }

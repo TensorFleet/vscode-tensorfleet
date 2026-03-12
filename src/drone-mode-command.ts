@@ -1,8 +1,10 @@
 import {
+  DroneFlightStack,
   DroneMode,
   DroneModeApiError,
   DroneModeApiErrorCode,
   DroneModeResponse,
+  normalizeDroneFlightStack,
   normalizeDroneMode
 } from './drone-mode-api';
 
@@ -14,8 +16,10 @@ export interface DroneModeCommandDependencies {
   isTelemetryTunnelActive: () => boolean;
   onModeApplied?: (details: {
     appliedMode: DroneMode | 'UNKNOWN';
+    flightStack: DroneFlightStack;
+    flightStackLabel: string;
+    flightStackStatus: string;
     mavrosStatus: string;
-    px4Status: string;
     warnings: string[];
   }) => void;
   onSitlModeWithTunnel?: () => Promise<void> | void;
@@ -47,13 +51,15 @@ export async function executeDroneModeCommand(
     const response = await deps.runWithProgress(title, async () => await deps.setDroneMode(vmId, targetMode));
     const appliedMode = normalizeAppliedMode(response, targetMode);
     const mavrosStatus = normalizeStatusText(response.mavrosStatus, response.mavrosActive, 'mavros');
-    const px4Status = normalizeStatusText(response.px4Status, response.px4Active, 'px4');
+    const flightStack = resolveFlightStack(response);
+    const flightStackLabel = formatFlightStackLabel(flightStack);
+    const flightStackStatus = resolveFlightStackStatus(response, flightStack);
     const warnings = normalizeWarnings(response.warnings);
 
     const lines = [
       `Drone mode applied: ${appliedMode}`,
       `MAVROS: ${mavrosStatus}`,
-      `PX4: ${px4Status}`
+      `${flightStackLabel}: ${flightStackStatus}`
     ];
 
     if (warnings.length > 0) {
@@ -67,12 +73,14 @@ export async function executeDroneModeCommand(
     }
 
     deps.log(
-      `[DroneMode] success vmId=${vmId} applied=${appliedMode} mavros=${mavrosStatus} px4=${px4Status} warnings=${warnings.length}`
+      `[DroneMode] success vmId=${vmId} applied=${appliedMode} stack=${flightStack} mavros=${mavrosStatus} stack_status=${flightStackStatus} warnings=${warnings.length}`
     );
     deps.onModeApplied?.({
       appliedMode,
+      flightStack,
+      flightStackLabel,
+      flightStackStatus,
       mavrosStatus,
-      px4Status,
       warnings
     });
     deps.showInfo(lines.join('\n'));
@@ -117,19 +125,48 @@ function normalizeWarnings(warnings?: string[]): string[] {
 function normalizeStatusText(
   value: string | undefined,
   active: boolean | undefined,
-  runtime: 'mavros' | 'px4'
+  runtime: 'mavros' | 'service'
 ): string {
   const normalized = value?.trim();
   if (normalized && normalized.length > 0) {
     return normalized;
   }
   if (typeof active === 'boolean') {
-    if (runtime === 'mavros') {
-      return active ? 'active' : 'inactive';
-    }
-    return active ? 'running' : 'stopped';
+    return runtime === 'mavros'
+      ? (active ? 'active' : 'inactive')
+      : (active ? 'running' : 'stopped');
   }
   return 'unknown';
+}
+
+function resolveFlightStack(response: DroneModeResponse): DroneFlightStack {
+  const explicit = normalizeDroneFlightStack(response.stack);
+  if (explicit !== 'unknown') return explicit;
+  if (response.ardupilotStatus !== undefined || response.ardupilotActive !== undefined) return 'ardupilot';
+  if (response.px4Status !== undefined || response.px4Active !== undefined) return 'px4';
+  return 'unknown';
+}
+
+function resolveFlightStackStatus(response: DroneModeResponse, flightStack: DroneFlightStack): string {
+  switch (flightStack) {
+    case 'ardupilot':
+      return normalizeStatusText(response.ardupilotStatus, response.ardupilotActive, 'service');
+    case 'px4':
+      return normalizeStatusText(response.px4Status, response.px4Active, 'service');
+    default:
+      return normalizeStatusText(undefined, response.droneActive, 'service');
+  }
+}
+
+function formatFlightStackLabel(flightStack: DroneFlightStack): string {
+  switch (flightStack) {
+    case 'ardupilot':
+      return 'ArduPilot';
+    case 'px4':
+      return 'PX4';
+    default:
+      return 'Flight Stack';
+  }
 }
 
 function formatDroneModeError(error: unknown): string {

@@ -3,6 +3,7 @@ import * as https from 'https';
 
 export type DroneMode = 'REAL' | 'SITL';
 export type DroneModeLowercase = 'real' | 'sitl';
+export type DroneFlightStack = 'px4' | 'ardupilot' | 'unknown';
 export type DroneModeApiErrorCode = 'COMMAND_FAILED' | 'COMMAND_START_FAILED' | 'COMMAND_TIMEOUT';
 
 export interface DroneModeRequest {
@@ -12,10 +13,15 @@ export interface DroneModeRequest {
 export interface DroneModeBaseResponse {
   requestedMode?: string;
   appliedMode?: string;
+  stack?: string;
   mavrosStatus?: string;
   px4Status?: string;
+  ardupilotStatus?: string;
   mavrosActive?: boolean;
   px4Active?: boolean;
+  ardupilotActive?: boolean;
+  droneService?: string;
+  droneActive?: boolean;
   warnings?: string[];
 }
 export type DroneModeResponse = DroneModeBaseResponse;
@@ -59,6 +65,13 @@ export function normalizeDroneMode(value: string | undefined | null): DroneMode 
   if (normalized === 'real') return 'REAL';
   if (normalized === 'sitl') return 'SITL';
   return 'UNKNOWN';
+}
+
+export function normalizeDroneFlightStack(value: string | undefined | null): DroneFlightStack {
+  const normalized = (value ?? '').trim().toLowerCase();
+  if (normalized === 'px4') return 'px4';
+  if (normalized === 'ardupilot') return 'ardupilot';
+  return 'unknown';
 }
 
 export function toDroneModeRequest(mode: DroneMode): DroneModeLowercase {
