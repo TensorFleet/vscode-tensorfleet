@@ -20,6 +20,17 @@ const sampleEntity: EntityCardData = {
   },
 };
 
+const sampleObjectEntity: EntityCardData = {
+  name: 'Mug',
+  type: 'object',
+  target: 'Room_Essentials_Mug_White_Yellow',
+  params: {
+    display_name: 'Mug',
+    gazebo_entity: 'Room_Essentials_Mug_White_Yellow',
+    model_names: ['Room_Essentials_Mug_White_Yellow'],
+  },
+};
+
 describe('moveControl', () => {
   it('builds candidate names including _include-stripped variants', () => {
     expect(getEntityNameCandidates(sampleEntity)).toEqual([
@@ -27,6 +38,14 @@ describe('moveControl', () => {
       'x500_0',
       'x500_0_include::x500_0',
       'X500',
+    ]);
+  });
+
+  it('prefers normalized display aliases first for movable objects', () => {
+    expect(getEntityNameCandidates(sampleObjectEntity)).toEqual([
+      'mug',
+      'Room_Essentials_Mug_White_Yellow',
+      'Mug',
     ]);
   });
 

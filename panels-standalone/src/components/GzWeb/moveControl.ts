@@ -9,6 +9,16 @@ export const unique = (items: Array<string | undefined>) => {
   return [...new Set(items.filter((value): value is string => Boolean(value && value.trim().length > 0)))];
 };
 
+const normalizeEntityAlias = (value: string): string | undefined => {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized.length > 0 ? normalized : undefined;
+};
+
 export const toPoseVector = (value: unknown): PoseVector | null => {
   if (!value || typeof value !== 'object') return null;
   const vector = value as Partial<PoseVector>;
@@ -76,7 +86,17 @@ export const getEntityNameCandidates = (entity: EntityCardData): string[] => {
     : undefined;
   const mappedNestedInclude = includeBase ? `${mapped}::${includeBase}` : undefined;
   const targetNestedInclude = targetBase ? `${entity.target}::${targetBase}` : undefined;
+  const displayName = typeof entity.params?.display_name === 'string'
+    ? entity.params.display_name
+    : entity.name;
+  const objectAliases = entity.type.toLowerCase() === 'object'
+    ? unique([
+      normalizeEntityAlias(displayName),
+      normalizeEntityAlias(entity.name),
+    ])
+    : [];
   return unique([
+    ...objectAliases,
     mapped,
     includeBase,
     mappedNestedInclude,
