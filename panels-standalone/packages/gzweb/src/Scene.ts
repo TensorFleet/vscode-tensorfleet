@@ -68,6 +68,47 @@ export interface SceneConfig {
   findResourceCb?: FindResourceCb;
 }
 
+export interface SceneDragConfig {
+  entityName: string;
+  poseName: string;
+  aliases: string[];
+  world: string;
+  baselinePose: {
+    name: string;
+    id?: number;
+    position: { x: number; y: number; z: number };
+    orientation: { x: number; y: number; z: number; w: number };
+  };
+  ignoreNames?: string[];
+  minDeltaMeters?: number;
+}
+
+interface SceneDragState {
+  config: SceneDragConfig;
+  cursorToPoseOffset: THREE.Vector3;
+  lastPreviewPose: {
+    name: string;
+    id?: number;
+    position: { x: number; y: number; z: number };
+    orientation: { x: number; y: number; z: number; w: number };
+  };
+  lastPlacementMode: "surface" | "free_plane";
+  lastPlacementLabel?: string;
+  startPoint: THREE.Vector3;
+  lastPoint: THREE.Vector3;
+  lastSurfaceZ: number | null;
+}
+
+const DRAG_DEFAULT_MIN_DELTA_METERS = 0.02;
+const DRAG_IGNORE_NAMES = new Set([
+  "grid",
+  "boundingBox",
+  "JOINT_VISUAL",
+  "INERTIA_VISUAL",
+  "COM_VISUAL",
+]);
+const DRAG_IGNORE_SUBSTRINGS = ["COLLISION_VISUAL", "_lightHelper"];
+
 /**
  * The scene is where everything is placed, from objects, to lights and cameras.
  *
@@ -156,6 +197,15 @@ export class Scene {
   );
   private currentThirdPersonCameraOffset: THREE.Vector3 = new THREE.Vector3();
   private mousePointerDown: boolean = false;
+
+  private activeDrag: SceneDragState | null = null;
+  private dragControlsWereEnabled: boolean | null = null;
+  private dragPointerId: number | null = null;
+  private boundDragMove: ((e: PointerEvent) => void) | null = null;
+  private boundDragUp: ((e: PointerEvent) => void) | null = null;
+  private boundDragCancel: (() => void) | null = null;
+  private boundDragLostCapture: (() => void) | null = null;
+  private boundDragWindowBlur: (() => void) | null = null;
   private currentFirstPersonLookAt = new THREE.Vector3();
   private cameraLerp: CameraLerpController;
 
@@ -455,7 +505,6 @@ export class Scene {
      * The first-person camera entity event name.
      */
     this.firstPersonEntityEvent = "first_person_entity";
-
     var that = this;
 
     /**
@@ -1477,6 +1526,537 @@ export class Scene {
    */
   public getDomElement(): HTMLCanvasElement {
     return this.renderer.domElement;
+  }
+
+  public on(eventName: string, listener: (...args: any[]) => void): void {
+    this.emitter.on(eventName, listener);
+  }
+
+  public off(eventName: string, listener: (...args: any[]) => void): void {
+    this.emitter.off(eventName, listener);
+  }
+
+  /**
+   * Enable or disable orbit / camera controls.
+   */
+  public setControlsEnabled(enabled: boolean): void {
+    this.controls.enabled = enabled;
+  }
+
+  /**
+   * Return whether orbit / camera controls are enabled.
+   */
+  public getControlsEnabled(): boolean {
+    return this.controls.enabled;
+  }
+
+  /**
+   * Return the currently selected entity name, if any.
+   */
+  public getSelectedEntityName(): string | null {
+    return this.selectedEntity?.name ?? null;
+  }
+
+  /**
+   * Return the current manipulation mode.
+   */
+  public getManipulationMode(): string {
+    return this.manipulationMode;
+  }
+
+  public intersectPointerOnHorizontalPlane(
+    clientX: number,
+    clientY: number,
+    planeZ: number,
+  ): THREE.Vector3 | null {
+    const rect = this.getDomElement().getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.ray.setFromCamera(ndc, this.camera);
+
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -planeZ);
+    const hitPoint = new THREE.Vector3();
+    const intersects = this.ray.ray.intersectPlane(plane, hitPoint);
+    return intersects ? hitPoint.clone() : null;
+  }
+
+  public intersectPointerOnSceneSurface(
+    clientX: number,
+    clientY: number,
+    options?: {
+      ignoreNames?: string[];
+      ignoreNameSubstrings?: string[];
+    },
+  ): { point: THREE.Vector3; surfaceName: string } | null {
+    const rect = this.getDomElement().getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.ray.setFromCamera(ndc, this.camera);
+
+    const intersections = this.ray.intersectObjects(this.scene.children, true);
+    if (intersections.length === 0) {
+      return null;
+    }
+
+    const ignoreNames = new Set(
+      (options?.ignoreNames ?? [])
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0),
+    );
+    const ignoreNameSubstrings = (options?.ignoreNameSubstrings ?? [])
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
+
+    const shouldIgnore = (value: string): boolean => {
+      if (!value) {
+        return false;
+      }
+      if (ignoreNames.has(value)) {
+        return true;
+      }
+      return ignoreNameSubstrings.some((fragment) => value.includes(fragment));
+    };
+
+    for (const hit of intersections) {
+      let root = hit.object as THREE.Object3D | null;
+      while (root?.parent && root.parent !== this.scene) {
+        root = root.parent;
+      }
+
+      const hitName = hit.object.name?.trim() ?? "";
+      const rootName = root?.name?.trim() ?? "";
+      const surfaceName = rootName || hitName;
+      if (!surfaceName) {
+        continue;
+      }
+      if (shouldIgnore(surfaceName) || shouldIgnore(hitName)) {
+        continue;
+      }
+
+      return {
+        point: hit.point.clone(),
+        surfaceName,
+      };
+    }
+
+    return null;
+  }
+
+  public previewPose(
+    world: string,
+    poseNames: string[],
+    pose: {
+      position: { x: number; y: number; z: number };
+      orientation: { x: number; y: number; z: number; w: number };
+    },
+  ): boolean {
+    const candidates = [
+      ...poseNames,
+      ...poseNames.map((name) => (name.includes("::") ? name : `${world}::${name}`)),
+    ];
+    const uniqueCandidates = [...new Set(candidates.filter((name) => name.trim().length > 0))];
+
+    for (const candidate of uniqueCandidates) {
+      try {
+        const obj = this.getByName(candidate);
+        if (!obj) {
+          continue;
+        }
+
+        const parent = obj.parent as
+          | {
+              updateMatrixWorld?: (force?: boolean) => void;
+              worldToLocal?: (v: THREE.Vector3) => THREE.Vector3;
+              getWorldQuaternion?: (q: THREE.Quaternion) => THREE.Quaternion;
+            }
+          | undefined;
+        if (typeof parent?.updateMatrixWorld === "function") {
+          parent.updateMatrixWorld(true);
+        }
+
+        const worldPosition = new THREE.Vector3(
+          pose.position.x,
+          pose.position.y,
+          pose.position.z,
+        );
+        const localPosition =
+          typeof parent?.worldToLocal === "function"
+            ? parent.worldToLocal(worldPosition.clone())
+            : worldPosition;
+
+        const worldQuaternion = new THREE.Quaternion(
+          pose.orientation.x,
+          pose.orientation.y,
+          pose.orientation.z,
+          pose.orientation.w,
+        );
+        let localQuaternion = worldQuaternion;
+        if (typeof parent?.getWorldQuaternion === "function") {
+          const parentWorldQuaternion = new THREE.Quaternion();
+          parent.getWorldQuaternion(parentWorldQuaternion);
+          localQuaternion = parentWorldQuaternion.clone().invert().multiply(worldQuaternion);
+        }
+
+        obj.position.set(localPosition.x, localPosition.y, localPosition.z);
+        obj.quaternion.set(
+          localQuaternion.x,
+          localQuaternion.y,
+          localQuaternion.z,
+          localQuaternion.w,
+        );
+        obj.updateMatrixWorld(true);
+        return true;
+      } catch {
+        // Ignore lookup failures and continue with the next candidate.
+      }
+    }
+
+    return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Drag lifecycle – owned by gzweb Scene
+  // ---------------------------------------------------------------------------
+
+  public startDrag(event: PointerEvent, config: SceneDragConfig): boolean {
+    if (this.activeDrag) {
+      this.finalizeDragInternal(undefined, undefined, "cancel");
+    }
+
+    const bp = config.baselinePose;
+    const startPlacement = this.resolveDragPlacement(
+      event.clientX,
+      event.clientY,
+      config.aliases,
+      bp.position.z,
+    );
+    const startPoint = startPlacement.point
+      ? startPlacement.point.clone()
+      : new THREE.Vector3(bp.position.x, bp.position.y, bp.position.z);
+    const cursorToPoseOffset = new THREE.Vector3(
+      bp.position.x - startPoint.x,
+      bp.position.y - startPoint.y,
+      bp.position.z - startPoint.z,
+    );
+
+    this.activeDrag = {
+      config,
+      cursorToPoseOffset,
+      lastPreviewPose: { ...bp },
+      lastPlacementMode:
+        startPlacement.mode === "surface" ? "surface" : "free_plane",
+      lastPlacementLabel:
+        startPlacement.mode !== "none" ? startPlacement.label : undefined,
+      startPoint: startPoint.clone(),
+      lastPoint: startPoint.clone(),
+      lastSurfaceZ:
+        startPlacement.mode === "surface" && startPlacement.point
+          ? startPlacement.point.z
+          : null,
+    };
+
+    this.dragControlsWereEnabled = this.controls.enabled;
+    this.controls.enabled = false;
+
+    const domEl = this.getDomElement();
+    this.dragPointerId = event.pointerId;
+    try {
+      domEl.setPointerCapture(event.pointerId);
+    } catch {
+      // Some renderers may not support explicit pointer capture.
+    }
+    domEl.style.cursor = "grabbing";
+
+    this.boundDragMove = (e: PointerEvent) => this.handleDragMove(e);
+    this.boundDragUp = (e: PointerEvent) =>
+      this.finalizeDragInternal(e.clientX, e.clientY, "up");
+    this.boundDragCancel = () =>
+      this.finalizeDragInternal(undefined, undefined, "cancel");
+    this.boundDragLostCapture = () =>
+      this.finalizeDragInternal(undefined, undefined, "lost_capture");
+    this.boundDragWindowBlur = () =>
+      this.finalizeDragInternal(undefined, undefined, "cancel");
+
+    window.addEventListener("pointermove", this.boundDragMove, true);
+    window.addEventListener("pointerup", this.boundDragUp, true);
+    window.addEventListener("pointercancel", this.boundDragCancel, true);
+    domEl.addEventListener(
+      "lostpointercapture",
+      this.boundDragLostCapture,
+      true,
+    );
+    window.addEventListener("blur", this.boundDragWindowBlur, true);
+
+    this.emitter.emit("manipulation_state", {
+      dragging: true,
+      entity: config.entityName,
+    });
+
+    return true;
+  }
+
+  public cancelDrag(): void {
+    this.finalizeDragInternal(undefined, undefined, "cancel");
+  }
+
+  public isDragging(): boolean {
+    return this.activeDrag !== null;
+  }
+
+  public isDragTarget(entityName: string): boolean {
+    if (!this.activeDrag || !entityName) return false;
+    const aliases = this.activeDrag.config.aliases;
+    if (aliases.includes(entityName)) return true;
+    return aliases.some(
+      (a) => entityName.endsWith(`::${a}`) || entityName.startsWith(`${a}::`) || entityName.includes(`::${a}::`)
+    );
+  }
+
+  private handleDragMove(event: PointerEvent): void {
+    const drag = this.activeDrag;
+    if (!drag) return;
+
+    if (event.buttons === 0) {
+      this.finalizeDragInternal(event.clientX, event.clientY, "no_buttons");
+      return;
+    }
+
+    const fallbackZ =
+      drag.lastSurfaceZ !== null
+        ? drag.lastSurfaceZ + drag.cursorToPoseOffset.z
+        : drag.config.baselinePose.position.z;
+    const placement = this.resolveDragPlacement(
+      event.clientX,
+      event.clientY,
+      drag.config.aliases,
+      fallbackZ,
+    );
+
+    if (placement.mode === "surface" && placement.point) {
+      drag.lastSurfaceZ = placement.point.z;
+    }
+
+    const previewPose = this.composeDragPose(drag, placement);
+    if (!previewPose || !placement.point) {
+      this.getDomElement().style.cursor = "not-allowed";
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    drag.lastPoint = placement.point.clone();
+    drag.lastPreviewPose = { ...previewPose };
+    drag.lastPlacementMode = placement.mode as "surface" | "free_plane";
+    drag.lastPlacementLabel = placement.label;
+
+    this.previewPose(drag.config.world, drag.config.aliases, previewPose);
+    this.getDomElement().style.cursor =
+      placement.mode === "surface" ? "grabbing" : "crosshair";
+
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  private finalizeDragInternal(
+    clientX: number | undefined,
+    clientY: number | undefined,
+    reason: "up" | "cancel" | "lost_capture" | "no_buttons",
+  ): void {
+    const drag = this.activeDrag;
+    if (!drag) return;
+
+    const bp = drag.config.baselinePose;
+    const minDelta =
+      drag.config.minDeltaMeters ?? DRAG_DEFAULT_MIN_DELTA_METERS;
+
+    let commitPose: SceneDragState["lastPreviewPose"] | null = null;
+
+    if (reason !== "cancel" && reason !== "lost_capture") {
+      let releasePose: SceneDragState["lastPreviewPose"] | null = null;
+      if (typeof clientX === "number" && typeof clientY === "number") {
+        const fallbackZ =
+          drag.lastSurfaceZ !== null
+            ? drag.lastSurfaceZ + drag.cursorToPoseOffset.z
+            : bp.position.z;
+        const placement = this.resolveDragPlacement(
+          clientX,
+          clientY,
+          drag.config.aliases,
+          fallbackZ,
+        );
+        releasePose = this.composeDragPose(drag, placement);
+      }
+      const targetPose = releasePose ?? drag.lastPreviewPose;
+      const dx = targetPose.position.x - bp.position.x;
+      const dy = targetPose.position.y - bp.position.y;
+      const dz = targetPose.position.z - bp.position.z;
+      const magnitude = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      if (magnitude >= minDelta) {
+        commitPose = targetPose;
+      }
+    }
+
+    if (commitPose) {
+      this.emitter.emit("manipulation_commit", {
+        name: commitPose.name,
+        position: { ...commitPose.position },
+        orientation: { ...commitPose.orientation },
+      });
+    } else {
+      this.previewPose(drag.config.world, drag.config.aliases, bp);
+    }
+
+    this.cleanupDrag();
+  }
+
+  private cleanupDrag(): void {
+    const drag = this.activeDrag;
+    const entityName = drag?.config.entityName ?? "";
+    this.activeDrag = null;
+
+    const domEl = this.getDomElement();
+    domEl.style.cursor = "";
+
+    if (this.dragControlsWereEnabled !== null) {
+      this.controls.enabled = this.dragControlsWereEnabled;
+    }
+    this.dragControlsWereEnabled = null;
+
+    if (this.dragPointerId !== null) {
+      try {
+        domEl.releasePointerCapture(this.dragPointerId);
+      } catch {
+        // Ignore if pointer capture was never set.
+      }
+      this.dragPointerId = null;
+    }
+
+    if (this.boundDragMove) {
+      window.removeEventListener("pointermove", this.boundDragMove, true);
+    }
+    if (this.boundDragUp) {
+      window.removeEventListener("pointerup", this.boundDragUp, true);
+    }
+    if (this.boundDragCancel) {
+      window.removeEventListener("pointercancel", this.boundDragCancel, true);
+    }
+    if (this.boundDragLostCapture) {
+      domEl.removeEventListener(
+        "lostpointercapture",
+        this.boundDragLostCapture,
+        true,
+      );
+    }
+    if (this.boundDragWindowBlur) {
+      window.removeEventListener("blur", this.boundDragWindowBlur, true);
+    }
+    this.boundDragMove = null;
+    this.boundDragUp = null;
+    this.boundDragCancel = null;
+    this.boundDragLostCapture = null;
+    this.boundDragWindowBlur = null;
+
+    this.emitter.emit("manipulation_state", {
+      dragging: false,
+      entity: entityName,
+    });
+  }
+
+  private resolveDragPlacement(
+    clientX: number,
+    clientY: number,
+    aliases: string[],
+    planeZ: number,
+  ): {
+    point: THREE.Vector3 | null;
+    mode: "surface" | "free_plane" | "none";
+    label: string;
+  } {
+    const ignoreNames = [...DRAG_IGNORE_NAMES, ...aliases];
+    if (this.activeDrag?.config.ignoreNames) {
+      ignoreNames.push(...this.activeDrag.config.ignoreNames);
+    }
+
+    const surface = this.intersectPointerOnSceneSurface(clientX, clientY, {
+      ignoreNames,
+      ignoreNameSubstrings: DRAG_IGNORE_SUBSTRINGS,
+    });
+    if (surface) {
+      const aliasSet = new Set(aliases);
+      const nameMatches =
+        aliasSet.has(surface.surfaceName) ||
+        aliases.some(
+          (a) =>
+            surface.surfaceName.includes(a) || a.includes(surface.surfaceName),
+        );
+      if (!nameMatches) {
+        return {
+          point: surface.point,
+          mode: "surface",
+          label: surface.surfaceName,
+        };
+      }
+    }
+
+    const planePoint = this.intersectPointerOnHorizontalPlane(
+      clientX,
+      clientY,
+      planeZ,
+    );
+    if (planePoint) {
+      return {
+        point: planePoint,
+        mode: "free_plane",
+        label: `z=${planeZ.toFixed(2)} free plane`,
+      };
+    }
+
+    return {
+      point: null,
+      mode: "none",
+      label: "No valid placement point under cursor",
+    };
+  }
+
+  private composeDragPose(
+    drag: SceneDragState,
+    placement: { point: THREE.Vector3 | null; mode: string; label: string },
+  ): SceneDragState["lastPreviewPose"] | null {
+    if (!placement.point) return null;
+    const bp = drag.config.baselinePose;
+    const factor = 10000;
+    return {
+      name: bp.name,
+      id: bp.id,
+      position: {
+        x:
+          Math.round(
+            (placement.point.x + drag.cursorToPoseOffset.x) * factor,
+          ) / factor,
+        y:
+          Math.round(
+            (placement.point.y + drag.cursorToPoseOffset.y) * factor,
+          ) / factor,
+        z:
+          Math.round(
+            (placement.point.z + drag.cursorToPoseOffset.z) * factor,
+          ) / factor,
+      },
+      orientation: { ...bp.orientation },
+    };
   }
 
   /**

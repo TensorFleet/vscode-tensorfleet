@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { AudioTopic } from "./AudioTopic";
 import { Publisher } from "./Publisher";
-import { Scene } from "./Scene";
+import { Scene, SceneDragConfig } from "./Scene";
 import { SDFParser } from "./SDFParser";
 import { Shaders } from "./Shaders";
 import { map, Observable, Subscription } from "rxjs";
@@ -291,6 +291,129 @@ export class SceneManager {
     if (this.scene) {
       this.scene.emitter.emit("select_entity", entityName);
     }
+  }
+
+  public clearSelection(): void {
+    if (this.scene) {
+      this.scene.selectEntity(null);
+    }
+  }
+
+  public getSelectedEntityName(): string | null {
+    if (!this.scene || typeof this.scene.getSelectedEntityName !== "function") {
+      return null;
+    }
+    return this.scene.getSelectedEntityName();
+  }
+
+  public setManipulationMode(mode: string): void {
+    if (this.scene && typeof this.scene.setManipulationMode === "function") {
+      this.scene.setManipulationMode(mode);
+    }
+  }
+
+  public getManipulationMode(): string {
+    if (!this.scene || typeof this.scene.getManipulationMode !== "function") {
+      return "view";
+    }
+    return this.scene.getManipulationMode();
+  }
+
+  public setControlsEnabled(enabled: boolean): void {
+    if (this.scene && typeof this.scene.setControlsEnabled === "function") {
+      this.scene.setControlsEnabled(enabled);
+    }
+  }
+
+  public getControlsEnabled(): boolean {
+    if (!this.scene || typeof this.scene.getControlsEnabled !== "function") {
+      return true;
+    }
+    return this.scene.getControlsEnabled();
+  }
+
+  public getDomElement(): HTMLCanvasElement | null {
+    if (!this.scene || typeof this.scene.getDomElement !== "function") {
+      return null;
+    }
+    return this.scene.getDomElement();
+  }
+
+  public intersectPointerOnHorizontalPlane(
+    clientX: number,
+    clientY: number,
+    planeZ: number,
+  ): THREE.Vector3 | null {
+    if (
+      !this.scene ||
+      typeof this.scene.intersectPointerOnHorizontalPlane !== "function"
+    ) {
+      return null;
+    }
+    return this.scene.intersectPointerOnHorizontalPlane(clientX, clientY, planeZ);
+  }
+
+  public intersectPointerOnSceneSurface(
+    clientX: number,
+    clientY: number,
+    options?: {
+      ignoreNames?: string[];
+      ignoreNameSubstrings?: string[];
+    },
+  ): { point: THREE.Vector3; surfaceName: string } | null {
+    if (
+      !this.scene ||
+      typeof this.scene.intersectPointerOnSceneSurface !== "function"
+    ) {
+      return null;
+    }
+    return this.scene.intersectPointerOnSceneSurface(clientX, clientY, options);
+  }
+
+  public previewPose(
+    world: string,
+    poseNames: string[],
+    pose: {
+      position: { x: number; y: number; z: number };
+      orientation: { x: number; y: number; z: number; w: number };
+    },
+  ): boolean {
+    if (!this.scene || typeof this.scene.previewPose !== "function") {
+      return false;
+    }
+    return this.scene.previewPose(world, poseNames, pose);
+  }
+
+  public onSceneEvent(eventName: string, listener: (...args: any[]) => void): void {
+    if (this.scene && typeof this.scene.on === "function") {
+      this.scene.on(eventName, listener);
+    }
+  }
+
+  public offSceneEvent(eventName: string, listener: (...args: any[]) => void): void {
+    if (this.scene && typeof this.scene.off === "function") {
+      this.scene.off(eventName, listener);
+    }
+  }
+
+  public startDrag(event: PointerEvent, config: SceneDragConfig): boolean {
+    if (!this.scene || typeof this.scene.startDrag !== "function") {
+      return false;
+    }
+    return this.scene.startDrag(event, config);
+  }
+
+  public cancelDrag(): void {
+    if (this.scene && typeof this.scene.cancelDrag === "function") {
+      this.scene.cancelDrag();
+    }
+  }
+
+  public isDragging(): boolean {
+    if (!this.scene || typeof this.scene.isDragging !== "function") {
+      return false;
+    }
+    return this.scene.isDragging();
   }
 
   /**
@@ -600,6 +723,12 @@ export class SceneManager {
       (msg) => {
         msg["pose"].forEach((pose: any) => {
           let entityName = pose["name"];
+          if (
+            typeof this.scene.isDragTarget === "function" &&
+            this.scene.isDragTarget(entityName)
+          ) {
+            return;
+          }
           // Objects created by Gz3D have an unique name, which is the
           // name plus the id.
           const entity = this.scene.getByName(entityName);
