@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ros2Bridge } from '../../ros2-bridge';
+import { ros2Bridge } from 'tensorfleet-ros';
 import { DroneStateModel } from '../../../packages/tensorfleet-util/src/drone/drone-state-model';
 import { DroneMap } from './map/DroneMap';
 import './MissionControl.css';

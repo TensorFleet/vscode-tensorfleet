@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ros2Bridge, Subscription } from '../ros2-bridge';
+import { ros2Bridge, Subscription } from 'tensorfleet-ros';
 import { type ImageMessage } from 'tensorfleet-util/ros/ros-types';
 import {
   type CameraInfo,

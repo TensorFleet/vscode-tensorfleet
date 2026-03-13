@@ -5,7 +5,7 @@
  *  - Uses ros2Bridge to call a simulator service if available
  */
 
-import { ros2Bridge } from "@/ros2-bridge";
+import { ros2Bridge } from "tensorfleet-ros";
 
 export class SimulationController {
   /**

@@ -10,7 +10,7 @@
 // - Removed framework components (Stack, EmptyState, ThemeProvider)
 
 import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
-import { ros2Bridge } from '../../ros2-bridge';
+import { ros2Bridge } from 'tensorfleet-ros';
 import { getTopicSuggestions } from '../../utils/discoveredTopics';
 import { DirectionalPad } from './DirectionalPad';
 import { geometryMsgOptions } from './constants';
