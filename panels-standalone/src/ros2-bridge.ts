@@ -471,6 +471,16 @@ export class ROS2Bridge {
     }) as T;
   }
 
+  async waitForService(name: string, timeoutMs = 10_000): Promise<void> {
+    if (!this.serverInfoReady) throw new Error("waitForService() before connect");
+    await this.serverInfoReady;
+    if (!this.client) throw new Error("waitForService() before connect");
+    if (typeof this.client.waitForService !== "function") {
+      throw new Error("FoxgloveWsClient.waitForService() not available");
+    }
+    await this.client.waitForService(name, timeoutMs);
+  }
+
   /**
    * Return ROS2 node names via rosapi:
    *   ros2 service call /rosapi/nodes rosapi_msgs/srv/Nodes "{}"

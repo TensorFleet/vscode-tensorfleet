@@ -33,6 +33,36 @@ function toDegreesMaybeScaled(value: number | undefined): number | undefined {
   return value;
 }
 
+function headingRadiansFromState(state: Partial<DroneState>): number {
+  if (typeof state.heading?.yaw === 'number' && Number.isFinite(state.heading.yaw)) {
+    return state.heading.yaw;
+  }
+
+  const rawHeading = state.global_position_int?.hdg;
+  if (typeof rawHeading === 'number' && Number.isFinite(rawHeading)) {
+    const headingDeg = Math.abs(rawHeading) > 360 ? rawHeading / 100 : rawHeading;
+    return (headingDeg * Math.PI) / 180;
+  }
+
+  const orientation = state.local?.orientation ?? state.imu?.orientation;
+  if (!orientation) {
+    return 0;
+  }
+
+  const yawEnu = quatToYaw(orientation);
+  return normalizeHeading((Math.PI / 2) - yawEnu);
+}
+
+function quatToYaw(quat: { x: number; y: number; z: number; w: number }): number {
+  const { x, y, z, w } = quat;
+  return Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
+}
+
+function normalizeHeading(angle: number): number {
+  const twoPi = Math.PI * 2;
+  return ((angle % twoPi) + twoPi) % twoPi;
+}
+
 
 // Bigger + fully compatible SVG (explicit width/height; rgb + fill-opacity)
 const NAV_ICON_SRC =
@@ -236,7 +266,7 @@ export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) =
       const coord = fromLonLat([lon, lat]);
       targetCoordRef.current = coord;
 
-      const headingRad = state.yaw ?? 0.0;
+      const headingRad = headingRadiansFromState(state);
       targetHeadingRef.current = headingRad;
 
       if (!hasCenteredRef.current) {

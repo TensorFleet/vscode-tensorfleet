@@ -78,6 +78,18 @@ function landedText(n?: number) {
   }
 }
 
+function autopilotText(name?: string) {
+  if (!name) return NDASH;
+  switch (name) {
+    case "px4":
+      return "PX4";
+    case "ardupilot":
+      return "ArduPilot";
+    default:
+      return "Unknown";
+  }
+}
+
 export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
   const s: any = useDroneState(model);
 
@@ -95,13 +107,12 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
   //   const val = t > 1.5 ? t : t * 100;
   //   return `${Math.round(val)}%`;
   // })();
-  const throttleText = NDASH;
-
   const faults: string[] = s?.status?.faults || [];
   const fcuOk = !!s?.vehicle?.connected;
   const gcsOk = !!(s?.status?.gcs_link ?? s?.vehicle?.connected);
   const armable = s?.status?.armable;
   const armReasons: string[] = s?.status?.arm_reasons || [];
+  const lastFcuMessage = s?.status?.last_fcu_message ?? s?.statustext?.text;
 
   const armableText =
     armable === undefined ? NDASH : armable ? "Yes" : "No";
@@ -121,6 +132,7 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
 
       <div className="dsp-body">
         {/* Vehicle */}
+        <Row label={<span>Flight Stack</span>} value={autopilotText(s?.vehicle?.autopilot)} />
         <Row label={<span>📡 Mode</span>} value={s?.vehicle?.mode ?? NDASH} />
         <Row label={<span>Armed</span>} value={s?.vehicle?.armed ? "Yes" : "No"} />
         <Row label={<span>Guided</span>} value={s?.vehicle?.guided ? "Yes" : "No"} />
@@ -170,6 +182,7 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
         <Row label={<span>🛠️ Faults</span>} value={(faults.length ? faults.join(", ") : "None")} />
         <Row label={<span>Armable</span>} value={armableText} />
         <Row label={<span>Arm reasons</span>} value={armReasonsText} />
+        <Row label={<span>FCU message</span>} value={lastFcuMessage || NDASH} />
 
         <hr className="dsp-sep" />
 
