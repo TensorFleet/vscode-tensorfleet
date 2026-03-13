@@ -1,5 +1,5 @@
 import { EntityCardData } from './EntityCardData';
-import { getGazeboEntityName } from './posePolicy';
+import { getGazeboEntityName, getRuntimePoseEntityName } from './posePolicy';
 
 export type PoseVector = { x: number; y: number; z: number };
 export type PoseQuaternion = { x: number; y: number; z: number; w: number };
@@ -77,13 +77,18 @@ export const resolveVisualOffset = (
 };
 
 export const getEntityNameCandidates = (entity: EntityCardData): string[] => {
+  const runtimeTarget = getRuntimePoseEntityName(entity);
   const mapped = getGazeboEntityName(entity);
+  const runtimeBase = runtimeTarget.endsWith('_include')
+    ? runtimeTarget.slice(0, -'_include'.length)
+    : undefined;
   const includeBase = mapped.endsWith('_include')
     ? mapped.slice(0, -'_include'.length)
     : undefined;
   const targetBase = entity.target.endsWith('_include')
     ? entity.target.slice(0, -'_include'.length)
     : undefined;
+  const runtimeNestedInclude = runtimeBase ? `${runtimeTarget}::${runtimeBase}` : undefined;
   const mappedNestedInclude = includeBase ? `${mapped}::${includeBase}` : undefined;
   const targetNestedInclude = targetBase ? `${entity.target}::${targetBase}` : undefined;
   const displayName = typeof entity.params?.display_name === 'string'
@@ -97,6 +102,9 @@ export const getEntityNameCandidates = (entity: EntityCardData): string[] => {
     : [];
   return unique([
     ...objectAliases,
+    runtimeTarget,
+    runtimeBase,
+    runtimeNestedInclude,
     mapped,
     includeBase,
     mappedNestedInclude,

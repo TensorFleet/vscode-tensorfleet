@@ -31,6 +31,18 @@ const sampleObjectEntity: EntityCardData = {
   },
 };
 
+const sampleObjectWithRuntimeTarget: EntityCardData = {
+  name: 'Mug',
+  type: 'object',
+  target: 'Room_Essentials_Mug_White_Yellow',
+  params: {
+    display_name: 'Mug',
+    runtime_pose_entity: 'mug',
+    gazebo_entity: 'Room_Essentials_Mug_White_Yellow',
+    model_names: ['Room_Essentials_Mug_White_Yellow'],
+  },
+};
+
 describe('moveControl', () => {
   it('builds candidate names including _include-stripped variants', () => {
     expect(getEntityNameCandidates(sampleEntity)).toEqual([
@@ -43,6 +55,14 @@ describe('moveControl', () => {
 
   it('prefers normalized display aliases first for movable objects', () => {
     expect(getEntityNameCandidates(sampleObjectEntity)).toEqual([
+      'mug',
+      'Room_Essentials_Mug_White_Yellow',
+      'Mug',
+    ]);
+  });
+
+  it('prefers explicit runtime pose target before gazebo asset names', () => {
+    expect(getEntityNameCandidates(sampleObjectWithRuntimeTarget)).toEqual([
       'mug',
       'Room_Essentials_Mug_White_Yellow',
       'Mug',

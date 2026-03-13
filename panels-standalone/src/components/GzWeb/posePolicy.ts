@@ -26,6 +26,19 @@ export const getGazeboEntityName = (entity: GazeboEntityTarget | null | undefine
   return entity.target;
 };
 
+export const getRuntimePoseEntityName = (entity: GazeboEntityTarget | null | undefined): string => {
+  if (!entity) return '';
+  const runtimePoseEntity = entity.params?.runtime_pose_entity;
+  if (typeof runtimePoseEntity === 'string' && runtimePoseEntity.trim().length > 0) {
+    return runtimePoseEntity.trim();
+  }
+  const poseEntity = entity.params?.pose_entity;
+  if (typeof poseEntity === 'string' && poseEntity.trim().length > 0) {
+    return poseEntity.trim();
+  }
+  return getGazeboEntityName(entity);
+};
+
 export const getPoseEditAccess = (entity: PosePolicyEntity | null): PoseEditAccess => {
   if (!entity) return { enabled: false };
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { getGazeboEntityName, getPoseEditAccess } from './posePolicy';
+import { getGazeboEntityName, getPoseEditAccess, getRuntimePoseEntityName } from './posePolicy';
 
 describe('posePolicy', () => {
   it('prefers canonical gazebo_entity over model_names aliases', () => {
@@ -21,6 +21,18 @@ describe('posePolicy', () => {
         params: { model_names: ['x500_0', 'x500_0::base_link'] },
       }),
     ).toBe('x500_0');
+  });
+
+  it('prefers explicit runtime pose entity over gazebo entity', () => {
+    expect(
+      getRuntimePoseEntityName({
+        target: 'fallback_target',
+        params: {
+          runtime_pose_entity: 'mug',
+          gazebo_entity: 'Room_Essentials_Mug_White_Yellow',
+        },
+      }),
+    ).toBe('mug');
   });
 
   it('respects runtime_pose_editable false with note', () => {
