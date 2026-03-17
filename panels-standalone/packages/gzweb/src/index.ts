@@ -11,7 +11,6 @@ export { PBRMaterial } from "./PBRMaterial";
 export { Pose } from "./Pose";
 export { Publisher } from "./Publisher";
 export { Scene } from "./Scene";
-export type { SceneDragConfig } from "./Scene";
 export { SceneManager, SceneManagerConfig } from "./SceneManager";
 export { SDFParser } from "./SDFParser";
 export { Topic } from "./Topic";

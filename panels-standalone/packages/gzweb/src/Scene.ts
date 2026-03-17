@@ -10,6 +10,7 @@ import { EventEmitter2 } from "eventemitter2";
 import { GzObjLoader } from "./GzObjLoader";
 import { ModelUserData } from "./ModelUserData";
 import { OrbitControls } from "../include/OrbitControls";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls";
 import { LayerMembershipManager } from "./LayerMembershipManager";
 import { CameraLerpController } from "./CameraLerpController";
 
@@ -67,47 +68,6 @@ export interface SceneConfig {
   backgroundColor?: THREE.Color;
   findResourceCb?: FindResourceCb;
 }
-
-export interface SceneDragConfig {
-  entityName: string;
-  poseName: string;
-  aliases: string[];
-  world: string;
-  baselinePose: {
-    name: string;
-    id?: number;
-    position: { x: number; y: number; z: number };
-    orientation: { x: number; y: number; z: number; w: number };
-  };
-  ignoreNames?: string[];
-  minDeltaMeters?: number;
-}
-
-interface SceneDragState {
-  config: SceneDragConfig;
-  cursorToPoseOffset: THREE.Vector3;
-  lastPreviewPose: {
-    name: string;
-    id?: number;
-    position: { x: number; y: number; z: number };
-    orientation: { x: number; y: number; z: number; w: number };
-  };
-  lastPlacementMode: "surface" | "free_plane";
-  lastPlacementLabel?: string;
-  startPoint: THREE.Vector3;
-  lastPoint: THREE.Vector3;
-  lastSurfaceZ: number | null;
-}
-
-const DRAG_DEFAULT_MIN_DELTA_METERS = 0.02;
-const DRAG_IGNORE_NAMES = new Set([
-  "grid",
-  "boundingBox",
-  "JOINT_VISUAL",
-  "INERTIA_VISUAL",
-  "COM_VISUAL",
-]);
-const DRAG_IGNORE_SUBSTRINGS = ["COLLISION_VISUAL", "_lightHelper"];
 
 /**
  * The scene is where everything is placed, from objects, to lights and cameras.
@@ -198,14 +158,17 @@ export class Scene {
   private currentThirdPersonCameraOffset: THREE.Vector3 = new THREE.Vector3();
   private mousePointerDown: boolean = false;
 
-  private activeDrag: SceneDragState | null = null;
-  private dragControlsWereEnabled: boolean | null = null;
-  private dragPointerId: number | null = null;
-  private boundDragMove: ((e: PointerEvent) => void) | null = null;
-  private boundDragUp: ((e: PointerEvent) => void) | null = null;
-  private boundDragCancel: (() => void) | null = null;
-  private boundDragLostCapture: (() => void) | null = null;
-  private boundDragWindowBlur: (() => void) | null = null;
+  private transformControls: TransformControls | null = null;
+  private gizmoActive: boolean = false;
+  private gizmoDragEntityName: string = "";
+  private manipulationTargetNames: Set<string> = new Set();
+  private gizmoDragStartPose:
+    | {
+        position: THREE.Vector3;
+        orientation: THREE.Quaternion;
+      }
+    | null = null;
+
   private currentFirstPersonLookAt = new THREE.Vector3();
   private cameraLerp: CameraLerpController;
 
@@ -512,7 +475,7 @@ export class Scene {
      * @param {string} entityName The name of the entity to select.
      */
     this.emitter.on(this.selectEntityEvent, function (entityName) {
-      var object = that.scene.getObjectByName(entityName);
+      var object = that.findSelectableEntityByName(entityName);
       if (object !== undefined && object !== null) {
         that.selectEntity(object);
       }
@@ -830,6 +793,8 @@ export class Scene {
     this.controls.screenSpacePanning = true;
 
     this.cameraLerp = new CameraLerpController(this.camera, this.controls);
+
+    this.initTransformControls();
 
     // Bounding Box
     var indices = new Uint16Array([
@@ -1277,32 +1242,22 @@ export class Scene {
       return;
     }*/
 
-    // Manipulation modes
-    // Model found
+    // Viewport click-to-select when manipulation mode is active.
+    // Skip if the TransformControls gizmo is currently hovered (the gizmo
+    // handles its own pointer events).
     if (model) {
-      // Do nothing to the floor plane
       if (model.name === "plane") {
-        // this.timeDown = new Date().getTime();
-      }
-      /*else if (this.modelManipulator.pickerNames.indexOf(model.name) >= 0)
-      {
-        // Do not attach manipulator to itself
-      }*/
-      // Attach manipulator to model
-      else if (model.name !== "") {
-        if (mainPointer && model.parent === this.scene) {
-          //this.selectEntity(model);
+        // Floor plane – ignore.
+      } else if (model.name !== "") {
+        if (
+          mainPointer &&
+          model.parent === this.scene &&
+          this.manipulationMode !== "view" &&
+          this.isManipulationAllowedForEntity(model.name) &&
+          !(this.transformControls && this.transformControls.axis)
+        ) {
+          this.selectEntity(model);
         }
-      }
-      // Manipulator pickers, for mouse
-      /*else if (this.modelManipulator.hovered)
-      {
-        this.modelManipulator.update();
-        this.modelManipulator.object.updateMatrixWorld();
-      }*/
-      // Sky
-      else {
-        // this.timeDown = new Date().getTime();
       }
     }
     // Plane from below, for example
@@ -1455,6 +1410,7 @@ export class Scene {
 
     let allObjects: THREE.Object3D[] = [];
     getDescendants(this.scene, allObjects);
+    allObjects = allObjects.filter(o => !this.isTransformControlsDescendant(o));
     let objects: any[] = this.ray.intersectObjects(allObjects);
 
     let model: THREE.Object3D = new THREE.Object3D();
@@ -1630,6 +1586,8 @@ export class Scene {
     };
 
     for (const hit of intersections) {
+      if (this.isTransformControlsDescendant(hit.object)) continue;
+
       let root = hit.object as THREE.Object3D | null;
       while (root?.parent && root.parent !== this.scene) {
         root = root.parent;
@@ -1727,336 +1685,182 @@ export class Scene {
   }
 
   // ---------------------------------------------------------------------------
-  // Drag lifecycle – owned by gzweb Scene
+  // TransformControls (3D gizmo) integration
   // ---------------------------------------------------------------------------
 
-  public startDrag(event: PointerEvent, config: SceneDragConfig): boolean {
-    if (this.activeDrag) {
-      this.finalizeDragInternal(undefined, undefined, "cancel");
-    }
+  private initTransformControls(): void {
+    const tc = new TransformControls(this.camera, this.getDomElement());
+    tc.setSize(0.75);
+    tc.setSpace("world");
+    this.scene.add(tc);
+    this.transformControls = tc;
 
-    const bp = config.baselinePose;
-    const startPlacement = this.resolveDragPlacement(
-      event.clientX,
-      event.clientY,
-      config.aliases,
-      bp.position.z,
-    );
-    const startPoint = startPlacement.point
-      ? startPlacement.point.clone()
-      : new THREE.Vector3(bp.position.x, bp.position.y, bp.position.z);
-    const cursorToPoseOffset = new THREE.Vector3(
-      bp.position.x - startPoint.x,
-      bp.position.y - startPoint.y,
-      bp.position.z - startPoint.z,
-    );
+    const onDraggingChanged = (event: any) => {
+      const dragging = event.value === true;
+      this.controls.enabled = !dragging;
+      this.gizmoActive = dragging;
 
-    this.activeDrag = {
-      config,
-      cursorToPoseOffset,
-      lastPreviewPose: { ...bp },
-      lastPlacementMode:
-        startPlacement.mode === "surface" ? "surface" : "free_plane",
-      lastPlacementLabel:
-        startPlacement.mode !== "none" ? startPlacement.label : undefined,
-      startPoint: startPoint.clone(),
-      lastPoint: startPoint.clone(),
-      lastSurfaceZ:
-        startPlacement.mode === "surface" && startPlacement.point
-          ? startPlacement.point.z
-          : null,
+      if (dragging) {
+        this.gizmoDragEntityName = this.selectedEntity?.name ?? "";
+        this.gizmoDragStartPose = this.captureSelectedEntityPose();
+        this.emitter.emit("manipulation_state", {
+          dragging: true,
+          entity: this.gizmoDragEntityName,
+        });
+      } else {
+        this.commitGizmoPoseIfChanged();
+        this.emitter.emit("manipulation_state", {
+          dragging: false,
+          entity: this.gizmoDragEntityName,
+        });
+        this.gizmoDragEntityName = "";
+        this.gizmoDragStartPose = null;
+      }
     };
-
-    this.dragControlsWereEnabled = this.controls.enabled;
-    this.controls.enabled = false;
-
-    const domEl = this.getDomElement();
-    this.dragPointerId = event.pointerId;
-    try {
-      domEl.setPointerCapture(event.pointerId);
-    } catch {
-      // Some renderers may not support explicit pointer capture.
-    }
-    domEl.style.cursor = "grabbing";
-
-    this.boundDragMove = (e: PointerEvent) => this.handleDragMove(e);
-    this.boundDragUp = (e: PointerEvent) =>
-      this.finalizeDragInternal(e.clientX, e.clientY, "up");
-    this.boundDragCancel = () =>
-      this.finalizeDragInternal(undefined, undefined, "cancel");
-    this.boundDragLostCapture = () =>
-      this.finalizeDragInternal(undefined, undefined, "lost_capture");
-    this.boundDragWindowBlur = () =>
-      this.finalizeDragInternal(undefined, undefined, "cancel");
-
-    window.addEventListener("pointermove", this.boundDragMove, true);
-    window.addEventListener("pointerup", this.boundDragUp, true);
-    window.addEventListener("pointercancel", this.boundDragCancel, true);
-    domEl.addEventListener(
-      "lostpointercapture",
-      this.boundDragLostCapture,
-      true,
-    );
-    window.addEventListener("blur", this.boundDragWindowBlur, true);
-
-    this.emitter.emit("manipulation_state", {
-      dragging: true,
-      entity: config.entityName,
-    });
-
-    return true;
+    tc.addEventListener("dragging-changed", onDraggingChanged);
   }
 
-  public cancelDrag(): void {
-    this.finalizeDragInternal(undefined, undefined, "cancel");
-  }
-
-  public isDragging(): boolean {
-    return this.activeDrag !== null;
-  }
-
-  public isDragTarget(entityName: string): boolean {
-    if (!this.activeDrag || !entityName) return false;
-    const aliases = this.activeDrag.config.aliases;
-    if (aliases.includes(entityName)) return true;
-    return aliases.some(
-      (a) => entityName.endsWith(`::${a}`) || entityName.startsWith(`${a}::`) || entityName.includes(`::${a}::`)
-    );
-  }
-
-  private handleDragMove(event: PointerEvent): void {
-    const drag = this.activeDrag;
-    if (!drag) return;
-
-    if (event.buttons === 0) {
-      this.finalizeDragInternal(event.clientX, event.clientY, "no_buttons");
-      return;
-    }
-
-    const fallbackZ =
-      drag.lastSurfaceZ !== null
-        ? drag.lastSurfaceZ + drag.cursorToPoseOffset.z
-        : drag.config.baselinePose.position.z;
-    const placement = this.resolveDragPlacement(
-      event.clientX,
-      event.clientY,
-      drag.config.aliases,
-      fallbackZ,
-    );
-
-    if (placement.mode === "surface" && placement.point) {
-      drag.lastSurfaceZ = placement.point.z;
-    }
-
-    const previewPose = this.composeDragPose(drag, placement);
-    if (!previewPose || !placement.point) {
-      this.getDomElement().style.cursor = "not-allowed";
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-
-    drag.lastPoint = placement.point.clone();
-    drag.lastPreviewPose = { ...previewPose };
-    drag.lastPlacementMode = placement.mode as "surface" | "free_plane";
-    drag.lastPlacementLabel = placement.label;
-
-    this.previewPose(drag.config.world, drag.config.aliases, previewPose);
-    this.getDomElement().style.cursor =
-      placement.mode === "surface" ? "grabbing" : "crosshair";
-
-    event.preventDefault();
-    event.stopPropagation();
-  }
-
-  private finalizeDragInternal(
-    clientX: number | undefined,
-    clientY: number | undefined,
-    reason: "up" | "cancel" | "lost_capture" | "no_buttons",
-  ): void {
-    const drag = this.activeDrag;
-    if (!drag) return;
-
-    const bp = drag.config.baselinePose;
-    const minDelta =
-      drag.config.minDeltaMeters ?? DRAG_DEFAULT_MIN_DELTA_METERS;
-
-    let commitPose: SceneDragState["lastPreviewPose"] | null = null;
-
-    if (reason !== "cancel" && reason !== "lost_capture") {
-      let releasePose: SceneDragState["lastPreviewPose"] | null = null;
-      if (typeof clientX === "number" && typeof clientY === "number") {
-        const fallbackZ =
-          drag.lastSurfaceZ !== null
-            ? drag.lastSurfaceZ + drag.cursorToPoseOffset.z
-            : bp.position.z;
-        const placement = this.resolveDragPlacement(
-          clientX,
-          clientY,
-          drag.config.aliases,
-          fallbackZ,
-        );
-        releasePose = this.composeDragPose(drag, placement);
+  private captureSelectedEntityPose():
+    | {
+        position: THREE.Vector3;
+        orientation: THREE.Quaternion;
       }
-      const targetPose = releasePose ?? drag.lastPreviewPose;
-      const dx = targetPose.position.x - bp.position.x;
-      const dy = targetPose.position.y - bp.position.y;
-      const dz = targetPose.position.z - bp.position.z;
-      const magnitude = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-      if (magnitude >= minDelta) {
-        commitPose = targetPose;
-      }
-    }
-
-    if (commitPose) {
-      this.emitter.emit("manipulation_commit", {
-        name: commitPose.name,
-        position: { ...commitPose.position },
-        orientation: { ...commitPose.orientation },
-      });
-    } else {
-      this.previewPose(drag.config.world, drag.config.aliases, bp);
-    }
-
-    this.cleanupDrag();
-  }
-
-  private cleanupDrag(): void {
-    const drag = this.activeDrag;
-    const entityName = drag?.config.entityName ?? "";
-    this.activeDrag = null;
-
-    const domEl = this.getDomElement();
-    domEl.style.cursor = "";
-
-    if (this.dragControlsWereEnabled !== null) {
-      this.controls.enabled = this.dragControlsWereEnabled;
-    }
-    this.dragControlsWereEnabled = null;
-
-    if (this.dragPointerId !== null) {
-      try {
-        domEl.releasePointerCapture(this.dragPointerId);
-      } catch {
-        // Ignore if pointer capture was never set.
-      }
-      this.dragPointerId = null;
-    }
-
-    if (this.boundDragMove) {
-      window.removeEventListener("pointermove", this.boundDragMove, true);
-    }
-    if (this.boundDragUp) {
-      window.removeEventListener("pointerup", this.boundDragUp, true);
-    }
-    if (this.boundDragCancel) {
-      window.removeEventListener("pointercancel", this.boundDragCancel, true);
-    }
-    if (this.boundDragLostCapture) {
-      domEl.removeEventListener(
-        "lostpointercapture",
-        this.boundDragLostCapture,
-        true,
-      );
-    }
-    if (this.boundDragWindowBlur) {
-      window.removeEventListener("blur", this.boundDragWindowBlur, true);
-    }
-    this.boundDragMove = null;
-    this.boundDragUp = null;
-    this.boundDragCancel = null;
-    this.boundDragLostCapture = null;
-    this.boundDragWindowBlur = null;
-
-    this.emitter.emit("manipulation_state", {
-      dragging: false,
-      entity: entityName,
-    });
-  }
-
-  private resolveDragPlacement(
-    clientX: number,
-    clientY: number,
-    aliases: string[],
-    planeZ: number,
-  ): {
-    point: THREE.Vector3 | null;
-    mode: "surface" | "free_plane" | "none";
-    label: string;
-  } {
-    const ignoreNames = [...DRAG_IGNORE_NAMES, ...aliases];
-    if (this.activeDrag?.config.ignoreNames) {
-      ignoreNames.push(...this.activeDrag.config.ignoreNames);
-    }
-
-    const surface = this.intersectPointerOnSceneSurface(clientX, clientY, {
-      ignoreNames,
-      ignoreNameSubstrings: DRAG_IGNORE_SUBSTRINGS,
-    });
-    if (surface) {
-      const aliasSet = new Set(aliases);
-      const nameMatches =
-        aliasSet.has(surface.surfaceName) ||
-        aliases.some(
-          (a) =>
-            surface.surfaceName.includes(a) || a.includes(surface.surfaceName),
-        );
-      if (!nameMatches) {
-        return {
-          point: surface.point,
-          mode: "surface",
-          label: surface.surfaceName,
-        };
-      }
-    }
-
-    const planePoint = this.intersectPointerOnHorizontalPlane(
-      clientX,
-      clientY,
-      planeZ,
-    );
-    if (planePoint) {
-      return {
-        point: planePoint,
-        mode: "free_plane",
-        label: `z=${planeZ.toFixed(2)} free plane`,
-      };
-    }
-
+    | null {
+    const obj = this.selectedEntity;
+    if (!obj) return null;
+    obj.updateMatrixWorld(true);
+    const worldPos = new THREE.Vector3();
+    const worldQuat = new THREE.Quaternion();
+    obj.getWorldPosition(worldPos);
+    obj.getWorldQuaternion(worldQuat);
     return {
-      point: null,
-      mode: "none",
-      label: "No valid placement point under cursor",
+      position: worldPos,
+      orientation: worldQuat,
     };
   }
 
-  private composeDragPose(
-    drag: SceneDragState,
-    placement: { point: THREE.Vector3 | null; mode: string; label: string },
-  ): SceneDragState["lastPreviewPose"] | null {
-    if (!placement.point) return null;
-    const bp = drag.config.baselinePose;
-    const factor = 10000;
-    return {
-      name: bp.name,
-      id: bp.id,
-      position: {
-        x:
-          Math.round(
-            (placement.point.x + drag.cursorToPoseOffset.x) * factor,
-          ) / factor,
-        y:
-          Math.round(
-            (placement.point.y + drag.cursorToPoseOffset.y) * factor,
-          ) / factor,
-        z:
-          Math.round(
-            (placement.point.z + drag.cursorToPoseOffset.z) * factor,
-          ) / factor,
+  private didGizmoPoseChange(
+    startPose: { position: THREE.Vector3; orientation: THREE.Quaternion } | null,
+    endPose: { position: THREE.Vector3; orientation: THREE.Quaternion } | null,
+  ): boolean {
+    if (!startPose || !endPose) return true;
+
+    const translationDelta = startPose.position.distanceTo(endPose.position);
+    if (translationDelta > 0.001) {
+      return true;
+    }
+
+    const quaternionDot = THREE.MathUtils.clamp(
+      Math.abs(startPose.orientation.dot(endPose.orientation)),
+      -1,
+      1,
+    );
+    const angularDelta = 2 * Math.acos(quaternionDot);
+    return angularDelta > THREE.MathUtils.degToRad(0.25);
+  }
+
+  private commitGizmoPoseIfChanged(): void {
+    const obj = this.selectedEntity;
+    if (!obj) return;
+    const endPose = this.captureSelectedEntityPose();
+    if (!this.didGizmoPoseChange(this.gizmoDragStartPose, endPose)) {
+      return;
+    }
+    if (!endPose) return;
+    this.emitter.emit("manipulation_commit", {
+      name: obj.name,
+      position: { x: endPose.position.x, y: endPose.position.y, z: endPose.position.z },
+      orientation: {
+        x: endPose.orientation.x,
+        y: endPose.orientation.y,
+        z: endPose.orientation.z,
+        w: endPose.orientation.w,
       },
-      orientation: { ...bp.orientation },
-    };
+    });
+  }
+
+  public isGizmoActive(): boolean {
+    return this.gizmoActive;
+  }
+
+  private isTransformControlsDescendant(obj: THREE.Object3D): boolean {
+    let cur: THREE.Object3D | null = obj;
+    while (cur) {
+      if ((cur as any).isTransformControls) return true;
+      cur = cur.parent;
+    }
+    return false;
+  }
+
+  private getSceneEntityRoot(
+    object: THREE.Object3D | null | undefined,
+  ): THREE.Object3D | null {
+    let root = object;
+    while (root?.parent && root.parent !== this.scene) {
+      root = root.parent;
+    }
+    return root ?? null;
+  }
+
+  private findSelectableEntityByName(entityName: string): THREE.Object3D | null {
+    if (!entityName) return null;
+    const directChild =
+      this.scene.children.find((child) => child.name === entityName) ?? null;
+    if (directChild) {
+      return directChild;
+    }
+    const object = this.scene.getObjectByName(entityName);
+    return this.getSceneEntityRoot(object);
+  }
+
+  private isManipulationAllowedForEntity(entityName: string): boolean {
+    if (this.manipulationTargetNames.size === 0) {
+      return false;
+    }
+    if (this.manipulationTargetNames.has(entityName)) {
+      return true;
+    }
+    for (const allowedName of this.manipulationTargetNames) {
+      if (
+        entityName === allowedName ||
+        entityName.endsWith(`::${allowedName}`) ||
+        entityName.startsWith(`${allowedName}::`) ||
+        entityName.includes(`::${allowedName}::`)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public setManipulationTargetNames(entityNames: string[]): void {
+    this.manipulationTargetNames = new Set(
+      entityNames
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0),
+    );
+
+    if (
+      this.selectedEntity &&
+      !this.isManipulationAllowedForEntity(this.selectedEntity.name)
+    ) {
+      if (this.transformControls) {
+        this.transformControls.detach();
+      }
+      this.hideBoundingBox();
+      this.selectedEntity = null;
+      this.emitter.emit("setTreeDeselected");
+    }
+  }
+
+  public isGizmoDragTarget(entityName: string): boolean {
+    if (!this.gizmoActive || !this.gizmoDragEntityName) return false;
+    return (
+      entityName === this.gizmoDragEntityName ||
+      entityName.endsWith(`::${this.gizmoDragEntityName}`) ||
+      entityName.startsWith(`${this.gizmoDragEntityName}::`) ||
+      entityName.includes(`::${this.gizmoDragEntityName}::`)
+    );
   }
 
   /**
@@ -2184,12 +1988,6 @@ export class Scene {
       }
     }
 
-    // this.modelManipulator.update();
-    /*if (this.radialMenu)
-    {
-      this.radialMenu.update();
-    }*/
-
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
 
@@ -2302,12 +2100,9 @@ export class Scene {
     position: THREE.Vector3,
     orientation: THREE.Quaternion,
   ): void {
-    /*if (this.modelManipulator && this.modelManipulator.object &&
-        this.modelManipulator.hovered)
-    {
+    if (this.gizmoActive && model === this.selectedEntity) {
       return;
-    }*/
-
+    }
     this.setPose(model, position, orientation);
   }
 
@@ -3540,24 +3335,13 @@ export class Scene {
     this.manipulationMode = mode;
 
     if (mode === "view") {
-      /*if (this.modelManipulator.object)
-      {
-        this.emitter.emit('entityChanged', this.modelManipulator.object);
-      }*/
+      if (this.transformControls) {
+        this.transformControls.detach();
+      }
       this.selectEntity(null);
     } else {
-      // Toggle manipulaion space (world / local)
-      /*if (this.modelManipulator.mode === this.manipulationMode)
-      {
-        this.modelManipulator.space =
-          (this.modelManipulator.space === 'world') ? 'local' : 'world';
-      }
-      this.modelManipulator.mode = this.manipulationMode;
-      this.modelManipulator.setMode(this.modelManipulator.mode);
-     */
-      // model was selected during view mode
       if (this.selectedEntity) {
-        this.selectEntity(this.selectedEntity);
+        this.attachManipulator(this.selectedEntity, mode);
       }
     }
   }
@@ -3590,24 +3374,19 @@ export class Scene {
     this.showCollisions = show;
   }
 
-  /**
-   * Attach manipulator to an object
-   * @param {THREE.Object3D} model
-   * @param {string} mode (translate/rotate)
-   */
   public attachManipulator(model: THREE.Object3D, mode: string): void {
-    /*if (this.modelManipulator.object)
-    {
-      this.emitter.emit('entityChanged', this.modelManipulator.object);
+    if (!this.transformControls) return;
+    if (mode === "view") {
+      this.transformControls.detach();
+      return;
     }
-
-    if (mode !== 'view')
-    {
-      this.modelManipulator.attach(model);
-      this.modelManipulator.mode = mode;
-      this.modelManipulator.setMode( this.modelManipulator.mode );
-      this.scene.add(this.modelManipulator.gizmo);
-    }*/
+    if (!this.isManipulationAllowedForEntity(model.name)) {
+      this.transformControls.detach();
+      return;
+    }
+    this.transformControls.attach(model);
+    const gizmoMode = mode === "rotate" ? "rotate" : "translate";
+    this.transformControls.setMode(gizmoMode);
   }
 
   /**
@@ -4037,19 +3816,18 @@ export class Scene {
    * @param {} object
    */
   public selectEntity(object: THREE.Object3D | null): void {
-    if (object) {
-      if (object !== this.selectedEntity) {
-        this.showBoundingBox(object);
-        this.selectedEntity = object;
+    const target = object ? this.getSceneEntityRoot(object) : null;
+    if (target) {
+      if (target !== this.selectedEntity) {
+        this.showBoundingBox(target);
+        this.selectedEntity = target;
       }
-      this.attachManipulator(object, this.manipulationMode);
-      this.emitter.emit("setTreeSelected", object.name);
+      this.attachManipulator(target, this.manipulationMode);
+      this.emitter.emit("setTreeSelected", target.name);
     } else {
-      /*if (this.modelManipulator.object)
-      {
-        this.modelManipulator.detach();
-        this.scene.remove(this.modelManipulator.gizmo);
-      }*/
+      if (this.transformControls) {
+        this.transformControls.detach();
+      }
       this.hideBoundingBox();
       this.selectedEntity = null;
       this.emitter.emit("setTreeDeselected");
@@ -4849,6 +4627,11 @@ export class Scene {
    * See: https://threejs.org/docs/index.html#manual/en/introduction/How-to-dispose-of-objects
    */
   public cleanup(): void {
+    if (this.transformControls) {
+      this.transformControls.detach();
+      this.transformControls.dispose();
+      this.transformControls = null;
+    }
     let objects: THREE.Object3D[] = [];
     getDescendants(this.scene, objects);
 
@@ -5006,9 +4789,9 @@ export class Scene {
     const allObjects: THREE.Object3D[] = [];
     getDescendants(this.scene, allObjects);
 
-    // Filter out non-visual objects
     const visualObjects = allObjects.filter(obj => 
       obj instanceof THREE.Mesh && 
+      !this.isTransformControlsDescendant(obj) &&
       obj.name !== "grid" && 
       obj.name !== "boundingBox" &&
       obj.name !== "JOINT_VISUAL" &&

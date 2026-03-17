@@ -63,14 +63,6 @@ export interface EntityNudgeStatusMessage {
   };
 }
 
-export interface EntityUndoMessage {
-  type: 'ENTITY_UNDO_LAST_MOVE';
-  payload: {
-    entity?: EntityCardData;
-    timestamp: number;
-  };
-}
-
 export interface EntityResetPoseMessage {
   type: 'ENTITY_RESET_ENTITY_POSE';
   payload: {
@@ -167,7 +159,6 @@ export const ENTITY_CONTROL_MESSAGES = {
   SELECT: 'ENTITY_SELECT' as const,
   NUDGE: 'ENTITY_NUDGE' as const,
   NUDGE_STATUS: 'ENTITY_NUDGE_STATUS' as const,
-  UNDO_LAST_MOVE: 'ENTITY_UNDO_LAST_MOVE' as const,
   RESET_ENTITY_POSE: 'ENTITY_RESET_ENTITY_POSE' as const,
   RESET_ALL_POSES: 'ENTITY_RESET_ALL_POSES' as const,
   SCENE_PRESET_SAVE: 'ENTITY_SCENE_PRESET_SAVE' as const,

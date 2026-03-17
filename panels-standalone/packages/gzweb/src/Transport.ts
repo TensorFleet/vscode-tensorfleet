@@ -9,6 +9,8 @@ import { Asset, AssetCb, AssetError } from "./Asset";
  * Gazebo websocket server.
  */
 export class Transport {
+  private static readonly DEFAULT_SERVICE_TIMEOUT_MS = 2500;
+
   /**
    * Scene Information behavior subject.
    * Components can subscribe to it to get the scene information once it is obtained.
@@ -60,6 +62,14 @@ export class Transport {
    * Uses a Behavior Subject because it has an initial state and stores a value.
    */
   private status$ = new BehaviorSubject<string>("disconnected");
+  private pendingServiceRequests = new Map<
+    string,
+    Array<{
+      resolve: (value: { topic: string; msgType: string; response: any }) => void;
+      reject: (reason?: unknown) => void;
+      timeoutId: ReturnType<typeof setTimeout>;
+    }>
+  >();
 
   /**
    * Connects to a websocket.
@@ -147,33 +157,71 @@ export class Transport {
     msgTypeName: string,
     msgProperties: { [key: string]: any },
   ): void {
+    void this.requestServiceWithResponse(topic, msgTypeName, msgProperties).catch((error) => {
+      console.error(`Service request failed for ${topic}`, error);
+    });
+  }
+
+  public requestServiceWithResponse(
+    topic: string,
+    msgTypeName: string,
+    msgProperties: { [key: string]: any },
+    timeoutMs: number = Transport.DEFAULT_SERVICE_TIMEOUT_MS,
+  ): Promise<{ topic: string; msgType: string; response: any }> {
     if (!this.root) {
-      console.error(
-        "Unable to request service - Message definitions are not ready",
+      return Promise.reject(
+        new Error("Unable to request service - Message definitions are not ready"),
       );
-      return;
     }
 
     const msgDef = this.root.lookupType(msgTypeName);
     if (!msgDef || msgDef === undefined) {
-      console.error(`Unable to lookup message type: ${msgTypeName}`);
-      return;
+      return Promise.reject(new Error(`Unable to lookup message type: ${msgTypeName}`));
     }
 
     const msg: Message = msgDef.create(msgProperties);
     if (!msg || msg === undefined) {
-      console.error(`Unable to create ${msgTypeName}, from, ${msgProperties}`);
-      return;
+      return Promise.reject(
+        new Error(`Unable to create ${msgTypeName}, from, ${msgProperties}`),
+      );
     }
 
     // Serialized the message
     const buffer = msgDef.encode(msg).finish();
     if (!buffer || buffer === undefined || buffer.length === 0) {
-      console.error("Unable to serialize message.");
-      return;
+      return Promise.reject(new Error("Unable to serialize message."));
     }
 
-    this.sendBinaryMessage("req", topic, msgTypeName, buffer);
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        const queue = this.pendingServiceRequests.get(topic) ?? [];
+        const filteredQueue = queue.filter((entry) => entry.timeoutId !== timeoutId);
+        if (filteredQueue.length > 0) {
+          this.pendingServiceRequests.set(topic, filteredQueue);
+        } else {
+          this.pendingServiceRequests.delete(topic);
+        }
+        reject(new Error(`Service response timed out after ${timeoutMs}ms for ${topic}`));
+      }, timeoutMs);
+
+      const queue = this.pendingServiceRequests.get(topic) ?? [];
+      queue.push({ resolve, reject, timeoutId });
+      this.pendingServiceRequests.set(topic, queue);
+
+      try {
+        this.sendBinaryMessage("req", topic, msgTypeName, buffer);
+      } catch (error) {
+        clearTimeout(timeoutId);
+        const currentQueue = this.pendingServiceRequests.get(topic) ?? [];
+        const filteredQueue = currentQueue.filter((entry) => entry.timeoutId !== timeoutId);
+        if (filteredQueue.length > 0) {
+          this.pendingServiceRequests.set(topic, filteredQueue);
+        } else {
+          this.pendingServiceRequests.delete(topic);
+        }
+        reject(error);
+      }
+    });
   }
 
   /**
@@ -363,6 +411,13 @@ export class Transport {
    * Cleanup the connections.
    */
   private onClose(): void {
+    for (const queue of this.pendingServiceRequests.values()) {
+      for (const pending of queue) {
+        clearTimeout(pending.timeoutId);
+        pending.reject(new Error("Websocket closed before service response was received"));
+      }
+    }
+    this.pendingServiceRequests.clear();
     this.topicMap.clear();
     this.availableTopics = [];
     this.root = null;
@@ -524,7 +579,22 @@ export class Transport {
             break;
         }
       } else if (frameParts[0] == "req") {
-        // We are not handling response messages from service calls.
+        const queue = this.pendingServiceRequests.get(frameParts[1]) ?? [];
+        const nextPending = queue.shift();
+        if (queue.length > 0) {
+          this.pendingServiceRequests.set(frameParts[1], queue);
+        } else {
+          this.pendingServiceRequests.delete(frameParts[1]);
+        }
+        if (!nextPending) {
+          return;
+        }
+        clearTimeout(nextPending.timeoutId);
+        nextPending.resolve({
+          topic: frameParts[1],
+          msgType: frameParts[2],
+          response: msg,
+        });
       } else {
         console.warn(
           "Unhandled websocket message with frame operation",

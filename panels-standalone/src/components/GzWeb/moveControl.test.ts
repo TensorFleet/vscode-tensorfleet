@@ -3,11 +3,14 @@ import { EntityCardData } from './EntityCardData';
 import {
   addPoseVector,
   buildPoseNameAliases,
+  capturePoseBaselines,
   getEntityNameCandidates,
+  getUnscopedPoseName,
   isFinitePoseVector,
   isExpectedPoseObserved,
   poseVectorMagnitude,
   roundPoseVector,
+  resolveObservedPoseEntry,
   resolvePoseEntry,
 } from './moveControl';
 
@@ -93,7 +96,7 @@ describe('moveControl', () => {
       nextPosition,
       0.25,
     );
-    expect(observed).toEqual({ matched: true, matchedName: 'world::x500_0' });
+    expect(observed).toEqual({ matched: true, matchedName: 'world::x500_0', matchedBy: 'absolute' });
   });
 
   it('accepts world/model/link pose names for the same alias', () => {
@@ -103,7 +106,7 @@ describe('moveControl', () => {
       { x: 5, y: 1, z: 0 },
       0.25,
     );
-    expect(observed).toEqual({ matched: true, matchedName: 'empty_world::x500_0::base_link' });
+    expect(observed).toEqual({ matched: true, matchedName: 'empty_world::x500_0::base_link', matchedBy: 'absolute' });
   });
 
   it('accepts slash-delimited pose names for the same alias', () => {
@@ -113,7 +116,7 @@ describe('moveControl', () => {
       { x: 5, y: 1, z: 0 },
       0.25,
     );
-    expect(observed).toEqual({ matched: true, matchedName: 'empty_world/x500_0/base_link' });
+    expect(observed).toEqual({ matched: true, matchedName: 'empty_world/x500_0/base_link', matchedBy: 'absolute' });
   });
 
   it('accepts pose id matches even when name differs', () => {
@@ -124,7 +127,7 @@ describe('moveControl', () => {
       0.25,
       76,
     );
-    expect(observed).toEqual({ matched: true, matchedName: 'some_other_name' });
+    expect(observed).toEqual({ matched: true, matchedName: 'some_other_name', matchedBy: 'absolute' });
   });
 
   it('confirms by delta-from-baseline for link frames with shifted origins', () => {
@@ -139,7 +142,56 @@ describe('moveControl', () => {
         ['empty_world::x500_0::base_link', { x: 6.5, y: 0.5, z: 1 }],
       ]),
     );
-    expect(observed).toEqual({ matched: true, matchedName: 'empty_world::x500_0::base_link' });
+    expect(observed).toEqual({ matched: true, matchedName: 'empty_world::x500_0::base_link', matchedBy: 'delta' });
+  });
+
+  it('prefers canonical model poses over nested link aliases', () => {
+    const poses = new Map([
+      ['empty_world::plate::base_link', {
+        name: 'empty_world::plate::base_link',
+        position: { x: 0, y: 0, z: 0 },
+        orientation: { x: 0, y: 0, z: 0, w: 1 },
+      }],
+      ['empty_world::plate', {
+        name: 'empty_world::plate',
+        position: { x: 4, y: 5, z: 6 },
+        orientation: { x: 0, y: 0, z: 0, w: 1 },
+      }],
+    ]);
+
+    expect(resolveObservedPoseEntry(poses, ['plate', 'empty_world::plate'], ['empty_world::plate'])).toEqual({
+      name: 'empty_world::plate',
+      pose: {
+        name: 'empty_world::plate',
+        position: { x: 4, y: 5, z: 6 },
+        orientation: { x: 0, y: 0, z: 0, w: 1 },
+      },
+    });
+  });
+
+  it('captures baselines for both canonical and nested alias matches', () => {
+    const poses = new Map([
+      ['empty_world::plate', {
+        name: 'empty_world::plate',
+        position: { x: 1, y: 2, z: 3 },
+        orientation: { x: 0, y: 0, z: 0, w: 1 },
+      }],
+      ['empty_world::plate::base_link', {
+        name: 'empty_world::plate::base_link',
+        position: { x: 0.1, y: 0.2, z: 0.3 },
+        orientation: { x: 0, y: 0, z: 0, w: 1 },
+      }],
+    ]);
+
+    expect([...capturePoseBaselines(poses, ['plate'], ['empty_world::plate']).entries()]).toEqual([
+      ['empty_world::plate', { x: 1, y: 2, z: 3 }],
+      ['empty_world::plate::base_link', { x: 0.1, y: 0.2, z: 0.3 }],
+    ]);
+  });
+
+  it('extracts unscoped pose names from world-scoped entries', () => {
+    expect(getUnscopedPoseName('empty_world::plate')).toBe('plate');
+    expect(getUnscopedPoseName('plate')).toBeUndefined();
   });
 
   it('does not confirm move when pose update is outside tolerance', () => {

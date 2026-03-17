@@ -3,7 +3,13 @@ import { getGazeboEntityName, getRuntimePoseEntityName } from './posePolicy';
 
 export type PoseVector = { x: number; y: number; z: number };
 export type PoseQuaternion = { x: number; y: number; z: number; w: number };
-export type GazeboPose = { name: string; position: PoseVector; orientation: PoseQuaternion; id?: number };
+export type GazeboPose = {
+  name: string;
+  position: PoseVector;
+  orientation: PoseQuaternion;
+  id?: number;
+  observedAtMs?: number;
+};
 
 export const unique = (items: Array<string | undefined>) => {
   return [...new Set(items.filter((value): value is string => Boolean(value && value.trim().length > 0)))];
@@ -151,7 +157,7 @@ export const resolvePoseEntry = (
   return { poseName: candidates[0].poseName, pose: candidates[0].pose };
 };
 
-const unscoped = (name: string): string | undefined => {
+export const getUnscopedPoseName = (name: string): string | undefined => {
   if (!name.includes('::')) return undefined;
   return name.split('::').slice(1).join('::');
 };
@@ -160,8 +166,72 @@ export const buildPoseNameAliases = (world: string, poseNames: string[]): string
   return unique([
     ...poseNames,
     ...poseNames.map((name) => (name.includes('::') ? undefined : `${world}::${name}`)),
-    ...poseNames.map(unscoped),
+    ...poseNames.map(getUnscopedPoseName),
   ]);
+};
+
+const scoreObservedPoseName = (
+  poseName: string,
+  aliases: Set<string>,
+  preferredNames: Set<string>,
+): number => {
+  if (preferredNames.has(poseName)) return 1000;
+
+  for (const alias of aliases) {
+    if (poseName === alias) return 900;
+    if (poseName.endsWith(`::${alias}`) || poseName.endsWith(`/${alias}`)) {
+      return 800;
+    }
+    if (poseName.startsWith(`${alias}::`) || poseName.startsWith(`${alias}/`)) {
+      return 500;
+    }
+    if (poseName.includes(`::${alias}::`) || poseName.includes(`/${alias}/`)) {
+      return 400;
+    }
+  }
+
+  return -1;
+};
+
+export const resolveObservedPoseEntry = (
+  poses: Map<string, GazeboPose>,
+  aliases: string[],
+  preferredNames: string[] = [],
+): { name: string; pose: GazeboPose } | null => {
+  const aliasSet = new Set(aliases);
+  const preferredSet = new Set(preferredNames);
+  let best: { name: string; pose: GazeboPose; score: number } | null = null;
+
+  for (const [poseName, pose] of poses.entries()) {
+    const score = scoreObservedPoseName(poseName, aliasSet, preferredSet);
+    if (score < 0) continue;
+    if (
+      !best ||
+      score > best.score ||
+      (score === best.score && poseName.length < best.name.length)
+    ) {
+      best = { name: poseName, pose, score };
+    }
+  }
+
+  return best ? { name: best.name, pose: best.pose } : null;
+};
+
+export const capturePoseBaselines = (
+  poses: Map<string, GazeboPose>,
+  aliases: string[],
+  preferredNames: string[] = [],
+): Map<string, PoseVector> => {
+  const baselineByName = new Map<string, PoseVector>();
+  const preferred = resolveObservedPoseEntry(poses, aliases, preferredNames);
+  if (preferred) {
+    baselineByName.set(preferred.name, { ...preferred.pose.position });
+  }
+  for (const [poseName, pose] of poses.entries()) {
+    if (!poseNameMatchesAliases(poseName, new Set(aliases))) continue;
+    baselineByName.set(poseName, { ...pose.position });
+  }
+  return baselineByName;
 };
 
 export const isPoseWithinTolerance = (
@@ -204,8 +274,7 @@ export const poseNameMatchesAliases = (poseName: string, aliases: Set<string>): 
       poseName.includes(`::${alias}::`) ||
       poseName.endsWith(`/${alias}`) ||
       poseName.startsWith(`${alias}/`) ||
-      poseName.includes(`/${alias}/`) ||
-      poseName.includes(alias)
+      poseName.includes(`/${alias}/`)
     ) {
       return true;
     }
@@ -221,7 +290,7 @@ export const isExpectedPoseObserved = (
   expectedPoseId?: number,
   expectedDelta?: PoseVector,
   baselineByName?: Map<string, PoseVector>,
-): { matched: boolean; matchedName?: string } => {
+): { matched: boolean; matchedName?: string; matchedBy?: 'absolute' | 'delta' } => {
   for (const poseEntry of poseEntries) {
     const observedId = toOptionalNumber(poseEntry.id);
     const idMatch =
@@ -236,7 +305,7 @@ export const isExpectedPoseObserved = (
     const observed = toPoseVector(poseEntry.position);
     if (!observed) continue;
     if (isPoseWithinTolerance(observed, expected, toleranceMeters)) {
-      return { matched: true, matchedName: poseEntry.name };
+      return { matched: true, matchedName: poseEntry.name, matchedBy: 'absolute' };
     }
 
     if (expectedDelta && poseEntry.name && baselineByName) {
@@ -248,7 +317,7 @@ export const isExpectedPoseObserved = (
           z: observed.z - baseline.z,
         };
         if (isPoseWithinTolerance(observedDelta, expectedDelta, toleranceMeters)) {
-          return { matched: true, matchedName: poseEntry.name };
+          return { matched: true, matchedName: poseEntry.name, matchedBy: 'delta' };
         }
       }
     }

@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ExpandLess, ExpandMore, Wifi, WifiOff } from '@mui/icons-material';
 import { IconButton, Tooltip } from '@mui/material';
 import { SceneManager } from 'gzweb';
-import type { SceneDragConfig } from 'gzweb';
 import * as THREE from 'three';
 import {
   CARD_MESSAGES,
@@ -17,7 +16,6 @@ import {
   GazeboPose,
   getEntityNameCandidates,
   isFinitePoseVector,
-  poseNameMatchesAliases,
   poseVectorMagnitude,
   roundPoseVector,
   resolvePoseEntry,
@@ -28,7 +26,15 @@ import {
   PoseVector,
   unique,
 } from './moveControl';
-import { getGazeboEntityName, getRuntimePoseEntityName } from './posePolicy';
+import {
+  buildManipulationPoseBinding,
+  parseManipulationDispatchEvent,
+  parseManipulationServiceReplyEvent,
+  parseManipulationStateEvent,
+  pollForPoseConfirmation,
+  resolveManipulationObservation,
+} from './manipulationController';
+import { getGazeboEntityName, getPoseEditAccess, getRuntimePoseEntityName } from './posePolicy';
 import './GzWebPanel.css';
 
 declare global {
@@ -53,6 +59,7 @@ type SceneManagerInstance = {
   clearSelection?: () => void;
   getSelectedEntityName?: () => string | null;
   setManipulationMode?: (mode: string) => void;
+  setManipulationTargetNames?: (entityNames: string[]) => void;
   getManipulationMode?: () => string;
   setControlsEnabled?: (enabled: boolean) => void;
   getControlsEnabled?: () => boolean;
@@ -70,9 +77,6 @@ type SceneManagerInstance = {
   ) => boolean;
   onSceneEvent?: (eventName: string, listener: (...args: any[]) => void) => void;
   offSceneEvent?: (eventName: string, listener: (...args: any[]) => void) => void;
-  startDrag?: (event: PointerEvent, config: SceneDragConfig) => boolean;
-  cancelDrag?: () => void;
-  isDragging?: () => boolean;
   getModels?: () => Array<{ name?: string }>;
   transport?: SceneManagerTransport;
   scene?: any; // The Scene instance
@@ -121,20 +125,12 @@ const MIN_NUDGE_THROTTLE_MS = 16;
 const MAX_NUDGE_THROTTLE_MS = 1000;
 const DEFAULT_MAX_NUDGE_DELTA_METERS = 3;
 const MIN_MOVE_EPSILON_METERS = 0.0001;
-const DRAG_MIN_DELTA_METERS = 0.02;
-const DRAG_CONFIRM_TIMEOUT_MS = 2200;
-const DRAG_CONFIRM_TOLERANCE_METERS = 0.05;
-const DRAG_RAYCAST_IGNORE_NAMES = new Set(['grid', 'boundingBox', 'JOINT_VISUAL', 'INERTIA_VISUAL', 'COM_VISUAL']);
+const DRAG_CONFIRM_TIMEOUT_MS = 3200;
+const DRAG_CONFIRM_TOLERANCE_METERS = 0.02;
 const MOVE_TRACE_BUFFER_MAX_LINES = 2000;
-const LEGACY_PANEL_DIRECT_MANIPULATION = false;
-const SCENE_EVENT_MANIPULATION_COMMIT = 'manipulation_commit';
+const SCENE_EVENT_MANIPULATION_DISPATCH = 'manipulation_dispatch';
+const SCENE_EVENT_MANIPULATION_SERVICE_REPLY = 'manipulation_service_reply';
 const SCENE_EVENT_MANIPULATION_STATE = 'manipulation_state';
-
-type MoveHistoryAction = 'append' | 'undo' | 'reset' | 'none';
-type DragPlacementMode = 'surface' | 'free_plane' | 'none';
-type DragPointerPlacement =
-  | { point: THREE.Vector3; mode: Exclude<DragPlacementMode, 'none'>; label: string }
-  | { point: null; mode: 'none'; label: string };
 
 type PendingThrottledNudge = {
   entity: EntityCardData;
@@ -142,11 +138,6 @@ type PendingThrottledNudge = {
   requestId?: string;
   timerId?: ReturnType<typeof setTimeout>;
   queuedAtMs: number;
-};
-
-type EntityMoveHistory = {
-  baseline: GazeboPose;
-  deltas: PoseVector[];
 };
 
 type ScenePresetPose = {
@@ -160,23 +151,6 @@ type ScenePresetRecord = {
   capturedAt: number;
   world?: string;
   poses: Record<string, ScenePresetPose>;
-};
-
-type DirectDragState = {
-  entity: EntityCardData;
-  world: string;
-  msgType: string;
-  mappedEntityName: string;
-  moveEntity: string;
-  poseName: string;
-  aliases: string[];
-  baselinePose: GazeboPose;
-  cursorToPoseOffset: PoseVector;
-  lastPreviewPose: GazeboPose;
-  lastPlacementMode: Exclude<DragPlacementMode, 'none'>;
-  lastPlacementLabel?: string;
-  startPoint: THREE.Vector3;
-  lastPoint: THREE.Vector3;
 };
 
 type SelectionSource = 'panel' | 'viewport' | 'none';
@@ -857,13 +831,40 @@ const clonePose = (pose: GazeboPose): GazeboPose => ({
   position: { ...pose.position },
   orientation: { ...pose.orientation },
   id: pose.id,
+  observedAtMs: pose.observedAtMs,
 });
 
-const invertPoseDelta = (delta: PoseVector): PoseVector => ({
-  x: -delta.x,
-  y: -delta.y,
-  z: -delta.z,
-});
+const captureSceneObjectPose = (
+  object: any,
+  poseName: string,
+): GazeboPose | null => {
+  if (!object || !poseName || typeof object.updateMatrixWorld !== 'function') {
+    return null;
+  }
+  const position = new THREE.Vector3();
+  const orientation = new THREE.Quaternion();
+  object.updateMatrixWorld(true);
+  if (typeof object.getWorldPosition !== 'function' || typeof object.getWorldQuaternion !== 'function') {
+    return null;
+  }
+  object.getWorldPosition(position);
+  object.getWorldQuaternion(orientation);
+  return {
+    name: poseName,
+    position: {
+      x: position.x,
+      y: position.y,
+      z: position.z,
+    },
+    orientation: {
+      x: orientation.x,
+      y: orientation.y,
+      z: orientation.z,
+      w: orientation.w,
+    },
+    observedAtMs: 0,
+  };
+};
 
 const sortScenePresetNames = (store: Record<string, ScenePresetRecord>): string[] =>
   Object.entries(store)
@@ -971,6 +972,21 @@ export const GzWebPanel: React.FC = () => {
     selectedEntityRef.current = selectedEntity;
   }, [selectedEntity]);
 
+  const selectedEntityPoseAccess = useMemo(
+    () => getPoseEditAccess(selectedEntity),
+    [selectedEntity],
+  );
+  const selectedEntityAllowsDirectManipulation = selectedEntityPoseAccess.enabled;
+  const selectedManipulationTargetNames = useMemo(() => {
+    if (!selectedEntity || !selectedEntityAllowsDirectManipulation) {
+      return [] as string[];
+    }
+    return unique([
+      getRuntimePoseEntityName(selectedEntity),
+      getGazeboEntityName(selectedEntity),
+    ]).filter((name) => name.length > 0);
+  }, [selectedEntity, selectedEntityAllowsDirectManipulation]);
+
   const moveRequestCounterRef = useRef(0);
   const pendingThrottledNudgesRef = useRef<Map<string, PendingThrottledNudge>>(new Map());
   const lastNudgeDispatchAtRef = useRef<Map<string, number>>(new Map());
@@ -986,12 +1002,8 @@ export const GzWebPanel: React.FC = () => {
       maxNudgeDeltaMeters: getConfiguredMaxNudgeDeltaMeters(),
     });
   }, []);
-  const moveHistoryRef = useRef<Map<string, EntityMoveHistory>>(new Map());
   const hoverOutlineRefs = useRef<Map<string, Set<any>>>(new Map());
-  const directDragStateRef = useRef<DirectDragState | null>(null);
   const isDraggingDirectRef = useRef(false);
-  const controlsEnabledBeforeDragRef = useRef<boolean | null>(null);
-  const dragPointerIdRef = useRef<number | null>(null);
 
   const setSceneControlsEnabled = useCallback((enabled: boolean) => {
     sceneManagerRef.current?.setControlsEnabled?.(enabled);
@@ -1058,6 +1070,21 @@ export const GzWebPanel: React.FC = () => {
     hoverOutlineRefs.current.clear();
   }, []);
 
+  const seedPoseCacheFromScene = useCallback((manager?: SceneManagerInstance | null) => {
+    const activeManager = manager ?? sceneManagerRef.current;
+    if (!activeManager?.getModels) return;
+
+    for (const model of activeManager.getModels() ?? []) {
+      const poseName = typeof model?.name === 'string' ? model.name : '';
+      if (!poseName || entityPoseRef.current.has(poseName)) continue;
+      const object = resolveSceneModelObject(activeManager, poseName);
+      const pose = captureSceneObjectPose(object, poseName);
+      if (!pose) continue;
+      entityPoseRef.current.set(poseName, pose);
+      recordSessionInitialPose(pose, { force: true });
+    }
+  }, [recordSessionInitialPose]);
+
   const emitNudgeStatus = useCallback((
     state: EntityNudgeStatusState,
     message: string,
@@ -1082,112 +1109,6 @@ export const GzWebPanel: React.FC = () => {
       { type: ENTITY_CONTROL_MESSAGES.NUDGE_STATUS, payload },
       '*',
     );
-  }, []);
-
-  const findPoseSnapshotForAliases = useCallback((aliases: string[]): { name: string; pose: GazeboPose } | null => {
-    if (aliases.length === 0) return null;
-    for (const alias of aliases) {
-      const pose = entityPoseRef.current.get(alias);
-      if (pose) return { name: alias, pose };
-    }
-    for (const [entryName, entryPose] of entityPoseRef.current.entries()) {
-      if (!aliases.some((alias) => entryName.includes(alias) || alias.includes(entryName))) continue;
-      return { name: entryName, pose: entryPose };
-    }
-    return null;
-  }, []);
-
-  const intersectPointerOnHorizontalPlane = useCallback(
-    (clientX: number, clientY: number, planeZ: number): THREE.Vector3 | null => {
-      return sceneManagerRef.current?.intersectPointerOnHorizontalPlane?.(clientX, clientY, planeZ) ?? null;
-    },
-    [],
-  );
-
-  const intersectPointerOnSceneSurface = useCallback((
-    clientX: number,
-    clientY: number,
-    dragAliases: string[],
-  ): { point: THREE.Vector3; surfaceName: string } | null => {
-    const surface = sceneManagerRef.current?.intersectPointerOnSceneSurface?.(clientX, clientY, {
-      ignoreNames: [...DRAG_RAYCAST_IGNORE_NAMES, ...dragAliases],
-      ignoreNameSubstrings: ['COLLISION_VISUAL', '_lightHelper'],
-    });
-    if (!surface) return null;
-
-    const dragAliasSet = new Set(dragAliases);
-    if (poseNameMatchesAliases(surface.surfaceName, dragAliasSet)) {
-      return null;
-    }
-
-    return surface;
-  }, []);
-
-  const resolveDragPointerPlacement = useCallback((
-    clientX: number,
-    clientY: number,
-    dragAliases: string[],
-    planeZ: number,
-  ): DragPointerPlacement => {
-    const surface = intersectPointerOnSceneSurface(clientX, clientY, dragAliases);
-    if (surface) {
-      return {
-        point: surface.point,
-        mode: 'surface',
-        label: surface.surfaceName,
-      };
-    }
-
-    const planePoint = intersectPointerOnHorizontalPlane(clientX, clientY, planeZ);
-    if (planePoint) {
-      return {
-        point: planePoint,
-        mode: 'free_plane',
-        label: `z=${planeZ.toFixed(2)} free plane`,
-      };
-    }
-
-    return {
-      point: null,
-      mode: 'none',
-      label: 'No valid placement point under cursor',
-    };
-  }, [intersectPointerOnHorizontalPlane, intersectPointerOnSceneSurface]);
-
-  const applyMoveHistoryAction = useCallback((
-    entityKey: string,
-    delta: PoseVector,
-    baseline: GazeboPose,
-    historyAction: MoveHistoryAction,
-  ) => {
-    if (historyAction === 'none') return;
-
-    if (historyAction === 'append') {
-      const existing = moveHistoryRef.current.get(entityKey);
-      if (!existing) {
-        moveHistoryRef.current.set(entityKey, {
-          baseline: clonePose(baseline),
-          deltas: [{ ...delta }],
-        });
-        return;
-      }
-      existing.deltas.push({ ...delta });
-      return;
-    }
-
-    if (historyAction === 'undo') {
-      const history = moveHistoryRef.current.get(entityKey);
-      if (!history || history.deltas.length === 0) return;
-      history.deltas.pop();
-      if (history.deltas.length === 0) {
-        moveHistoryRef.current.delete(entityKey);
-      }
-      return;
-    }
-
-    if (historyAction === 'reset') {
-      moveHistoryRef.current.delete(entityKey);
-    }
   }, []);
 
   const requestSetPose = useCallback((
@@ -1242,9 +1163,6 @@ export const GzWebPanel: React.FC = () => {
       entity: EntityCardData,
       delta: PoseVector,
       requestIdFromMessage?: string,
-      options?: {
-        historyAction?: MoveHistoryAction;
-      },
     ): boolean => {
       const manager = sceneManagerRef.current;
       const transport = manager?.transport;
@@ -1446,12 +1364,6 @@ export const GzWebPanel: React.FC = () => {
         aliases,
         atMs: Date.now(),
       };
-      applyMoveHistoryAction(
-        mappedEntityName,
-        delta,
-        currentPose,
-        options?.historyAction ?? 'append',
-      );
       moveTrace('move.dispatch.accepted', {
         requestId,
         world,
@@ -1520,7 +1432,7 @@ export const GzWebPanel: React.FC = () => {
       }, 250);
       return true;
     },
-    [applyMoveHistoryAction, emitNudgeStatus, previewPoseInScene, requestSetPose],
+    [emitNudgeStatus, previewPoseInScene, requestSetPose],
   );
 
   const flushThrottledNudge = useCallback((entityKey: string, reason: string): boolean => {
@@ -1549,7 +1461,6 @@ export const GzWebPanel: React.FC = () => {
       pending.entity,
       pending.delta,
       pending.requestId,
-      { historyAction: 'append' },
     );
     if (accepted) {
       lastNudgeDispatchAtRef.current.set(entityKey, Date.now());
@@ -1578,17 +1489,13 @@ export const GzWebPanel: React.FC = () => {
       entity: EntityCardData,
       delta: PoseVector,
       requestIdFromMessage?: string,
-      options?: {
-        historyAction?: MoveHistoryAction;
-      },
     ): boolean => {
-      const historyAction = options?.historyAction ?? 'append';
       const entityKey = getGazeboEntityName(entity);
       if (!isFinitePoseVector(delta)) {
-        return dispatchNudgeEntity(entity, delta, requestIdFromMessage, { historyAction });
+        return dispatchNudgeEntity(entity, delta, requestIdFromMessage);
       }
       if (!entityKey) {
-        return dispatchNudgeEntity(entity, delta, requestIdFromMessage, { historyAction });
+        return dispatchNudgeEntity(entity, delta, requestIdFromMessage);
       }
       if (poseVectorMagnitude(delta) <= MIN_MOVE_EPSILON_METERS) {
         moveTrace('move.throttle.ignored_zero_delta', {
@@ -1599,17 +1506,12 @@ export const GzWebPanel: React.FC = () => {
         return true;
       }
 
-      if (historyAction !== 'append') {
-        flushThrottledNudge(entityKey, 'history_action');
-        return dispatchNudgeEntity(entity, delta, requestIdFromMessage, { historyAction });
-      }
-
       const now = Date.now();
       const throttleMs = getConfiguredNudgeThrottleMs();
       const lastDispatchAt = lastNudgeDispatchAtRef.current.get(entityKey) ?? 0;
       const elapsedMs = now - lastDispatchAt;
       if (elapsedMs >= throttleMs) {
-        const accepted = dispatchNudgeEntity(entity, delta, requestIdFromMessage, { historyAction: 'append' });
+        const accepted = dispatchNudgeEntity(entity, delta, requestIdFromMessage);
         if (accepted) {
           lastNudgeDispatchAtRef.current.set(entityKey, Date.now());
         }
@@ -1649,24 +1551,6 @@ export const GzWebPanel: React.FC = () => {
     },
     [dispatchNudgeEntity, flushThrottledNudge],
   );
-
-  const undoLastMove = useCallback((entity: EntityCardData): boolean => {
-    const entityKey = getGazeboEntityName(entity);
-    const history = moveHistoryRef.current.get(entityKey);
-    if (!history || history.deltas.length === 0) {
-      emitNudgeStatus('error', `Undo ignored: no move history for ${entityKey}`, {
-        entity: entityKey,
-      });
-      return false;
-    }
-
-    const lastDelta = history.deltas[history.deltas.length - 1];
-    const accepted = nudgeEntity(entity, invertPoseDelta(lastDelta), undefined, { historyAction: 'undo' });
-    if (!accepted) {
-      return false;
-    }
-    return true;
-  }, [emitNudgeStatus, nudgeEntity]);
 
   const applyAbsolutePose = useCallback((
     pose: GazeboPose,
@@ -1771,7 +1655,6 @@ export const GzWebPanel: React.FC = () => {
       },
     });
 
-    moveHistoryRef.current.delete(entityKey);
     emitNudgeStatus('success', `Reset ${entityKey} to session start pose`, {
       entity: entityKey,
     });
@@ -1789,7 +1672,6 @@ export const GzWebPanel: React.FC = () => {
         target: entity.target,
         gazeboEntity: getGazeboEntityName(entity),
       })),
-      movedHistoryKeys: [...moveHistoryRef.current.keys()],
       baselinePoseCount: sessionInitialPoseRef.current.size,
     });
 
@@ -1865,10 +1747,6 @@ export const GzWebPanel: React.FC = () => {
         entity: '__scene__',
       });
       return false;
-    }
-
-    if (failed.length === 0) {
-      moveHistoryRef.current.clear();
     }
 
     const details: string[] = [];
@@ -2002,7 +1880,6 @@ export const GzWebPanel: React.FC = () => {
       return false;
     }
 
-    moveHistoryRef.current.clear();
     emitNudgeStatus('success', `Loaded scene preset \"${trimmedName}\"`, {
       entity: '__scene__',
     });
@@ -2018,553 +1895,127 @@ export const GzWebPanel: React.FC = () => {
       setSceneControlsEnabled(true);
       return;
     }
-    if (LEGACY_PANEL_DIRECT_MANIPULATION) {
-      setSceneControlsEnabled(!dragModeEnabled && !isDraggingDirectRef.current);
-    } else {
-      setSceneControlsEnabled(!isDraggingDirectRef.current);
-    }
+    setSceneControlsEnabled(!isDraggingDirectRef.current);
   }, [directManipulationEnabled, dragModeEnabled, setSceneControlsEnabled]);
 
   useEffect(() => {
     const manager = sceneManagerRef.current;
     if (!manager?.setManipulationMode) return;
-    const nextMode = directManipulationEnabled && dragModeEnabled ? 'translate' : 'view';
+    manager.setManipulationTargetNames?.(selectedManipulationTargetNames);
+    const nextMode =
+      directManipulationEnabled && dragModeEnabled && selectedEntityAllowsDirectManipulation
+        ? 'translate'
+        : 'view';
     manager.setManipulationMode(nextMode);
-  }, [directManipulationEnabled, dragModeEnabled]);
-
-  useEffect(() => {
-    if (!LEGACY_PANEL_DIRECT_MANIPULATION) return;
-    if (!directManipulationEnabled) return;
-    const sceneElement = document.getElementById(SCENE_ELEMENT_ID);
-    if (!sceneElement) return;
-    const sceneCanvas =
-      sceneManagerRef.current?.getDomElement?.() ??
-      sceneElement;
-    const getSceneControlsEnabled = () => sceneManagerRef.current?.getControlsEnabled?.();
-
-    const releaseSceneControls = () => {
-      if (controlsEnabledBeforeDragRef.current !== null) {
-        sceneManagerRef.current?.setControlsEnabled?.(controlsEnabledBeforeDragRef.current);
-      }
-      controlsEnabledBeforeDragRef.current = null;
-    };
-
-    const clearDirectDrag = () => {
-      directDragStateRef.current = null;
-      isDraggingDirectRef.current = false;
-      setIsDraggingDirect(false);
-      sceneCanvas.style.cursor = '';
-    };
-
-    const applyPoseSnapshotToAliases = (state: DirectDragState, pose: GazeboPose) => {
-      const manager = sceneManagerRef.current;
-      if (!manager) return;
-      previewPoseInScene(manager, state.world, state.aliases, pose);
-      for (const alias of state.aliases) {
-        entityPoseRef.current.set(alias, {
-          ...clonePose(pose),
-          name: alias,
-        });
-      }
-    };
-
-    const composePoseFromPlacement = (state: DirectDragState, placement: DragPointerPlacement): GazeboPose | null => {
-      if (!placement.point) return null;
-      return {
-        ...state.baselinePose,
-        name: state.poseName,
-        id: state.baselinePose.id,
-        position: roundPoseVector({
-          x: placement.point.x + state.cursorToPoseOffset.x,
-          y: placement.point.y + state.cursorToPoseOffset.y,
-          z: placement.point.z + state.cursorToPoseOffset.z,
-        }),
-      };
-    };
-
-    const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return;
-      if (!dragModeEnabled) return;
-      event.preventDefault();
-      event.stopPropagation();
-
-      const activeEntity = selectedEntityRef.current;
-      const dragTargetName = activeEntity ? getGazeboEntityName(activeEntity) : '';
-      if (!activeEntity || !dragTargetName) {
-        setEntityControlStatus('Drag start failed: select a featured entity card first');
-        setManipStatus('Drag start failed: select a featured entity card first');
-        return;
-      }
-
-      const manager = sceneManagerRef.current;
-      const transport = manager?.transport;
-      const world = transport?.getWorld?.();
-      if (!manager || !transport || !world) {
-        setEntityControlStatus('Drag start failed: scene transport is unavailable');
-        setManipStatus('Drag start failed: scene transport is unavailable');
-        return;
-      }
-      const msgType = getOrderedPoseMessageTypes(transport, world)[0];
-      if (!msgType) {
-        setEntityControlStatus('Drag start failed: no compatible pose message type');
-        setManipStatus('Drag start failed: no compatible pose message type');
-        return;
-      }
-
-      const entityNameCandidates = getEntityNameCandidates(activeEntity);
-      let resolvedPoseEntry: { poseName: string; pose: GazeboPose } | null = null;
-      let resolvedEntityName = '';
-      for (const entityName of entityNameCandidates) {
-        resolvedPoseEntry = resolvePoseEntry(entityPoseRef.current, entityName);
-        if (resolvedPoseEntry) {
-          resolvedEntityName = entityName;
-          break;
-        }
-      }
-      if (!resolvedPoseEntry) {
-        setEntityControlStatus('Drag start failed: waiting for dynamic pose for selected entity');
-        setManipStatus('Drag start failed: waiting for dynamic pose for selected entity');
-        return;
-      }
-
-      const controlsEnabled = getSceneControlsEnabled();
-      controlsEnabledBeforeDragRef.current = typeof controlsEnabled === 'boolean' ? controlsEnabled : null;
-      sceneManagerRef.current?.setControlsEnabled?.(false);
-
-      const aliases = buildPoseNameAliases(world, unique([
-        resolvedPoseEntry.poseName,
-        `${world}::${resolvedPoseEntry.poseName}`,
-        dragTargetName,
-        resolvedEntityName,
-      ]));
-      const startPlacement = resolveDragPointerPlacement(
-        event.clientX,
-        event.clientY,
-        aliases,
-        resolvedPoseEntry.pose.position.z,
-      );
-      const startPoint = startPlacement.point ?? new THREE.Vector3(
-        resolvedPoseEntry.pose.position.x,
-        resolvedPoseEntry.pose.position.y,
-        resolvedPoseEntry.pose.position.z,
-      );
-      const cursorToPoseOffset = {
-        x: resolvedPoseEntry.pose.position.x - startPoint.x,
-        y: resolvedPoseEntry.pose.position.y - startPoint.y,
-        z: resolvedPoseEntry.pose.position.z - startPoint.z,
-      };
-      const moveEntity = resolvedEntityName || dragTargetName;
-      directDragStateRef.current = {
-        entity: activeEntity,
-        world,
-        msgType,
-        mappedEntityName: dragTargetName,
-        moveEntity,
-        poseName: resolvedPoseEntry.poseName,
-        aliases,
-        baselinePose: clonePose(resolvedPoseEntry.pose),
-        cursorToPoseOffset,
-        lastPreviewPose: clonePose(resolvedPoseEntry.pose),
-        lastPlacementMode: startPlacement.mode === 'surface' ? 'surface' : 'free_plane',
-        lastPlacementLabel: startPlacement.mode !== 'none' ? startPlacement.label : undefined,
-        startPoint: startPoint.clone(),
-        lastPoint: startPoint.clone(),
-      };
-      moveTrace('drag.start', {
-        world,
-        entity: moveEntity,
-        mappedEntityName: dragTargetName,
-        poseName: resolvedPoseEntry.poseName,
-        msgType,
-        baselinePosition: toTracePosition(resolvedPoseEntry.pose.position),
-        startPoint: toTracePosition({ x: startPoint.x, y: startPoint.y, z: startPoint.z }),
-        startPlacementMode: startPlacement.mode,
-        startPlacementLabel: startPlacement.label,
-      });
-
-      isDraggingDirectRef.current = true;
-      setIsDraggingDirect(true);
-      dragPointerIdRef.current = event.pointerId;
-      try {
-        sceneCanvas.setPointerCapture(event.pointerId);
-      } catch {
-        // Some renderers may not allow explicit pointer capture.
-      }
-      sceneCanvas.style.cursor = 'grabbing';
-      if (startPlacement.mode === 'none') {
-        setEntityControlStatus(`Dragging ${moveEntity}: move cursor over scene to find a valid placement`);
-        setManipStatus(`Dragging ${moveEntity}: waiting for valid placement`);
-      } else {
-        const placementDescription = startPlacement.mode === 'surface'
-          ? `surface ${startPlacement.label}`
-          : `free plane ${startPlacement.label}`;
-        setEntityControlStatus(`Dragging ${moveEntity} on ${placementDescription} (release to apply exact pose)`);
-        setManipStatus(`Dragging ${moveEntity} (release to place)`);
-      }
-    };
-
-    const finalizeDrag = (clientX?: number, clientY?: number, reason: 'up' | 'cancel' | 'lost_capture' | 'no_buttons' = 'up') => {
-      const dragState = directDragStateRef.current;
-      if (isDraggingDirectRef.current && dragState) {
-        const releasePlacement =
-          typeof clientX === 'number' && typeof clientY === 'number'
-            ? resolveDragPointerPlacement(
-              clientX,
-              clientY,
-              dragState.aliases,
-              dragState.baselinePose.position.z,
-            )
-            : { point: null, mode: 'none', label: 'No pointer position available at release' } satisfies DragPointerPlacement;
-        const resolvedReleasePose = composePoseFromPlacement(dragState, releasePlacement);
-        const targetPose = resolvedReleasePose ?? dragState.lastPreviewPose;
-        const delta = {
-          x: targetPose.position.x - dragState.baselinePose.position.x,
-          y: targetPose.position.y - dragState.baselinePose.position.y,
-          z: targetPose.position.z - dragState.baselinePose.position.z,
-        };
-        const magnitude = poseVectorMagnitude(delta);
-        if (magnitude >= DRAG_MIN_DELTA_METERS && reason !== 'cancel' && reason !== 'lost_capture') {
-          const manager = sceneManagerRef.current;
-          const transport = manager?.transport;
-          if (!manager || !transport) {
-            emitNudgeStatus('error', 'Drag move failed: scene transport is unavailable', {
-              entity: dragState.moveEntity,
-            });
-            setManipStatus('Drag move failed: scene transport is unavailable');
-          } else {
-            const requestId = `drag-${Date.now().toString(36)}-${(++moveRequestCounterRef.current).toString(36)}`;
-            emitNudgeStatus('pending', `Applying drag pose for ${dragState.moveEntity}...`, {
-              requestId,
-              entity: dragState.moveEntity,
-              attempt: 1,
-              maxAttempts: 1,
-            });
-            moveTrace('drag.dispatch.prepare', {
-              requestId,
-              world: dragState.world,
-              entity: dragState.moveEntity,
-              poseName: dragState.poseName,
-              delta: toTracePosition(delta),
-              targetPose: {
-                name: targetPose.name,
-                id: targetPose.id,
-                position: toTracePosition(targetPose.position),
-                orientation: toTraceOrientation(targetPose.orientation),
-              },
-              releasePlacementMode: releasePlacement.mode,
-              releasePlacementLabel: releasePlacement.label,
-              releaseUsedLastValidPreview: !resolvedReleasePose,
-            });
-            const response = requestSetPose(transport, dragState.world, dragState.msgType, targetPose, {
-              requestId,
-              entity: dragState.moveEntity,
-              phasePrefix: 'drag.dispatch',
-            });
-            if (!response.ok) {
-              const observed = findPoseSnapshotForAliases(dragState.aliases);
-              if (observed) {
-                applyPoseSnapshotToAliases(dragState, observed.pose);
-              } else {
-                applyPoseSnapshotToAliases(dragState, dragState.baselinePose);
-              }
-              emitNudgeStatus('error', `Drag move failed: set_pose request error (${response.error})`, {
-                requestId,
-                entity: dragState.moveEntity,
-                attempt: 1,
-                maxAttempts: 1,
-              });
-              setManipStatus(`Drag move failed for ${dragState.moveEntity}`);
-            } else {
-              recentMoveRef.current = {
-                entity: dragState.moveEntity,
-                aliases: dragState.aliases,
-                atMs: Date.now(),
-              };
-              moveTrace('drag.dispatch.accepted', {
-                requestId,
-                world: dragState.world,
-                serviceName: response.serviceName,
-                msgType: dragState.msgType,
-                entity: dragState.moveEntity,
-                aliases: dragState.aliases,
-              });
-              const startedAtMs = Date.now();
-              const poll = () => {
-                const observed = findPoseSnapshotForAliases(dragState.aliases);
-                const observedPose = observed?.pose;
-                if (observedPose) {
-                  const dx = observedPose.position.x - targetPose.position.x;
-                  const dy = observedPose.position.y - targetPose.position.y;
-                  const dz = observedPose.position.z - targetPose.position.z;
-                  const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                  if (distance <= DRAG_CONFIRM_TOLERANCE_METERS) {
-                    applyPoseSnapshotToAliases(dragState, observedPose);
-                    applyMoveHistoryAction(
-                      dragState.mappedEntityName,
-                      {
-                        x: targetPose.position.x - dragState.baselinePose.position.x,
-                        y: targetPose.position.y - dragState.baselinePose.position.y,
-                        z: targetPose.position.z - dragState.baselinePose.position.z,
-                      },
-                      dragState.baselinePose,
-                      'append',
-                    );
-                    emitNudgeStatus('success', `Drag move confirmed for ${dragState.moveEntity}`, {
-                      requestId,
-                      entity: dragState.moveEntity,
-                      attempt: 1,
-                      maxAttempts: 1,
-                    });
-                    setManipStatus(`Drag move confirmed for ${dragState.moveEntity}`);
-                    moveTrace('drag.confirmed', {
-                      requestId,
-                      world: dragState.world,
-                      entity: dragState.moveEntity,
-                      observedName: observed?.name,
-                      observedPosition: toTracePosition(observedPose.position),
-                      targetPosition: toTracePosition(targetPose.position),
-                      distanceToExpectedMeters: Number(distance.toFixed(4)),
-                    });
-                    return;
-                  }
-                }
-                if (Date.now() - startedAtMs >= DRAG_CONFIRM_TIMEOUT_MS) {
-                  if (observedPose) {
-                    applyPoseSnapshotToAliases(dragState, observedPose);
-                  } else {
-                    applyPoseSnapshotToAliases(dragState, targetPose);
-                  }
-                  emitNudgeStatus(
-                    'warning',
-                    `Drag move sent but not confirmed within ${DRAG_CONFIRM_TIMEOUT_MS}ms`,
-                    {
-                      requestId,
-                      entity: dragState.moveEntity,
-                      attempt: 1,
-                      maxAttempts: 1,
-                    },
-                  );
-                  setManipStatus(`Drag move timeout for ${dragState.moveEntity}`);
-                  moveTrace('drag.confirm.timeout', {
-                    requestId,
-                    world: dragState.world,
-                    entity: dragState.moveEntity,
-                    targetPosition: toTracePosition(targetPose.position),
-                    lastObservedPosition: observedPose ? toTracePosition(observedPose.position) : undefined,
-                  });
-                  return;
-                }
-                setTimeout(poll, 100);
-              };
-              setTimeout(poll, 120);
-            }
-          }
-        } else {
-          const observed = findPoseSnapshotForAliases(dragState.aliases);
-          if (observed) {
-            applyPoseSnapshotToAliases(dragState, observed.pose);
-          } else {
-            applyPoseSnapshotToAliases(dragState, dragState.baselinePose);
-          }
-          const canceledMessage =
-            reason === 'cancel' || reason === 'lost_capture'
-              ? `Drag canceled: ${reason === 'cancel' ? 'pointer canceled' : 'pointer capture lost'}`
-              : releasePlacement.mode === 'none'
-                ? 'Drag canceled: no valid placement under cursor'
-                : `Drag canceled: movement below ${DRAG_MIN_DELTA_METERS}m`;
-          setEntityControlStatus(canceledMessage);
-          setManipStatus(canceledMessage);
-        }
-      }
-      releaseSceneControls();
-      clearDirectDrag();
-      const pointerId = dragPointerIdRef.current;
-      if (pointerId !== null) {
-        try {
-          sceneCanvas.releasePointerCapture(pointerId);
-        } catch {
-          // Ignore if pointer capture was never set.
-        }
-      }
-      dragPointerIdRef.current = null;
-    };
-
-    const onPointerMove = (event: PointerEvent) => {
-      const dragState = directDragStateRef.current;
-      if (!dragState || !isDraggingDirectRef.current) return;
-      if (event.buttons === 0) {
-        finalizeDrag(event.clientX, event.clientY, 'no_buttons');
-        return;
-      }
-      const placement = resolveDragPointerPlacement(
-        event.clientX,
-        event.clientY,
-        dragState.aliases,
-        dragState.baselinePose.position.z,
-      );
-      const previewPose = composePoseFromPlacement(dragState, placement);
-      if (!previewPose || !placement.point) {
-        sceneCanvas.style.cursor = 'not-allowed';
-        setEntityControlStatus(`Placement blocked: ${placement.label}`);
-        setManipStatus(`Dragging ${dragState.moveEntity}: move cursor to a valid placement`);
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      dragState.lastPoint = placement.point.clone();
-      dragState.lastPreviewPose = clonePose(previewPose);
-      dragState.lastPlacementMode = placement.mode;
-      dragState.lastPlacementLabel = placement.label;
-      const manager = sceneManagerRef.current;
-      if (!manager) return;
-      previewPoseInScene(manager, dragState.world, dragState.aliases, previewPose);
-      sceneCanvas.style.cursor = placement.mode === 'surface' ? 'grabbing' : 'crosshair';
-      const placementDescription = placement.mode === 'surface'
-        ? `surface ${placement.label}`
-        : `free plane ${placement.label}`;
-      setEntityControlStatus(
-        `Drag target (${placementDescription}): x=${previewPose.position.x.toFixed(2)} y=${previewPose.position.y.toFixed(2)} z=${previewPose.position.z.toFixed(2)}`,
-      );
-      if (placement.mode === 'surface') {
-        setManipStatus(`Release to place ${dragState.moveEntity}`);
-      } else {
-        setManipStatus(`Release to place ${dragState.moveEntity} (free plane mode)`);
-      }
-      event.preventDefault();
-      event.stopPropagation();
-    };
-
-    const onPointerUp = (event: PointerEvent) => {
-      finalizeDrag(event.clientX, event.clientY, 'up');
-    };
-    const onPointerCancel = () => finalizeDrag(undefined, undefined, 'cancel');
-    const onLostPointerCapture = () => finalizeDrag(undefined, undefined, 'lost_capture');
-    const onMouseUp = (event: MouseEvent) => {
-      if (!isDraggingDirectRef.current) return;
-      finalizeDrag(event.clientX, event.clientY, 'up');
-    };
-    const onWindowBlur = () => {
-      if (!isDraggingDirectRef.current) return;
-      finalizeDrag(undefined, undefined, 'cancel');
-    };
-
-    sceneCanvas.addEventListener('pointerdown', onPointerDown, true);
-    window.addEventListener('pointermove', onPointerMove, true);
-    window.addEventListener('pointerup', onPointerUp, true);
-    window.addEventListener('pointercancel', onPointerCancel, true);
-    sceneCanvas.addEventListener('lostpointercapture', onLostPointerCapture, true);
-    window.addEventListener('mouseup', onMouseUp, true);
-    window.addEventListener('blur', onWindowBlur, true);
-
-    return () => {
-      sceneCanvas.removeEventListener('pointerdown', onPointerDown, true);
-      window.removeEventListener('pointermove', onPointerMove, true);
-      window.removeEventListener('pointerup', onPointerUp, true);
-      window.removeEventListener('pointercancel', onPointerCancel, true);
-      sceneCanvas.removeEventListener('lostpointercapture', onLostPointerCapture, true);
-      window.removeEventListener('mouseup', onMouseUp, true);
-      window.removeEventListener('blur', onWindowBlur, true);
-      releaseSceneControls();
-      clearDirectDrag();
-      dragPointerIdRef.current = null;
-    };
   }, [
-    applyMoveHistoryAction,
     directManipulationEnabled,
     dragModeEnabled,
-    emitNudgeStatus,
-    findPoseSnapshotForAliases,
-    previewPoseInScene,
-    requestSetPose,
-    resolveDragPointerPlacement,
-    setManipStatus,
+    selectedEntityAllowsDirectManipulation,
+    selectedManipulationTargetNames,
   ]);
 
   useEffect(() => {
-    if (LEGACY_PANEL_DIRECT_MANIPULATION) return;
     if (!isConnected || !directManipulationEnabled) return;
     const manager = sceneManagerRef.current;
     if (!manager?.onSceneEvent || !manager?.offSceneEvent) return;
+    let disposed = false;
+    type PendingDragConfirmation = {
+      requestId: string;
+      entity: string;
+      cancel: () => void;
+    };
 
-    const sceneElement = document.getElementById(SCENE_ELEMENT_ID);
-    if (!sceneElement) return;
-    const sceneCanvas = manager.getDomElement?.() ?? sceneElement;
+    const pendingConfirmCancels = new Set<() => void>();
+    const pendingConfirmByEntity = new Map<string, PendingDragConfirmation>();
+    const pendingConfirmByRequestId = new Map<string, PendingDragConfirmation>();
+    const clearPendingConfirmation = (pending: PendingDragConfirmation | undefined) => {
+      if (!pending) return;
+      pending.cancel();
+      pendingConfirmCancels.delete(pending.cancel);
+      if (pendingConfirmByEntity.get(pending.entity)?.requestId === pending.requestId) {
+        pendingConfirmByEntity.delete(pending.entity);
+      }
+      if (pendingConfirmByRequestId.get(pending.requestId)?.entity === pending.entity) {
+        pendingConfirmByRequestId.delete(pending.requestId);
+      }
+    };
 
     const handleManipulationState = (payload: unknown) => {
-      const candidate = (payload ?? {}) as { dragging?: unknown; entity?: unknown };
-      const dragging = Boolean(candidate.dragging);
+      const event = parseManipulationStateEvent(payload);
+      const dragging = event.dragging;
       isDraggingDirectRef.current = dragging;
       setIsDraggingDirect(dragging);
-      const entityName = typeof candidate.entity === 'string' && candidate.entity.trim().length > 0
-        ? candidate.entity.trim()
-        : 'selected entity';
+      const entityName = event.entity || 'selected entity';
       if (dragging) {
         setManipStatus(`Dragging ${entityName}`);
         setEntityControlStatus(`Dragging ${entityName} (release to apply exact pose)`);
       } else {
-        setManipStatus(dragModeEnabled ? 'Translate mode armed' : 'Ready');
+        setManipStatus(dragModeEnabled ? 'Gizmo ready' : 'Ready');
       }
     };
 
-    const handleManipulationCommit = (payload: unknown) => {
+    const handleManipulationDispatch = (payload: unknown) => {
       if (!dragModeEnabled) return;
-      const candidate = (payload ?? {}) as {
-        name?: unknown;
-        position?: unknown;
-        orientation?: unknown;
-      };
-      const requestedName = typeof candidate.name === 'string' ? candidate.name.trim() : '';
-      const position = toPoseVector(candidate.position);
-      const orientation = toPoseQuaternion(candidate.orientation);
-      if (!requestedName || !position || !orientation) return;
+      const dispatchEvent = parseManipulationDispatchEvent(payload);
+      if (!dispatchEvent) return;
+      const {
+        name: requestedName,
+        position,
+        orientation,
+        world,
+        serviceName,
+        msgType,
+        ok,
+        error,
+        requestId: dispatchRequestId,
+      } = dispatchEvent;
 
-      const mgr = sceneManagerRef.current;
-      const transport = mgr?.transport;
-      const world = transport?.getWorld?.();
-      if (!mgr || !transport || !transport.requestService || !world) {
-        emitNudgeStatus('error', 'Drag move failed: scene transport is unavailable', {
-          entity: requestedName,
-        });
-        setManipStatus(`Drag move failed for ${requestedName}`);
-        return;
-      }
-
-      const msgType = getOrderedPoseMessageTypes(transport, world)[0];
-      if (!msgType) {
-        emitNudgeStatus('error', 'Drag move failed: no compatible pose message type', {
-          entity: requestedName,
-        });
-        setManipStatus(`Drag move failed for ${requestedName}`);
-        return;
-      }
-
-      const resolvedPoseEntry = resolvePoseEntry(entityPoseRef.current, requestedName);
-      const poseName = resolvedPoseEntry?.poseName ?? requestedName;
-      const baselinePose = resolvedPoseEntry?.pose;
-      const historyEntityKey =
-        selectedEntity && getRuntimePoseEntityName(selectedEntity) === requestedName
-          ? getGazeboEntityName(selectedEntity)
-          : requestedName;
+      const binding = buildManipulationPoseBinding({
+        poses: entityPoseRef.current,
+        world,
+        requestedName,
+      });
       const targetPose: GazeboPose = {
-        name: poseName,
-        id: baselinePose?.id,
+        name: binding.poseName,
+        id: binding.poseId,
         position: roundPoseVector(position),
         orientation,
       };
-      const requestId = `drag-${Date.now().toString(36)}-${(++moveRequestCounterRef.current).toString(36)}`;
+      const requestId =
+        dispatchRequestId ??
+        `drag-${Date.now().toString(36)}-${(++moveRequestCounterRef.current).toString(36)}`;
+      const existingPending = pendingConfirmByEntity.get(requestedName);
+      if (existingPending) {
+        clearPendingConfirmation(existingPending);
+        moveTrace('drag.confirm.superseded', {
+          requestId,
+          world,
+          entity: requestedName,
+          note: 'Cancelled older confirmation poll for superseded drag request',
+        });
+      }
       emitNudgeStatus('pending', `Applying drag pose for ${requestedName}...`, {
         requestId,
         entity: requestedName,
         attempt: 1,
         maxAttempts: 1,
       });
-      const response = requestSetPose(transport, world, msgType, targetPose, {
-        requestId,
-        entity: requestedName,
-        phasePrefix: 'drag.dispatch',
-      });
-      if (!response.ok) {
-        emitNudgeStatus('error', `Drag move failed: set_pose request error (${response.error})`, {
+      if (!ok) {
+        moveTrace('drag.dispatch.error', {
+          requestId,
+          world,
+          serviceName,
+          msgType,
+          entity: requestedName,
+          error,
+          pose: {
+            name: targetPose.name,
+            id: targetPose.id,
+            position: toTracePosition(targetPose.position),
+            orientation: toTraceOrientation(targetPose.orientation),
+          },
+        });
+        emitNudgeStatus('error', `Drag move failed: ${error ?? 'set_pose request error'}`, {
           requestId,
           entity: requestedName,
           attempt: 1,
@@ -2574,130 +2025,149 @@ export const GzWebPanel: React.FC = () => {
         return;
       }
 
-      const aliases = buildPoseNameAliases(world, unique([poseName, requestedName]));
+      moveTrace('drag.dispatch.set_pose', {
+        requestId,
+        attempt: 1,
+        world,
+        serviceName,
+        msgType,
+        entity: requestedName,
+        pose: {
+          name: targetPose.name,
+          id: targetPose.id,
+          position: toTracePosition(targetPose.position),
+          orientation: toTraceOrientation(targetPose.orientation),
+        },
+      });
       recentMoveRef.current = {
         entity: requestedName,
-        aliases,
+        aliases: binding.aliases,
         atMs: Date.now(),
       };
-      if (baselinePose) {
-        applyMoveHistoryAction(
-          historyEntityKey,
-          {
-            x: targetPose.position.x - baselinePose.position.x,
-            y: targetPose.position.y - baselinePose.position.y,
-            z: targetPose.position.z - baselinePose.position.z,
-          },
-          baselinePose,
-          'append',
-        );
-      }
       moveTrace('drag.dispatch.accepted', {
         requestId,
         world,
-        serviceName: response.serviceName,
+        serviceName,
         msgType,
         entity: requestedName,
-        aliases,
-        note: 'set_pose dispatched from gzweb manipulation commit',
+        aliases: binding.aliases,
+        note: 'set_pose dispatched from gzweb scene manager',
       });
-      emitNudgeStatus('success', `Drag move set_pose sent for ${requestedName}`, {
+      let cancelConfirmation = () => {};
+      const pendingConfirmation: PendingDragConfirmation = {
         requestId,
         entity: requestedName,
+        cancel: () => cancelConfirmation(),
+      };
+      const confirmationStartedAtMs = Date.now();
+      cancelConfirmation = pollForPoseConfirmation({
+        isDisposed: () => disposed,
+        getObservation: () =>
+          resolveManipulationObservation({
+            poses: entityPoseRef.current,
+            binding,
+            targetPose,
+            toleranceMeters: DRAG_CONFIRM_TOLERANCE_METERS,
+            minObservedAtMs: confirmationStartedAtMs,
+          }),
+        timeoutMs: DRAG_CONFIRM_TIMEOUT_MS,
+        onConfirmed: ({ name: observedName, pose: observedPose, distance }) => {
+          clearPendingConfirmation(pendingConfirmation);
+          emitNudgeStatus('success', `Drag move confirmed for ${requestedName}`, {
+            requestId,
+            entity: requestedName,
+            attempt: 1,
+            maxAttempts: 1,
+          });
+          setManipStatus(`Drag move confirmed for ${requestedName}`);
+          moveTrace('drag.confirmed', {
+            requestId,
+            world,
+            entity: requestedName,
+            observedName,
+            observedPosition: toTracePosition(observedPose.position),
+            targetPosition: toTracePosition(targetPose.position),
+            distanceToExpectedMeters: Number(distance.toFixed(4)),
+          });
+        },
+        onTimeout: (observedPose) => {
+          clearPendingConfirmation(pendingConfirmation);
+          emitNudgeStatus(
+            'warning',
+            `Drag move sent but not confirmed within ${DRAG_CONFIRM_TIMEOUT_MS}ms`,
+            {
+              requestId,
+              entity: requestedName,
+              attempt: 1,
+              maxAttempts: 1,
+            },
+          );
+          setManipStatus(`Drag move timeout for ${requestedName}`);
+          moveTrace('drag.confirm.timeout', {
+            requestId,
+            world,
+            entity: requestedName,
+            targetPosition: toTracePosition(targetPose.position),
+            lastObservedPosition: observedPose ? toTracePosition(observedPose.position) : undefined,
+          });
+        },
+      });
+      pendingConfirmCancels.add(cancelConfirmation);
+      pendingConfirmByEntity.set(requestedName, pendingConfirmation);
+      pendingConfirmByRequestId.set(requestId, pendingConfirmation);
+    };
+
+    const handleManipulationServiceReply = (payload: unknown) => {
+      const replyEvent = parseManipulationServiceReplyEvent(payload);
+      if (!replyEvent) return;
+      const { requestId, name, world, serviceName, requestType, responseType, ok, detail } = replyEvent;
+      moveTrace('drag.dispatch.reply', {
+        requestId,
+        entity: name,
+        world,
+        serviceName,
+        requestType,
+        responseType,
+        ok: ok === null ? 'unknown' : ok,
+        detail,
+      });
+
+      if (ok !== false) {
+        return;
+      }
+
+      clearPendingConfirmation(pendingConfirmByRequestId.get(requestId));
+
+      emitNudgeStatus('error', `Drag move rejected: ${detail ?? 'service reported failure'}`, {
+        requestId,
+        entity: name,
         attempt: 1,
         maxAttempts: 1,
       });
-      setManipStatus(`Drag move applied for ${requestedName}`);
+      setManipStatus(`Drag move rejected for ${name}`);
     };
 
-    const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return;
-      if (!dragModeEnabled) return;
-      event.preventDefault();
-      event.stopPropagation();
-
-      const activeEntity = selectedEntityRef.current;
-      const dragTargetName = activeEntity ? getGazeboEntityName(activeEntity) : '';
-      if (!activeEntity || !dragTargetName) {
-        setEntityControlStatus('Drag start failed: select a featured entity card first');
-        setManipStatus('Drag start failed: select a featured entity card first');
-        return;
-      }
-
-      const mgr = sceneManagerRef.current;
-      const transport = mgr?.transport;
-      const world = transport?.getWorld?.();
-      if (!mgr || !transport || !world) {
-        setEntityControlStatus('Drag start failed: scene transport is unavailable');
-        setManipStatus('Drag start failed: scene transport is unavailable');
-        return;
-      }
-
-      const runtimePoseEntity = getRuntimePoseEntityName(activeEntity);
-      const entityNameCandidates = getEntityNameCandidates(activeEntity);
-      let resolvedPoseEntry: { poseName: string; pose: GazeboPose } | null = null;
-      for (const entityName of entityNameCandidates) {
-        resolvedPoseEntry = resolvePoseEntry(entityPoseRef.current, entityName);
-        if (resolvedPoseEntry) break;
-      }
-      if (!resolvedPoseEntry) {
-        setEntityControlStatus('Drag start failed: waiting for dynamic pose for selected entity');
-        setManipStatus('Drag start failed: waiting for dynamic pose for selected entity');
-        return;
-      }
-
-      const aliases = buildPoseNameAliases(world, unique([
-        resolvedPoseEntry.poseName,
-        `${world}::${resolvedPoseEntry.poseName}`,
-        dragTargetName,
-        runtimePoseEntity,
-      ]));
-      const bp = resolvedPoseEntry.pose;
-      const dragConfig: SceneDragConfig = {
-        entityName: runtimePoseEntity || dragTargetName,
-        poseName: resolvedPoseEntry.poseName,
-        aliases,
-        world,
-        baselinePose: {
-          name: bp.name || resolvedPoseEntry.poseName,
-          id: bp.id,
-          position: { ...bp.position },
-          orientation: { ...bp.orientation },
-        },
-        minDeltaMeters: DRAG_MIN_DELTA_METERS,
-      };
-      moveTrace('drag.start', {
-        world,
-        entity: dragConfig.entityName,
-        mappedEntityName: dragTargetName,
-        poseName: resolvedPoseEntry.poseName,
-        baselinePosition: toTracePosition(bp.position),
-      });
-      const started = mgr.startDrag?.(event, dragConfig);
-      if (!started) {
-        setEntityControlStatus('Drag start failed: scene did not accept drag');
-        setManipStatus('Drag start failed: scene did not accept drag');
-      }
-    };
-
-    sceneCanvas.addEventListener('pointerdown', onPointerDown, true);
     manager.onSceneEvent(SCENE_EVENT_MANIPULATION_STATE, handleManipulationState);
-    manager.onSceneEvent(SCENE_EVENT_MANIPULATION_COMMIT, handleManipulationCommit);
+    manager.onSceneEvent(SCENE_EVENT_MANIPULATION_DISPATCH, handleManipulationDispatch);
+    manager.onSceneEvent(SCENE_EVENT_MANIPULATION_SERVICE_REPLY, handleManipulationServiceReply);
 
     return () => {
-      sceneCanvas.removeEventListener('pointerdown', onPointerDown, true);
+      disposed = true;
+      for (const cancel of pendingConfirmCancels) {
+        cancel();
+      }
+      pendingConfirmCancels.clear();
+      pendingConfirmByEntity.clear();
+      pendingConfirmByRequestId.clear();
       manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_STATE, handleManipulationState);
-      manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_COMMIT, handleManipulationCommit);
-      manager.cancelDrag?.();
+      manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_DISPATCH, handleManipulationDispatch);
+      manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_SERVICE_REPLY, handleManipulationServiceReply);
     };
   }, [
-    applyMoveHistoryAction,
     directManipulationEnabled,
     dragModeEnabled,
     emitNudgeStatus,
     isConnected,
-    requestSetPose,
-    selectedEntity,
     setManipStatus,
   ]);
 
@@ -2779,15 +2249,6 @@ export const GzWebPanel: React.FC = () => {
       const entityFromMessage = toEntityCardData(message.payload);
       const entity = entityFromMessage ?? selectedEntity;
 
-      if (message.type === ENTITY_CONTROL_MESSAGES.UNDO_LAST_MOVE) {
-        if (!entity) {
-          setEntityControlStatus('Undo ignored: no selected entity');
-          return;
-        }
-        undoLastMove(entity);
-        return;
-      }
-
       if (message.type === ENTITY_CONTROL_MESSAGES.RESET_ENTITY_POSE) {
         if (!entity) {
           setEntityControlStatus('Reset ignored: no selected entity');
@@ -2822,7 +2283,7 @@ export const GzWebPanel: React.FC = () => {
       const requestId = typeof payload.requestId === 'string' ? payload.requestId : undefined;
       nudgeEntity(entity, delta, requestId);
     },
-    [clearAllThrottledNudges, emitScenePresetList, loadScenePreset, nudgeEntity, resetAllPoses, resetEntityPose, saveScenePreset, selectedEntity, undoLastMove],
+    [clearAllThrottledNudges, emitScenePresetList, loadScenePreset, nudgeEntity, resetAllPoses, resetEntityPose, saveScenePreset, selectedEntity],
   );
 
   const destroyScene = useCallback(() => {
@@ -2862,14 +2323,10 @@ export const GzWebPanel: React.FC = () => {
     contactOriginalCbRef.current = null;
     contactWrappedCbRef.current = null;
     recentMoveRef.current = null;
-    directDragStateRef.current = null;
     isDraggingDirectRef.current = false;
     setIsDraggingDirect(false);
-    dragPointerIdRef.current = null;
-    controlsEnabledBeforeDragRef.current = null;
     clearAllThrottledNudges('destroy_scene');
     lastNudgeDispatchAtRef.current.clear();
-    moveHistoryRef.current.clear();
     entityPoseRef.current.clear();
     sessionInitialPoseRef.current.clear();
     sessionBaselineCaptureDeadlineRef.current = 0;
@@ -3316,7 +2773,13 @@ export const GzWebPanel: React.FC = () => {
 
       patchTransportRoot(manager.transport);
       sceneManagerRef.current = manager;
-      manager.setManipulationMode?.(directManipulationEnabled && dragModeEnabled ? 'translate' : 'view');
+      seedPoseCacheFromScene(manager);
+      manager.setManipulationTargetNames?.(selectedManipulationTargetNames);
+      manager.setManipulationMode?.(
+        directManipulationEnabled && dragModeEnabled && selectedEntityAllowsDirectManipulation
+          ? 'translate'
+          : 'view',
+      );
       if (selectedEntity) {
         manager.select?.(getRuntimePoseEntityName(selectedEntity));
       }
@@ -3343,7 +2806,10 @@ export const GzWebPanel: React.FC = () => {
     hasVsCodeBridge,
     requestHostVmInfo,
     resetWebSocketToNative,
+    seedPoseCacheFromScene,
     selectedEntity,
+    selectedEntityAllowsDirectManipulation,
+    selectedManipulationTargetNames,
     token,
   ]);
 
@@ -3419,12 +2885,13 @@ export const GzWebPanel: React.FC = () => {
           const orientation = toPoseQuaternion(poseEntry.orientation);
           if (!position || !orientation) continue;
           const id = toOptionalNumber(poseEntry.id);
-          const poseSnapshot = {
-            name: poseEntry.name,
-            position,
-            orientation,
-            id,
-          };
+        const poseSnapshot = {
+          name: poseEntry.name,
+          position,
+          orientation,
+          id,
+          observedAtMs: Date.now(),
+        };
           entityPoseRef.current.set(poseEntry.name, poseSnapshot);
           recordSessionInitialPose(poseSnapshot);
         }
@@ -3742,16 +3209,6 @@ export const GzWebPanel: React.FC = () => {
                   isDraggingDirectRef.current = false;
                   setIsDraggingDirect(false);
                   setManipStatus('Direct manipulation disabled');
-                  directDragStateRef.current = null;
-                  dragPointerIdRef.current = null;
-                  if (controlsEnabledBeforeDragRef.current !== null) {
-                    sceneManagerRef.current?.setControlsEnabled?.(controlsEnabledBeforeDragRef.current);
-                  }
-                  controlsEnabledBeforeDragRef.current = null;
-                  const sceneDom = sceneManagerRef.current?.getDomElement?.();
-                  if (sceneDom) {
-                    sceneDom.style.cursor = '';
-                  }
                 }
               }}
             />
@@ -3769,28 +3226,18 @@ export const GzWebPanel: React.FC = () => {
                 if (!next) {
                   isDraggingDirectRef.current = false;
                   setIsDraggingDirect(false);
-                  setManipStatus('Drag mode disarmed');
-                  directDragStateRef.current = null;
-                  dragPointerIdRef.current = null;
-                  if (controlsEnabledBeforeDragRef.current !== null) {
-                    sceneManagerRef.current?.setControlsEnabled?.(controlsEnabledBeforeDragRef.current);
-                  }
-                  controlsEnabledBeforeDragRef.current = null;
-                  const sceneDom = sceneManagerRef.current?.getDomElement?.();
-                  if (sceneDom) {
-                    sceneDom.style.cursor = '';
-                  }
+                  setManipStatus('Gizmo disarmed');
                 }
                 return next;
               });
             }}
           >
-            {dragModeEnabled ? (isDraggingDirect ? 'Dragging...' : 'Drag armed') : 'Click select'}
+            {dragModeEnabled ? (isDraggingDirect ? 'Dragging...' : 'Gizmo active') : 'Click select'}
           </button>
         </div>
         <div className="gzweb-manip-hint">
           {dragModeEnabled
-            ? 'Press, drag, release. Surface hits place in 3D; fallback uses a free plane. Red cursor means release is blocked there.'
+            ? 'Click an entity to attach the gizmo. Drag an axis handle to move it. Release to commit the new pose.'
             : 'Click an object in the viewport to select it.'}
         </div>
         <div className="gzweb-manip-status">
