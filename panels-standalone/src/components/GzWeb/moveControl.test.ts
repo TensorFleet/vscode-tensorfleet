@@ -9,6 +9,7 @@ import {
   isFinitePoseVector,
   isExpectedPoseObserved,
   poseVectorMagnitude,
+  quaternionAngularDistanceRad,
   roundPoseVector,
   resolveObservedPoseEntry,
   resolvePoseEntry,
@@ -221,5 +222,21 @@ describe('moveControl', () => {
       y: -2.3457,
       z: 0.0001,
     });
+  });
+
+  it('computes quaternion angular distance independent of sign', () => {
+    expect(
+      quaternionAngularDistanceRad(
+        { x: 0, y: 0, z: 0, w: 1 },
+        { x: 0, y: 0, z: 0, w: -1 },
+      ),
+    ).toBe(0);
+
+    expect(
+      quaternionAngularDistanceRad(
+        { x: 0, y: 0, z: 0, w: 1 },
+        { x: 0, y: Math.sin(Math.PI / 4), z: 0, w: Math.cos(Math.PI / 4) },
+      ),
+    ).toBeCloseTo(Math.PI / 2, 6);
   });
 });

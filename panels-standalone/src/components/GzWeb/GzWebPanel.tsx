@@ -34,7 +34,13 @@ import {
   pollForPoseConfirmation,
   resolveManipulationObservation,
 } from './manipulationController';
-import { getGazeboEntityName, getPoseEditAccess, getRuntimePoseEntityName } from './posePolicy';
+import {
+  getGazeboEntityName,
+  getManipulationSelectionNames,
+  getManipulationTargetName,
+  getPoseEditAccess,
+  getRuntimePoseEntityName,
+} from './posePolicy';
 import './GzWebPanel.css';
 
 declare global {
@@ -127,6 +133,9 @@ const DEFAULT_MAX_NUDGE_DELTA_METERS = 3;
 const MIN_MOVE_EPSILON_METERS = 0.0001;
 const DRAG_CONFIRM_TIMEOUT_MS = 3200;
 const DRAG_CONFIRM_TOLERANCE_METERS = 0.02;
+const DRAG_CONFIRM_ANGULAR_TOLERANCE_RAD = Math.PI / 36;
+const DRAG_SETTLE_STABILITY_WINDOW_MS = 400;
+const DRAG_SETTLE_STABILITY_TOLERANCE_METERS = 0.0025;
 const MOVE_TRACE_BUFFER_MAX_LINES = 2000;
 const SCENE_EVENT_MANIPULATION_DISPATCH = 'manipulation_dispatch';
 const SCENE_EVENT_MANIPULATION_SERVICE_REPLY = 'manipulation_service_reply';
@@ -308,6 +317,14 @@ const toTraceOrientation = (value: PoseQuaternion) => ({
   z: Number(value.z.toFixed(4)),
   w: Number(value.w.toFixed(4)),
 });
+
+const toTraceDelta = (observed: PoseVector, target: PoseVector) => ({
+  x: Number((observed.x - target.x).toFixed(4)),
+  y: Number((observed.y - target.y).toFixed(4)),
+  z: Number((observed.z - target.z).toFixed(4)),
+});
+
+const radiansToDegrees = (radians: number) => Number((radians * 180 / Math.PI).toFixed(2));
 
 const toTraceValueText = (value: unknown): string => {
   if (value === undefined) return 'undefined';
@@ -977,15 +994,54 @@ export const GzWebPanel: React.FC = () => {
     [selectedEntity],
   );
   const selectedEntityAllowsDirectManipulation = selectedEntityPoseAccess.enabled;
+  const selectedSceneEntityNames = useMemo(() => {
+    return getManipulationSelectionNames(selectedEntity);
+  }, [selectedEntity]);
   const selectedManipulationTargetNames = useMemo(() => {
     if (!selectedEntity || !selectedEntityAllowsDirectManipulation) {
       return [] as string[];
     }
     return unique([
-      getRuntimePoseEntityName(selectedEntity),
-      getGazeboEntityName(selectedEntity),
+      getManipulationTargetName(selectedEntity),
+      ...getManipulationSelectionNames(selectedEntity),
     ]).filter((name) => name.length > 0);
   }, [selectedEntity, selectedEntityAllowsDirectManipulation]);
+
+  const syncSceneSelection = useCallback((manager: GzWebManagerLike | null | undefined) => {
+    if (!manager?.select) return;
+    const currentSelection = manager.getSelectedEntityName?.() ?? null;
+    if (!selectedEntity) {
+      if (currentSelection && manager.clearSelection) {
+        manager.clearSelection();
+      }
+      return;
+    }
+
+    const matchesSelectedName = (candidate: string | null): boolean => {
+      if (!candidate) return false;
+      return selectedSceneEntityNames.some((name) => {
+        if (candidate === name) return true;
+        return (
+          candidate.endsWith(`::${name}`) ||
+          candidate.startsWith(`${name}::`) ||
+          candidate.includes(`::${name}::`)
+        );
+      });
+    };
+
+    if (matchesSelectedName(currentSelection)) {
+      return;
+    }
+
+    manager.clearSelection?.();
+    for (const candidateName of selectedSceneEntityNames) {
+      manager.select(candidateName);
+      const nextSelection = manager.getSelectedEntityName?.() ?? null;
+      if (matchesSelectedName(nextSelection)) {
+        return;
+      }
+    }
+  }, [selectedEntity, selectedSceneEntityNames]);
 
   const moveRequestCounterRef = useRef(0);
   const pendingThrottledNudgesRef = useRef<Map<string, PendingThrottledNudge>>(new Map());
@@ -1905,7 +1961,7 @@ export const GzWebPanel: React.FC = () => {
     const nextMode =
       directManipulationEnabled && dragModeEnabled && selectedEntityAllowsDirectManipulation
         ? 'translate'
-        : 'view';
+      : 'view';
     manager.setManipulationMode(nextMode);
   }, [
     directManipulationEnabled,
@@ -1913,6 +1969,11 @@ export const GzWebPanel: React.FC = () => {
     selectedEntityAllowsDirectManipulation,
     selectedManipulationTargetNames,
   ]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    syncSceneSelection(sceneManagerRef.current);
+  }, [isConnected, syncSceneSelection]);
 
   useEffect(() => {
     if (!isConnected || !directManipulationEnabled) return;
@@ -1988,7 +2049,8 @@ export const GzWebPanel: React.FC = () => {
       if (existingPending) {
         clearPendingConfirmation(existingPending);
         moveTrace('drag.confirm.superseded', {
-          requestId,
+          requestId: existingPending.requestId,
+          supersededByRequestId: requestId,
           world,
           entity: requestedName,
           note: 'Cancelled older confirmation poll for superseded drag request',
@@ -2068,10 +2130,13 @@ export const GzWebPanel: React.FC = () => {
             binding,
             targetPose,
             toleranceMeters: DRAG_CONFIRM_TOLERANCE_METERS,
+            orientationToleranceRad: DRAG_CONFIRM_ANGULAR_TOLERANCE_RAD,
             minObservedAtMs: confirmationStartedAtMs,
           }),
         timeoutMs: DRAG_CONFIRM_TIMEOUT_MS,
-        onConfirmed: ({ name: observedName, pose: observedPose, distance }) => {
+        stabilityWindowMs: DRAG_SETTLE_STABILITY_WINDOW_MS,
+        stabilityToleranceMeters: DRAG_SETTLE_STABILITY_TOLERANCE_METERS,
+        onConfirmed: ({ name: observedName, pose: observedPose, distance, angularDistanceRad }) => {
           clearPendingConfirmation(pendingConfirmation);
           emitNudgeStatus('success', `Drag move confirmed for ${requestedName}`, {
             requestId,
@@ -2087,7 +2152,35 @@ export const GzWebPanel: React.FC = () => {
             observedName,
             observedPosition: toTracePosition(observedPose.position),
             targetPosition: toTracePosition(targetPose.position),
+            observedDelta: toTraceDelta(observedPose.position, targetPose.position),
             distanceToExpectedMeters: Number(distance.toFixed(4)),
+            angularDeltaDegrees:
+              typeof angularDistanceRad === 'number' ? radiansToDegrees(angularDistanceRad) : undefined,
+          });
+        },
+        onSettledMismatch: ({ name: observedName, pose: observedPose, distance, angularDistanceRad }) => {
+          clearPendingConfirmation(pendingConfirmation);
+          emitNudgeStatus('warning', `Drag move settled away from target for ${requestedName}`, {
+            requestId,
+            entity: requestedName,
+            attempt: 1,
+            maxAttempts: 1,
+          });
+          setManipStatus(`Drag move settled away from target for ${requestedName}`);
+          moveTrace('drag.settled_mismatch', {
+            requestId,
+            world,
+            entity: requestedName,
+            observedName,
+            observedPosition: toTracePosition(observedPose.position),
+            targetPosition: toTracePosition(targetPose.position),
+            observedDelta: toTraceDelta(observedPose.position, targetPose.position),
+            distanceToExpectedMeters: Number(distance.toFixed(4)),
+            toleranceMeters: DRAG_CONFIRM_TOLERANCE_METERS,
+            angularDeltaDegrees:
+              typeof angularDistanceRad === 'number' ? radiansToDegrees(angularDistanceRad) : undefined,
+            angularToleranceDegrees: radiansToDegrees(DRAG_CONFIRM_ANGULAR_TOLERANCE_RAD),
+            stableWindowMs: DRAG_SETTLE_STABILITY_WINDOW_MS,
           });
         },
         onTimeout: (observedPose) => {
@@ -2109,6 +2202,9 @@ export const GzWebPanel: React.FC = () => {
             entity: requestedName,
             targetPosition: toTracePosition(targetPose.position),
             lastObservedPosition: observedPose ? toTracePosition(observedPose.position) : undefined,
+            observedDelta: observedPose
+              ? toTraceDelta(observedPose.position, targetPose.position)
+              : undefined,
           });
         },
       });
@@ -2136,7 +2232,23 @@ export const GzWebPanel: React.FC = () => {
         return;
       }
 
-      clearPendingConfirmation(pendingConfirmByRequestId.get(requestId));
+      const pendingConfirmation = pendingConfirmByRequestId.get(requestId);
+      if (!pendingConfirmation) {
+        moveTrace('drag.dispatch.reply.ignored', {
+          requestId,
+          entity: name,
+          world,
+          serviceName,
+          requestType,
+          responseType,
+          ok,
+          detail,
+          note: 'Ignored failed service reply for settled drag request',
+        });
+        return;
+      }
+
+      clearPendingConfirmation(pendingConfirmation);
 
       emitNudgeStatus('error', `Drag move rejected: ${detail ?? 'service reported failure'}`, {
         requestId,
@@ -2780,9 +2892,7 @@ export const GzWebPanel: React.FC = () => {
           ? 'translate'
           : 'view',
       );
-      if (selectedEntity) {
-        manager.select?.(getRuntimePoseEntityName(selectedEntity));
-      }
+      syncSceneSelection(manager);
       sessionBaselineCaptureDeadlineRef.current = Date.now() + SESSION_BASELINE_CAPTURE_WINDOW_MS;
       bindResize(manager);
 
@@ -2810,6 +2920,7 @@ export const GzWebPanel: React.FC = () => {
     selectedEntity,
     selectedEntityAllowsDirectManipulation,
     selectedManipulationTargetNames,
+    syncSceneSelection,
     token,
   ]);
 

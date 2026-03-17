@@ -66,6 +66,20 @@ export const roundPoseVector = (value: PoseVector, decimals = 4): PoseVector => 
   };
 };
 
+export const quaternionAngularDistanceRad = (
+  observed: PoseQuaternion,
+  expected: PoseQuaternion,
+): number => {
+  const dot = Math.abs(
+    observed.x * expected.x +
+    observed.y * expected.y +
+    observed.z * expected.z +
+    observed.w * expected.w,
+  );
+  const clampedDot = Math.min(1, Math.max(-1, dot));
+  return 2 * Math.acos(clampedDot);
+};
+
 export const resolveVisualOffset = (
   offsets: Map<string, PoseVector>,
   world: string,

@@ -4,6 +4,7 @@ import {
   GazeboPose,
   getUnscopedPoseName,
   isExpectedPoseObserved,
+  quaternionAngularDistanceRad,
   PoseQuaternion,
   PoseVector,
   resolvePoseEntry,
@@ -195,12 +196,14 @@ export const resolveManipulationObservation = (options: {
   binding: ManipulationPoseBinding;
   targetPose: GazeboPose;
   toleranceMeters: number;
+  orientationToleranceRad?: number;
   minObservedAtMs?: number;
 }): {
   matched: boolean;
   matchedBy?: 'absolute' | 'delta';
   observed: { name: string; pose: GazeboPose } | null;
   distance: number | null;
+  angularDistanceRad: number | null;
 } => {
   const expectedDelta = options.binding.baselinePose
     ? {
@@ -234,6 +237,7 @@ export const resolveManipulationObservation = (options: {
     null;
 
   let distance: number | null = null;
+  let angularDistanceRad: number | null = null;
   if (observed) {
     if (observation.matchedBy === 'delta' && expectedDelta) {
       const baseline = options.binding.baselineByName.get(observed.name);
@@ -253,16 +257,26 @@ export const resolveManipulationObservation = (options: {
       const dz = observed.pose.position.z - options.targetPose.position.z;
       distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
+    angularDistanceRad = quaternionAngularDistanceRad(
+      observed.pose.orientation,
+      options.targetPose.orientation,
+    );
   }
+
+  const orientationToleranceRad = options.orientationToleranceRad ?? Number.POSITIVE_INFINITY;
+  const orientationMatched =
+    angularDistanceRad === null || angularDistanceRad <= orientationToleranceRad;
 
   return {
     matched:
       observation.matched &&
+      orientationMatched &&
       (!options.minObservedAtMs ||
         ((observed?.pose.observedAtMs ?? 0) >= options.minObservedAtMs)),
     matchedBy: observation.matchedBy,
     observed,
     distance,
+    angularDistanceRad,
   };
 };
 
@@ -272,12 +286,26 @@ type PoseConfirmationOptions = {
     matched: boolean;
     observed: { name: string; pose: GazeboPose } | null;
     distance: number | null;
+    angularDistanceRad: number | null;
   };
   timeoutMs: number;
-  onConfirmed: (observed: { name: string; pose: GazeboPose; distance: number }) => void;
+  onConfirmed: (observed: {
+    name: string;
+    pose: GazeboPose;
+    distance: number;
+    angularDistanceRad: number | null;
+  }) => void;
+  onSettledMismatch: (observed: {
+    name: string;
+    pose: GazeboPose;
+    distance: number;
+    angularDistanceRad: number | null;
+  }) => void;
   onTimeout: (observedPose: GazeboPose | null) => void;
   pollIntervalMs?: number;
   initialDelayMs?: number;
+  stabilityWindowMs?: number;
+  stabilityToleranceMeters?: number;
 };
 
 export const pollForPoseConfirmation = (
@@ -285,25 +313,66 @@ export const pollForPoseConfirmation = (
 ): (() => void) => {
   const pollIntervalMs = options.pollIntervalMs ?? 100;
   const initialDelayMs = options.initialDelayMs ?? 120;
+  const stabilityWindowMs = options.stabilityWindowMs ?? 400;
+  const stabilityToleranceMeters = options.stabilityToleranceMeters ?? 0.0025;
   const startedAtMs = Date.now();
   let cancelled = false;
   let timeoutHandle: number | null = null;
+  let lastObservedPosition:
+    | { x: number; y: number; z: number }
+    | null = null;
+  let stableSinceMs: number | null = null;
 
   const poll = () => {
     if (cancelled || options.isDisposed()) return;
+    const now = Date.now();
     const observation = options.getObservation();
     const observed = observation.observed;
     const observedPose = observed?.pose ?? null;
+    if (observedPose) {
+      const currentPosition = observedPose.position;
+      if (!lastObservedPosition) {
+        lastObservedPosition = { ...currentPosition };
+        stableSinceMs = now;
+      } else {
+        const dx = currentPosition.x - lastObservedPosition.x;
+        const dy = currentPosition.y - lastObservedPosition.y;
+        const dz = currentPosition.z - lastObservedPosition.z;
+        const movement = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (movement > stabilityToleranceMeters) {
+          lastObservedPosition = { ...currentPosition };
+          stableSinceMs = now;
+        }
+      }
+    } else {
+      lastObservedPosition = null;
+      stableSinceMs = null;
+    }
     if (observation.matched && observed && observedPose) {
       const distance = observation.distance ?? 0;
       options.onConfirmed({
         name: observed.name,
         pose: observedPose,
         distance,
+        angularDistanceRad: observation.angularDistanceRad,
       });
       return;
     }
-    if (Date.now() - startedAtMs >= options.timeoutMs) {
+    if (now - startedAtMs >= options.timeoutMs) {
+      if (
+        observed &&
+        observedPose &&
+        stableSinceMs !== null &&
+        now - stableSinceMs >= stabilityWindowMs
+      ) {
+        options.onSettledMismatch({
+          name: observed.name,
+          pose: observedPose,
+          distance: observation.distance ?? Number.POSITIVE_INFINITY,
+          angularDistanceRad: observation.angularDistanceRad,
+        });
+        return;
+      }
       options.onTimeout(observedPose);
       return;
     }

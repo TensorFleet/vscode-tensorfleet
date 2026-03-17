@@ -1767,14 +1767,18 @@ export class Scene {
       return;
     }
     if (!endPose) return;
+    const committedOrientation =
+      this.manipulationMode === "translate" && this.gizmoDragStartPose
+        ? this.gizmoDragStartPose.orientation
+        : endPose.orientation;
     this.emitter.emit("manipulation_commit", {
       name: obj.name,
       position: { x: endPose.position.x, y: endPose.position.y, z: endPose.position.z },
       orientation: {
-        x: endPose.orientation.x,
-        y: endPose.orientation.y,
-        z: endPose.orientation.z,
-        w: endPose.orientation.w,
+        x: committedOrientation.x,
+        y: committedOrientation.y,
+        z: committedOrientation.z,
+        w: committedOrientation.w,
       },
     });
   }

@@ -12,15 +12,26 @@ export type PoseEditAccess = {
   reason?: string;
 };
 
+const trimNonEmptyString = (value: unknown): string | undefined => {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+};
+
+const uniqueStrings = (values: Array<string | undefined>): string[] => {
+  return [...new Set(values.filter((value): value is string => Boolean(value && value.length > 0)))];
+};
+
 export const getGazeboEntityName = (entity: GazeboEntityTarget | null | undefined): string => {
   if (!entity) return '';
-  const gazeboEntity = entity.params?.gazebo_entity;
-  if (typeof gazeboEntity === 'string' && gazeboEntity.trim().length > 0) {
-    return gazeboEntity.trim();
+  const gazeboEntity = trimNonEmptyString(entity.params?.gazebo_entity);
+  if (gazeboEntity) {
+    return gazeboEntity;
   }
   const modelNames = entity.params?.model_names;
-  if (Array.isArray(modelNames) && typeof modelNames[0] === 'string' && modelNames[0].trim().length > 0) {
-    return modelNames[0].trim();
+  if (Array.isArray(modelNames)) {
+    const firstModelName = trimNonEmptyString(modelNames[0]);
+    if (firstModelName) {
+      return firstModelName;
+    }
   }
   // Safety fallback for malformed cards missing model_names.
   return entity.target;
@@ -28,15 +39,36 @@ export const getGazeboEntityName = (entity: GazeboEntityTarget | null | undefine
 
 export const getRuntimePoseEntityName = (entity: GazeboEntityTarget | null | undefined): string => {
   if (!entity) return '';
-  const runtimePoseEntity = entity.params?.runtime_pose_entity;
-  if (typeof runtimePoseEntity === 'string' && runtimePoseEntity.trim().length > 0) {
-    return runtimePoseEntity.trim();
+  const runtimePoseEntity = trimNonEmptyString(entity.params?.runtime_pose_entity);
+  if (runtimePoseEntity) {
+    return runtimePoseEntity;
   }
-  const poseEntity = entity.params?.pose_entity;
-  if (typeof poseEntity === 'string' && poseEntity.trim().length > 0) {
-    return poseEntity.trim();
+  const poseEntity = trimNonEmptyString(entity.params?.pose_entity);
+  if (poseEntity) {
+    return poseEntity;
   }
   return getGazeboEntityName(entity);
+};
+
+export const getManipulationTargetName = (
+  entity: GazeboEntityTarget | null | undefined,
+): string => {
+  return getRuntimePoseEntityName(entity);
+};
+
+export const getManipulationSelectionNames = (
+  entity: GazeboEntityTarget | null | undefined,
+): string[] => {
+  if (!entity) return [];
+  const modelNames = Array.isArray(entity.params?.model_names)
+    ? entity.params?.model_names.map(trimNonEmptyString)
+    : [];
+  return uniqueStrings([
+    getRuntimePoseEntityName(entity),
+    getGazeboEntityName(entity),
+    ...modelNames,
+    trimNonEmptyString(entity.target),
+  ]);
 };
 
 export const getPoseEditAccess = (entity: PosePolicyEntity | null): PoseEditAccess => {

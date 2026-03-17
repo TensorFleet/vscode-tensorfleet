@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { getGazeboEntityName, getPoseEditAccess, getRuntimePoseEntityName } from './posePolicy';
+import {
+  getGazeboEntityName,
+  getManipulationSelectionNames,
+  getManipulationTargetName,
+  getPoseEditAccess,
+  getRuntimePoseEntityName,
+} from './posePolicy';
 
 describe('posePolicy', () => {
   it('prefers canonical gazebo_entity over model_names aliases', () => {
@@ -33,6 +39,36 @@ describe('posePolicy', () => {
         },
       }),
     ).toBe('mug');
+  });
+
+  it('uses runtime pose entity as the primary manipulation target', () => {
+    expect(
+      getManipulationTargetName({
+        target: 'Room_Essentials_Mug_White_Yellow',
+        params: {
+          runtime_pose_entity: 'mug',
+          gazebo_entity: 'Room_Essentials_Mug_White_Yellow',
+          model_names: ['Room_Essentials_Mug_White_Yellow'],
+        },
+      }),
+    ).toBe('mug');
+  });
+
+  it('includes both runtime and asset aliases when resolving manipulation selection names', () => {
+    expect(
+      getManipulationSelectionNames({
+        target: 'Room_Essentials_Mug_White_Yellow',
+        params: {
+          runtime_pose_entity: 'mug',
+          gazebo_entity: 'Room_Essentials_Mug_White_Yellow',
+          model_names: ['Room_Essentials_Mug_White_Yellow', 'room_essentials_mug_white_yellow'],
+        },
+      }),
+    ).toEqual([
+      'mug',
+      'Room_Essentials_Mug_White_Yellow',
+      'room_essentials_mug_white_yellow',
+    ]);
   });
 
   it('respects runtime_pose_editable false with note', () => {
