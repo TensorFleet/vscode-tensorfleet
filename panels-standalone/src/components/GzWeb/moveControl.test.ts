@@ -29,21 +29,16 @@ const sampleObjectEntity: EntityCardData = {
   type: 'object',
   target: 'Room_Essentials_Mug_White_Yellow',
   params: {
-    display_name: 'Mug',
-    gazebo_entity: 'Room_Essentials_Mug_White_Yellow',
     model_names: ['Room_Essentials_Mug_White_Yellow'],
   },
 };
 
-const sampleObjectWithRuntimeTarget: EntityCardData = {
+const sampleObjectWithAliasNames: EntityCardData = {
   name: 'Mug',
   type: 'object',
   target: 'Room_Essentials_Mug_White_Yellow',
   params: {
-    display_name: 'Mug',
-    runtime_pose_entity: 'mug',
-    gazebo_entity: 'Room_Essentials_Mug_White_Yellow',
-    model_names: ['Room_Essentials_Mug_White_Yellow'],
+    model_names: ['Room_Essentials_Mug_White_Yellow', 'mug'],
   },
 };
 
@@ -65,8 +60,8 @@ describe('moveControl', () => {
     ]);
   });
 
-  it('prefers explicit runtime pose target before gazebo asset names', () => {
-    expect(getEntityNameCandidates(sampleObjectWithRuntimeTarget)).toEqual([
+  it('accepts additional model-name aliases after the canonical model name', () => {
+    expect(getEntityNameCandidates(sampleObjectWithAliasNames)).toEqual([
       'mug',
       'Room_Essentials_Mug_White_Yellow',
       'Mug',

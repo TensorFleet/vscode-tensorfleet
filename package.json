@@ -34,6 +34,7 @@
     "onCommand:tensorfleet.openMapPanel",
     "onCommand:tensorfleet.openRawMessagesPanel",
     "onCommand:tensorfleet.openFeaturedEntitiesPanel",
+    "onCommand:tensorfleet.resetSimulationScene",
     "onCommand:tensorfleet.createNewProject",
     "onCommand:tensorfleet.createNewRoboticArmProject",
     "onCommand:tensorfleet.installTools",
@@ -182,6 +183,11 @@
       {
         "command": "tensorfleet.openAllPanels",
         "title": "Open All Dashboards in Main Area",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.resetSimulationScene",
+        "title": "TensorFleet: Reset Simulation Scene",
         "category": "TensorFleet"
       },
       {

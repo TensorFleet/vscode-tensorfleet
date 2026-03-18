@@ -23,7 +23,7 @@ const toEntityParams = (value: unknown): Record<string, unknown> | null => {
   }
 };
 
-const getModelNames = (params: Record<string, unknown>): string[] => {
+export const getModelNames = (params: Record<string, unknown>): string[] => {
   const modelNames = params.model_names;
   if (!Array.isArray(modelNames)) return [];
   return modelNames
@@ -31,22 +31,40 @@ const getModelNames = (params: Record<string, unknown>): string[] => {
     .filter((name) => name.length > 0);
 };
 
-const resolveDisplayName = (params: Record<string, unknown>, fallbacks: Array<unknown>): string => {
-  return (
-    trimIfNonEmpty(params.display_name) ??
-    trimIfNonEmpty(params.preferred_name) ??
-    fallbacks.map(trimIfNonEmpty).find(Boolean) ??
-    "unknown_entity"
-  );
+const formatEntityNameToken = (token: string): string => {
+  if (!token) return token;
+  if (/^[a-z]+\d+$/i.test(token)) {
+    const match = token.match(/^([a-z]+)(\d+)$/i);
+    if (match) {
+      return `${match[1].toUpperCase()}${match[2]}`;
+    }
+  }
+  if (token.length <= 2 && /^[a-z]+$/i.test(token)) {
+    return token.toUpperCase();
+  }
+  return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
 };
 
-const resolvePrimaryTarget = (params: Record<string, unknown>, fallback: unknown): string => {
-  const canonicalGazeboEntity = trimIfNonEmpty(params.gazebo_entity);
-  if (canonicalGazeboEntity) {
-    return canonicalGazeboEntity;
-  }
+export const humanizeEntityName = (value: unknown): string | undefined => {
+  const trimmed = trimIfNonEmpty(value);
+  if (!trimmed) return undefined;
+  return trimmed
+    .split(/[^a-zA-Z0-9]+/)
+    .filter((part) => part.length > 0)
+    .map(formatEntityNameToken)
+    .join(" ");
+};
+
+export const resolveDisplayName = (params: Record<string, unknown>, fallbacks: Array<unknown>): string => {
+  return fallbacks.map(humanizeEntityName).find(Boolean) ?? "Unknown Entity";
+};
+
+export const resolvePrimaryTarget = (params: Record<string, unknown>, fallback: unknown): string => {
   const modelNames = getModelNames(params);
-  return modelNames[0] ?? trimIfNonEmpty(fallback) ?? "unknown_entity";
+  if (modelNames[0]) {
+    return modelNames[0];
+  }
+  return trimIfNonEmpty(fallback) ?? "unknown_entity";
 };
 
 /**
@@ -140,13 +158,13 @@ export class EntityCardDataImpl implements EntityData {
  *
  * 1. Proxy featured nodes (when we can't modify the node's implementation):
  *    - `proxy_featured`: boolean flag to mark the entity
- *    - `proxy_target`: fallback display name of the entity
+ *    - `proxy_target`: fallback node/target name of the entity
  *    - `params`: JSON string containing entity parameters
- *      - preferred fields: `display_name`, `type`, `model_names`
+ *      - preferred fields: `type`, `model_names`
  *
  * 2. Direct featured nodes (when the node itself has the flag):
  *    - `featured`: boolean flag on the node
- *    - node name is used as fallback label when `display_name` is absent
+ *    - node name is used as fallback identity when `model_names` is absent
  *    - `params`: optional JSON string containing entity parameters
  *
  * @param bridge - ROS2BridgeApi instance to fetch parameters from
@@ -175,8 +193,8 @@ export async function fetchFeaturedEntities(bridge: ROS2BridgeApi): Promise<Feat
       }
 
       const nodeLabel = nodeName.startsWith('/') ? nodeName.slice(1) : nodeName;
-      const name = resolveDisplayName(params, [fallbackLabel, nodeLabel]);
       const target = resolvePrimaryTarget(params, nodeLabel);
+      const name = resolveDisplayName(params, [target, fallbackLabel, nodeLabel]);
       const type = trimIfNonEmpty(params.type) ?? 'unknown';
       featured.push(new EntityCardDataImpl(name, type, target, params));
     }
@@ -191,8 +209,8 @@ export async function fetchFeaturedEntities(bridge: ROS2BridgeApi): Promise<Feat
       const params = toEntityParams(paramsStr);
 
       if (params) {
-        const name = resolveDisplayName(params, [fallbackName]);
         const target = resolvePrimaryTarget(params, fallbackName);
+        const name = resolveDisplayName(params, [target, fallbackName]);
         const type = trimIfNonEmpty(params.type) ?? 'unknown';
         featured.push(new EntityCardDataImpl(name, type, target, params));
         continue;

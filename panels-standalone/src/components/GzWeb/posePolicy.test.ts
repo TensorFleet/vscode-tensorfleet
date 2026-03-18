@@ -6,18 +6,18 @@ import {
   getPoseEditAccess,
   getRuntimePoseEntityName,
 } from './posePolicy';
+import { humanizeEntityName } from 'tensorfleet-util/ros/fetchFeaturedEntities';
 
 describe('posePolicy', () => {
-  it('prefers canonical gazebo_entity over model_names aliases', () => {
+  it('uses the first model_names entry as the canonical entity name', () => {
     expect(
       getGazeboEntityName({
         target: 'fallback_target',
         params: {
-          gazebo_entity: 'simple_bot_include',
           model_names: ['simple_bot', 'simple_bot_include'],
         },
       }),
-    ).toBe('simple_bot_include');
+    ).toBe('simple_bot');
   });
 
   it('uses first model_names entry as fallback gazebo entity name', () => {
@@ -29,43 +29,35 @@ describe('posePolicy', () => {
     ).toBe('x500_0');
   });
 
-  it('prefers explicit runtime pose entity over gazebo entity', () => {
+  it('falls back to target when model_names is absent', () => {
     expect(
       getRuntimePoseEntityName({
         target: 'fallback_target',
-        params: {
-          runtime_pose_entity: 'mug',
-          gazebo_entity: 'Room_Essentials_Mug_White_Yellow',
-        },
+        params: {},
       }),
-    ).toBe('mug');
+    ).toBe('fallback_target');
   });
 
-  it('uses runtime pose entity as the primary manipulation target', () => {
+  it('uses the canonical model name as the primary manipulation target', () => {
     expect(
       getManipulationTargetName({
         target: 'Room_Essentials_Mug_White_Yellow',
         params: {
-          runtime_pose_entity: 'mug',
-          gazebo_entity: 'Room_Essentials_Mug_White_Yellow',
           model_names: ['Room_Essentials_Mug_White_Yellow'],
         },
       }),
-    ).toBe('mug');
+    ).toBe('Room_Essentials_Mug_White_Yellow');
   });
 
-  it('includes both runtime and asset aliases when resolving manipulation selection names', () => {
+  it('includes canonical and alias model names when resolving manipulation selection names', () => {
     expect(
       getManipulationSelectionNames({
         target: 'Room_Essentials_Mug_White_Yellow',
         params: {
-          runtime_pose_entity: 'mug',
-          gazebo_entity: 'Room_Essentials_Mug_White_Yellow',
           model_names: ['Room_Essentials_Mug_White_Yellow', 'room_essentials_mug_white_yellow'],
         },
       }),
     ).toEqual([
-      'mug',
       'Room_Essentials_Mug_White_Yellow',
       'room_essentials_mug_white_yellow',
     ]);
@@ -84,22 +76,6 @@ describe('posePolicy', () => {
     ).toEqual({
       enabled: false,
       reason: 'locked by runtime policy',
-    });
-  });
-
-  it('locks entities when policy is locked', () => {
-    expect(
-      getPoseEditAccess({
-        type: 'drone',
-        target: 'x500_0',
-        params: {
-          pose_edit_policy: 'locked',
-          pose_edit_note: 'fixed-base model',
-        },
-      }),
-    ).toEqual({
-      enabled: false,
-      reason: 'fixed-base model',
     });
   });
 
@@ -124,5 +100,11 @@ describe('posePolicy', () => {
         params: {},
       }),
     ).toEqual({ enabled: true });
+  });
+
+  it('humanizes canonical runtime names for UI labels', () => {
+    expect(humanizeEntityName('mug')).toBe('Mug');
+    expect(humanizeEntityName('x500_0')).toBe('X500 0');
+    expect(humanizeEntityName('so-arm101')).toBe('SO ARM101');
   });
 });

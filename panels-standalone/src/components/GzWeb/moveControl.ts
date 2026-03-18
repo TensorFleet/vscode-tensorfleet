@@ -111,12 +111,8 @@ export const getEntityNameCandidates = (entity: EntityCardData): string[] => {
   const runtimeNestedInclude = runtimeBase ? `${runtimeTarget}::${runtimeBase}` : undefined;
   const mappedNestedInclude = includeBase ? `${mapped}::${includeBase}` : undefined;
   const targetNestedInclude = targetBase ? `${entity.target}::${targetBase}` : undefined;
-  const displayName = typeof entity.params?.display_name === 'string'
-    ? entity.params.display_name
-    : entity.name;
   const objectAliases = entity.type.toLowerCase() === 'object'
     ? unique([
-      normalizeEntityAlias(displayName),
       normalizeEntityAlias(entity.name),
     ])
     : [];

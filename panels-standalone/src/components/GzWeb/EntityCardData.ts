@@ -79,6 +79,14 @@ export interface EntityResetAllPosesMessage {
   };
 }
 
+export interface EntityManagedEntitiesMessage {
+  type: 'ENTITY_MANAGED_ENTITIES';
+  payload: {
+    entities: EntityCardData[];
+    timestamp: number;
+  };
+}
+
 export interface ScenePresetSaveMessage {
   type: 'ENTITY_SCENE_PRESET_SAVE';
   payload: {
@@ -161,6 +169,7 @@ export const ENTITY_CONTROL_MESSAGES = {
   NUDGE_STATUS: 'ENTITY_NUDGE_STATUS' as const,
   RESET_ENTITY_POSE: 'ENTITY_RESET_ENTITY_POSE' as const,
   RESET_ALL_POSES: 'ENTITY_RESET_ALL_POSES' as const,
+  MANAGED_ENTITIES: 'ENTITY_MANAGED_ENTITIES' as const,
   SCENE_PRESET_SAVE: 'ENTITY_SCENE_PRESET_SAVE' as const,
   SCENE_PRESET_LOAD: 'ENTITY_SCENE_PRESET_LOAD' as const,
   SCENE_PRESET_LIST_REQUEST: 'ENTITY_SCENE_PRESET_LIST_REQUEST' as const,

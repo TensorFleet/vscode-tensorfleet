@@ -4,6 +4,7 @@ import { fetchFeaturedEntities, FeaturedEntityData } from 'tensorfleet-util/ros/
 import './ESimViewPanel.css';
 import {
   EntityClickMessage,
+  EntityManagedEntitiesMessage,
   EntityNudgeStatusMessage,
   EntityResetAllPosesMessage,
   EntitySelectMessage,
@@ -311,6 +312,17 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     return () => window.removeEventListener('message', handleMessage);
   }, [featuredEntities, refreshScenePresetNames, selectedEntity]);
 
+  useEffect(() => {
+    const message: EntityManagedEntitiesMessage = {
+      type: ENTITY_CONTROL_MESSAGES.MANAGED_ENTITIES,
+      payload: {
+        entities: featuredEntities,
+        timestamp: Date.now(),
+      },
+    };
+    window.parent.postMessage(message, '*');
+  }, [featuredEntities]);
+
   // Handle main card click - sends window message for modularity
   const handleCardClick = useCallback((entity: EntityCardData) => {
     setActiveCard(entity.name);
@@ -368,11 +380,12 @@ export const FeaturedEntitiesPanel: React.FC = () => {
     const message: EntityResetAllPosesMessage = {
       type: ENTITY_CONTROL_MESSAGES.RESET_ALL_POSES,
       payload: {
+        entities: featuredEntities,
         timestamp: Date.now(),
       },
     };
     window.parent.postMessage(message, '*');
-  }, []);
+  }, [featuredEntities]);
 
   const handleSaveScenePreset = useCallback(() => {
     const name = scenePresetName.trim();

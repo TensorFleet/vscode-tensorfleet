@@ -105,6 +105,13 @@ type TensorfleetMetadata = {
   };
 };
 
+type ResetAllPosesMessage = {
+  type: 'ENTITY_RESET_ALL_POSES';
+  payload: {
+    timestamp: number;
+  };
+};
+
 // -----------------------------------------------------------------------------
 // Collections
 // -----------------------------------------------------------------------------
@@ -738,6 +745,7 @@ const TERMINAL_CONFIGS: Record<string, TerminalConfig> = {
 };
 
 const terminalRegistry = new Map<string, vscode.Terminal>();
+const dedicatedPanelRegistry = new Map<string, Set<vscode.WebviewPanel>>();
 let mcpServerProcess: ChildProcess | null = null;
 let mcpBridge: MCPBridge | null = null;
 let vmManagerIntegration: VMManagerIntegration | null = null;
@@ -908,6 +916,12 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tensorfleet.openAllPanels', () => openAllPanels(context))
+  );
+
+  context.subscriptions.push(
+    registerTensorFleetCommand('tensorfleet.resetSimulationScene', () => resetSimulationSceneFromExtension(), {
+      feature: 'panel'
+    })
   );
 
   context.subscriptions.push(
@@ -1149,6 +1163,77 @@ export function deactivate() {
 
 function getTelemetry() {
   return telemetryService;
+}
+
+function trackDedicatedPanel(viewId: string, panel: vscode.WebviewPanel) {
+  let panels = dedicatedPanelRegistry.get(viewId);
+  if (!panels) {
+    panels = new Set<vscode.WebviewPanel>();
+    dedicatedPanelRegistry.set(viewId, panels);
+  }
+  panels.add(panel);
+  panel.onDidDispose(() => {
+    const currentPanels = dedicatedPanelRegistry.get(viewId);
+    if (!currentPanels) {
+      return;
+    }
+    currentPanels.delete(panel);
+    if (currentPanels.size === 0) {
+      dedicatedPanelRegistry.delete(viewId);
+    }
+  });
+}
+
+function getTrackedDedicatedPanels(viewId: string): vscode.WebviewPanel[] {
+  return Array.from(dedicatedPanelRegistry.get(viewId) ?? []);
+}
+
+async function resetSimulationSceneFromExtension() {
+  const telemetry = getTelemetry();
+  const panels = getTrackedDedicatedPanels('tensorfleet-gzweb-panel');
+  if (panels.length === 0) {
+    const action = 'Open Simulation View';
+    const choice = await vscode.window.showWarningMessage(
+      'Simulation reset requires an open Simulation View panel.',
+      action,
+    );
+    if (choice === action) {
+      await vscode.commands.executeCommand('tensorfleet.openGzWebPanel');
+    }
+    telemetry?.trackEvent('simulation.reset', { phase: 'no_panel' });
+    return;
+  }
+
+  const message: ResetAllPosesMessage = {
+    type: 'ENTITY_RESET_ALL_POSES',
+    payload: {
+      timestamp: Date.now(),
+    },
+  };
+
+  const postResults = await Promise.all(
+    panels.map(async (panel) => ({
+      panel,
+      delivered: await panel.webview.postMessage(message),
+    })),
+  );
+  const deliveredCount = postResults.filter((result) => result.delivered).length;
+  telemetry?.trackEvent('simulation.reset', {
+    phase: deliveredCount > 0 ? 'sent' : 'undelivered',
+    targetPanels: String(panels.length),
+    deliveredPanels: String(deliveredCount),
+  });
+
+  if (deliveredCount === 0) {
+    vscode.window.showWarningMessage('Reset request was not delivered to the open Simulation View panel.');
+    return;
+  }
+
+  vscode.window.showInformationMessage(
+    deliveredCount === 1
+      ? 'Sent reset request to the Simulation View.'
+      : `Sent reset request to ${deliveredCount} Simulation View panels.`,
+  );
 }
 
 function registerTensorFleetCommand(
@@ -1685,6 +1770,7 @@ async function openDedicatedPanel(
         localResourceRoots
       }
     );
+    trackDedicatedPanel(view.id, panel);
 
     const webview = panel.webview;
     const imageUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', view.image)).toString();

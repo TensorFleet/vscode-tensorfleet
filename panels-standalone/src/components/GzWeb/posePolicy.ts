@@ -22,10 +22,6 @@ const uniqueStrings = (values: Array<string | undefined>): string[] => {
 
 export const getGazeboEntityName = (entity: GazeboEntityTarget | null | undefined): string => {
   if (!entity) return '';
-  const gazeboEntity = trimNonEmptyString(entity.params?.gazebo_entity);
-  if (gazeboEntity) {
-    return gazeboEntity;
-  }
   const modelNames = entity.params?.model_names;
   if (Array.isArray(modelNames)) {
     const firstModelName = trimNonEmptyString(modelNames[0]);
@@ -39,14 +35,6 @@ export const getGazeboEntityName = (entity: GazeboEntityTarget | null | undefine
 
 export const getRuntimePoseEntityName = (entity: GazeboEntityTarget | null | undefined): string => {
   if (!entity) return '';
-  const runtimePoseEntity = trimNonEmptyString(entity.params?.runtime_pose_entity);
-  if (runtimePoseEntity) {
-    return runtimePoseEntity;
-  }
-  const poseEntity = trimNonEmptyString(entity.params?.pose_entity);
-  if (poseEntity) {
-    return poseEntity;
-  }
   return getGazeboEntityName(entity);
 };
 
@@ -75,7 +63,6 @@ export const getPoseEditAccess = (entity: PosePolicyEntity | null): PoseEditAcce
   if (!entity) return { enabled: false };
 
   const editable = entity.params?.runtime_pose_editable;
-  const policy = entity.params?.pose_edit_policy;
   const note = entity.params?.pose_edit_note;
   const gazeboEntity = getGazeboEntityName(entity);
 
@@ -83,13 +70,6 @@ export const getPoseEditAccess = (entity: PosePolicyEntity | null): PoseEditAcce
     return {
       enabled: editable,
       reason: !editable && typeof note === 'string' ? note : undefined,
-    };
-  }
-
-  if (typeof policy === 'string' && policy.toLowerCase() === 'locked') {
-    return {
-      enabled: false,
-      reason: typeof note === 'string' ? note : 'Pose edits are disabled for this entity.',
     };
   }
 
