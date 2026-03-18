@@ -160,14 +160,17 @@ export class Scene {
 
   private transformControls: TransformControls | null = null;
   private gizmoActive: boolean = false;
+  private applyingGizmoConstraint: boolean = false;
   private gizmoDragEntityName: string = "";
   private manipulationTargetNames: Set<string> = new Set();
+  private tabletopEntityNames: Set<string> = new Set();
   private gizmoDragStartPose:
     | {
         position: THREE.Vector3;
         orientation: THREE.Quaternion;
       }
     | null = null;
+  private lastManipulationObjectChangeLogAtMs: number = 0;
 
   private currentFirstPersonLookAt = new THREE.Vector3();
   private cameraLerp: CameraLerpController;
@@ -1684,6 +1687,83 @@ export class Scene {
     return false;
   }
 
+  public animateToPose(
+    world: string,
+    poseNames: string[],
+    pose: {
+      position: { x: number; y: number; z: number };
+      orientation: { x: number; y: number; z: number; w: number };
+    },
+    durationMs: number = 220,
+  ): boolean {
+    const candidates = [
+      ...poseNames,
+      ...poseNames.map((name) => (name.includes("::") ? name : `${world}::${name}`)),
+    ];
+    const uniqueCandidates = [...new Set(candidates.filter((name) => name.trim().length > 0))];
+
+    for (const candidate of uniqueCandidates) {
+      try {
+        const obj = this.getByName(candidate);
+        if (!obj) {
+          continue;
+        }
+
+        obj.updateMatrixWorld(true);
+        const startPosition = new THREE.Vector3();
+        const startOrientation = new THREE.Quaternion();
+        obj.getWorldPosition(startPosition);
+        obj.getWorldQuaternion(startOrientation);
+
+        const targetPosition = new THREE.Vector3(
+          pose.position.x,
+          pose.position.y,
+          pose.position.z,
+        );
+        const targetOrientation = new THREE.Quaternion(
+          pose.orientation.x,
+          pose.orientation.y,
+          pose.orientation.z,
+          pose.orientation.w,
+        );
+
+        if (durationMs <= 0) {
+          return this.previewPose(world, poseNames, pose);
+        }
+
+        const startedAt = performance.now();
+        const step = (now: number) => {
+          const progress = Math.min(1, (now - startedAt) / durationMs);
+          const eased = 1 - Math.pow(1 - progress, 3);
+          const nextPosition = startPosition.clone().lerp(targetPosition, eased);
+          const nextOrientation = startOrientation.clone().slerp(targetOrientation, eased);
+          this.previewPose(world, poseNames, {
+            position: {
+              x: nextPosition.x,
+              y: nextPosition.y,
+              z: nextPosition.z,
+            },
+            orientation: {
+              x: nextOrientation.x,
+              y: nextOrientation.y,
+              z: nextOrientation.z,
+              w: nextOrientation.w,
+            },
+          });
+          if (progress < 1) {
+            requestAnimationFrame(step);
+          }
+        };
+        requestAnimationFrame(step);
+        return true;
+      } catch {
+        // Ignore lookup failures and continue with the next candidate.
+      }
+    }
+
+    return false;
+  }
+
   // ---------------------------------------------------------------------------
   // TransformControls (3D gizmo) integration
   // ---------------------------------------------------------------------------
@@ -1695,6 +1775,26 @@ export class Scene {
     this.scene.add(tc);
     this.transformControls = tc;
 
+    const onObjectChange = () => {
+      if (this.applyingGizmoConstraint) {
+        return;
+      }
+      const currentPose = this.captureSelectedEntityPose();
+      const now = performance.now();
+      if (
+        currentPose &&
+        this.gizmoDragEntityName &&
+        now - this.lastManipulationObjectChangeLogAtMs >= 100
+      ) {
+        this.lastManipulationObjectChangeLogAtMs = now;
+        this.emitManipulationDebug("object_change", {
+          entity: this.gizmoDragEntityName,
+          pose: this.toPoseSnapshot(this.gizmoDragEntityName, currentPose),
+        });
+      }
+      this.enforceTabletopGizmoConstraint();
+    };
+
     const onDraggingChanged = (event: any) => {
       const dragging = event.value === true;
       this.controls.enabled = !dragging;
@@ -1703,12 +1803,38 @@ export class Scene {
       if (dragging) {
         this.gizmoDragEntityName = this.selectedEntity?.name ?? "";
         this.gizmoDragStartPose = this.captureSelectedEntityPose();
+        this.lastManipulationObjectChangeLogAtMs = 0;
+        if (this.gizmoDragStartPose) {
+          this.emitManipulationDebug("started", {
+            entity: this.gizmoDragEntityName,
+            pose: this.toPoseSnapshot(this.gizmoDragEntityName, this.gizmoDragStartPose),
+          });
+          this.emitter.emit("manipulation_started", {
+            entity: this.gizmoDragEntityName,
+            pose: this.toPoseSnapshot(this.gizmoDragEntityName, this.gizmoDragStartPose),
+          });
+        }
         this.emitter.emit("manipulation_state", {
           dragging: true,
           entity: this.gizmoDragEntityName,
         });
       } else {
-        this.commitGizmoPoseIfChanged();
+        const committed = this.commitGizmoPoseIfChanged();
+        if (!committed) {
+          const endPose = this.captureSelectedEntityPose();
+          this.emitManipulationDebug("cancelled", {
+            entity: this.gizmoDragEntityName,
+            startPose: this.gizmoDragStartPose
+              ? this.toPoseSnapshot(this.gizmoDragEntityName, this.gizmoDragStartPose)
+              : undefined,
+            endPose: endPose
+              ? this.toPoseSnapshot(this.gizmoDragEntityName, endPose)
+              : undefined,
+          });
+          this.emitter.emit("manipulation_cancelled", {
+            entity: this.gizmoDragEntityName,
+          });
+        }
         this.emitter.emit("manipulation_state", {
           dragging: false,
           entity: this.gizmoDragEntityName,
@@ -1717,6 +1843,7 @@ export class Scene {
         this.gizmoDragStartPose = null;
       }
     };
+    tc.addEventListener("objectChange", onObjectChange);
     tc.addEventListener("dragging-changed", onDraggingChanged);
   }
 
@@ -1739,6 +1866,47 @@ export class Scene {
     };
   }
 
+  private toPoseSnapshot(
+    entityName: string,
+    pose: { position: THREE.Vector3; orientation: THREE.Quaternion },
+  ): {
+    name: string;
+    position: { x: number; y: number; z: number };
+    orientation: { x: number; y: number; z: number; w: number };
+  } {
+    return {
+      name: entityName,
+      position: {
+        x: pose.position.x,
+        y: pose.position.y,
+        z: pose.position.z,
+      },
+      orientation: {
+        x: pose.orientation.x,
+        y: pose.orientation.y,
+        z: pose.orientation.z,
+        w: pose.orientation.w,
+      },
+    };
+  }
+
+  private emitManipulationDebug(
+    phase: string,
+    payload: Record<string, unknown>,
+  ): void {
+    this.emitter.emit("manipulation_debug", {
+      phase,
+      ...payload,
+    });
+  }
+
+  public emitManipulationDebugEvent(
+    phase: string,
+    payload: Record<string, unknown>,
+  ): void {
+    this.emitManipulationDebug(phase, payload);
+  }
+
   private didGizmoPoseChange(
     startPose: { position: THREE.Vector3; orientation: THREE.Quaternion } | null,
     endPose: { position: THREE.Vector3; orientation: THREE.Quaternion } | null,
@@ -1759,28 +1927,72 @@ export class Scene {
     return angularDelta > THREE.MathUtils.degToRad(0.25);
   }
 
-  private commitGizmoPoseIfChanged(): void {
+  private commitGizmoPoseIfChanged(): boolean {
     const obj = this.selectedEntity;
-    if (!obj) return;
+    if (!obj) {
+      this.emitManipulationDebug("commit_skipped", {
+        reason: "no_selected_entity",
+      });
+      return false;
+    }
     const endPose = this.captureSelectedEntityPose();
     if (!this.didGizmoPoseChange(this.gizmoDragStartPose, endPose)) {
-      return;
+      this.emitManipulationDebug("commit_skipped", {
+        entity: obj.name,
+        reason: "below_change_threshold",
+        startPose: this.gizmoDragStartPose
+          ? this.toPoseSnapshot(obj.name, this.gizmoDragStartPose)
+          : undefined,
+        endPose: endPose
+          ? this.toPoseSnapshot(obj.name, endPose)
+          : undefined,
+      });
+      return false;
     }
-    if (!endPose) return;
+    if (!endPose) {
+      this.emitManipulationDebug("commit_skipped", {
+        entity: obj.name,
+        reason: "no_end_pose",
+      });
+      return false;
+    }
+    const useTabletopPose =
+      this.manipulationMode === "translate" &&
+      !!this.gizmoDragStartPose &&
+      this.isTabletopManipulationEntity(obj.name);
+    const committedPosition = useTabletopPose && this.gizmoDragStartPose
+      ? {
+          x: endPose.position.x,
+          y: endPose.position.y,
+          z: this.gizmoDragStartPose.position.z,
+        }
+      : { x: endPose.position.x, y: endPose.position.y, z: endPose.position.z };
     const committedOrientation =
-      this.manipulationMode === "translate" && this.gizmoDragStartPose
+      (this.manipulationMode === "translate" && this.gizmoDragStartPose)
         ? this.gizmoDragStartPose.orientation
         : endPose.orientation;
-    this.emitter.emit("manipulation_commit", {
+    const committedPose = {
       name: obj.name,
-      position: { x: endPose.position.x, y: endPose.position.y, z: endPose.position.z },
+      position: committedPosition,
       orientation: {
         x: committedOrientation.x,
         y: committedOrientation.y,
         z: committedOrientation.z,
         w: committedOrientation.w,
       },
+    };
+    this.emitManipulationDebug("commit_emitted", {
+      entity: obj.name,
+      startPose: this.gizmoDragStartPose
+        ? this.toPoseSnapshot(obj.name, this.gizmoDragStartPose)
+        : undefined,
+      endPose: this.toPoseSnapshot(obj.name, endPose),
+      committedPose,
+      tabletopConstraintApplied: useTabletopPose,
     });
+    this.emitter.emit("manipulation_commit", committedPose);
+    this.emitter.emit("manipulation_committed", committedPose);
+    return true;
   }
 
   public isGizmoActive(): boolean {
@@ -1818,13 +2030,17 @@ export class Scene {
   }
 
   private isManipulationAllowedForEntity(entityName: string): boolean {
-    if (this.manipulationTargetNames.size === 0) {
+    return this.matchesTrackedEntityName(entityName, this.manipulationTargetNames);
+  }
+
+  private matchesTrackedEntityName(entityName: string, trackedNames: Set<string>): boolean {
+    if (trackedNames.size === 0) {
       return false;
     }
-    if (this.manipulationTargetNames.has(entityName)) {
+    if (trackedNames.has(entityName)) {
       return true;
     }
-    for (const allowedName of this.manipulationTargetNames) {
+    for (const allowedName of trackedNames) {
       if (
         entityName === allowedName ||
         entityName.endsWith(`::${allowedName}`) ||
@@ -1835,6 +2051,60 @@ export class Scene {
       }
     }
     return false;
+  }
+
+  private isTabletopManipulationEntity(entityName: string): boolean {
+    return this.matchesTrackedEntityName(entityName, this.tabletopEntityNames);
+  }
+
+  private enforceTabletopGizmoConstraint(): void {
+    if (
+      !this.gizmoActive ||
+      this.manipulationMode !== "translate" ||
+      !this.selectedEntity ||
+      !this.gizmoDragStartPose ||
+      !this.isTabletopManipulationEntity(this.selectedEntity.name)
+    ) {
+      return;
+    }
+
+    const currentPose = this.captureSelectedEntityPose();
+    if (!currentPose) {
+      return;
+    }
+
+    const constrainedPosition = new THREE.Vector3(
+      currentPose.position.x,
+      currentPose.position.y,
+      this.gizmoDragStartPose.position.z,
+    );
+    const constrainedOrientation = this.gizmoDragStartPose.orientation.clone();
+
+    const positionChanged =
+      Math.abs(currentPose.position.z - constrainedPosition.z) > 0.0001;
+    const rotationChanged =
+      1 - Math.abs(currentPose.orientation.dot(constrainedOrientation)) > 0.000001;
+
+    if (!positionChanged && !rotationChanged) {
+      return;
+    }
+
+    this.emitManipulationDebug("constraint_applied", {
+      entity: this.selectedEntity.name,
+      currentPose: this.toPoseSnapshot(this.selectedEntity.name, currentPose),
+      constrainedPose: this.toPoseSnapshot(this.selectedEntity.name, {
+        position: constrainedPosition,
+        orientation: constrainedOrientation,
+      }),
+    });
+
+    this.applyingGizmoConstraint = true;
+    try {
+      this.setPose(this.selectedEntity, constrainedPosition, constrainedOrientation);
+      this.selectedEntity.updateMatrixWorld(true);
+    } finally {
+      this.applyingGizmoConstraint = false;
+    }
   }
 
   public setManipulationTargetNames(entityNames: string[]): void {
@@ -1857,6 +2127,16 @@ export class Scene {
     }
   }
 
+  public setTabletopEntityNames(entityNames: string[]): void {
+    this.tabletopEntityNames = new Set(
+      entityNames
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0),
+    );
+
+    this.enforceTabletopGizmoConstraint();
+  }
+
   public isGizmoDragTarget(entityName: string): boolean {
     if (!this.gizmoActive || !this.gizmoDragEntityName) return false;
     return (
@@ -1865,6 +2145,10 @@ export class Scene {
       entityName.startsWith(`${this.gizmoDragEntityName}::`) ||
       entityName.includes(`::${this.gizmoDragEntityName}::`)
     );
+  }
+
+  public isDragTarget(entityName: string): boolean {
+    return this.isGizmoDragTarget(entityName);
   }
 
   /**

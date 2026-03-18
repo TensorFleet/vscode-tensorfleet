@@ -54,26 +54,6 @@ export interface SceneManagerConfig {
   enableLights?: boolean;
 }
 
-type ManipulationCommitPayload = {
-  name?: string;
-  position?: { x?: number; y?: number; z?: number };
-  orientation?: { x?: number; y?: number; z?: number; w?: number };
-};
-
-type ManipulationServiceReply = {
-  ok: boolean | null;
-  detail?: string;
-};
-
-type PendingManipulationPose = {
-  requestId: string;
-  world: string;
-  requestedName: string;
-  aliases: Set<string>;
-  targetPosition: { x: number; y: number; z: number };
-  expiresAtMs: number;
-};
-
 /**
  * SceneManager handles the interface between a Gazebo server and the
  * rendering scene. A user of gzweb will typically create a SceneManager and
@@ -88,10 +68,6 @@ type PendingManipulationPose = {
  * ```
  */
 export class SceneManager {
-  private static readonly POSE_MESSAGE_TYPE_CANDIDATES = ["gz.msgs.Pose"] as const;
-  private static readonly MANIPULATION_POSE_LOCK_TIMEOUT_MS = 1500;
-  private static readonly MANIPULATION_POSE_LOCK_TOLERANCE_METERS = 0.03;
-
   /**
    * Particle emitter updates.
    */
@@ -196,128 +172,6 @@ export class SceneManager {
    * Whether or not lights in models are visible. Enabled by default.
    */
   private enableLights: boolean = true;
-  private manipulationDispatchCounter: number = 0;
-  private pendingManipulationPoses: PendingManipulationPose[] = [];
-
-  private readonly handleManipulationCommit = (payload: ManipulationCommitPayload): void => {
-    const scene = this.scene;
-    if (!scene?.emitter?.emit) {
-      return;
-    }
-
-    const name = typeof payload?.name === "string" ? payload.name.trim() : "";
-    const position = payload?.position;
-    const orientation = payload?.orientation;
-    const world = this.transport.getWorld();
-
-    if (
-      !name ||
-      !world ||
-      !position ||
-      !orientation ||
-      typeof position.x !== "number" ||
-      typeof position.y !== "number" ||
-      typeof position.z !== "number" ||
-      typeof orientation.x !== "number" ||
-      typeof orientation.y !== "number" ||
-      typeof orientation.z !== "number" ||
-      typeof orientation.w !== "number"
-    ) {
-      scene.emitter.emit("manipulation_dispatch", {
-        ok: false,
-        name,
-        world,
-        error: "Invalid manipulation commit payload",
-      });
-      return;
-    }
-
-    const requestId = `drag-${Date.now().toString(36)}-${(++this.manipulationDispatchCounter).toString(36)}`;
-    const msgType = this.getOrderedPoseMessageTypes()[0];
-    const serviceName = `/world/${world}/set_pose`;
-    if (!msgType) {
-      scene.emitter.emit("manipulation_dispatch", {
-        ok: false,
-        requestId,
-        name,
-        world,
-        serviceName,
-        error: "No compatible pose message type available",
-      });
-      return;
-    }
-
-    try {
-      const request = {
-        name,
-        position,
-        orientation,
-      };
-      this.trackPendingManipulationPose({
-        requestId,
-        world,
-        requestedName: name,
-        aliases: this.buildPoseAliases(world, name),
-        targetPosition: {
-          x: position.x,
-          y: position.y,
-          z: position.z,
-        },
-        expiresAtMs: Date.now() + SceneManager.MANIPULATION_POSE_LOCK_TIMEOUT_MS,
-      });
-      scene.emitter.emit("manipulation_dispatch", {
-        ok: true,
-        requestId,
-        name,
-        world,
-        serviceName,
-        msgType,
-        position,
-        orientation,
-      });
-      void this.transport
-        .requestServiceWithResponse(serviceName, msgType, request)
-        .then(({ msgType: responseType, response }) => {
-          const normalizedReply = this.normalizeManipulationServiceReply(
-            responseType,
-            response,
-          );
-          scene.emitter.emit("manipulation_service_reply", {
-            requestId,
-            name,
-            world,
-            serviceName,
-            requestType: msgType,
-            responseType,
-            ok: normalizedReply.ok,
-            detail: normalizedReply.detail,
-          });
-        })
-        .catch((error) => {
-          scene.emitter.emit("manipulation_service_reply", {
-            requestId,
-            name,
-            world,
-            serviceName,
-            requestType: msgType,
-            ok: false,
-            detail: error instanceof Error ? error.message : String(error),
-          });
-        });
-    } catch (error) {
-      scene.emitter.emit("manipulation_dispatch", {
-        ok: false,
-        requestId,
-        name,
-        world,
-        serviceName,
-        msgType,
-        position,
-        orientation,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
 
   /**
    * Constructor. If a url is specified, then then SceneManager will connect
@@ -467,6 +321,15 @@ export class SceneManager {
     }
   }
 
+  public setTabletopEntityNames(entityNames: string[]): void {
+    if (
+      this.scene &&
+      typeof this.scene.setTabletopEntityNames === "function"
+    ) {
+      this.scene.setTabletopEntityNames(entityNames);
+    }
+  }
+
   public getManipulationMode(): string {
     if (!this.scene || typeof this.scene.getManipulationMode !== "function") {
       return "view";
@@ -537,6 +400,21 @@ export class SceneManager {
       return false;
     }
     return this.scene.previewPose(world, poseNames, pose);
+  }
+
+  public animateToPose(
+    world: string,
+    poseNames: string[],
+    pose: {
+      position: { x: number; y: number; z: number };
+      orientation: { x: number; y: number; z: number; w: number };
+    },
+    durationMs?: number,
+  ): boolean {
+    if (!this.scene || typeof this.scene.animateToPose !== "function") {
+      return false;
+    }
+    return this.scene.animateToPose(world, poseNames, pose, durationMs);
   }
 
   public onSceneEvent(eventName: string, listener: (...args: any[]) => void): void {
@@ -669,157 +547,10 @@ export class SceneManager {
     this.modelMap.clear();
   }
 
-  private getOrderedPoseMessageTypes(): string[] {
-    const world = this.transport.getWorld();
-    const topicName = `/world/${world}/dynamic_pose/info`;
-    const availableTopics = this.transport.getAvailableTopics();
-    const defaultOrder = [...SceneManager.POSE_MESSAGE_TYPE_CANDIDATES];
-
-    if (!Array.isArray(availableTopics)) {
-      return defaultOrder;
-    }
-
-    const topicMeta = availableTopics.find((topic) => topic["topic"] === topicName);
-    const msgType = typeof topicMeta?.["msg_type"] === "string" ? topicMeta["msg_type"] : "";
-    const preferredPrefix = msgType.startsWith("ignition.msgs.")
-      ? "ignition.msgs."
-      : msgType.startsWith("gazebo.msgs.")
-        ? "gazebo.msgs."
-        : msgType.startsWith("gz.msgs.")
-          ? "gz.msgs."
-          : "";
-
-    if (!preferredPrefix) {
-      return defaultOrder;
-    }
-
-    return defaultOrder.sort(
-      (a, b) => Number(b.startsWith(preferredPrefix)) - Number(a.startsWith(preferredPrefix)),
-    );
-  }
-
-  private normalizeManipulationServiceReply(
-    responseType: string,
-    response: any,
-  ): ManipulationServiceReply {
-    const boolField = response?.data;
-    if (typeof boolField === "boolean") {
-      return {
-        ok: boolField,
-        detail: responseType,
-      };
-    }
-
-    if (typeof response?.success === "boolean") {
-      return {
-        ok: response.success,
-        detail: responseType,
-      };
-    }
-
-    if (typeof response?.result === "boolean") {
-      return {
-        ok: response.result,
-        detail: responseType,
-      };
-    }
-
-    if (typeof response?.data === "string") {
-      return {
-        ok: null,
-        detail: `${responseType}: ${response.data}`,
-      };
-    }
-
-    return {
-      ok: null,
-      detail: responseType,
-    };
-  }
-
-  private getUnscopedEntityName(entityName: string): string {
-    const trimmed = entityName.trim();
-    if (!trimmed.includes("::")) {
-      return trimmed;
-    }
-    const parts = trimmed.split("::");
-    return parts[parts.length - 1] ?? trimmed;
-  }
-
-  private buildPoseAliases(world: string, entityName: string): Set<string> {
-    const aliases = new Set<string>();
-    const trimmed = entityName.trim();
-    if (!trimmed) {
-      return aliases;
-    }
-    const unscoped = this.getUnscopedEntityName(trimmed);
-    aliases.add(trimmed);
-    aliases.add(unscoped);
-    aliases.add(`${world}::${unscoped}`);
-    return aliases;
-  }
-
-  private trackPendingManipulationPose(pending: PendingManipulationPose): void {
-    const now = Date.now();
-    this.pendingManipulationPoses = this.pendingManipulationPoses.filter(
-      (entry) => entry.expiresAtMs > now && !entry.aliases.has(pending.requestedName),
-    );
-    this.pendingManipulationPoses.push(pending);
-  }
-
-  private consumeMatchingPendingManipulationPose(
-    entityName: string,
-    pose: { position?: { x?: number; y?: number; z?: number } },
-  ): PendingManipulationPose | null {
-    const now = Date.now();
-    let matched: PendingManipulationPose | null = null;
-    this.pendingManipulationPoses = this.pendingManipulationPoses.filter((entry) => {
-      if (entry.expiresAtMs <= now) {
-        return false;
-      }
-      if (!entry.aliases.has(entityName)) {
-        return true;
-      }
-
-      const dx = (pose.position?.x ?? 0) - entry.targetPosition.x;
-      const dy = (pose.position?.y ?? 0) - entry.targetPosition.y;
-      const dz = (pose.position?.z ?? 0) - entry.targetPosition.z;
-      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (distance <= SceneManager.MANIPULATION_POSE_LOCK_TOLERANCE_METERS) {
-        matched = entry;
-        return false;
-      }
-
-      matched = entry;
-      return true;
-    });
-    return matched;
-  }
-
-  private shouldSuppressPoseUpdate(
-    entityName: string,
-    pose: { position?: { x?: number; y?: number; z?: number } },
-  ): boolean {
-    const pending = this.consumeMatchingPendingManipulationPose(entityName, pose);
-    if (!pending) {
-      return false;
-    }
-
-    const dx = (pose.position?.x ?? 0) - pending.targetPosition.x;
-    const dy = (pose.position?.y ?? 0) - pending.targetPosition.y;
-    const dz = (pose.position?.z ?? 0) - pending.targetPosition.z;
-    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    return distance > SceneManager.MANIPULATION_POSE_LOCK_TOLERANCE_METERS;
-  }
-
   /**
    * Disconnect from the Gazebo server
    */
   public disconnect(): void {
-    if (this.scene && typeof this.scene.off === "function") {
-      this.scene.off("manipulation_commit", this.handleManipulationCommit);
-    }
-
     // Remove the canvas. Helpful to disconnect and connect several times.
     if (
       this.sceneElement?.childElementCount > 0 &&
@@ -831,7 +562,6 @@ export class SceneManager {
     this.transport.disconnect();
     this.sceneInfo = {};
     this.connectionStatus = "disconnected";
-    this.pendingManipulationPoses = [];
 
     // Clear all models and mappings
     this.clearAllModels();
@@ -977,9 +707,12 @@ export class SceneManager {
    * Play the Simulation.
    */
   public play(): void {
+    console.log(
+      `[MoveTrace] ts=${new Date().toISOString()} phase=drag.pause.scene_manager_play world=${this.transport.getWorld()}`,
+    );
     this.transport.requestService(
       `/world/${this.transport.getWorld()}/control`,
-      "ignition.msgs.WorldControl",
+      "gz.msgs.WorldControl",
       { pause: false },
     );
   }
@@ -988,9 +721,36 @@ export class SceneManager {
    * Pause the Simulation.
    */
   public pause(): void {
+    console.log(
+      `[MoveTrace] ts=${new Date().toISOString()} phase=drag.pause.scene_manager_pause world=${this.transport.getWorld()}`,
+    );
     this.transport.requestService(
       `/world/${this.transport.getWorld()}/control`,
-      "ignition.msgs.WorldControl",
+      "gz.msgs.WorldControl",
+      { pause: true },
+    );
+  }
+
+  public async playWithAck(): Promise<{ topic: string; msgType: string; response: any }> {
+    const world = this.transport.getWorld();
+    console.log(
+      `[MoveTrace] ts=${new Date().toISOString()} phase=drag.pause.scene_manager_play.await world=${world}`,
+    );
+    return this.transport.requestServiceWithResponse(
+      `/world/${world}/control`,
+      "gz.msgs.WorldControl",
+      { pause: false },
+    );
+  }
+
+  public async pauseWithAck(): Promise<{ topic: string; msgType: string; response: any }> {
+    const world = this.transport.getWorld();
+    console.log(
+      `[MoveTrace] ts=${new Date().toISOString()} phase=drag.pause.scene_manager_pause.await world=${world}`,
+    );
+    return this.transport.requestServiceWithResponse(
+      `/world/${world}/control`,
+      "gz.msgs.WorldControl",
       { pause: true },
     );
   }
@@ -1020,13 +780,29 @@ export class SceneManager {
       (msg) => {
         msg["pose"].forEach((pose: any) => {
           let entityName = pose["name"];
-          if (
-            typeof this.scene.isDragTarget === "function" &&
-            this.scene.isDragTarget(entityName)
-          ) {
-            return;
-          }
-          if (this.shouldSuppressPoseUpdate(entityName, pose)) {
+          const isDragTarget =
+            typeof this.scene.isGizmoDragTarget === "function"
+              ? this.scene.isGizmoDragTarget(entityName)
+              : typeof this.scene.isDragTarget === "function"
+                ? this.scene.isDragTarget(entityName)
+                : false;
+          if (isDragTarget) {
+            if (
+              this.scene &&
+              typeof this.scene.emitManipulationDebugEvent === "function"
+            ) {
+              this.scene.emitManipulationDebugEvent(
+                "dynamic_pose.skipped_during_drag",
+                {
+                  entity: entityName,
+                  pose: {
+                    name: pose["name"],
+                    position: pose.position,
+                    orientation: pose.orientation,
+                  },
+                },
+              );
+            }
             return;
           }
           // Objects created by Gz3D have an unique name, which is the
@@ -1119,7 +895,6 @@ export class SceneManager {
       shaders: new Shaders(),
       findResourceCb: findAsset,
     });
-    this.scene.on("manipulation_commit", this.handleManipulationCommit);
     this.sdfParser = new SDFParser(this.scene);
     this.sdfParser.usingFilesUrls = true;
 

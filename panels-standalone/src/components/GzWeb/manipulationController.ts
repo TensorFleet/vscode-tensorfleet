@@ -13,35 +13,19 @@ import {
   unique,
 } from './moveControl';
 
-export type ManipulationStateEvent = {
-  dragging: boolean;
+export type ManipulationStartedEvent = {
   entity: string;
+  pose: GazeboPose;
 };
 
-export type ManipulationCommitEvent = {
+export type ManipulationCommittedEvent = {
   name: string;
   position: PoseVector;
   orientation: PoseQuaternion;
 };
 
-export type ManipulationDispatchEvent = ManipulationCommitEvent & {
-  ok: boolean;
-  requestId?: string;
-  world: string;
-  serviceName?: string;
-  msgType?: string;
-  error?: string;
-};
-
-export type ManipulationServiceReplyEvent = {
-  requestId: string;
-  name: string;
-  world: string;
-  serviceName?: string;
-  requestType?: string;
-  responseType?: string;
-  ok: boolean | null;
-  detail?: string;
+export type ManipulationCancelledEvent = {
+  entity: string;
 };
 
 export type ManipulationPoseBinding = {
@@ -76,20 +60,37 @@ const selectObservedPoseCandidates = (
   return allEntries.filter((entry) => aliasSet.has(entry.name));
 };
 
-export const parseManipulationStateEvent = (
+export const parseManipulationStartedEvent = (
   payload: unknown,
-): ManipulationStateEvent => {
-  const candidate = (payload ?? {}) as { dragging?: unknown; entity?: unknown };
+): ManipulationStartedEvent | null => {
+  const candidate = (payload ?? {}) as {
+    entity?: unknown;
+    pose?: unknown;
+  };
   const entity = typeof candidate.entity === 'string' ? candidate.entity.trim() : '';
+  const poseCandidate = (candidate.pose ?? {}) as {
+    name?: unknown;
+    position?: unknown;
+    orientation?: unknown;
+  };
+  const position = toPoseVector(poseCandidate.position);
+  const orientation = toPoseQuaternion(poseCandidate.orientation);
+  if (!entity || !position || !orientation) return null;
   return {
-    dragging: Boolean(candidate.dragging),
     entity,
+    pose: {
+      name: typeof poseCandidate.name === 'string' && poseCandidate.name.trim().length > 0
+        ? poseCandidate.name.trim()
+        : entity,
+      position,
+      orientation,
+    },
   };
 };
 
-export const parseManipulationCommitEvent = (
+export const parseManipulationCommittedEvent = (
   payload: unknown,
-): ManipulationCommitEvent | null => {
+): ManipulationCommittedEvent | null => {
   const candidate = (payload ?? {}) as {
     name?: unknown;
     position?: unknown;
@@ -102,66 +103,13 @@ export const parseManipulationCommitEvent = (
   return { name, position, orientation };
 };
 
-export const parseManipulationDispatchEvent = (
+export const parseManipulationCancelledEvent = (
   payload: unknown,
-): ManipulationDispatchEvent | null => {
-  const candidate = (payload ?? {}) as {
-    ok?: unknown;
-    requestId?: unknown;
-    world?: unknown;
-    serviceName?: unknown;
-    msgType?: unknown;
-    error?: unknown;
-    name?: unknown;
-    position?: unknown;
-    orientation?: unknown;
-  };
-  const commit = parseManipulationCommitEvent(candidate);
-  const world = typeof candidate.world === 'string' ? candidate.world.trim() : '';
-  if (!commit || !world) return null;
-  return {
-    ...commit,
-    ok: Boolean(candidate.ok),
-    requestId: typeof candidate.requestId === 'string' ? candidate.requestId : undefined,
-    world,
-    serviceName: typeof candidate.serviceName === 'string' ? candidate.serviceName : undefined,
-    msgType: typeof candidate.msgType === 'string' ? candidate.msgType : undefined,
-    error: typeof candidate.error === 'string' ? candidate.error : undefined,
-  };
-};
-
-export const parseManipulationServiceReplyEvent = (
-  payload: unknown,
-): ManipulationServiceReplyEvent | null => {
-  const candidate = (payload ?? {}) as {
-    requestId?: unknown;
-    name?: unknown;
-    world?: unknown;
-    serviceName?: unknown;
-    requestType?: unknown;
-    responseType?: unknown;
-    ok?: unknown;
-    detail?: unknown;
-  };
-  const requestId = typeof candidate.requestId === 'string' ? candidate.requestId.trim() : '';
-  const name = typeof candidate.name === 'string' ? candidate.name.trim() : '';
-  const world = typeof candidate.world === 'string' ? candidate.world.trim() : '';
-  if (!requestId || !name || !world) return null;
-  return {
-    requestId,
-    name,
-    world,
-    serviceName: typeof candidate.serviceName === 'string' ? candidate.serviceName : undefined,
-    requestType: typeof candidate.requestType === 'string' ? candidate.requestType : undefined,
-    responseType: typeof candidate.responseType === 'string' ? candidate.responseType : undefined,
-    ok:
-      typeof candidate.ok === 'boolean'
-        ? candidate.ok
-        : candidate.ok === null
-          ? null
-          : null,
-    detail: typeof candidate.detail === 'string' ? candidate.detail : undefined,
-  };
+): ManipulationCancelledEvent | null => {
+  const candidate = (payload ?? {}) as { entity?: unknown };
+  const entity = typeof candidate.entity === 'string' ? candidate.entity.trim() : '';
+  if (!entity) return null;
+  return { entity };
 };
 
 export const buildManipulationPoseBinding = (options: {

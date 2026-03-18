@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ExpandLess, ExpandMore, Wifi, WifiOff } from '@mui/icons-material';
 import { IconButton, Tooltip } from '@mui/material';
 import { SceneManager } from 'gzweb';
 import * as THREE from 'three';
+import { resolveDisplayName, resolvePrimaryTarget } from 'tensorfleet-util/ros/fetchFeaturedEntities';
 import {
   CARD_MESSAGES,
   EntityCardData,
@@ -28,9 +29,9 @@ import {
 } from './moveControl';
 import {
   buildManipulationPoseBinding,
-  parseManipulationDispatchEvent,
-  parseManipulationServiceReplyEvent,
-  parseManipulationStateEvent,
+  parseManipulationCancelledEvent,
+  parseManipulationCommittedEvent,
+  parseManipulationStartedEvent,
   pollForPoseConfirmation,
   resolveManipulationObservation,
 } from './manipulationController';
@@ -61,11 +62,16 @@ type SceneManagerTransport = {
 type SceneManagerInstance = {
   destroy: () => void;
   resize: () => void;
+  pause?: () => void;
+  play?: () => void;
+  pauseWithAck?: () => Promise<{ topic: string; msgType: string; response: unknown }>;
+  playWithAck?: () => Promise<{ topic: string; msgType: string; response: unknown }>;
   select?: (entityName: string) => void;
   clearSelection?: () => void;
   getSelectedEntityName?: () => string | null;
   setManipulationMode?: (mode: string) => void;
   setManipulationTargetNames?: (entityNames: string[]) => void;
+  setTabletopEntityNames?: (entityNames: string[]) => void;
   getManipulationMode?: () => string;
   setControlsEnabled?: (enabled: boolean) => void;
   getControlsEnabled?: () => boolean;
@@ -80,6 +86,12 @@ type SceneManagerInstance = {
     world: string,
     poseNames: string[],
     pose: { position: PoseVector; orientation: PoseQuaternion },
+  ) => boolean;
+  animateToPose?: (
+    world: string,
+    poseNames: string[],
+    pose: { position: PoseVector; orientation: PoseQuaternion },
+    durationMs?: number,
   ) => boolean;
   onSceneEvent?: (eventName: string, listener: (...args: any[]) => void) => void;
   offSceneEvent?: (eventName: string, listener: (...args: any[]) => void) => void;
@@ -105,6 +117,21 @@ type HostVmInfo = {
   error?: string;
 };
 
+type VmInitialPosesResponse = {
+  world?: string;
+  capturedAt?: string;
+  source?: string;
+  poses?: Record<
+    string,
+    {
+      name?: unknown;
+      position?: unknown;
+      orientation?: unknown;
+      id?: unknown;
+    }
+  >;
+};
+
 type VsCodeApi = {
   postMessage: (message: any) => void;
 };
@@ -115,6 +142,7 @@ declare global {
     TENSORFLEET_VM_MANAGER_URL?: string;
     TENSORFLEET_NODE_ID?: string;
     TENSORFLEET_JWT?: string;
+    TENSORFLEET_PAUSE_DURING_DIRECT_MANIPULATION?: boolean | string;
     TENSORFLEET_MOVE_TRACE?: boolean | string;
     TENSORFLEET_MOVE_TRACE_LINES?: string[];
     TENSORFLEET_MOVE_TRACE_DUMP?: () => string;
@@ -136,10 +164,58 @@ const DRAG_CONFIRM_TOLERANCE_METERS = 0.02;
 const DRAG_CONFIRM_ANGULAR_TOLERANCE_RAD = Math.PI / 36;
 const DRAG_SETTLE_STABILITY_WINDOW_MS = 400;
 const DRAG_SETTLE_STABILITY_TOLERANCE_METERS = 0.0025;
+const RESET_CONFIRM_TIMEOUT_MS = DRAG_CONFIRM_TIMEOUT_MS;
+const RESET_CONFIRM_TOLERANCE_METERS = DRAG_CONFIRM_TOLERANCE_METERS;
+const RESET_CONFIRM_ANGULAR_TOLERANCE_RAD = DRAG_CONFIRM_ANGULAR_TOLERANCE_RAD;
+const RESET_SETTLE_STABILITY_WINDOW_MS = DRAG_SETTLE_STABILITY_WINDOW_MS;
+const RESET_SETTLE_STABILITY_TOLERANCE_METERS = DRAG_SETTLE_STABILITY_TOLERANCE_METERS;
+const TABLETOP_POSE_HOLD_WINDOW_MS = 900;
+const TABLETOP_POSE_HOLD_INTERVAL_MS = 120;
 const MOVE_TRACE_BUFFER_MAX_LINES = 2000;
-const SCENE_EVENT_MANIPULATION_DISPATCH = 'manipulation_dispatch';
-const SCENE_EVENT_MANIPULATION_SERVICE_REPLY = 'manipulation_service_reply';
-const SCENE_EVENT_MANIPULATION_STATE = 'manipulation_state';
+const SCENE_EVENT_MANIPULATION_STARTED = 'manipulation_started';
+const SCENE_EVENT_MANIPULATION_COMMITTED = 'manipulation_committed';
+const SCENE_EVENT_MANIPULATION_CANCELLED = 'manipulation_cancelled';
+const SCENE_EVENT_MANIPULATION_DEBUG = 'manipulation_debug';
+const DRAG_REVERT_DELAY_MS = 300;
+const DRAG_REVERT_ANIMATION_MS = 220;
+
+const isPauseDuringDirectManipulationEnabled = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  if (isTruthyFlag(window.TENSORFLEET_PAUSE_DURING_DIRECT_MANIPULATION)) return true;
+  if (isFalsyFlag(window.TENSORFLEET_PAUSE_DURING_DIRECT_MANIPULATION)) return false;
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (
+      isFalsyFlag(params.get('pauseDuringManipulation')) ||
+      isFalsyFlag(params.get('pause_during_manipulation'))
+    ) {
+      return false;
+    }
+    if (
+      isTruthyFlag(params.get('pauseDuringManipulation')) ||
+      isTruthyFlag(params.get('pause_during_manipulation'))
+    ) {
+      return true;
+    }
+  } catch {
+    // Ignore malformed query string parsing.
+  }
+
+  try {
+    const storageValue = window.localStorage.getItem('tf.direct_manip.pause');
+    if (isFalsyFlag(storageValue)) {
+      return false;
+    }
+    if (isTruthyFlag(storageValue)) {
+      return true;
+    }
+  } catch {
+    // Ignore localStorage access failures.
+  }
+
+  return true;
+};
 
 type PendingThrottledNudge = {
   entity: EntityCardData;
@@ -162,6 +238,26 @@ type ScenePresetRecord = {
   poses: Record<string, ScenePresetPose>;
 };
 
+type PoseApplyConfirmationOutcome = 'confirmed' | 'settled_mismatch' | 'timeout';
+
+type PoseApplyResult =
+  | {
+      ok: true;
+      requestId: string;
+      outcome: PoseApplyConfirmationOutcome;
+      poseName: string;
+      observedName?: string;
+      observedPose?: GazeboPose | null;
+      distance?: number | null;
+      angularDistanceRad?: number | null;
+    }
+  | {
+      ok: false;
+      requestId: string;
+      poseName: string;
+      error: string;
+    };
+
 type SelectionSource = 'panel' | 'viewport' | 'none';
 
 const toFiniteNumber = (value: unknown): number | null => {
@@ -178,12 +274,27 @@ const isTruthyFlag = (value: unknown): boolean => {
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 };
 
+const isFalsyFlag = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value === false;
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off';
+};
+
 const isMoveTraceEnabled = (): boolean => {
   if (typeof window === 'undefined') return false;
   if (isTruthyFlag(window.TENSORFLEET_MOVE_TRACE)) return true;
+  if (isFalsyFlag(window.TENSORFLEET_MOVE_TRACE)) return false;
 
   try {
     const params = new URLSearchParams(window.location.search);
+    if (
+      isFalsyFlag(params.get('moveTrace')) ||
+      isFalsyFlag(params.get('move_trace')) ||
+      isFalsyFlag(params.get('debugMove'))
+    ) {
+      return false;
+    }
     if (
       isTruthyFlag(params.get('moveTrace')) ||
       isTruthyFlag(params.get('move_trace')) ||
@@ -196,14 +307,18 @@ const isMoveTraceEnabled = (): boolean => {
   }
 
   try {
-    if (isTruthyFlag(window.localStorage.getItem('tf.move.trace'))) {
+    const storageValue = window.localStorage.getItem('tf.move.trace');
+    if (isFalsyFlag(storageValue)) {
+      return false;
+    }
+    if (isTruthyFlag(storageValue)) {
       return true;
     }
   } catch {
     // Ignore localStorage access failures.
   }
 
-  return false;
+  return true;
 };
 
 const getMoveTraceFilter = (): string => {
@@ -335,7 +450,7 @@ const toTraceValueText = (value: unknown): string => {
   }
   try {
     const serialized = JSON.stringify(value);
-    if (!serialized) return String(value);
+    if (serialized == undefined || serialized.length === 0) return String(value);
     return serialized.length > 220 ? `${serialized.slice(0, 217)}...` : serialized;
   } catch {
     return String(value);
@@ -677,20 +792,11 @@ const toEntityCardData = (payload: unknown): EntityCardData | null => {
     const directTarget = typeof candidate.target === 'string' && candidate.target.trim().length > 0
       ? candidate.target.trim()
       : undefined;
-    const canonicalTarget = typeof params.gazebo_entity === 'string' && params.gazebo_entity.trim().length > 0
-      ? params.gazebo_entity.trim()
-      : undefined;
-    const modelNames = params.model_names;
-    const modelTarget = Array.isArray(modelNames) && typeof modelNames[0] === 'string' && modelNames[0].trim().length > 0
-      ? modelNames[0].trim()
-      : undefined;
-    const resolvedTarget = canonicalTarget ?? modelTarget ?? directTarget;
+    const resolvedTarget = resolvePrimaryTarget(params, directTarget);
     const directName = typeof candidate.name === 'string' && candidate.name.trim().length > 0
       ? candidate.name.trim()
       : undefined;
-    const displayName = typeof params.display_name === 'string' && params.display_name.trim().length > 0
-      ? params.display_name.trim()
-      : undefined;
+    const displayName = resolveDisplayName(params, [directName, resolvedTarget]);
     const resolvedName = directName ?? displayName ?? resolvedTarget;
 
     if (resolvedName && resolvedTarget) {
@@ -888,6 +994,102 @@ const sortScenePresetNames = (store: Record<string, ScenePresetRecord>): string[
     .sort(([, a], [, b]) => (b?.capturedAt ?? 0) - (a?.capturedAt ?? 0))
     .map(([name]) => name);
 
+type DirectManipulationState =
+  | { status: 'idle' }
+  | { status: 'dragging'; entity: string; preDragPose: GazeboPose }
+  | {
+      status: 'pending';
+      entity: string;
+      requestId: string;
+      preDragPose: GazeboPose;
+      optimisticPose: GazeboPose;
+      startedAt: number;
+    }
+  | { status: 'confirmed'; entity: string; requestId: string }
+  | { status: 'rejected'; entity: string; requestId: string; reason: string; preDragPose: GazeboPose }
+  | { status: 'timed_out'; entity: string; requestId: string; preDragPose: GazeboPose };
+
+type DirectManipulationAction =
+  | { type: 'drag_started'; entity: string; preDragPose: GazeboPose }
+  | { type: 'drag_cancelled'; entity?: string }
+  | {
+      type: 'pose_apply_started';
+      entity: string;
+      requestId: string;
+      preDragPose: GazeboPose;
+      optimisticPose: GazeboPose;
+      startedAt: number;
+    }
+  | { type: 'pose_confirmed'; entity: string; requestId: string }
+  | { type: 'pose_rejected'; entity: string; requestId: string; reason: string }
+  | { type: 'pose_timed_out'; entity: string; requestId: string }
+  | { type: 'reset' };
+
+const directManipulationReducer = (
+  state: DirectManipulationState,
+  action: DirectManipulationAction,
+): DirectManipulationState => {
+  switch (action.type) {
+    case 'drag_started':
+      return {
+        status: 'dragging',
+        entity: action.entity,
+        preDragPose: clonePose(action.preDragPose),
+      };
+    case 'drag_cancelled':
+      if (state.status !== 'dragging') {
+        return state;
+      }
+      if (action.entity && action.entity !== state.entity) {
+        return state;
+      }
+      return { status: 'idle' };
+    case 'pose_apply_started':
+      return {
+        status: 'pending',
+        entity: action.entity,
+        requestId: action.requestId,
+        preDragPose: clonePose(action.preDragPose),
+        optimisticPose: clonePose(action.optimisticPose),
+        startedAt: action.startedAt,
+      };
+    case 'pose_confirmed':
+      if (state.status !== 'pending' || state.requestId !== action.requestId) {
+        return state;
+      }
+      return {
+        status: 'confirmed',
+        entity: action.entity,
+        requestId: action.requestId,
+      };
+    case 'pose_rejected':
+      if (state.status !== 'pending' || state.requestId !== action.requestId) {
+        return state;
+      }
+      return {
+        status: 'rejected',
+        entity: action.entity,
+        requestId: action.requestId,
+        reason: action.reason,
+        preDragPose: clonePose(state.preDragPose),
+      };
+    case 'pose_timed_out':
+      if (state.status !== 'pending' || state.requestId !== action.requestId) {
+        return state;
+      }
+      return {
+        status: 'timed_out',
+        entity: action.entity,
+        requestId: action.requestId,
+        preDragPose: clonePose(state.preDragPose),
+      };
+    case 'reset':
+      return { status: 'idle' };
+    default:
+      return state;
+  }
+};
+
 export const GzWebPanel: React.FC = () => {
   const originalWebSocket = useRef<typeof WebSocket | null>(null);
   const sceneManagerRef = useRef<SceneManagerInstance | null>(null);
@@ -945,10 +1147,15 @@ export const GzWebPanel: React.FC = () => {
   const [selectedEntitySource, setSelectedEntitySource] = useState<SelectionSource>('none');
   const selectedEntityRef = useRef<EntityCardData | null>(null);
   const [entityControlStatus, setEntityControlStatus] = useState('');
+  const [managedSceneEntities, setManagedSceneEntities] = useState<EntityCardData[]>([]);
   const [directManipulationEnabled, setDirectManipulationEnabled] = useState(true);
   const [dragModeEnabled, setDragModeEnabled] = useState(false);
   const [isDraggingDirect, setIsDraggingDirect] = useState(false);
   const [manipStatusText, setManipStatusText] = useState('Ready');
+  const [directManipulationState, dispatchDirectManipulation] = useReducer(
+    directManipulationReducer,
+    { status: 'idle' } as DirectManipulationState,
+  );
   const dynamicPoseTopicRef = useRef<string | null>(null);
   const dynamicPoseOriginalCbRef = useRef<((msg: { pose?: Array<{ name?: string; position?: unknown; orientation?: unknown; id?: unknown }> }) => void) | null>(null);
   const dynamicPoseWrappedCbRef = useRef<((msg: { pose?: Array<{ name?: string; position?: unknown; orientation?: unknown; id?: unknown }> }) => void) | null>(null);
@@ -963,6 +1170,9 @@ export const GzWebPanel: React.FC = () => {
   } | null>(null);
   const entityPoseRef = useRef<Map<string, GazeboPose>>(new Map());
   const sessionInitialPoseRef = useRef<Map<string, GazeboPose>>(new Map());
+  const sessionDirtyEntityNamesRef = useRef(new Set<string>());
+  const managedEntitiesRef = useRef<Map<string, EntityCardData>>(new Map());
+  const hasVmOwnedInitialBaselineRef = useRef(false);
   const sessionBaselineCaptureDeadlineRef = useRef(0);
   const entityVisualOffsetRef = useRef<Map<string, PoseVector>>(new Map());
   const sessionScenePresetsRef = useRef<Record<string, ScenePresetRecord>>({});
@@ -1006,8 +1216,18 @@ export const GzWebPanel: React.FC = () => {
       ...getManipulationSelectionNames(selectedEntity),
     ]).filter((name) => name.length > 0);
   }, [selectedEntity, selectedEntityAllowsDirectManipulation]);
+  const tabletopEntityNames = useMemo(() => {
+    return unique(
+      managedSceneEntities.flatMap((entity) => {
+        if (entity.type.toLowerCase() !== 'object' || !getPoseEditAccess(entity).enabled) {
+          return [] as string[];
+        }
+        return getManipulationSelectionNames(entity);
+      }),
+    ).filter((name) => name.length > 0);
+  }, [managedSceneEntities]);
 
-  const syncSceneSelection = useCallback((manager: GzWebManagerLike | null | undefined) => {
+  const syncSceneSelection = useCallback((manager: SceneManagerInstance | null | undefined) => {
     if (!manager?.select) return;
     const currentSelection = manager.getSelectedEntityName?.() ?? null;
     if (!selectedEntity) {
@@ -1056,14 +1276,178 @@ export const GzWebPanel: React.FC = () => {
       nodeId: nodeIdRef.current,
       throttleMs: getConfiguredNudgeThrottleMs(),
       maxNudgeDeltaMeters: getConfiguredMaxNudgeDeltaMeters(),
+      pauseDuringDirectManipulation: isPauseDuringDirectManipulationEnabled(),
     });
   }, []);
   const hoverOutlineRefs = useRef<Map<string, Set<any>>>(new Map());
   const isDraggingDirectRef = useRef(false);
+  const directManipulationPauseHeldRef = useRef(false);
+  const directManipulationPausePromiseRef = useRef<Promise<boolean> | null>(null);
+
+  const pauseDirectManipulationWorld = useCallback((reason: string, payload: Record<string, unknown> = {}) => {
+    const enabled = isPauseDuringDirectManipulationEnabled();
+    moveTrace('drag.pause.helper_invoked', {
+      reason,
+      enabled,
+      hasManager: Boolean(sceneManagerRef.current),
+      hasPause: Boolean(sceneManagerRef.current?.pause || sceneManagerRef.current?.pauseWithAck),
+      held: directManipulationPauseHeldRef.current,
+      pending: Boolean(directManipulationPausePromiseRef.current),
+      ...payload,
+    });
+    if (!enabled) {
+      directManipulationPauseHeldRef.current = false;
+      directManipulationPausePromiseRef.current = Promise.resolve(false);
+      return directManipulationPausePromiseRef.current;
+    }
+    const manager = sceneManagerRef.current;
+    if (!manager?.pause && !manager?.pauseWithAck) {
+      moveTrace('drag.pause.unavailable', { reason, ...payload });
+      directManipulationPauseHeldRef.current = false;
+      directManipulationPausePromiseRef.current = Promise.resolve(false);
+      return directManipulationPausePromiseRef.current;
+    }
+    if (directManipulationPauseHeldRef.current) {
+      moveTrace('drag.pause.already_held', { reason, ...payload });
+      return Promise.resolve(true);
+    }
+    if (directManipulationPausePromiseRef.current) {
+      moveTrace('drag.pause.await_existing', { reason, ...payload });
+      return directManipulationPausePromiseRef.current;
+    }
+
+    const pausePromise = (async () => {
+      try {
+        if (manager.pauseWithAck) {
+          moveTrace('drag.pause.awaiting_ack', { reason, ...payload });
+          const result = await manager.pauseWithAck();
+          directManipulationPauseHeldRef.current = true;
+          moveTrace('drag.pause.acknowledged', {
+            reason,
+            ...payload,
+            response: result.response ?? null,
+          });
+          return true;
+        }
+
+        manager.pause?.();
+        directManipulationPauseHeldRef.current = true;
+        moveTrace('drag.pause.requested', { reason, ...payload });
+        return true;
+      } catch (error) {
+        directManipulationPauseHeldRef.current = false;
+        moveTrace('drag.pause.failed', {
+          reason,
+          ...payload,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      } finally {
+        directManipulationPausePromiseRef.current = null;
+      }
+    })();
+
+    directManipulationPausePromiseRef.current = pausePromise;
+    return pausePromise;
+  }, []);
+
+  const resumeDirectManipulationWorld = useCallback((reason: string, payload: Record<string, unknown> = {}) => {
+    moveTrace('drag.pause.resume_helper_invoked', {
+      reason,
+      held: directManipulationPauseHeldRef.current,
+      hasManager: Boolean(sceneManagerRef.current),
+      hasPlay: Boolean(sceneManagerRef.current?.play || sceneManagerRef.current?.playWithAck),
+      pending: Boolean(directManipulationPausePromiseRef.current),
+      ...payload,
+    });
+    if (!directManipulationPauseHeldRef.current) {
+      directManipulationPausePromiseRef.current = null;
+      return Promise.resolve(false);
+    }
+    const manager = sceneManagerRef.current;
+    if (!manager?.play && !manager?.playWithAck) {
+      moveTrace('drag.pause.resume_unavailable', { reason, ...payload });
+      directManipulationPauseHeldRef.current = false;
+      directManipulationPausePromiseRef.current = null;
+      return Promise.resolve(false);
+    }
+    return (async () => {
+      try {
+        if (manager.playWithAck) {
+          moveTrace('drag.pause.resuming_await_ack', { reason, ...payload });
+          const result = await manager.playWithAck();
+          moveTrace('drag.pause.resumed', {
+            reason,
+            ...payload,
+            response: result.response ?? null,
+          });
+        } else {
+          manager.play?.();
+          moveTrace('drag.pause.resumed', { reason, ...payload });
+        }
+        return true;
+      } catch (error) {
+        moveTrace('drag.pause.resume_failed', {
+          reason,
+          ...payload,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      } finally {
+        directManipulationPauseHeldRef.current = false;
+        directManipulationPausePromiseRef.current = null;
+      }
+    })();
+  }, []);
+
+  const ensureDirectManipulationPauseHeld = useCallback(async (
+    reason: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<boolean> => {
+    if (!isPauseDuringDirectManipulationEnabled()) {
+      return true;
+    }
+    if (directManipulationPauseHeldRef.current) {
+      moveTrace('drag.pause.ensure.already_held', { reason, ...payload });
+      return true;
+    }
+    const pendingPause = directManipulationPausePromiseRef.current;
+    if (!pendingPause) {
+      moveTrace('drag.pause.ensure.missing_pending', { reason, ...payload });
+      return false;
+    }
+    moveTrace('drag.pause.ensure.awaiting', { reason, ...payload });
+    const held = await pendingPause;
+    moveTrace('drag.pause.ensure.resolved', { reason, held, ...payload });
+    return held;
+  }, []);
 
   const setSceneControlsEnabled = useCallback((enabled: boolean) => {
     sceneManagerRef.current?.setControlsEnabled?.(enabled);
   }, []);
+
+  const animateScenePose = useCallback((
+    pose: GazeboPose,
+    poseNames: string[],
+    durationMs = DRAG_REVERT_ANIMATION_MS,
+  ): boolean => {
+    const manager = sceneManagerRef.current;
+    const world = manager?.transport?.getWorld?.();
+    if (!manager || !world) {
+      return false;
+    }
+    return (
+      manager.animateToPose?.(world, poseNames, pose, durationMs) ??
+      manager.previewPose?.(world, poseNames, pose) ??
+      false
+    );
+  }, []);
+
+  useEffect(() => {
+    const isDragging = directManipulationState.status === 'dragging';
+    isDraggingDirectRef.current = isDragging;
+    setIsDraggingDirect(isDragging);
+  }, [directManipulationState.status]);
 
   const setManipStatus = useCallback((message: string) => {
     setManipStatusText(message);
@@ -1084,10 +1468,81 @@ export const GzWebPanel: React.FC = () => {
   }, []);
 
   const recordSessionInitialPose = useCallback((pose: GazeboPose, options?: { force?: boolean }) => {
+    if (hasVmOwnedInitialBaselineRef.current) return;
     if (!pose.name || sessionInitialPoseRef.current.has(pose.name)) return;
     const deadline = sessionBaselineCaptureDeadlineRef.current;
     if (!options?.force && deadline > 0 && Date.now() > deadline) return;
     sessionInitialPoseRef.current.set(pose.name, clonePose(pose));
+  }, []);
+
+  const loadVmInitialPoseBaseline = useCallback(async (
+    baseUrl: string,
+    authToken: string,
+  ): Promise<boolean> => {
+    const trimmedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
+    if (!trimmedBaseUrl) {
+      return false;
+    }
+
+    const headers = authToken.trim()
+      ? { Authorization: `Bearer ${authToken.trim()}` }
+      : undefined;
+    const endpoint = `${trimmedBaseUrl}/vms/self/tensorfleet/api/v1/gazebo/initial-poses`;
+
+    try {
+      const response = await fetch(endpoint, { headers });
+      if (response.status === 404) {
+        return false;
+      }
+      if (!response.ok) {
+        return false;
+      }
+
+      const payload = (await response.json()) as VmInitialPosesResponse;
+      const nextBaseline = new Map<string, GazeboPose>();
+      for (const [poseName, poseEntry] of Object.entries(payload.poses ?? {})) {
+        const effectiveName = typeof poseEntry?.name === 'string' && poseEntry.name.trim().length > 0
+          ? poseEntry.name.trim()
+          : poseName;
+        const position = toPoseVector(poseEntry?.position);
+        const orientation = toPoseQuaternion(poseEntry?.orientation);
+        if (!effectiveName || !position || !orientation) {
+          continue;
+        }
+        nextBaseline.set(effectiveName, {
+          name: effectiveName,
+          position,
+          orientation,
+          id: toOptionalNumber(poseEntry?.id),
+          observedAtMs: 0,
+        });
+      }
+
+      if (nextBaseline.size === 0) {
+        return false;
+      }
+
+      sessionInitialPoseRef.current.clear();
+      for (const [poseName, pose] of nextBaseline.entries()) {
+        sessionInitialPoseRef.current.set(poseName, clonePose(pose));
+      }
+      sessionDirtyEntityNamesRef.current.clear();
+      hasVmOwnedInitialBaselineRef.current = true;
+      sessionBaselineCaptureDeadlineRef.current = 0;
+      moveTrace('reset.baseline.loaded', {
+        source: payload.source ?? 'vm',
+        world: payload.world,
+        capturedAt: payload.capturedAt,
+        poseCount: nextBaseline.size,
+        endpoint,
+      });
+      return true;
+    } catch (error) {
+      console.warn(`Failed to fetch VM initial poses from ${endpoint}`, error);
+    }
+
+    hasVmOwnedInitialBaselineRef.current = false;
+    return false;
   }, []);
 
   const clearVisualOffsets = useCallback((aliases: string[]) => {
@@ -1167,6 +1622,11 @@ export const GzWebPanel: React.FC = () => {
     );
   }, []);
 
+  const shouldHoldTabletopPose = useCallback((entity: EntityCardData | null | undefined): boolean => {
+    if (!entity) return false;
+    return entity.type.toLowerCase() === 'object' && getPoseEditAccess(entity).enabled;
+  }, []);
+
   const requestSetPose = useCallback((
     transport: SceneManagerTransport,
     world: string,
@@ -1213,6 +1673,41 @@ export const GzWebPanel: React.FC = () => {
       return { ok: false, serviceName, error: message };
     }
   }, []);
+
+  const schedulePoseHold = useCallback((
+    transport: SceneManagerTransport,
+    world: string,
+    msgType: string,
+    pose: GazeboPose,
+    traceMeta: {
+      requestId?: string;
+      entity?: string;
+      phasePrefix: string;
+    },
+    holdWindowMs: number,
+  ): number => {
+    if (holdWindowMs <= 0) return 0;
+    const manager = sceneManagerRef.current;
+    const requestCount = Math.floor(holdWindowMs / TABLETOP_POSE_HOLD_INTERVAL_MS);
+    moveTrace(`${traceMeta.phasePrefix}.hold.scheduled`, {
+      requestId: traceMeta.requestId,
+      entity: traceMeta.entity,
+      poseName: pose.name,
+      holdWindowMs,
+      intervalMs: TABLETOP_POSE_HOLD_INTERVAL_MS,
+      requestCount,
+    });
+    for (let delayMs = TABLETOP_POSE_HOLD_INTERVAL_MS; delayMs <= holdWindowMs; delayMs += TABLETOP_POSE_HOLD_INTERVAL_MS) {
+      window.setTimeout(() => {
+        if (sceneManagerRef.current !== manager) return;
+        requestSetPose(transport, world, msgType, pose, {
+          ...traceMeta,
+          phasePrefix: `${traceMeta.phasePrefix}.hold`,
+        });
+      }, delayMs);
+    }
+    return holdWindowMs;
+  }, [requestSetPose]);
 
   const dispatchNudgeEntity = useCallback(
     (
@@ -1375,7 +1870,8 @@ export const GzWebPanel: React.FC = () => {
         phasePrefix: 'move.dispatch',
       });
       if (!response.ok) {
-        emitNudgeStatus('error', `Move failed: set_pose request error (${response.error})`, {
+        const responseError = response.error;
+        emitNudgeStatus('error', `Move failed: set_pose request error (${responseError})`, {
           requestId,
           entity: mappedEntityName,
           attempt: 1,
@@ -1410,6 +1906,8 @@ export const GzWebPanel: React.FC = () => {
           });
         }
       }
+      sessionDirtyEntityNamesRef.current.add(moveEntity);
+      sessionDirtyEntityNamesRef.current.add(poseName);
       const aliases = buildPoseNameAliases(world, unique([
         poseName,
         worldScopedPoseName,
@@ -1608,15 +2106,44 @@ export const GzWebPanel: React.FC = () => {
     [dispatchNudgeEntity, flushThrottledNudge],
   );
 
-  const applyAbsolutePose = useCallback((
+  const applyAbsolutePose = useCallback(async (
     pose: GazeboPose,
     poseNames: string[],
-  ): boolean => {
+    options?: {
+      entity?: string;
+      requestId?: string;
+      holdPose?: boolean;
+      tracePhasePrefix?: string;
+      confirmTimeoutMs?: number;
+      confirmToleranceMeters?: number;
+      confirmAngularToleranceRad?: number;
+      settleStabilityWindowMs?: number;
+      settleStabilityToleranceMeters?: number;
+    },
+  ): Promise<PoseApplyResult> => {
     const manager = sceneManagerRef.current;
     const transport = manager?.transport;
-    if (!manager || !transport || !transport.requestService) return false;
+    const requestId =
+      options?.requestId ??
+      `reset-${Date.now().toString(36)}-${(++moveRequestCounterRef.current).toString(36)}`;
+    const entityName = options?.entity ?? pose.name;
+    if (!manager || !transport || !transport.requestService) {
+      return {
+        ok: false,
+        requestId,
+        poseName: pose.name,
+        error: 'scene transport is unavailable',
+      };
+    }
     const world = transport.getWorld?.();
-    if (!world) return false;
+    if (!world) {
+      return {
+        ok: false,
+        requestId,
+        poseName: pose.name,
+        error: 'world is unavailable',
+      };
+    }
 
     const poseTypes = getOrderedPoseMessageTypes(transport, world);
     const msgType = poseTypes[0];
@@ -1626,9 +2153,46 @@ export const GzWebPanel: React.FC = () => {
       ...poseNames,
       ...poseNames.map((name) => (name.includes('::') ? undefined : `${world}::${name}`)),
     ]);
-    if (!msgType) return false;
-    moveTrace('reset.apply.prepare', {
+    const tracePhasePrefix = options?.tracePhasePrefix ?? 'reset.apply';
+    const confirmTimeoutMs = options?.confirmTimeoutMs ?? RESET_CONFIRM_TIMEOUT_MS;
+    const confirmToleranceMeters = options?.confirmToleranceMeters ?? RESET_CONFIRM_TOLERANCE_METERS;
+    const confirmAngularToleranceRad =
+      options?.confirmAngularToleranceRad ?? RESET_CONFIRM_ANGULAR_TOLERANCE_RAD;
+    const settleStabilityWindowMs =
+      options?.settleStabilityWindowMs ?? RESET_SETTLE_STABILITY_WINDOW_MS;
+    const settleStabilityToleranceMeters =
+      options?.settleStabilityToleranceMeters ?? RESET_SETTLE_STABILITY_TOLERANCE_METERS;
+    if (!msgType) {
+      return {
+        ok: false,
+        requestId,
+        poseName: pose.name,
+        error: 'no compatible pose message type is available',
+      };
+    }
+    const binding = (() => {
+      const base = buildManipulationPoseBinding({
+        poses: entityPoseRef.current,
+        world,
+        requestedName: pose.name,
+      });
+      const preferredPoseNames = unique([
+        ...base.preferredPoseNames,
+        ...requestNames,
+      ]);
+      return {
+        ...base,
+        aliases: buildPoseNameAliases(world, unique([
+          ...base.aliases,
+          ...requestNames,
+        ])),
+        preferredPoseNames,
+      };
+    })();
+    moveTrace(`${tracePhasePrefix}.prepare`, {
+      requestId,
       world,
+      entity: entityName,
       poseName: pose.name,
       poseNames,
       requestNames,
@@ -1650,32 +2214,160 @@ export const GzWebPanel: React.FC = () => {
       id: pose.id,
     };
     const response = requestSetPose(transport, world, msgType, nextPose, {
-      phasePrefix: 'reset.apply',
+      requestId,
+      entity: entityName,
+      phasePrefix: tracePhasePrefix,
     });
-    const totalRequests = response.ok ? 1 : 0;
+    if (!response.ok) {
+      const responseError = response.error;
+      return {
+        ok: false,
+        requestId,
+        poseName: pose.name,
+        error: responseError,
+      };
+    }
 
-    const aliases = buildPoseNameAliases(world, requestNames);
+    const aliases = binding.aliases;
     clearVisualOffsets(aliases);
     previewPoseInScene(manager, world, aliases, nextPose);
-    for (const alias of aliases) {
-      entityPoseRef.current.set(alias, {
-        ...clonePose(nextPose),
-        name: alias,
-      });
-    }
-    moveTrace('reset.apply.sent', {
+    moveTrace(`${tracePhasePrefix}.sent`, {
+      requestId,
       world,
+      entity: entityName,
       poseName: pose.name,
-      totalRequests,
       aliases,
     });
-    return totalRequests > 0;
-  }, [clearVisualOffsets, previewPoseInScene, requestSetPose]);
+    const holdWindowMs = options?.holdPose ? TABLETOP_POSE_HOLD_WINDOW_MS : 0;
+    schedulePoseHold(transport, world, msgType, nextPose, {
+      requestId,
+      entity: entityName,
+      phasePrefix: tracePhasePrefix,
+    }, holdWindowMs);
 
-  const resetEntityPose = useCallback((entity: EntityCardData): boolean => {
+    return await new Promise<PoseApplyResult>((resolve) => {
+      let settled = false;
+      let lastObservation:
+        | ReturnType<typeof resolveManipulationObservation>
+        | null = null;
+
+      const finish = (result: PoseApplyResult) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+
+      window.setTimeout(() => {
+        if (settled) return;
+        const confirmationStartedAtMs = Date.now();
+        pollForPoseConfirmation({
+          isDisposed: () => !sceneManagerRef.current,
+          getObservation: () => {
+            const observation = resolveManipulationObservation({
+              poses: entityPoseRef.current,
+              binding,
+              targetPose: nextPose,
+              toleranceMeters: confirmToleranceMeters,
+              orientationToleranceRad: confirmAngularToleranceRad,
+              minObservedAtMs: confirmationStartedAtMs,
+            });
+            lastObservation = observation;
+            return observation;
+          },
+          timeoutMs: confirmTimeoutMs,
+          stabilityWindowMs: settleStabilityWindowMs,
+          stabilityToleranceMeters: settleStabilityToleranceMeters,
+          onConfirmed: ({ name: observedName, pose: observedPose, distance, angularDistanceRad }) => {
+            moveTrace(`${tracePhasePrefix}.confirmed`, {
+              requestId,
+              world,
+              entity: entityName,
+              poseName: pose.name,
+              observedName,
+              observedPosition: toTracePosition(observedPose.position),
+              targetPosition: toTracePosition(nextPose.position),
+              observedDelta: toTraceDelta(observedPose.position, nextPose.position),
+              distanceToExpectedMeters: Number(distance.toFixed(4)),
+              angularDeltaDegrees:
+                typeof angularDistanceRad === 'number' ? radiansToDegrees(angularDistanceRad) : undefined,
+            });
+            finish({
+              ok: true,
+              requestId,
+              outcome: 'confirmed',
+              poseName: pose.name,
+              observedName,
+              observedPose,
+              distance,
+              angularDistanceRad,
+            });
+          },
+          onSettledMismatch: ({ name: observedName, pose: observedPose, distance, angularDistanceRad }) => {
+            moveTrace(`${tracePhasePrefix}.settled_mismatch`, {
+              requestId,
+              world,
+              entity: entityName,
+              poseName: pose.name,
+              observedName,
+              observedPosition: toTracePosition(observedPose.position),
+              targetPosition: toTracePosition(nextPose.position),
+              observedDelta: toTraceDelta(observedPose.position, nextPose.position),
+              distanceToExpectedMeters: Number(distance.toFixed(4)),
+              toleranceMeters: confirmToleranceMeters,
+              angularDeltaDegrees:
+                typeof angularDistanceRad === 'number' ? radiansToDegrees(angularDistanceRad) : undefined,
+              angularToleranceDegrees: radiansToDegrees(confirmAngularToleranceRad),
+              stableWindowMs: settleStabilityWindowMs,
+            });
+            finish({
+              ok: true,
+              requestId,
+              outcome: 'settled_mismatch',
+              poseName: pose.name,
+              observedName,
+              observedPose,
+              distance,
+              angularDistanceRad,
+            });
+          },
+          onTimeout: () => {
+            const observedName = lastObservation?.observed?.name;
+            const observedPose = lastObservation?.observed?.pose ?? null;
+            moveTrace(`${tracePhasePrefix}.confirm.timeout`, {
+              requestId,
+              world,
+              entity: entityName,
+              poseName: pose.name,
+              targetPosition: toTracePosition(nextPose.position),
+              lastObservedName: observedName,
+              lastObservedPosition: observedPose ? toTracePosition(observedPose.position) : undefined,
+              observedDelta: observedPose
+                ? toTraceDelta(observedPose.position, nextPose.position)
+                : undefined,
+            });
+            finish({
+              ok: true,
+              requestId,
+              outcome: 'timeout',
+              poseName: pose.name,
+              observedName,
+              observedPose,
+              distance: lastObservation?.distance ?? null,
+              angularDistanceRad: lastObservation?.angularDistanceRad ?? null,
+            });
+          },
+        });
+      }, 0);
+    });
+  }, [clearVisualOffsets, previewPoseInScene, requestSetPose, schedulePoseHold]);
+
+  const resetEntityPose = useCallback(async (entity: EntityCardData): Promise<boolean> => {
     const entityKey = getGazeboEntityName(entity);
     const candidates = getEntityNameCandidates(entity);
+    const requestId =
+      `reset-${Date.now().toString(36)}-${(++moveRequestCounterRef.current).toString(36)}`;
     moveTrace('reset.entity.requested', {
+      requestId,
       entityKey,
       candidates,
     });
@@ -1687,54 +2379,151 @@ export const GzWebPanel: React.FC = () => {
 
     if (!initialPoseEntry) {
       emitNudgeStatus('error', `Reset ignored: initial pose not captured for ${entityKey}`, {
+        requestId,
         entity: entityKey,
       });
       return false;
     }
 
     const restoredPose = clonePose(initialPoseEntry.pose);
-    const applied = applyAbsolutePose(restoredPose, unique([initialPoseEntry.poseName, ...candidates]));
-    if (!applied) {
-      emitNudgeStatus('error', `Reset failed: no compatible pose service for ${entityKey}`, {
+    const requestNames = unique([initialPoseEntry.poseName, ...candidates]);
+    emitNudgeStatus('pending', `Resetting ${entityKey} to VM baseline...`, {
+      requestId,
+      entity: entityKey,
+      attempt: 1,
+      maxAttempts: 1,
+    });
+    const result = await applyAbsolutePose(restoredPose, requestNames, {
+      entity: entityKey,
+      requestId,
+      holdPose: shouldHoldTabletopPose(entity),
+    });
+    if (!result.ok) {
+      const resultError = result.error;
+      emitNudgeStatus('error', `Reset failed: ${resultError}`, {
+        requestId,
         entity: entityKey,
+        attempt: 1,
+        maxAttempts: 1,
       });
       return false;
     }
+
     moveTrace('reset.entity.applied', {
+      requestId,
       entityKey,
       baselinePoseName: initialPoseEntry.poseName,
+      outcome: result.outcome,
       restoredPose: {
         name: restoredPose.name,
         id: restoredPose.id,
         position: toTracePosition(restoredPose.position),
         orientation: toTraceOrientation(restoredPose.orientation),
       },
+      observedName: result.observedName,
+      observedPosition: result.observedPose ? toTracePosition(result.observedPose.position) : undefined,
+      distanceToExpectedMeters:
+        typeof result.distance === 'number' ? Number(result.distance.toFixed(4)) : undefined,
+      angularDeltaDegrees:
+        typeof result.angularDistanceRad === 'number' ? radiansToDegrees(result.angularDistanceRad) : undefined,
     });
 
-    emitNudgeStatus('success', `Reset ${entityKey} to session start pose`, {
-      entity: entityKey,
-    });
-    return true;
-  }, [applyAbsolutePose, emitNudgeStatus]);
+    if (result.outcome === 'confirmed') {
+      for (const name of requestNames) {
+        sessionDirtyEntityNamesRef.current.delete(name);
+      }
+      sessionDirtyEntityNamesRef.current.delete(entityKey);
+      emitNudgeStatus('success', `Reset ${entityKey} to VM start pose`, {
+        requestId,
+        entity: entityKey,
+        attempt: 1,
+        maxAttempts: 1,
+      });
+      return true;
+    }
 
-  const resetAllPoses = useCallback((entities?: EntityCardData[]): boolean => {
-    const providedEntities = Array.isArray(entities) ? entities : [];
-    const targetPoses = new Map<string, GazeboPose>();
+    if (result.outcome === 'settled_mismatch') {
+      emitNudgeStatus('warning', `Reset settled away from VM baseline for ${entityKey}`, {
+        requestId,
+        entity: entityKey,
+        attempt: 1,
+        maxAttempts: 1,
+      });
+      return false;
+    }
+
+    emitNudgeStatus(
+      'warning',
+      `Reset sent for ${entityKey} but not confirmed within ${RESET_CONFIRM_TIMEOUT_MS}ms`,
+      {
+        requestId,
+        entity: entityKey,
+        attempt: 1,
+        maxAttempts: 1,
+      },
+    );
+    return false;
+  }, [applyAbsolutePose, emitNudgeStatus, shouldHoldTabletopPose]);
+
+  const resetAllPoses = useCallback(async (entities?: EntityCardData[]): Promise<boolean> => {
+    const rawProvidedEntities = Array.isArray(entities) && entities.length > 0
+      ? entities
+      : Array.from(managedEntitiesRef.current.values());
+    const requestId =
+      `reset-all-${Date.now().toString(36)}-${(++moveRequestCounterRef.current).toString(36)}`;
+    const targetPoses = new Map<string, {
+      pose: GazeboPose;
+      entityKey: string;
+      requestNames: string[];
+      holdPose: boolean;
+    }>();
     const missingRequested: string[] = [];
-    const failed: string[] = [];
+    const failedDispatch: string[] = [];
+    const dirtyEntityNames = unique(Array.from(sessionDirtyEntityNamesRef.current.values()));
+    const sceneModelNames = unique(
+      (sceneManagerRef.current?.getModels?.() ?? [])
+        .map((model) => (typeof model?.name === 'string' ? model.name.trim() : ''))
+        .filter((name) => name.length > 0),
+    );
+    const dirtyEntityNameSet = new Set(dirtyEntityNames);
+    const providedEntities = rawProvidedEntities.filter((entity) => {
+      const entityKey = getGazeboEntityName(entity) || entity.name;
+      if (!entityKey) return false;
+      if (!getPoseEditAccess(entity).enabled) {
+        return dirtyEntityNameSet.has(entityKey);
+      }
+      if (dirtyEntityNameSet.size > 0) {
+        return dirtyEntityNameSet.has(entityKey);
+      }
+      return true;
+    });
     moveTrace('reset.all.requested', {
+      requestId,
       requestedEntities: providedEntities.map((entity) => ({
         name: entity.name,
         target: entity.target,
         gazeboEntity: getGazeboEntityName(entity),
       })),
       baselinePoseCount: sessionInitialPoseRef.current.size,
+      dirtyEntityNames,
+      sceneModelNames,
     });
 
-    const addTargetPose = (pose: GazeboPose, fallbackName?: string) => {
+    const addTargetPose = (
+      pose: GazeboPose,
+      entityKey: string,
+      requestNames: string[],
+      holdPose: boolean,
+      fallbackName?: string,
+    ) => {
       const poseName = pose.name || fallbackName;
       if (!poseName || targetPoses.has(poseName)) return;
-      targetPoses.set(poseName, clonePose({ ...pose, name: poseName }));
+      targetPoses.set(poseName, {
+        pose: clonePose({ ...pose, name: poseName }),
+        entityKey,
+        requestNames: unique([poseName, ...requestNames]),
+        holdPose,
+      });
     };
 
     if (providedEntities.length > 0) {
@@ -1759,13 +2548,24 @@ export const GzWebPanel: React.FC = () => {
           missingRequested.push(entityKey);
           continue;
         }
-        addTargetPose(initialPoseEntry.pose, initialPoseEntry.poseName);
+        addTargetPose(
+          initialPoseEntry.pose,
+          entityKey,
+          candidates,
+          shouldHoldTabletopPose(entity),
+          initialPoseEntry.poseName,
+        );
       }
     }
 
     if (providedEntities.length === 0 && targetPoses.size === 0) {
+      const preferredPoseNames = dirtyEntityNames.length > 0 ? dirtyEntityNames : sceneModelNames;
+      const allowedPoseNames = new Set(preferredPoseNames);
       for (const [poseName, pose] of sessionInitialPoseRef.current.entries()) {
-        addTargetPose(pose, poseName);
+        if (allowedPoseNames.size > 0 && !allowedPoseNames.has(poseName)) {
+          continue;
+        }
+        addTargetPose(pose, poseName, [poseName], false, poseName);
       }
     }
 
@@ -1777,9 +2577,11 @@ export const GzWebPanel: React.FC = () => {
         ? `Reset all failed: no baseline pose found for requested entities${missingSummary}`
         : 'Reset all failed: no session baseline poses are available yet';
       emitNudgeStatus('error', message, {
+        requestId,
         entity: '__scene__',
       });
       moveTrace('reset.all.failed_no_targets', {
+        requestId,
         requestedCount: providedEntities.length,
         missingRequested,
         baselinePoseCount: sessionInitialPoseRef.current.size,
@@ -1788,39 +2590,88 @@ export const GzWebPanel: React.FC = () => {
       return false;
     }
 
-    let resetCount = 0;
-    for (const [poseName, pose] of targetPoses.entries()) {
-      const applied = applyAbsolutePose(pose, [poseName]);
-      if (!applied) {
-        failed.push(poseName);
+    emitNudgeStatus('pending', `Resetting ${targetPoses.size} object(s) to VM baseline...`, {
+      requestId,
+      entity: '__scene__',
+      attempt: 1,
+      maxAttempts: 1,
+    });
+
+    const results = await Promise.all(
+      [...targetPoses.values()].map((target, index) =>
+        applyAbsolutePose(target.pose, target.requestNames, {
+          entity: target.entityKey,
+          requestId: `${requestId}-${index + 1}`,
+          holdPose: target.holdPose,
+        }),
+      ),
+    );
+
+    let confirmedCount = 0;
+    let mismatchCount = 0;
+    let timeoutCount = 0;
+    for (const [index, target] of [...targetPoses.values()].entries()) {
+      const result = results[index];
+      if (!result.ok) {
+        failedDispatch.push(target.pose.name);
         continue;
       }
-      resetCount += 1;
+      if (result.outcome === 'confirmed') {
+        confirmedCount += 1;
+        for (const name of target.requestNames) {
+          sessionDirtyEntityNamesRef.current.delete(name);
+        }
+        sessionDirtyEntityNamesRef.current.delete(target.entityKey);
+        continue;
+      }
+      if (result.outcome === 'settled_mismatch') {
+        mismatchCount += 1;
+        continue;
+      }
+      timeoutCount += 1;
     }
 
-    if (resetCount === 0) {
-      emitNudgeStatus('error', 'Reset all failed: no compatible pose service calls succeeded', {
+    if (confirmedCount === 0) {
+      const failureDetails: string[] = [];
+      if (mismatchCount > 0) failureDetails.push(`${mismatchCount} settled away from baseline`);
+      if (timeoutCount > 0) failureDetails.push(`${timeoutCount} confirmation timeouts`);
+      if (failedDispatch.length > 0) failureDetails.push(`${failedDispatch.length} dispatch failures`);
+      const suffix = failureDetails.length > 0 ? ` (${failureDetails.join(', ')})` : '';
+      emitNudgeStatus('error', `Reset all failed to confirm any object${suffix}`, {
+        requestId,
         entity: '__scene__',
+        attempt: 1,
+        maxAttempts: 1,
       });
       return false;
     }
 
     const details: string[] = [];
     if (missingRequested.length > 0) details.push(`${missingRequested.length} requested items missing baseline`);
-    if (failed.length > 0) details.push(`${failed.length} service failures`);
+    if (failedDispatch.length > 0) details.push(`${failedDispatch.length} dispatch failures`);
+    if (mismatchCount > 0) details.push(`${mismatchCount} settled away from baseline`);
+    if (timeoutCount > 0) details.push(`${timeoutCount} confirmation timeouts`);
     const suffix = details.length > 0 ? ` (${details.join(', ')})` : '';
     moveTrace('reset.all.applied', {
+      requestId,
+      dirtyEntityNames,
+      sceneModelNames,
       targetPoseCount: targetPoses.size,
-      resetCount,
+      confirmedCount,
+      mismatchCount,
+      timeoutCount,
       missingRequested,
-      failed,
+      failedDispatch,
       details,
     });
-    emitNudgeStatus('success', `Reset ${resetCount} object(s) to session start${suffix}`, {
+    emitNudgeStatus('success', `Reset ${confirmedCount} object(s) to VM start${suffix}`, {
+      requestId,
       entity: '__scene__',
+      attempt: 1,
+      maxAttempts: 1,
     });
     return true;
-  }, [applyAbsolutePose, emitNudgeStatus]);
+  }, [applyAbsolutePose, emitNudgeStatus, shouldHoldTabletopPose]);
 
   const saveScenePreset = useCallback((name: string): boolean => {
     const trimmedName = name.trim();
@@ -1951,23 +2802,36 @@ export const GzWebPanel: React.FC = () => {
       setSceneControlsEnabled(true);
       return;
     }
-    setSceneControlsEnabled(!isDraggingDirectRef.current);
-  }, [directManipulationEnabled, dragModeEnabled, setSceneControlsEnabled]);
+    setSceneControlsEnabled(
+      directManipulationState.status !== 'dragging' &&
+      directManipulationState.status !== 'pending' &&
+      directManipulationState.status !== 'rejected' &&
+      directManipulationState.status !== 'timed_out',
+    );
+  }, [directManipulationEnabled, directManipulationState.status, dragModeEnabled, setSceneControlsEnabled]);
 
   useEffect(() => {
     const manager = sceneManagerRef.current;
     if (!manager?.setManipulationMode) return;
     manager.setManipulationTargetNames?.(selectedManipulationTargetNames);
+    manager.setTabletopEntityNames?.(tabletopEntityNames);
     const nextMode =
-      directManipulationEnabled && dragModeEnabled && selectedEntityAllowsDirectManipulation
+      directManipulationEnabled &&
+      dragModeEnabled &&
+      selectedEntityAllowsDirectManipulation &&
+      directManipulationState.status !== 'pending' &&
+      directManipulationState.status !== 'rejected' &&
+      directManipulationState.status !== 'timed_out'
         ? 'translate'
       : 'view';
     manager.setManipulationMode(nextMode);
   }, [
+    directManipulationState.status,
     directManipulationEnabled,
     dragModeEnabled,
     selectedEntityAllowsDirectManipulation,
     selectedManipulationTargetNames,
+    tabletopEntityNames,
   ]);
 
   useEffect(() => {
@@ -1980,120 +2844,130 @@ export const GzWebPanel: React.FC = () => {
     const manager = sceneManagerRef.current;
     if (!manager?.onSceneEvent || !manager?.offSceneEvent) return;
     let disposed = false;
-    type PendingDragConfirmation = {
-      requestId: string;
-      entity: string;
-      cancel: () => void;
+
+    const handleManipulationStarted = (payload: unknown) => {
+      if (!dragModeEnabled || directManipulationState.status === 'pending') return;
+      const event = parseManipulationStartedEvent(payload);
+      if (!event) return;
+      moveTrace('drag.pause.start_handler', {
+        entity: event.entity,
+        status: directManipulationState.status,
+      });
+      void pauseDirectManipulationWorld('drag_started', {
+        entity: event.entity,
+      });
+      dispatchDirectManipulation({
+        type: 'drag_started',
+        entity: event.entity,
+        preDragPose: event.pose,
+      });
+      setManipStatus(`Dragging ${event.entity}`);
+      setEntityControlStatus(`Dragging ${event.entity} (release to apply exact pose)`);
     };
 
-    const pendingConfirmCancels = new Set<() => void>();
-    const pendingConfirmByEntity = new Map<string, PendingDragConfirmation>();
-    const pendingConfirmByRequestId = new Map<string, PendingDragConfirmation>();
-    const clearPendingConfirmation = (pending: PendingDragConfirmation | undefined) => {
-      if (!pending) return;
-      pending.cancel();
-      pendingConfirmCancels.delete(pending.cancel);
-      if (pendingConfirmByEntity.get(pending.entity)?.requestId === pending.requestId) {
-        pendingConfirmByEntity.delete(pending.entity);
-      }
-      if (pendingConfirmByRequestId.get(pending.requestId)?.entity === pending.entity) {
-        pendingConfirmByRequestId.delete(pending.requestId);
-      }
+    const handleManipulationCancelled = (payload: unknown) => {
+      const event = parseManipulationCancelledEvent(payload);
+      if (!event) return;
+      dispatchDirectManipulation({
+        type: 'drag_cancelled',
+        entity: event.entity,
+      });
+      resumeDirectManipulationWorld('drag_cancelled', {
+        entity: event.entity,
+      });
+      setManipStatus(dragModeEnabled ? 'Gizmo ready' : 'Ready');
     };
 
-    const handleManipulationState = (payload: unknown) => {
-      const event = parseManipulationStateEvent(payload);
-      const dragging = event.dragging;
-      isDraggingDirectRef.current = dragging;
-      setIsDraggingDirect(dragging);
-      const entityName = event.entity || 'selected entity';
-      if (dragging) {
-        setManipStatus(`Dragging ${entityName}`);
-        setEntityControlStatus(`Dragging ${entityName} (release to apply exact pose)`);
-      } else {
-        setManipStatus(dragModeEnabled ? 'Gizmo ready' : 'Ready');
-      }
+    const handleManipulationDebug = (payload: unknown) => {
+      const candidate = (payload ?? {}) as {
+        phase?: unknown;
+        entity?: unknown;
+      } & Record<string, unknown>;
+      const phase = typeof candidate.phase === 'string' && candidate.phase.trim().length > 0
+        ? candidate.phase.trim()
+        : 'unknown';
+      moveTrace(`drag.scene.${phase}`, candidate);
     };
 
-    const handleManipulationDispatch = (payload: unknown) => {
-      if (!dragModeEnabled) return;
-      const dispatchEvent = parseManipulationDispatchEvent(payload);
-      if (!dispatchEvent) return;
-      const {
-        name: requestedName,
-        position,
-        orientation,
-        world,
-        serviceName,
-        msgType,
-        ok,
-        error,
-        requestId: dispatchRequestId,
-      } = dispatchEvent;
+    const handleManipulationCommitted = async (payload: unknown) => {
+      if (!dragModeEnabled || disposed) return;
+      const event = parseManipulationCommittedEvent(payload);
+      if (!event) return;
+
+      const activeManager = sceneManagerRef.current;
+      const world = activeManager?.transport?.getWorld?.();
+      if (!activeManager || !world) {
+        setManipStatus(`Drag move failed for ${event.name}`);
+        setEntityControlStatus('Drag move failed: scene transport is unavailable');
+        return;
+      }
 
       const binding = buildManipulationPoseBinding({
         poses: entityPoseRef.current,
         world,
-        requestedName,
+        requestedName: event.name,
       });
       const targetPose: GazeboPose = {
         name: binding.poseName,
         id: binding.poseId,
-        position: roundPoseVector(position),
-        orientation,
+        position: roundPoseVector(event.position),
+        orientation: event.orientation,
       };
       const requestId =
-        dispatchRequestId ??
         `drag-${Date.now().toString(36)}-${(++moveRequestCounterRef.current).toString(36)}`;
-      const existingPending = pendingConfirmByEntity.get(requestedName);
-      if (existingPending) {
-        clearPendingConfirmation(existingPending);
-        moveTrace('drag.confirm.superseded', {
-          requestId: existingPending.requestId,
-          supersededByRequestId: requestId,
-          world,
-          entity: requestedName,
-          note: 'Cancelled older confirmation poll for superseded drag request',
-        });
-      }
-      emitNudgeStatus('pending', `Applying drag pose for ${requestedName}...`, {
-        requestId,
-        entity: requestedName,
-        attempt: 1,
-        maxAttempts: 1,
+      const preDragPose =
+        directManipulationState.status === 'dragging' && directManipulationState.entity === event.name
+          ? directManipulationState.preDragPose
+          : binding.baselinePose ?? clonePose(targetPose);
+
+      const pauseHeld = await ensureDirectManipulationPauseHeld('before_commit_apply', {
+        entity: event.name,
       });
-      if (!ok) {
-        moveTrace('drag.dispatch.error', {
-          requestId,
-          world,
-          serviceName,
-          msgType,
-          entity: requestedName,
-          error,
-          pose: {
-            name: targetPose.name,
-            id: targetPose.id,
-            position: toTracePosition(targetPose.position),
-            orientation: toTraceOrientation(targetPose.orientation),
-          },
+      if (disposed) return;
+      if (!pauseHeld) {
+        moveTrace('drag.pause.commit_blocked', {
+          entity: event.name,
         });
-        emitNudgeStatus('error', `Drag move failed: ${error ?? 'set_pose request error'}`, {
-          requestId,
-          entity: requestedName,
-          attempt: 1,
-          maxAttempts: 1,
+        dispatchDirectManipulation({
+          type: 'drag_cancelled',
+          entity: event.name,
         });
-        setManipStatus(`Drag move failed for ${requestedName}`);
+        emitNudgeStatus('error', `Drag move blocked: simulation pause was not confirmed for ${event.name}`, {
+          entity: event.name,
+        });
+        setManipStatus(`Drag move blocked for ${event.name}`);
+        setEntityControlStatus('Drag move blocked: simulation did not acknowledge pause');
         return;
       }
 
-      moveTrace('drag.dispatch.set_pose', {
+      dispatchDirectManipulation({
+        type: 'pose_apply_started',
+        entity: event.name,
         requestId,
+        preDragPose,
+        optimisticPose: targetPose,
+        startedAt: Date.now(),
+      });
+      emitNudgeStatus('pending', `Applying drag pose for ${event.name}...`, {
+        requestId,
+        entity: event.name,
         attempt: 1,
+        maxAttempts: 1,
+      });
+      setManipStatus(`Applying drag pose for ${event.name}...`);
+
+      recentMoveRef.current = {
+        entity: event.name,
+        aliases: binding.aliases,
+        atMs: Date.now(),
+      };
+      sessionDirtyEntityNamesRef.current.add(event.name);
+      sessionDirtyEntityNamesRef.current.add(binding.poseName);
+      moveTrace('drag.dispatch.accepted', {
+        requestId,
         world,
-        serviceName,
-        msgType,
-        entity: requestedName,
+        entity: event.name,
+        aliases: binding.aliases,
         pose: {
           name: targetPose.name,
           id: targetPose.id,
@@ -2101,187 +2975,185 @@ export const GzWebPanel: React.FC = () => {
           orientation: toTraceOrientation(targetPose.orientation),
         },
       });
-      recentMoveRef.current = {
-        entity: requestedName,
-        aliases: binding.aliases,
-        atMs: Date.now(),
-      };
-      moveTrace('drag.dispatch.accepted', {
+
+      void applyAbsolutePose(targetPose, binding.preferredPoseNames, {
+        entity: event.name,
         requestId,
-        world,
-        serviceName,
-        msgType,
-        entity: requestedName,
-        aliases: binding.aliases,
-        note: 'set_pose dispatched from gzweb scene manager',
-      });
-      let cancelConfirmation = () => {};
-      const pendingConfirmation: PendingDragConfirmation = {
-        requestId,
-        entity: requestedName,
-        cancel: () => cancelConfirmation(),
-      };
-      const confirmationStartedAtMs = Date.now();
-      cancelConfirmation = pollForPoseConfirmation({
-        isDisposed: () => disposed,
-        getObservation: () =>
-          resolveManipulationObservation({
-            poses: entityPoseRef.current,
-            binding,
-            targetPose,
-            toleranceMeters: DRAG_CONFIRM_TOLERANCE_METERS,
-            orientationToleranceRad: DRAG_CONFIRM_ANGULAR_TOLERANCE_RAD,
-            minObservedAtMs: confirmationStartedAtMs,
-          }),
-        timeoutMs: DRAG_CONFIRM_TIMEOUT_MS,
-        stabilityWindowMs: DRAG_SETTLE_STABILITY_WINDOW_MS,
-        stabilityToleranceMeters: DRAG_SETTLE_STABILITY_TOLERANCE_METERS,
-        onConfirmed: ({ name: observedName, pose: observedPose, distance, angularDistanceRad }) => {
-          clearPendingConfirmation(pendingConfirmation);
-          emitNudgeStatus('success', `Drag move confirmed for ${requestedName}`, {
+        tracePhasePrefix: 'drag.apply',
+        confirmTimeoutMs: DRAG_CONFIRM_TIMEOUT_MS,
+        confirmToleranceMeters: DRAG_CONFIRM_TOLERANCE_METERS,
+        confirmAngularToleranceRad: DRAG_CONFIRM_ANGULAR_TOLERANCE_RAD,
+        settleStabilityWindowMs: DRAG_SETTLE_STABILITY_WINDOW_MS,
+        settleStabilityToleranceMeters: DRAG_SETTLE_STABILITY_TOLERANCE_METERS,
+      }).then((result) => {
+        if (disposed) return;
+        if (!result.ok) {
+          const resultError = result.error;
+          dispatchDirectManipulation({
+            type: 'pose_rejected',
+            entity: event.name,
             requestId,
-            entity: requestedName,
+            reason: resultError,
+          });
+          emitNudgeStatus('error', `Drag move failed: ${resultError}`, {
+            requestId,
+            entity: event.name,
             attempt: 1,
             maxAttempts: 1,
           });
-          setManipStatus(`Drag move confirmed for ${requestedName}`);
-          moveTrace('drag.confirmed', {
+          setManipStatus(`Drag move failed for ${event.name}`);
+          return;
+        }
+
+        if (result.outcome === 'confirmed') {
+          dispatchDirectManipulation({
+            type: 'pose_confirmed',
+            entity: event.name,
             requestId,
-            world,
-            entity: requestedName,
-            observedName,
-            observedPosition: toTracePosition(observedPose.position),
-            targetPosition: toTracePosition(targetPose.position),
-            observedDelta: toTraceDelta(observedPose.position, targetPose.position),
-            distanceToExpectedMeters: Number(distance.toFixed(4)),
-            angularDeltaDegrees:
-              typeof angularDistanceRad === 'number' ? radiansToDegrees(angularDistanceRad) : undefined,
           });
-        },
-        onSettledMismatch: ({ name: observedName, pose: observedPose, distance, angularDistanceRad }) => {
-          clearPendingConfirmation(pendingConfirmation);
-          emitNudgeStatus('warning', `Drag move settled away from target for ${requestedName}`, {
+          emitNudgeStatus('success', `Drag move confirmed for ${event.name}`, {
             requestId,
-            entity: requestedName,
+            entity: event.name,
             attempt: 1,
             maxAttempts: 1,
           });
-          setManipStatus(`Drag move settled away from target for ${requestedName}`);
-          moveTrace('drag.settled_mismatch', {
+          setManipStatus(`Drag move confirmed for ${event.name}`);
+          return;
+        }
+
+        if (result.outcome === 'settled_mismatch') {
+          dispatchDirectManipulation({
+            type: 'pose_rejected',
+            entity: event.name,
             requestId,
-            world,
-            entity: requestedName,
-            observedName,
-            observedPosition: toTracePosition(observedPose.position),
-            targetPosition: toTracePosition(targetPose.position),
-            observedDelta: toTraceDelta(observedPose.position, targetPose.position),
-            distanceToExpectedMeters: Number(distance.toFixed(4)),
-            toleranceMeters: DRAG_CONFIRM_TOLERANCE_METERS,
-            angularDeltaDegrees:
-              typeof angularDistanceRad === 'number' ? radiansToDegrees(angularDistanceRad) : undefined,
-            angularToleranceDegrees: radiansToDegrees(DRAG_CONFIRM_ANGULAR_TOLERANCE_RAD),
-            stableWindowMs: DRAG_SETTLE_STABILITY_WINDOW_MS,
+            reason: 'settled away from target',
           });
-        },
-        onTimeout: (observedPose) => {
-          clearPendingConfirmation(pendingConfirmation);
-          emitNudgeStatus(
-            'warning',
-            `Drag move sent but not confirmed within ${DRAG_CONFIRM_TIMEOUT_MS}ms`,
-            {
-              requestId,
-              entity: requestedName,
-              attempt: 1,
-              maxAttempts: 1,
-            },
-          );
-          setManipStatus(`Drag move timeout for ${requestedName}`);
-          moveTrace('drag.confirm.timeout', {
+          emitNudgeStatus('warning', `Drag move settled away from target for ${event.name}`, {
             requestId,
-            world,
-            entity: requestedName,
-            targetPosition: toTracePosition(targetPose.position),
-            lastObservedPosition: observedPose ? toTracePosition(observedPose.position) : undefined,
-            observedDelta: observedPose
-              ? toTraceDelta(observedPose.position, targetPose.position)
-              : undefined,
+            entity: event.name,
+            attempt: 1,
+            maxAttempts: 1,
           });
-        },
-      });
-      pendingConfirmCancels.add(cancelConfirmation);
-      pendingConfirmByEntity.set(requestedName, pendingConfirmation);
-      pendingConfirmByRequestId.set(requestId, pendingConfirmation);
-    };
+          setManipStatus(`Drag move settled away from target for ${event.name}`);
+          return;
+        }
 
-    const handleManipulationServiceReply = (payload: unknown) => {
-      const replyEvent = parseManipulationServiceReplyEvent(payload);
-      if (!replyEvent) return;
-      const { requestId, name, world, serviceName, requestType, responseType, ok, detail } = replyEvent;
-      moveTrace('drag.dispatch.reply', {
-        requestId,
-        entity: name,
-        world,
-        serviceName,
-        requestType,
-        responseType,
-        ok: ok === null ? 'unknown' : ok,
-        detail,
-      });
-
-      if (ok !== false) {
-        return;
-      }
-
-      const pendingConfirmation = pendingConfirmByRequestId.get(requestId);
-      if (!pendingConfirmation) {
-        moveTrace('drag.dispatch.reply.ignored', {
+        dispatchDirectManipulation({
+          type: 'pose_timed_out',
+          entity: event.name,
           requestId,
-          entity: name,
-          world,
-          serviceName,
-          requestType,
-          responseType,
-          ok,
-          detail,
-          note: 'Ignored failed service reply for settled drag request',
         });
-        return;
-      }
-
-      clearPendingConfirmation(pendingConfirmation);
-
-      emitNudgeStatus('error', `Drag move rejected: ${detail ?? 'service reported failure'}`, {
-        requestId,
-        entity: name,
-        attempt: 1,
-        maxAttempts: 1,
       });
-      setManipStatus(`Drag move rejected for ${name}`);
     };
 
-    manager.onSceneEvent(SCENE_EVENT_MANIPULATION_STATE, handleManipulationState);
-    manager.onSceneEvent(SCENE_EVENT_MANIPULATION_DISPATCH, handleManipulationDispatch);
-    manager.onSceneEvent(SCENE_EVENT_MANIPULATION_SERVICE_REPLY, handleManipulationServiceReply);
+    manager.onSceneEvent(SCENE_EVENT_MANIPULATION_STARTED, handleManipulationStarted);
+    manager.onSceneEvent(SCENE_EVENT_MANIPULATION_COMMITTED, handleManipulationCommitted);
+    manager.onSceneEvent(SCENE_EVENT_MANIPULATION_CANCELLED, handleManipulationCancelled);
+    manager.onSceneEvent(SCENE_EVENT_MANIPULATION_DEBUG, handleManipulationDebug);
 
     return () => {
       disposed = true;
-      for (const cancel of pendingConfirmCancels) {
-        cancel();
-      }
-      pendingConfirmCancels.clear();
-      pendingConfirmByEntity.clear();
-      pendingConfirmByRequestId.clear();
-      manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_STATE, handleManipulationState);
-      manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_DISPATCH, handleManipulationDispatch);
-      manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_SERVICE_REPLY, handleManipulationServiceReply);
+      manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_STARTED, handleManipulationStarted);
+      manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_COMMITTED, handleManipulationCommitted);
+      manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_CANCELLED, handleManipulationCancelled);
+      manager.offSceneEvent?.(SCENE_EVENT_MANIPULATION_DEBUG, handleManipulationDebug);
     };
   }, [
+    applyAbsolutePose,
+    directManipulationState,
     directManipulationEnabled,
     dragModeEnabled,
+    ensureDirectManipulationPauseHeld,
     emitNudgeStatus,
     isConnected,
+    pauseDirectManipulationWorld,
+    resumeDirectManipulationWorld,
+    setEntityControlStatus,
     setManipStatus,
   ]);
+
+  useEffect(() => {
+    if (directManipulationState.status !== 'pending') return;
+    const { entity, requestId } = directManipulationState;
+    const timeoutId = window.setTimeout(() => {
+      dispatchDirectManipulation({
+        type: 'pose_timed_out',
+        entity,
+        requestId,
+      });
+    }, DRAG_CONFIRM_TIMEOUT_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [directManipulationState]);
+
+  useEffect(() => {
+    if (directManipulationState.status !== 'rejected' && directManipulationState.status !== 'timed_out') {
+      return;
+    }
+
+    const { entity, requestId, preDragPose } = directManipulationState;
+    const poseNames = unique([preDragPose.name, entity]);
+
+    if (directManipulationState.status === 'timed_out') {
+      emitNudgeStatus(
+        'warning',
+        `Drag move sent but not confirmed within ${DRAG_CONFIRM_TIMEOUT_MS}ms`,
+        {
+          requestId,
+          entity,
+          attempt: 1,
+          maxAttempts: 1,
+        },
+      );
+      setManipStatus(`Drag move timeout for ${entity}`);
+    } else {
+      emitNudgeStatus('error', `Drag move rejected: ${directManipulationState.reason}`, {
+        requestId,
+        entity,
+        attempt: 1,
+        maxAttempts: 1,
+      });
+      setManipStatus(`Drag move rejected for ${entity}`);
+      sessionDirtyEntityNamesRef.current.delete(entity);
+      if (preDragPose.name) {
+        sessionDirtyEntityNamesRef.current.delete(preDragPose.name);
+      }
+    }
+
+    const revertDelayId = window.setTimeout(() => {
+      animateScenePose(preDragPose, poseNames, DRAG_REVERT_ANIMATION_MS);
+    }, DRAG_REVERT_DELAY_MS);
+    const resetId = window.setTimeout(() => {
+      dispatchDirectManipulation({ type: 'reset' });
+      resumeDirectManipulationWorld('drag_terminal_reverted', {
+        entity,
+        requestId,
+        outcome: directManipulationState.status,
+      });
+    }, DRAG_REVERT_DELAY_MS + DRAG_REVERT_ANIMATION_MS + 40);
+    return () => {
+      window.clearTimeout(revertDelayId);
+      window.clearTimeout(resetId);
+    };
+  }, [animateScenePose, directManipulationState, emitNudgeStatus, resumeDirectManipulationWorld, setManipStatus]);
+
+  useEffect(() => {
+    if (directManipulationState.status !== 'confirmed') return;
+    const resetId = window.setTimeout(() => {
+      dispatchDirectManipulation({ type: 'reset' });
+      resumeDirectManipulationWorld('drag_confirmed', {
+        entity: directManipulationState.entity,
+        requestId: directManipulationState.requestId,
+      });
+      setManipStatus(dragModeEnabled ? 'Gizmo ready' : 'Ready');
+    }, 0);
+    return () => window.clearTimeout(resetId);
+  }, [directManipulationState, dragModeEnabled, resumeDirectManipulationWorld, setManipStatus]);
+
+  useEffect(() => {
+    return () => {
+      resumeDirectManipulationWorld('component_cleanup');
+    };
+  }, [resumeDirectManipulationWorld]);
 
   const handleEntityControlMessage = useCallback(
     (event: MessageEvent) => {
@@ -2296,6 +3168,19 @@ export const GzWebPanel: React.FC = () => {
         const runtimePoseEntity = getRuntimePoseEntityName(entity);
         sceneManagerRef.current?.select?.(runtimePoseEntity);
         setEntityControlStatus(`Selected ${runtimePoseEntity}`);
+        return;
+      }
+
+      if (message.type === ENTITY_CONTROL_MESSAGES.MANAGED_ENTITIES) {
+        const entities = toEntityCardDataList((message.payload as { entities?: unknown } | undefined)?.entities);
+        const nextManagedEntities = new Map<string, EntityCardData>();
+        for (const entity of entities) {
+          const key = getGazeboEntityName(entity) || entity.name;
+          if (!key) continue;
+          nextManagedEntities.set(key, entity);
+        }
+        managedEntitiesRef.current = nextManagedEntities;
+        setManagedSceneEntities(entities);
         return;
       }
 
@@ -2437,10 +3322,15 @@ export const GzWebPanel: React.FC = () => {
     recentMoveRef.current = null;
     isDraggingDirectRef.current = false;
     setIsDraggingDirect(false);
+    dispatchDirectManipulation({ type: 'reset' });
     clearAllThrottledNudges('destroy_scene');
     lastNudgeDispatchAtRef.current.clear();
     entityPoseRef.current.clear();
     sessionInitialPoseRef.current.clear();
+    sessionDirtyEntityNamesRef.current.clear();
+    managedEntitiesRef.current.clear();
+    setManagedSceneEntities([]);
+    hasVmOwnedInitialBaselineRef.current = false;
     sessionBaselineCaptureDeadlineRef.current = 0;
     entityVisualOffsetRef.current.clear();
     sessionScenePresetsRef.current = {};
@@ -2862,6 +3752,7 @@ export const GzWebPanel: React.FC = () => {
     setActiveWsUrl(websocketUrl);
 
     try {
+      const loadedVmBaseline = await loadVmInitialPoseBaseline(effectiveVmBase, token.trim());
       const manager = new SceneManager({
         elementId: SCENE_ELEMENT_ID,
         websocketUrl,
@@ -2886,14 +3777,26 @@ export const GzWebPanel: React.FC = () => {
       patchTransportRoot(manager.transport);
       sceneManagerRef.current = manager;
       seedPoseCacheFromScene(manager);
+      if (!loadedVmBaseline) {
+        [250, 750, 1500, 3000].forEach((delayMs) => {
+          window.setTimeout(() => {
+            if (sceneManagerRef.current !== manager) return;
+            if (hasVmOwnedInitialBaselineRef.current) return;
+            seedPoseCacheFromScene(manager);
+          }, delayMs);
+        });
+      }
       manager.setManipulationTargetNames?.(selectedManipulationTargetNames);
+      manager.setTabletopEntityNames?.(tabletopEntityNames);
       manager.setManipulationMode?.(
         directManipulationEnabled && dragModeEnabled && selectedEntityAllowsDirectManipulation
           ? 'translate'
           : 'view',
       );
       syncSceneSelection(manager);
-      sessionBaselineCaptureDeadlineRef.current = Date.now() + SESSION_BASELINE_CAPTURE_WINDOW_MS;
+      if (!loadedVmBaseline) {
+        sessionBaselineCaptureDeadlineRef.current = Date.now() + SESSION_BASELINE_CAPTURE_WINDOW_MS;
+      }
       bindResize(manager);
 
       // Keep status as pending until login succeeds
@@ -2917,9 +3820,11 @@ export const GzWebPanel: React.FC = () => {
     requestHostVmInfo,
     resetWebSocketToNative,
     seedPoseCacheFromScene,
+    loadVmInitialPoseBaseline,
     selectedEntity,
     selectedEntityAllowsDirectManipulation,
     selectedManipulationTargetNames,
+    tabletopEntityNames,
     syncSceneSelection,
     token,
   ]);
@@ -3319,6 +4224,7 @@ export const GzWebPanel: React.FC = () => {
                   setDragModeEnabled(false);
                   isDraggingDirectRef.current = false;
                   setIsDraggingDirect(false);
+                  dispatchDirectManipulation({ type: 'reset' });
                   setManipStatus('Direct manipulation disabled');
                 }
               }}
@@ -3337,6 +4243,7 @@ export const GzWebPanel: React.FC = () => {
                 if (!next) {
                   isDraggingDirectRef.current = false;
                   setIsDraggingDirect(false);
+                  dispatchDirectManipulation({ type: 'reset' });
                   setManipStatus('Gizmo disarmed');
                 }
                 return next;
