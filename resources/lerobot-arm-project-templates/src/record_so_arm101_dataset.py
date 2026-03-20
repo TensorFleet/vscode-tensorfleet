@@ -1477,7 +1477,6 @@ def parse_args() -> RecorderConfig:
         follower_id = args.robot_id
 
     timestamp = _now_ts()
-    repo_id = args.dataset_repo_id or args.repo_id or f"local/so_arm101_sim_{timestamp}"
     root_value = args.dataset_root or args.root
     root = os.path.expanduser(root_value) if root_value else os.path.join(
         os.getcwd(), "datasets", f"so_arm101_sim_{timestamp}"
@@ -1485,6 +1484,21 @@ def parse_args() -> RecorderConfig:
 
     if args.resume and not root_value:
         parser.error("--resume requires --root or --dataset.root pointing to an existing dataset.")
+
+    # When resuming without an explicit repo_id, read it from the existing dataset metadata
+    # so the dataset is opened with the correct ID rather than a new timestamp-based one.
+    explicit_repo_id = args.dataset_repo_id or args.repo_id
+    if args.resume and not explicit_repo_id and root_value:
+        info_path = os.path.join(root, INFO_PATH)
+        if os.path.exists(info_path):
+            try:
+                import json as _json
+                with open(info_path) as _f:
+                    _info = _json.load(_f)
+                explicit_repo_id = _info.get("repo_id")
+            except Exception:
+                pass
+    repo_id = explicit_repo_id or f"local/so_arm101_sim_{timestamp}"
 
     cameras = []
     if not args.no_images:
