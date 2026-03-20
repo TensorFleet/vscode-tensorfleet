@@ -759,6 +759,7 @@ const uniquePanelRegistry = new Map<string, UniqueViewProvider>();
 
 
 
+
 // -----------------------------------------------------------------------------
 // Activation
 // -----------------------------------------------------------------------------
@@ -840,13 +841,23 @@ export function activate(context: vscode.ExtensionContext) {
       })
     );
 
-    context.subscriptions.push(
-      registerTensorFleetCommand(
-        view.command,
-        () => openDedicatedPanel(view, context),
-        { feature: 'panel' }
-      )
-    );
+    if (view.id === 'tensorfleet-aiops') {
+      context.subscriptions.push(
+        registerTensorFleetCommand(
+          view.command,
+          () => openLerobotAIPanel(view, context),
+          { feature: 'panel' }
+        )
+      );
+    } else {
+      context.subscriptions.push(
+        registerTensorFleetCommand(
+          view.command,
+          () => openDedicatedPanel(view, context),
+          { feature: 'panel' }
+        )
+      );
+    }
   });
 
   // Register Unique Panels (function-driven, no "open" command)
@@ -1838,7 +1849,7 @@ async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, 
 }
 
 async function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d' | 'gzweb' | 'featured_entities',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d' | 'gzweb' | 'featured_entities' | 'lerobot',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
@@ -4185,4 +4196,22 @@ async function showDebugInfo(context: vscode.ExtensionContext) {
   });
 
   await vscode.window.showTextDocument(document);
+}
+
+// =============================================================================
+// LeRobot / SO-ARM101 Monitoring Panel  (see src/lerobot.ts)
+// =============================================================================
+
+import * as lerobot from './lerobot';
+
+function openLerobotAIPanel(view: DroneViewport, context: vscode.ExtensionContext) {
+  return lerobot.openLerobotAIPanel(
+    context,
+    (webview, csp) => getStandalonePanelHtml('lerobot', webview, context, csp),
+    (webview) => getStandardPanelHtml(
+      view,
+      webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', view.image)).toString(),
+      webview.cspSource,
+    ),
+  );
 }

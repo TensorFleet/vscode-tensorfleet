@@ -74,6 +74,7 @@ export default defineConfig({
         raw_messages: resolve(rootDir, "raw_messages.html"),
         sensor_3d: resolve(rootDir, "sensor_view_3d.html"),
         featured_entities: resolve(rootDir, "featured_entities.html"),
+        lerobot: resolve(rootDir, "lerobot.html"),
       },
       output: {
         assetFileNames: "assets/[name]-[hash][extname]",
