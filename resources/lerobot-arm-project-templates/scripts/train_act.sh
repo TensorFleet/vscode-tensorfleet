@@ -122,8 +122,8 @@ if [ ! -f "$DATASET_ROOT/meta/info.json" ]; then
     exit 1
 fi
 
-# Extract job name from repo_id (replace / with _)
-JOB_NAME="act_${REPO_ID//\//_}"
+# Extract job name from the dataset name portion of repo_id (drop namespace like "local/")
+JOB_NAME="act_${REPO_ID##*/}"
 OUTPUT_DIR="$PROJECT_ROOT/outputs/train/${JOB_NAME}"
 
 # Detect device
