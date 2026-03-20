@@ -209,51 +209,126 @@ The leader drives the simulation, which mirrors to the real follower.
 
 ```
 .
-├── src/teleop_so_arm101.py    # Main teleoperation script
-├── src/lib/                   # Hardware bridge and utilities
-├── requirements.txt       # Python dependencies
-├── .env.example               # Environment variable template
-└── assets/                    # Screenshots for this guide
+├── src/teleop_so_arm101.py         # Teleoperation script
+├── src/record_so_arm101_dataset.py # Dataset recorder
+├── src/deploy_act.py               # ACT policy deployment
+├── src/lib/                        # Hardware bridge and utilities
+├── scripts/train_act.sh            # Train ACT policy
+├── scripts/train_act_overfit.sh    # Quick overfit test
+├── requirements.txt                # Python dependencies
+├── .env.example                    # Environment variable template
+└── assets/                         # Screenshots for this guide
 ```
 
 ---
 
-## Next Steps
-
-- **Record demonstrations**: Collect training data for imitation learning
-- **Train models**: Use LeRobot to train policies from your data
-- **[LeRobot documentation](https://huggingface.co/docs/lerobot)**: Full SDK reference
-
-## 3. Record a LeRobot dataset (sim)
-
-This recorder writes a LeRobot dataset by subscribing to `/joint_states`, action commands, and the SO-ARM101 cameras over rosbridge.
-
-### A. Run the recorder
+## 3. Record a dataset
 
 ```bash
+# Keyboard teleop
 uv run python src/record_so_arm101_dataset.py --input keyboard
+
+# Leader arm teleop
+uv run python src/record_so_arm101_dataset.py --input leader
 ```
 
 > [!IMPORTANT]
-> Always include `--input keyboard` or `--input leader` when recording. Without teleop, the arm sits idle and you'll record a static dataset that isn't useful for training.
+> Always pass `--input keyboard` or `--input leader`. Without teleop the arm sits idle and the dataset is useless for training.
 
-Defaults:
-- Dataset root: `./datasets/so_arm101_sim_<timestamp>`
-- Repo id: `local/so_arm101_sim_<timestamp>`
-- FPS: 5 (matches sim cameras)
-- Cameras: wrist, agent, side
-- Video codec: h264
+### Controls
+
+| Key | Action |
+|-----|--------|
+| `r` | Start recording episode |
+| `s` | Save episode and start next |
+| `d` | Discard current episode |
+| `f` | Finalize dataset and quit (saves pending episode) |
+| `q` / `Ctrl-C` | Quit without finalizing |
+
+### Resume an existing dataset
+
+```bash
+uv run python src/record_so_arm101_dataset.py --resume --root ./datasets/so_arm101_sim_YYYYMMDD_HHMMSS
+```
 
 > [!NOTE]
-> Recording videos requires `ffmpeg` to be available in `PATH`. If not, pass `--no-videos` to store PNGs.
+> `--resume` requires `--root`, and your settings (fps, cameras, image/video mode) must match the existing dataset.
 
-### B. Controls
+---
 
-- `n`: end episode and start next
-- `p`: pause/resume recording
-- `x` / `Ctrl-C`: quit (saves current episode if it has frames)
+## 4. Train the policy
 
-### C. Common overrides
+### Full training run
+
+```bash
+./scripts/train_act.sh ./datasets/so_arm101_sim_YYYYMMDD_HHMMSS local/so_arm101_sim_YYYYMMDD_HHMMSS
+```
+
+Checkpoints are saved to `outputs/train/act_so_arm101_sim_YYYYMMDD_HHMMSS/`.
+
+### Quick overfit test (verify pipeline on a small dataset)
+
+```bash
+./scripts/train_act_overfit.sh ./datasets/so_arm101_sim_YYYYMMDD_HHMMSS local/so_arm101_sim_YYYYMMDD_HHMMSS
+```
+
+### Resume training
+
+```bash
+./scripts/train_act.sh --resume outputs/train/act_so_arm101_sim_YYYYMMDD_HHMMSS
+```
+
+Pass extra args to override config, e.g. `--steps=50000`.
+
+> [!TIP]
+> Set `TRAIN_STEPS`, `BATCH_SIZE`, `SAVE_FREQ`, or `NUM_WORKERS` as environment variables to override defaults without editing the script.
+
+---
+
+## 5. Deploy the policy
+
+Run a trained checkpoint in the simulation. The script loads the policy, subscribes to camera and joint state topics, and publishes trajectory commands in a loop.
+
+### Run deployment
+
+```bash
+uv run python src/deploy_act.py \
+  --policy-path outputs/train/act_so_arm101_sim_YYYYMMDD_HHMMSS/checkpoints/last/pretrained_model
+```
+
+### Smoke test (load + one inference, no continuous loop)
+
+```bash
+uv run python src/deploy_act.py \
+  --policy-path outputs/train/act_so_arm101_sim_YYYYMMDD_HHMMSS/checkpoints/last/pretrained_model \
+  --check
+```
+
+### Controls
+
+| Key | Action |
+|-----|--------|
+| `Space` | Pause / resume |
+| `q` / `Ctrl-C` | Quit |
+
+### Common options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--policy-path` | *(required)* | Path to `pretrained_model` directory |
+| `--fps` | `5` | Control loop frequency (Hz) |
+| `--action-steps` | `10` | Actions to execute per inference |
+| `--device` | `cuda` | Inference device: `cuda`, `cpu`, or `mps` |
+| `--cameras` | `wrist,agent,side` | Comma-separated camera list |
+| `--trajectory-time` | `0.2` | `time_from_start` for each trajectory point (s) |
+| `--debug` | — | Log commands and joint states |
+| `--check` | — | Smoke test: connect, infer once, exit |
+
+---
+
+## Appendix: Recorder Reference
+
+### Common overrides
 
 ```bash
 # Record 20 episodes at 10 seconds each
@@ -262,123 +337,37 @@ uv run python src/record_so_arm101_dataset.py \
   --episode-seconds 10 \
   --task "pick-and-place"
 
-# Disable images and log only joint/action data
+# Disable images (log joint/action data only)
 uv run python src/record_so_arm101_dataset.py --no-images
 
 # Record just wrist + agent cameras
 uv run python src/record_so_arm101_dataset.py --cameras wrist,agent
 
-# Record even if action topics are missing (actions mirror joint states until commands arrive)
+# Start recording without waiting for action commands
 uv run python src/record_so_arm101_dataset.py --no-wait-for-action
 
-# Record + keyboard teleop in the same process
-uv run python src/record_so_arm101_dataset.py --input keyboard
-
-# Record + leader teleop in the same process
+# Leader arm teleop with explicit port/id
 uv run python src/record_so_arm101_dataset.py \
   --input leader \
   --leader-port /dev/ttyACM1 \
   --leader-id my_awesome_leader_arm
-
-# Lerobot-style flags (mirrors lerobot-record)
-uv run python src/record_so_arm101_dataset.py \
-  --robot.type=so101_follower \
-  --robot.cameras="{front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
-  --ros.camera_topics="{front: /so_arm101/agent_camera/image_raw}" \
-  --teleop.type=so101_leader \
-  --teleop.port /dev/ttyACM1 \
-  --teleop.id my_awesome_leader_arm \
-  --dataset.repo_id=local/record-test \
-  --dataset.num_episodes=5 \
-  --dataset.single_task="Grab the black cube"
-
-# Append to an existing dataset root
-uv run python src/record_so_arm101_dataset.py --resume --root ./datasets/so_arm101_sim_20250130_120000
 ```
 
-> [!IMPORTANT]
-> `--resume` is strict: it requires `--root`, and your current settings (fps, cameras, image/video mode)
-> must match the existing dataset metadata.
-
-### D. Preflight check (optional)
+### Preflight check
 
 ```bash
 uv run python src/record_so_arm101_dataset.py --check
 ```
 
-Use `--check` to confirm topics, images, and ffmpeg before recording.
+Verifies topics, cameras, and ffmpeg before recording.
 
-## 4. Test + train the dataset
+### Defaults
 
-### A. Quick sanity check
-
-```bash
-python - <<'PY'
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-repo_id = "local/so_arm101_sim_YYYYMMDD_HHMMSS"
-root = "./datasets/so_arm101_sim_YYYYMMDD_HHMMSS"
-
-ds = LeRobotDataset(repo_id, root=root)
-print("episodes:", ds.meta.total_episodes, "frames:", ds.meta.total_frames)
-print("features:", list(ds.meta.features.keys()))
-print("sample keys:", list(ds[0].keys()))
-PY
-```
-
-### B. Visualize an episode (optional)
-
-```bash
-# HF_HUB_OFFLINE=1 prevents any HuggingFace hub access
-HF_HUB_OFFLINE=1 lerobot-dataset-viz \
-  --repo-id local/so_arm101_sim_YYYYMMDD_HHMMSS \
-  --root ./datasets/so_arm101_sim_YYYYMMDD_HHMMSS \
-  --episode-index 0 \
-  --display-compressed-images true
-```
-
-> [!NOTE]
-> If you recorded with an older recorder and see `meta/tasks.parquet` missing, recreate it once (replace `teleop` with your `--task` label):
-> ```bash
-> python - <<'PY'
-> from pathlib import Path
-> import pandas as pd
->
-> root = Path("./datasets/so_arm101_sim_YYYYMMDD_HHMMSS")
-> tasks = pd.DataFrame({"task_index": [0]}, index=["teleop"])
-> tasks.to_parquet(root / "meta" / "tasks.parquet")
-> print("Wrote", root / "meta" / "tasks.parquet")
-> PY
-> ```
-
-### C. Start a minimal training run
-
-```bash
-# HF_HUB_OFFLINE=1 prevents any HuggingFace hub access
-HF_HUB_OFFLINE=1 python -m lerobot.scripts.lerobot_train \
-  --dataset.repo_id=local/so_arm101_sim_YYYYMMDD_HHMMSS \
-  --dataset.root=./datasets/so_arm101_sim_YYYYMMDD_HHMMSS \
-  --policy.type=act \
-  --policy.repo_id=local/so_arm101_policy \
-  --steps=1000 \
-  --batch_size=4 \
-  --num_workers=0 \
-  --eval_freq=0 \
-  --wandb.enable=false \
-  --save_checkpoint=true \
-  --output_dir=./outputs
-```
-
-> [!TIP]
-> - `--policy.repo_id` is required even for local training (just use any local name)
-> - `--output_dir` specifies where checkpoints are saved
-> - Add `--policy.device=cpu` for CPU-only training
-
----
-
-## Appendix: Recorder Argument Reference
-
-Complete list of arguments for `record_so_arm101_dataset.py`.
+- Dataset root: `./datasets/so_arm101_sim_<timestamp>`
+- Repo id: `local/so_arm101_sim_<timestamp>`
+- FPS: 5
+- Cameras: wrist, agent, side
+- Video codec: h264 (pass `--no-videos` to store PNGs instead)
 
 ### Dataset Options
 
@@ -435,8 +424,6 @@ Complete list of arguments for `record_so_arm101_dataset.py`.
 | `--display_data` | `false` | Preview camera feeds in OpenCV windows |
 
 ### LeRobot-style Aliases
-
-These mirror `lerobot-record` flags:
 
 | Argument | Maps to |
 |----------|---------|
