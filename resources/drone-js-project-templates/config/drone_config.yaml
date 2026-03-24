@@ -57,6 +57,20 @@ ai_models:
     model: "yolov8n"
     confidence_threshold: 0.5
 
+vision:
+  topics:
+    image_topic: "/drone_camera/image_raw"
+    annotated_image_topic: "/drone_camera/image_annotated"
+    message_type: "sensor_msgs/Image"
+
+  yolo:
+    model_name: "yolov8n"
+    model_path: ""
+    confidence_threshold: 0.25
+    iou_threshold: 0.45
+    input_size: 640
+    target_label: "dining table"
+
 logging:
   level: "info"
   save_to_file: true

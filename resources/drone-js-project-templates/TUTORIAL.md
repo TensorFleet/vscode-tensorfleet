@@ -1,34 +1,35 @@
-# TensorFleet Tutorials
+# TensorFleet Drone Tutorials
 
-📚 **The tutorials have been reorganized for better navigation!**
+The runnable tutorials live in `src/tutorials/` and are intended to be run in
+order after you have a working PX4 + rosbridge setup.
 
-## What's New
+## Core Tutorials
 
-- **Modular Structure**: Each tutorial is now in its own focused file
-- **Easy Navigation**: Quick links between tutorials
-- **Better Organization**: Logical progression with clear prerequisites
+1. `bun run tutorial:01` - connect to rosbridge
+2. `bun run tutorial:02` - inspect telemetry topics
+3. `bun run tutorial:03` - arm and disarm
+4. `bun run tutorial:04` - take off and land
+5. `bun run tutorial:05` - OFFBOARD hover
+6. `bun run tutorial:06` - OFFBOARD velocity motion
+7. `bun run tutorial:07` - OFFBOARD position waypoint navigation
 
-## Tutorial Index
+## Vision Demos
 
-| Tutorial | Description | Status |
-|----------|-------------|--------|
-| [00_preparation](tutorials/00_preparation.md) | Environment setup & simulation | ✅ Complete |
-| [01_connection](tutorials/01_connection.md) | ROS Bridge connection & state monitoring | ✅ Complete |
-| [02_telemetry](tutorials/02_telemetry.md) | Comprehensive telemetry collection | ✅ Complete |
-| [03_arm](tutorials/03_arm.md) | Arm/disarm drone control | ✅ Complete |
+The current first-pass vision demo builds on the same environment and assumes
+the VM-side front camera pipeline is present:
 
-## Getting Started
+- `bun run vision:yolo`
 
-1. **Start Here**: [Tutorial Overview](tutorials/README.md)
-2. **First Steps**: [Preparation Tutorial](tutorials/00_preparation.md)
-3. **Follow the sequence** numbered tutorials in order
+## Suggested Run Order
 
-## Quick Links
+1. `bun run restart`
+2. `bun run tutorial:01`
+3. `bun run tutorial:04`
+4. `bun run tutorial:05`
+5. `bun run vision:yolo`
 
-- 📖 [Tutorial Overview](tutorials/README.md)
-- 🚀 [Start Learning](tutorials/00_preparation.md)
-- 💻 [Run Code Examples](src/tutorials/)
+## Requirements
 
----
-
-*The old monolithic tutorial content has been split into focused, navigable sections. Each tutorial now builds progressively on the previous one.*
+- rosbridge available on the VM
+- PX4 sim running and reset to a known state
+- the default drone VM/world with `/drone_camera/image_raw` available

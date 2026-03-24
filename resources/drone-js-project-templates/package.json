@@ -13,6 +13,7 @@
     "check": "node check-runtime.js",
     "restart": "bun src/restart_sim.js",
     "drone:mover": "bun src/drone_mover.js",
+    "vision:yolo": "bun src/vision_yolo.js",
     "tutorial:01": "bun src/tutorials/01_connect.js",
     "tutorial:02": "bun src/tutorials/02_telemetry.js",
     "tutorial:03": "bun src/tutorials/03_arm.js",
