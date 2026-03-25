@@ -299,6 +299,56 @@ async function serverSettingsMessageHandler(message: any, api: {
         break;
       }
 
+      case 'getSimulationWorldData': {
+        if (!vmManagerIntegration) {
+          webview.postMessage({
+            command: 'updateSimulationWorldData',
+            presets: [],
+            selection: { mode: 'default' },
+            available: false,
+            reason: 'VM Manager not available'
+          });
+          return;
+        }
+
+        const state = unifiedStatusCoordinator?.getState();
+        const vmRunning = state?.vmState === 'running';
+        if (!vmRunning) {
+          webview.postMessage({
+            command: 'updateSimulationWorldData',
+            presets: [],
+            selection: { mode: 'default' },
+            available: false,
+            reason: 'Start the VM to manage runtime simulation worlds'
+          });
+          return;
+        }
+
+        try {
+          const [presets, selection] = await Promise.all([
+            vmManagerIntegration.listGazeboPresets(),
+            vmManagerIntegration.getGazeboSelection()
+          ]);
+
+          webview.postMessage({
+            command: 'updateSimulationWorldData',
+            presets,
+            selection,
+            available: true
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          webview.postMessage({
+            command: 'updateSimulationWorldData',
+            presets: [],
+            selection: { mode: 'default' },
+            available: false,
+            reason: `Runtime world switching unavailable: ${message}`
+          });
+        }
+        break;
+      }
+
       case 'setRegion': {
         const { regionId } = message;
         if (!regionId) return;
@@ -306,7 +356,6 @@ async function serverSettingsMessageHandler(message: any, api: {
         telemetry?.trackEvent('serverSettings.region.set', { regionId, phase: 'start' });
         await regions.setSelectedRegion(regionId);
 
-        const newRegion = regions.getSelectedRegion();
         telemetry?.trackEvent('serverSettings.region.set', { regionId, phase: 'success' });
 
         // Refresh VM Manager status
@@ -398,6 +447,29 @@ async function serverSettingsMessageHandler(message: any, api: {
         break;
       }
 
+      case 'setSimulationWorldPreset': {
+        const { preset } = message;
+        if (!preset || !vmManagerIntegration) return;
+
+        telemetry?.trackEvent('serverSettings.simulationWorld.setPreset', { preset, phase: 'start' });
+        const resultMessage = await vmManagerIntegration.setGazeboPreset(preset);
+        telemetry?.trackEvent('serverSettings.simulationWorld.setPreset', { preset, phase: 'success' });
+        void vscode.window.showInformationMessage(resultMessage);
+        await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
+        break;
+      }
+
+      case 'resetSimulationWorld': {
+        if (!vmManagerIntegration) return;
+
+        telemetry?.trackEvent('serverSettings.simulationWorld.reset', { phase: 'start' });
+        const resultMessage = await vmManagerIntegration.resetGazeboSelection();
+        telemetry?.trackEvent('serverSettings.simulationWorld.reset', { phase: 'success' });
+        void vscode.window.showInformationMessage(resultMessage);
+        await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
+        break;
+      }
+
       default: {
         console.log('[ServerSettings] Unknown message:', command);
         break;
@@ -406,6 +478,10 @@ async function serverSettingsMessageHandler(message: any, api: {
   } catch (error) {
     telemetry?.captureError(error, { source: 'serverSettingsMessageHandler', command });
     console.error('[ServerSettings] Message handler error:', error);
+    if (!['getStatus', 'getRegions', 'getVmTypes', 'getSimulationWorldData'].includes(command)) {
+      const message = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(`Server settings action failed: ${message}`);
+    }
   }
 }
 
@@ -1437,15 +1513,6 @@ async function showWelcomePage(context: vscode.ExtensionContext) {
 
   const telemetry = getTelemetry();
 
-  const PANEL_COMMANDS: Record<string, string> = {
-    'tensorfleet-gazebo': 'tensorfleet.openGazeboPanel',
-    'tensorfleet-teleops-panel': 'tensorfleet.openTeleopsPanel',
-    'tensorfleet-map-panel': 'tensorfleet.openMapPanel',
-    'tensorfleet-sensor-3d-panel': 'tensorfleet.openSensor3DPanel',
-    'tensorfleet-raw-messages-panel': 'tensorfleet.openRawMessagesPanel',
-    'tensorfleet-image-panel': 'tensorfleet.openImagePanel'
-  };
-
   const panel = vscode.window.createWebviewPanel(
     'tensorfleet.welcome',
     'Welcome to TensorFleet',
@@ -1523,7 +1590,6 @@ async function showWelcomePage(context: vscode.ExtensionContext) {
       }
 
       case 'welcome.openStarterPanels': {
-        const ids = Array.isArray(msg.panelIds) ? msg.panelIds : [];
         const commandsToRun = new Set<string>();
 
         commandsToRun.add('tensorfleet.openGzWebPanel');
@@ -3527,74 +3593,6 @@ async function updateUnifiedAuthStatus(context: vscode.ExtensionContext) {
   console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
   unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
 }
-
-/**
- * Build menu items with visual grouping (primary actions, separator, secondary actions)
- */
-function buildMenuForState(
-  vmState: 'unknown' | 'stopped' | 'starting' | 'running' | 'stopping' | 'failed' | 'pending',
-  ipAddress?: string
-): vscode.QuickPickItem[] {
-  const items: vscode.QuickPickItem[] = [];
-  const primaryActions: vscode.QuickPickItem[] = [];
-
-  // Build primary actions based on VM state
-  switch (vmState) {
-    case 'running':
-      primaryActions.push({
-        label: '$(debug-stop) Stop VM'
-      });
-      break;
-
-    case 'stopped':
-    case 'pending':
-    case 'unknown':
-      primaryActions.push({
-        label: '$(play) Start VM'
-      });
-      break;
-
-    case 'failed':
-      primaryActions.push({
-        label: '$(refresh) Retry Start'
-      });
-      break;
-
-    case 'starting':
-    case 'stopping':
-      // No primary actions during transitions
-      break;
-  }
-
-  // Add primary actions if any exist
-  if (primaryActions.length > 0) {
-    items.push(...primaryActions);
-
-    // Add separator after primary actions
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
-  }
-
-  // Add secondary actions (always shown)
-  const currentRegion = regions.getSelectedRegion();
-  items.push(
-    {
-      label: '$(refresh) Refresh Status'
-    },
-    {
-      label: `$(globe) Change Region`,
-      detail: `Current: ${currentRegion.name}`
-    },
-    {
-      label: '$(sign-out) Logout'
-    }
-  );
-
-  return items;
-}
-
 
 async function showAccountPanel(context: vscode.ExtensionContext) {
   await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "account");

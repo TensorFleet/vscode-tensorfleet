@@ -416,6 +416,26 @@
               </div>
             </div>
           </div>
+
+          <!-- Simulation World -->
+          <div class="tf-panel-card" id="simulation-world-card">
+            <div class="tf-panel-card__left">
+              <div class="tf-panel-card__icon">🏗️</div>
+              <div class="tf-panel-card__text">
+                <div class="tf-panel-card__title">Simulation World</div>
+                <div class="tf-panel-card__subtitle" id="simulation-world-status">Start the VM to manage runtime worlds</div>
+              </div>
+            </div>
+            <div class="tf-panel-card__pill">
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <select id="simulation-world-select" disabled>
+                  <option value="default">Default boot scene</option>
+                </select>
+                <button id="apply-simulation-world-btn" class="vm-control-btn" disabled>Apply</button>
+                <button id="reset-simulation-world-btn" class="vm-control-btn" disabled>Reset</button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </main>
@@ -438,6 +458,12 @@
     const stopVmBtn = document.getElementById('stop-vm-btn');
     const vmDetailsCard = document.getElementById('vm-details-card');
     const vmDetailsEl = document.getElementById('vm-details');
+    const simulationWorldStatusEl = document.getElementById('simulation-world-status');
+    const simulationWorldSelect = document.getElementById('simulation-world-select');
+    const applySimulationWorldBtn = document.getElementById('apply-simulation-world-btn');
+    const resetSimulationWorldBtn = document.getElementById('reset-simulation-world-btn');
+    let currentSimulationSelection = 'default';
+    let lastVmState = 'unknown';
 
     /**
      * Initialize the server settings panel
@@ -447,12 +473,15 @@
       vscode.postMessage({ command: 'getRegions' });
       vscode.postMessage({ command: 'getVmTypes' });
       vscode.postMessage({ command: 'getStatus' });
+      vscode.postMessage({ command: 'getSimulationWorldData' });
 
       // Set up event listeners
       regionSelect.addEventListener('change', handleRegionChange);
       vmTypeSelect.addEventListener('change', handleVmTypeChange);
       startVmBtn.addEventListener('click', handleStartVm);
       stopVmBtn.addEventListener('click', handleStopVm);
+      applySimulationWorldBtn.addEventListener('click', handleApplySimulationWorld);
+      resetSimulationWorldBtn.addEventListener('click', handleResetSimulationWorld);
 
       // Start polling for status updates
       startStatusPolling();
@@ -524,6 +553,30 @@
       vscode.postMessage({ command: 'stopVm' });
     }
 
+    function handleApplySimulationWorld() {
+      const selectedValue = simulationWorldSelect.value;
+      if (!selectedValue) {
+        return;
+      }
+
+      applySimulationWorldBtn.disabled = true;
+      if (selectedValue === 'default') {
+        simulationWorldStatusEl.textContent = 'Resetting to default boot scene...';
+        vscode.postMessage({ command: 'resetSimulationWorld' });
+        return;
+      }
+
+      simulationWorldStatusEl.textContent = `Switching to preset "${selectedValue}" (Gazebo will restart)...`;
+      vscode.postMessage({ command: 'setSimulationWorldPreset', preset: selectedValue });
+    }
+
+    function handleResetSimulationWorld() {
+      simulationWorldStatusEl.textContent = 'Resetting to default boot scene...';
+      applySimulationWorldBtn.disabled = true;
+      resetSimulationWorldBtn.disabled = true;
+      vscode.postMessage({ command: 'resetSimulationWorld' });
+    }
+
     /**
      * Update region display
      */
@@ -580,6 +633,14 @@
 
       // VM details
       updateVmDetails(status);
+
+      if (status.vmState === 'running' && lastVmState !== 'running') {
+        vscode.postMessage({ command: 'getSimulationWorldData' });
+      } else if (status.vmState !== 'running' && lastVmState === 'running') {
+        updateSimulationWorldData([], { mode: 'default' }, false, 'Start the VM to manage runtime worlds');
+      }
+
+      lastVmState = status.vmState;
     }
 
     /**
@@ -810,6 +871,54 @@
       }
     }
 
+    function updateSimulationWorldData(presets, selection, available, reason) {
+      const normalizedSelection = selection || { mode: 'default' };
+      const normalizedPresets = Array.isArray(presets) ? presets : [];
+      simulationWorldSelect.innerHTML = '';
+
+      const defaultOption = document.createElement('option');
+      defaultOption.value = 'default';
+      defaultOption.textContent = 'Default boot scene';
+      simulationWorldSelect.appendChild(defaultOption);
+
+      normalizedPresets.forEach(preset => {
+        const option = document.createElement('option');
+        option.value = preset.name;
+        option.textContent = preset.description
+          ? `${preset.name} - ${preset.description}`
+          : preset.name;
+        simulationWorldSelect.appendChild(option);
+      });
+
+      if (!available) {
+        currentSimulationSelection = 'default';
+        simulationWorldSelect.value = 'default';
+        simulationWorldSelect.disabled = true;
+        applySimulationWorldBtn.disabled = true;
+        resetSimulationWorldBtn.disabled = true;
+        simulationWorldStatusEl.textContent = reason || 'Runtime world switching is unavailable right now';
+        return;
+      }
+
+      if (normalizedSelection.mode === 'preset' && normalizedSelection.preset) {
+        currentSimulationSelection = normalizedSelection.preset;
+        simulationWorldSelect.value = normalizedSelection.preset;
+        simulationWorldStatusEl.textContent = `Active preset: ${normalizedSelection.preset}`;
+      } else if (normalizedSelection.mode === 'world' && normalizedSelection.world) {
+        currentSimulationSelection = 'default';
+        simulationWorldSelect.value = 'default';
+        simulationWorldStatusEl.textContent = `Direct world override active: ${normalizedSelection.world}`;
+      } else {
+        currentSimulationSelection = 'default';
+        simulationWorldSelect.value = 'default';
+        simulationWorldStatusEl.textContent = 'Using default boot scene';
+      }
+
+      simulationWorldSelect.disabled = false;
+      applySimulationWorldBtn.disabled = simulationWorldSelect.value === currentSimulationSelection;
+      resetSimulationWorldBtn.disabled = normalizedSelection.mode === 'default';
+    }
+
     /**
      * Handle messages from extension
      */
@@ -826,7 +935,14 @@
         case 'updateStatus':
           updateStatus(message.status);
           break;
+        case 'updateSimulationWorldData':
+          updateSimulationWorldData(message.presets, message.selection, message.available, message.reason);
+          break;
       }
+    });
+
+    simulationWorldSelect.addEventListener('change', () => {
+      applySimulationWorldBtn.disabled = simulationWorldSelect.disabled || simulationWorldSelect.value === currentSimulationSelection;
     });
 
     // Initialize when DOM is ready
