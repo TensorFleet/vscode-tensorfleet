@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Shared configuration helpers for the front-camera YOLO demo.
+ * Shared configuration helpers for the drone vision demos.
  */
 
 const fs = require("fs");
@@ -12,6 +12,8 @@ const DEFAULT_CONFIG = {
     topics: {
       image_topic: "/drone_camera/image_raw",
       annotated_image_topic: "/drone_camera/image_annotated",
+      landing_image_topic: "/drone_camera/down/image_raw",
+      landing_annotated_image_topic: "/drone_camera/down/image_annotated",
       message_type: "sensor_msgs/Image",
     },
     yolo: {
@@ -21,6 +23,21 @@ const DEFAULT_CONFIG = {
       iou_threshold: 0.45,
       input_size: 640,
       target_label: "dining table",
+    },
+    landing_demo: {
+      takeoff_altitude_m: 4.0,
+      xy_gain: 1.3,
+      max_xy_speed: 1.0,
+      descent_speed_mps: 0.45,
+      slow_descent_speed_mps: 0.18,
+      centered_tolerance: 0.10,
+      descent_tolerance: 0.18,
+      min_blob_pixels: 150,
+      handoff_area_ratio: 0.16,
+      stable_frames_required: 12,
+      loop_hz: 10,
+      pad_color: "magenta",
+      frame_timeout_ms: 1500,
     },
   },
 };
@@ -102,6 +119,11 @@ function getImageTopics() {
   return {
     imageTopic: envString("IMAGE_TOPIC", topics.image_topic),
     annotatedImageTopic: envString("ANNOTATED_IMAGE_TOPIC", topics.annotated_image_topic),
+    landingImageTopic: envString("LANDING_IMAGE_TOPIC", topics.landing_image_topic),
+    landingAnnotatedImageTopic: envString(
+      "LANDING_ANNOTATED_IMAGE_TOPIC",
+      topics.landing_annotated_image_topic
+    ),
     messageType: envString("IMAGE_MESSAGE_TYPE", topics.message_type),
   };
 }
@@ -120,8 +142,33 @@ function getYoloConfig() {
   };
 }
 
+function getLandingConfig() {
+  const config = loadDroneConfig();
+  const base = config.vision?.landing_demo || DEFAULT_CONFIG.vision.landing_demo;
+
+  return {
+    takeoffAltitudeM: envNumber("LANDING_TAKEOFF_ALTITUDE_M", base.takeoff_altitude_m),
+    xyGain: envNumber("LANDING_XY_GAIN", base.xy_gain),
+    maxXySpeed: envNumber("LANDING_MAX_XY_SPEED", base.max_xy_speed),
+    descentSpeedMps: envNumber("LANDING_DESCENT_SPEED_MPS", base.descent_speed_mps),
+    slowDescentSpeedMps: envNumber(
+      "LANDING_SLOW_DESCENT_SPEED_MPS",
+      base.slow_descent_speed_mps
+    ),
+    centeredTolerance: envNumber("LANDING_CENTERED_TOLERANCE", base.centered_tolerance),
+    descentTolerance: envNumber("LANDING_DESCENT_TOLERANCE", base.descent_tolerance),
+    minBlobPixels: envNumber("LANDING_MIN_BLOB_PIXELS", base.min_blob_pixels),
+    handoffAreaRatio: envNumber("LANDING_HANDOFF_AREA_RATIO", base.handoff_area_ratio),
+    stableFramesRequired: envNumber("LANDING_STABLE_FRAMES_REQUIRED", base.stable_frames_required),
+    loopHz: envNumber("LANDING_LOOP_HZ", base.loop_hz),
+    padColor: envString("LANDING_PAD_COLOR", base.pad_color),
+    frameTimeoutMs: envNumber("LANDING_FRAME_TIMEOUT_MS", base.frame_timeout_ms),
+  };
+}
+
 module.exports = {
   loadDroneConfig,
   getImageTopics,
   getYoloConfig,
+  getLandingConfig,
 };

@@ -4,7 +4,6 @@
   "private": true,
   "description": "TensorFleet drone starter using JavaScript and roslib over rosbridge.",
   "type": "module",
-  "workspaces": ["packages/*"],
   "engines": {
     "node": ">=14.0.0",
     "bun": ">=1.0.0"
@@ -14,6 +13,7 @@
     "restart": "bun src/restart_sim.js",
     "drone:mover": "bun src/drone_mover.js",
     "vision:yolo": "bun src/vision_yolo.js",
+    "vision:landing": "bun src/visual_landing.js",
     "tutorial:01": "bun src/tutorials/01_connect.js",
     "tutorial:02": "bun src/tutorials/02_telemetry.js",
     "tutorial:03": "bun src/tutorials/03_arm.js",
@@ -21,7 +21,7 @@
     "tutorial:05": "bun src/tutorials/05_offboard_hover.js",
     "tutorial:06": "bun src/tutorials/06_move_forward.js",
     "tutorial:07": "bun src/tutorials/07_goto_waypoint.js",
-    "postinstall": "cd packages/tensorfleet-util && bun run build"
+    "postinstall": "cd ../../panels-standalone/packages/tensorfleet-util && bun run build"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
@@ -29,7 +29,7 @@
     "js-yaml": "^4.1.0",
     "onnxruntime-node": "^1.18.0",
     "roslib": "^1.3.0",
-    "tensorfleet-util": "^1.0.0",
+    "tensorfleet-util": "file:../../panels-standalone/packages/tensorfleet-util",
     "ws": "^8.18.0"
   }
 }

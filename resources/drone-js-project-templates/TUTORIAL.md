@@ -15,10 +15,11 @@ order after you have a working PX4 + rosbridge setup.
 
 ## Vision Demos
 
-The current first-pass vision demo builds on the same environment and assumes
-the VM-side front camera pipeline is present:
+These build on the same environment and assume the VM-side camera pipeline is
+present:
 
 - `bun run vision:yolo`
+- `bun run vision:landing`
 
 ## Suggested Run Order
 
@@ -27,9 +28,11 @@ the VM-side front camera pipeline is present:
 3. `bun run tutorial:04`
 4. `bun run tutorial:05`
 5. `bun run vision:yolo`
+6. `bun run vision:landing`
 
 ## Requirements
 
 - rosbridge available on the VM
 - PX4 sim running and reset to a known state
 - the default drone VM/world with `/drone_camera/image_raw` available
+- the landing pad present in `e2e_test_world.sdf` for `vision:landing`

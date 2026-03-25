@@ -4,7 +4,8 @@
 
 The TensorFleet drone simulation runs on PX4 and provides a virtual environment for testing drone scripts and tutorials. Consistent simulation state is crucial for reliable testing, so restarting the simulation between runs ensures predictable behavior.
 
-For the current `vision:yolo` pass, use the default drone VM/world as-is.
+For the current vision demos, use the drone VM with the x500 front/down cameras
+and the colored landing pad added to the existing `e2e_test_world.sdf`.
 
 ## Methods to Restart Simulation
 
@@ -52,13 +53,18 @@ bun run src/restart_sim.js
 
 #### Vision demo setup
 
-No extra MMDS scene composition is required for `vision:yolo` in this first pass.
-Use the current default drone VM configuration and verify the front camera topic
-is available after restart.
+For `vision:yolo`, verify the front camera topic is available after restart.
+
+For `vision:landing`, make sure the VM world includes the colored landing pad in:
+
+```text
+~/firecracker-vm/assets/opt/gazebo/worlds/e2e_test_world.sdf
+```
 
 The expected image topics in that world are:
 
 - `/drone_camera/image_raw`
+- `/drone_camera/down/image_raw`
 - `/drone_camera/image_raw/compressed`
 - `/drone_camera/down/image_raw/compressed`
 
