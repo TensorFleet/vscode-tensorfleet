@@ -453,6 +453,7 @@ async function serverSettingsMessageHandler(message: any, api: {
 
         telemetry?.trackEvent('serverSettings.simulationWorld.setPreset', { preset, phase: 'start' });
         const resultMessage = await vmManagerIntegration.setGazeboPreset(preset);
+        await refreshSimulationViewPanels(api.context);
         telemetry?.trackEvent('serverSettings.simulationWorld.setPreset', { preset, phase: 'success' });
         void vscode.window.showInformationMessage(resultMessage);
         await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
@@ -464,6 +465,7 @@ async function serverSettingsMessageHandler(message: any, api: {
 
         telemetry?.trackEvent('serverSettings.simulationWorld.reset', { phase: 'start' });
         const resultMessage = await vmManagerIntegration.resetGazeboSelection();
+        await refreshSimulationViewPanels(api.context);
         telemetry?.trackEvent('serverSettings.simulationWorld.reset', { phase: 'success' });
         void vscode.window.showInformationMessage(resultMessage);
         await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
@@ -832,6 +834,61 @@ let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
 
 // Panel registry for unique panels (to enable refresh on auth changes)
 const uniquePanelRegistry = new Map<string, UniqueViewProvider>();
+const dedicatedPanelRegistry = new Map<string, Set<vscode.WebviewPanel>>();
+
+function registerDedicatedPanel(viewId: string, panel: vscode.WebviewPanel) {
+  let panels = dedicatedPanelRegistry.get(viewId);
+  if (!panels) {
+    panels = new Set<vscode.WebviewPanel>();
+    dedicatedPanelRegistry.set(viewId, panels);
+  }
+
+  panels.add(panel);
+  panel.onDidDispose(() => {
+    const existing = dedicatedPanelRegistry.get(viewId);
+    if (!existing) {
+      return;
+    }
+    existing.delete(panel);
+    if (existing.size === 0) {
+      dedicatedPanelRegistry.delete(viewId);
+    }
+  });
+}
+
+async function refreshDedicatedPanels(view: DroneViewport, context: vscode.ExtensionContext): Promise<void> {
+  const panels = dedicatedPanelRegistry.get(view.id);
+  if (!panels || panels.size === 0) {
+    return;
+  }
+
+  for (const panel of panels) {
+    const webview = panel.webview;
+    const imageUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', view.image)).toString();
+    const cspSource = webview.cspSource;
+
+    if (view.panelKind === 'terminalTabs') {
+      webview.html = getTerminalPanelHtml(view, imageUri, cspSource);
+      continue;
+    }
+
+    if (view.htmlTemplate) {
+      webview.html = await getCustomPanelHtml(view, webview, context, cspSource);
+      continue;
+    }
+
+    webview.html = getStandardPanelHtml(view, imageUri, cspSource);
+  }
+}
+
+async function refreshSimulationViewPanels(context: vscode.ExtensionContext): Promise<void> {
+  const simView = DRONE_VIEWS.find((view) => view.id === 'tensorfleet-gzweb-panel');
+  if (!simView) {
+    return;
+  }
+
+  await refreshDedicatedPanels(simView, context);
+}
 
 
 
@@ -1751,6 +1808,7 @@ async function openDedicatedPanel(
         localResourceRoots
       }
     );
+    registerDedicatedPanel(view.id, panel);
 
     const webview = panel.webview;
     const imageUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', view.image)).toString();
