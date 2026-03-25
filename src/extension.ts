@@ -1940,12 +1940,14 @@ async function getStandalonePanelHtml(
   const vmManagerUrl = regions.getVmManagerUrl();
   const nodeId = vmManagerIntegration?.snapshot.nodeId ?? '';
   const token = await auth.getToken(context);
+  const vmConfigId = vmManagerIntegration?.getLastUsedConfig()?.id ?? '';
 
   const tfConfigScript = `
   <script>
     window.TENSORFLEET_VM_MANAGER_URL = "${vmManagerUrl}";
     ${nodeId ? `window.TENSORFLEET_NODE_ID = "${nodeId}";` : ''}
     ${token ? `window.TENSORFLEET_JWT = "${token}";` : ''}
+    ${vmConfigId ? `window.TENSORFLEET_VM_CONFIG_ID = "${vmConfigId}";` : ''}
   </script>
   `;
 
