@@ -158,6 +158,7 @@ const FONT_5X7 = {
   " ": [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
   "-": [0b00000, 0b00000, 0b00000, 0b01110, 0b00000, 0b00000, 0b00000],
   ".": [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00100],
+  "·": [0b00000, 0b00000, 0b00000, 0b01100, 0b01100, 0b00000, 0b00000],
   ":": [0b00100, 0b00100, 0b00000, 0b00000, 0b00100, 0b00100, 0b00000],
   "A": [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
   "B": [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
@@ -219,14 +220,44 @@ function setPixel(buffer, meta, x, y, color) {
   }
 }
 
+function blendPixel(buffer, meta, x, y, color, alpha = 1) {
+  const { width, height, step, channels, encoding } = meta;
+  if (x < 0 || x >= width || y < 0 || y >= height) return;
+  const offset = y * step + x * channels;
+  if (offset + 2 >= buffer.length) return;
+
+  const a = Math.max(0, Math.min(1, alpha));
+  const enc = (encoding || "").toLowerCase();
+  const isBgr = enc.startsWith("bgr");
+  const [cr, cg, cb] = isBgr
+    ? [color.b, color.g, color.r]
+    : [color.r, color.g, color.b];
+
+  buffer[offset + 0] = Math.round(buffer[offset + 0] * (1 - a) + cr * a);
+  buffer[offset + 1] = Math.round(buffer[offset + 1] * (1 - a) + cg * a);
+  buffer[offset + 2] = Math.round(buffer[offset + 2] * (1 - a) + cb * a);
+}
+
+function fillRect(buffer, meta, x, y, w, h, color, alpha = 1) {
+  const x1 = Math.max(0, Math.floor(x));
+  const y1 = Math.max(0, Math.floor(y));
+  const x2 = Math.min(meta.width - 1, Math.floor(x + w - 1));
+  const y2 = Math.min(meta.height - 1, Math.floor(y + h - 1));
+  for (let yy = y1; yy <= y2; yy += 1) {
+    for (let xx = x1; xx <= x2; xx += 1) {
+      blendPixel(buffer, meta, xx, yy, color, alpha);
+    }
+  }
+}
+
 /**
  * Draw a rectangle onto an image buffer in-place.
  */
 function drawRectOnBuffer(buffer, meta, box, options = {}) {
-  const { width, height } = meta;
+  const { height } = meta;
 
-  const thickness = options.thickness || 4;
-  const color = options.color || { r: 0, g: 255, b: 255 };
+  const thickness = options.thickness || 2;
+  const color = options.color || { r: 92, g: 196, b: 214 };
 
   const norm = normalizeBox(box, meta);
   if (!norm) {
@@ -234,96 +265,89 @@ function drawRectOnBuffer(buffer, meta, box, options = {}) {
   }
   const { x1, y1, x2, y2 } = norm;
 
-  // Top and bottom edges
   for (let x = x1; x <= x2; x += 1) {
     for (let t = 0; t < thickness && y1 + t < height; t += 1) {
-      setPixel(buffer, meta, x, y1 + t, color);
-      setPixel(buffer, meta, x, Math.max(y1, y2 - t), color);
+      blendPixel(buffer, meta, x, y1 + t, color, 0.88);
+      blendPixel(buffer, meta, x, Math.max(y1, y2 - t), color, 0.88);
     }
   }
 
-  // Left and right edges
   for (let y = y1; y <= y2; y += 1) {
-    for (let t = 0; t < thickness && x1 + t < width; t += 1) {
-      setPixel(buffer, meta, x1 + t, y, color);
-      setPixel(buffer, meta, Math.max(x1, x2 - t), y, color);
+    for (let t = 0; t < thickness; t += 1) {
+      blendPixel(buffer, meta, x1 + t, y, color, 0.88);
+      blendPixel(buffer, meta, Math.max(x1, x2 - t), y, color, 0.88);
     }
   }
 }
 
-function drawLabelOnBuffer(buffer, meta, box, text, options = {}) {
-  const { width, height } = meta;
-  const baseColor = options.color || { r: 0, g: 255, b: 255 };
-  const bgColor = options.bgColor || { r: baseColor.r, g: baseColor.g, b: baseColor.b };
-  const textColor = options.textColor || { r: 0, g: 0, b: 0 };
-  const scale = options.scale || 2;
-
-  const norm = normalizeBox(box, meta);
-  if (!norm) return;
-  let { x1, y1 } = norm;
-
+function drawLabelOnBuffer(buffer, meta, det, options = {}) {
+  const color = options.color || { r: 92, g: 196, b: 214 };
+  const scale = 1;
+  const paddingX = 6;
+  const paddingY = 3;
   const charWidth = 5;
   const charHeight = 7;
   const charSpacing = 1;
-  const paddingX = 2 * scale;
-  const paddingY = 1 * scale;
+  const { width, height } = meta;
 
-  const textLen = text.length;
-  const textPixelWidth =
-    textLen > 0
-      ? (textLen * (charWidth + charSpacing) - charSpacing) * scale
-      : 0;
-  const textPixelHeight = charHeight * scale;
+  const norm = normalizeBox(det, meta);
+  if (!norm) return;
 
-  const boxWidth = textPixelWidth + paddingX * 2;
-  const boxHeight = textPixelHeight + paddingY * 2;
+  const scorePercent = Math.round(((det && det.score) || 0) * 100);
+  const rawLabel = ((det && det.label) || "object").replaceAll("_", " ");
+  const labelWithSep = `${rawLabel} · `;
+  const confText = `${scorePercent}%`;
 
-  // Position label above the box where possible.
-  let labelX = x1;
-  let labelY = y1 - boxHeight - 2;
-  if (labelY < 0) {
-    labelY = y1 + 2;
-  }
-  if (labelX + boxWidth > width) {
-    labelX = Math.max(0, width - boxWidth);
-  }
+  const measureStr = (str) =>
+    str.length > 0 ? (str.length * (charWidth + charSpacing) - charSpacing) * scale : 0;
 
-  // Draw background rectangle
-  for (let y = 0; y < boxHeight; y += 1) {
-    const yy = labelY + y;
-    if (yy < 0 || yy >= height) continue;
-    for (let x = 0; x < boxWidth; x += 1) {
-      const xx = labelX + x;
-      if (xx < 0 || xx >= width) continue;
-      setPixel(buffer, meta, xx, yy, bgColor);
-    }
-  }
-
-  // Draw text glyphs
-  let cursorX = labelX + paddingX;
-  const cursorY = labelY + paddingY;
-
-  for (let i = 0; i < text.length; i += 1) {
-    const chRaw = text[i];
-    const chKey = chRaw.toUpperCase();
-    const glyph = FONT_5X7[chKey] || FONT_5X7[" "];
-    for (let row = 0; row < charHeight; row += 1) {
-      const rowBits = glyph[row];
-      for (let col = 0; col < charWidth; col += 1) {
-        const bit = (rowBits >> (charWidth - 1 - col)) & 1;
-        if (!bit) continue;
-        for (let sy = 0; sy < scale; sy += 1) {
-          for (let sx = 0; sx < scale; sx += 1) {
-            const xx = cursorX + col * scale + sx;
-            const yy = cursorY + row * scale + sy;
-            if (xx < 0 || xx >= width || yy < 0 || yy >= height) continue;
-            setPixel(buffer, meta, xx, yy, textColor);
+  const renderStr = (str, startX, startY, textColor) => {
+    let cx = startX;
+    for (let i = 0; i < str.length; i += 1) {
+      const glyph = FONT_5X7[str[i].toUpperCase()] || FONT_5X7["·"] || FONT_5X7[" "];
+      for (let row = 0; row < charHeight; row += 1) {
+        const rowBits = glyph[row];
+        for (let col = 0; col < charWidth; col += 1) {
+          if (!((rowBits >> (charWidth - 1 - col)) & 1)) continue;
+          for (let sy = 0; sy < scale; sy += 1) {
+            for (let sx = 0; sx < scale; sx += 1) {
+              const px = cx + col * scale + sx;
+              const py = startY + row * scale + sy;
+              if (px >= 0 && px < width && py >= 0 && py < height) {
+                setPixel(buffer, meta, px, py, textColor);
+              }
+            }
           }
         }
       }
+      cx += (charWidth + charSpacing) * scale;
     }
-    cursorX += (charWidth + charSpacing) * scale;
+  };
+
+  const labelWithSepWidth = measureStr(labelWithSep);
+  const confWidth = measureStr(confText);
+  const chipWidth = labelWithSepWidth + scale + confWidth + paddingX * 2;
+  const chipHeight = charHeight * scale + paddingY * 2;
+
+  let chipX = norm.x1;
+  let chipY = norm.y1 - chipHeight - 2;
+  if (chipY < 0) chipY = norm.y1 + 2;
+  if (chipX + chipWidth > width) chipX = Math.max(0, width - chipWidth);
+
+  fillRect(buffer, meta, chipX, chipY, chipWidth, chipHeight, { r: 10, g: 14, b: 18 }, 0.78);
+
+  for (let bx = chipX; bx < chipX + chipWidth; bx += 1) {
+    blendPixel(buffer, meta, bx, chipY, color, 0.28);
+    blendPixel(buffer, meta, bx, chipY + chipHeight - 1, color, 0.28);
   }
+  for (let by = chipY + 1; by < chipY + chipHeight - 1; by += 1) {
+    blendPixel(buffer, meta, chipX, by, color, 0.28);
+    blendPixel(buffer, meta, chipX + chipWidth - 1, by, color, 0.28);
+  }
+
+  const textY = chipY + paddingY;
+  renderStr(labelWithSep, chipX + paddingX, textY, { r: 235, g: 242, b: 245 });
+  renderStr(confText, chipX + paddingX + labelWithSepWidth + scale, textY, { r: 180, g: 195, b: 205 });
 }
 
 /**
@@ -339,29 +363,17 @@ function annotateImageMessage(msg, detections) {
     const { buffer, meta } = decodeRosImage(msg);
 
     const colors = [
-      { r: 0, g: 255, b: 255 }, // Cyan
-      { r: 255, g: 0, b: 255 }, // Magenta
-      { r: 255, g: 255, b: 0 }, // Yellow
-      { r: 0, g: 255, b: 0 },   // Green
-      { r: 255, g: 128, b: 0 }  // Orange
+      { r: 92, g: 196, b: 214 },
+      { r: 86, g: 170, b: 176 },
+      { r: 232, g: 166, b: 76 },
+      { r: 140, g: 160, b: 180 },
+      { r: 214, g: 96, b: 96 },
     ];
 
     detections.forEach((det, idx) => {
       const color = colors[idx % colors.length];
-      drawRectOnBuffer(buffer, meta, det, { color, thickness: 4 });
-
-      const scorePct = Math.round(det.score * 100);
-      const baseLabel =
-        (det.label && typeof det.label === "string"
-          ? det.label
-          : `CLASS_${det.classId}`).toUpperCase();
-      const labelText = `${baseLabel} ${scorePct}%`;
-      drawLabelOnBuffer(buffer, meta, det, labelText, {
-        color,
-        bgColor: color,
-        textColor: { r: 0, g: 0, b: 0 },
-        scale: 2
-      });
+      drawRectOnBuffer(buffer, meta, det, { color, thickness: 2 });
+      drawLabelOnBuffer(buffer, meta, det, { color });
     });
 
     return encodeRosImage(buffer, msg, meta);

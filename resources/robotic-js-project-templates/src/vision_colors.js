@@ -180,6 +180,33 @@ function setPixel(buffer, meta, x, y, color) {
     }
 }
 
+function blendPixel(buffer, meta, x, y, color, alpha = 1) {
+    const { width, height, channels, encoding } = meta;
+    if (x < 0 || x >= width || y < 0 || y >= height) return;
+    const offset = y * width * channels + x * channels;
+    if (offset + 2 >= buffer.length) return;
+    const a = Math.max(0, Math.min(1, alpha));
+    const isBgr = (encoding || "").toLowerCase().startsWith("bgr");
+    const [cr, cg, cb] = isBgr
+        ? [color.b, color.g, color.r]
+        : [color.r, color.g, color.b];
+    buffer[offset + 0] = Math.round(buffer[offset + 0] * (1 - a) + cr * a);
+    buffer[offset + 1] = Math.round(buffer[offset + 1] * (1 - a) + cg * a);
+    buffer[offset + 2] = Math.round(buffer[offset + 2] * (1 - a) + cb * a);
+}
+
+function fillRect(buffer, meta, x, y, w, h, color, alpha = 1) {
+    const x1 = Math.max(0, Math.floor(x));
+    const y1 = Math.max(0, Math.floor(y));
+    const x2 = Math.min(meta.width - 1, Math.floor(x + w - 1));
+    const y2 = Math.min(meta.height - 1, Math.floor(y + h - 1));
+    for (let yy = y1; yy <= y2; yy++) {
+        for (let xx = x1; xx <= x2; xx++) {
+            blendPixel(buffer, meta, xx, yy, color, alpha);
+        }
+    }
+}
+
 /**
  * Calculate color distance (Euclidean in RGB space)
  */
@@ -312,26 +339,24 @@ function detectColoredObjects(buffer, meta) {
 /**
  * Draw bounding box on image
  */
-function drawRect(buffer, meta, box, color, thickness = 3) {
-    const { width, height } = meta;
+function drawRect(buffer, meta, box, color, thickness = 2) {
+    const { height } = meta;
     const x1 = Math.max(0, Math.floor(box.x1));
     const y1 = Math.max(0, Math.floor(box.y1));
-    const x2 = Math.min(width - 1, Math.ceil(box.x2));
+    const x2 = Math.min(meta.width - 1, Math.ceil(box.x2));
     const y2 = Math.min(height - 1, Math.ceil(box.y2));
 
-    // Top and bottom edges
     for (let x = x1; x <= x2; x++) {
         for (let t = 0; t < thickness; t++) {
-            setPixel(buffer, meta, x, y1 + t, color);
-            setPixel(buffer, meta, x, y2 - t, color);
+            blendPixel(buffer, meta, x, y1 + t, color, 0.88);
+            blendPixel(buffer, meta, x, y2 - t, color, 0.88);
         }
     }
 
-    // Left and right edges
     for (let y = y1; y <= y2; y++) {
         for (let t = 0; t < thickness; t++) {
-            setPixel(buffer, meta, x1 + t, y, color);
-            setPixel(buffer, meta, x2 - t, y, color);
+            blendPixel(buffer, meta, x1 + t, y, color, 0.88);
+            blendPixel(buffer, meta, x2 - t, y, color, 0.88);
         }
     }
 }
@@ -385,42 +410,38 @@ const FONT_5X7 = {
     ]))
 };
 
-function drawLabel(buffer, meta, box, text, bgColor) {
+function drawLabel(buffer, meta, box, text, accentColor) {
     const { width, height } = meta;
-    const textColor = { r: 0, g: 0, b: 0 };
-    const scale = 2;
+    const textColor = { r: 235, g: 242, b: 245 };
+    const scale = 1;
     const charWidth = 5;
     const charHeight = 7;
     const charSpacing = 1;
-    const paddingX = 4;
-    const paddingY = 2;
+    const paddingX = 6;
+    const paddingY = 3;
 
     const textLen = text.length;
-    const textPixelWidth = textLen > 0
+    const chipWidth = (textLen > 0
         ? (textLen * (charWidth + charSpacing) - charSpacing) * scale
-        : 0;
-    const textPixelHeight = charHeight * scale;
-
-    const boxWidth = textPixelWidth + paddingX * 2;
-    const boxHeight = textPixelHeight + paddingY * 2;
+        : 0) + paddingX * 2;
+    const chipHeight = charHeight * scale + paddingY * 2;
 
     let labelX = Math.max(0, Math.floor(box.x1));
-    let labelY = Math.floor(box.y1) - boxHeight - 2;
+    let labelY = Math.floor(box.y1) - chipHeight - 2;
     if (labelY < 0) labelY = Math.floor(box.y1) + 2;
-    if (labelX + boxWidth > width) labelX = Math.max(0, width - boxWidth);
+    if (labelX + chipWidth > width) labelX = Math.max(0, width - chipWidth);
 
-    // Draw background
-    for (let y = 0; y < boxHeight; y++) {
-        for (let x = 0; x < boxWidth; x++) {
-            const yy = labelY + y;
-            const xx = labelX + x;
-            if (yy >= 0 && yy < height && xx >= 0 && xx < width) {
-                setPixel(buffer, meta, xx, yy, bgColor);
-            }
-        }
+    fillRect(buffer, meta, labelX, labelY, chipWidth, chipHeight, { r: 10, g: 14, b: 18 }, 0.78);
+
+    for (let bx = labelX; bx < labelX + chipWidth; bx++) {
+        blendPixel(buffer, meta, bx, labelY, accentColor, 0.28);
+        blendPixel(buffer, meta, bx, labelY + chipHeight - 1, accentColor, 0.28);
+    }
+    for (let by = labelY + 1; by < labelY + chipHeight - 1; by++) {
+        blendPixel(buffer, meta, labelX, by, accentColor, 0.28);
+        blendPixel(buffer, meta, labelX + chipWidth - 1, by, accentColor, 0.28);
     }
 
-    // Draw text
     let cursorX = labelX + paddingX;
     const cursorY = labelY + paddingY;
 
@@ -433,15 +454,10 @@ function drawLabel(buffer, meta, box, text, bgColor) {
             for (let col = 0; col < charWidth; col++) {
                 const bit = (rowBits >> (charWidth - 1 - col)) & 1;
                 if (!bit) continue;
-
-                for (let sy = 0; sy < scale; sy++) {
-                    for (let sx = 0; sx < scale; sx++) {
-                        const xx = cursorX + col * scale + sx;
-                        const yy = cursorY + row * scale + sy;
-                        if (xx >= 0 && xx < width && yy >= 0 && yy < height) {
-                            setPixel(buffer, meta, xx, yy, textColor);
-                        }
-                    }
+                const xx = cursorX + col * scale;
+                const yy = cursorY + row * scale;
+                if (xx >= 0 && xx < width && yy >= 0 && yy < height) {
+                    setPixel(buffer, meta, xx, yy, textColor);
                 }
             }
         }
@@ -459,10 +475,9 @@ function annotateImage(msg, detections) {
         const { buffer, meta } = decodeRosImage(msg);
 
         detections.forEach((det) => {
-            // Use the detected object's color for the bounding box
-            const boxColor = det.color || { r: 0, g: 255, b: 255 };
-            drawRect(buffer, meta, det, boxColor, 3);
-            const label = det.label.toUpperCase();
+            const boxColor = det.color || { r: 92, g: 196, b: 214 };
+            drawRect(buffer, meta, det, boxColor, 2);
+            const label = (det.label || "Object").replace(/\b\w/g, (c) => c.toUpperCase());
             drawLabel(buffer, meta, det, label, boxColor);
         });
 

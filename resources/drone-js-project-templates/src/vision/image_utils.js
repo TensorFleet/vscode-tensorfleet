@@ -9,6 +9,7 @@ const FONT_5X7 = {
   " ": ["00000", "00000", "00000", "00000", "00000", "00000", "00000"],
   "%": ["11001", "11010", "00100", "01000", "10110", "00110", "00000"],
   ".": ["00000", "00000", "00000", "00000", "00000", "01100", "01100"],
+  "·": ["00000", "00000", "00000", "01100", "01100", "00000", "00000"],
   "-": ["00000", "00000", "00000", "11111", "00000", "00000", "00000"],
   "_": ["00000", "00000", "00000", "00000", "00000", "00000", "11111"],
   "0": ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
@@ -212,15 +213,15 @@ function drawRectOnBuffer(buffer, meta, box, options = {}) {
 
   for (let x = x1; x <= x2; x += 1) {
     for (let t = 0; t < thickness; t += 1) {
-      blendPixel(buffer, meta, x, y1 + t, color, 0.9);
-      blendPixel(buffer, meta, x, y2 - t, color, 0.9);
+      blendPixel(buffer, meta, x, y1 + t, color, 0.88);
+      blendPixel(buffer, meta, x, y2 - t, color, 0.88);
     }
   }
 
   for (let y = y1; y <= y2; y += 1) {
     for (let t = 0; t < thickness; t += 1) {
-      blendPixel(buffer, meta, x1 + t, y, color, 0.9);
-      blendPixel(buffer, meta, x2 - t, y, color, 0.9);
+      blendPixel(buffer, meta, x1 + t, y, color, 0.88);
+      blendPixel(buffer, meta, x2 - t, y, color, 0.88);
     }
   }
 }
@@ -260,37 +261,65 @@ function drawText(buffer, meta, text, x, y, options = {}) {
 
 function formatDetectionLabel(det) {
   const scorePercent = Math.round((det.score || 0) * 100);
-  return `${(det.label || "object").replaceAll("_", " ")} ${scorePercent}%`;
+  const label = (det.label || "object").replaceAll("_", " ");
+  return `${label} · ${scorePercent}%`;
 }
 
-function drawDetectionLabel(buffer, meta, box, text, color) {
+function drawDetectionLabel(buffer, meta, box, det, color) {
   const scale = 1;
-  const paddingX = 3;
-  const paddingY = 2;
-  const textWidth = measureText(text, scale);
-  const labelWidth = textWidth + paddingX * 2;
-  const labelHeight = 7 * scale + paddingY * 2;
-  const x = Math.max(0, Math.min(meta.width - labelWidth - 1, box.x1));
-  const preferredY = box.y1 - labelHeight - 2;
+  const paddingX = 6;
+  const paddingY = 3;
+  const charHeight = 7;
+
+  const scorePercent = Math.round(((det && det.score) || 0) * 100);
+  const rawLabel = ((det && det.label) || "object").replaceAll("_", " ");
+  const labelWithSep = `${rawLabel} · `;
+  const confText = `${scorePercent}%`;
+
+  const labelWithSepWidth = measureText(labelWithSep, scale);
+  const confWidth = measureText(confText, scale);
+  const chipWidth = labelWithSepWidth + scale + confWidth + paddingX * 2;
+  const chipHeight = charHeight * scale + paddingY * 2;
+
+  const x = Math.max(0, Math.min(meta.width - chipWidth - 1, box.x1));
+  const preferredY = box.y1 - chipHeight - 2;
   const y = preferredY >= 0
     ? preferredY
-    : Math.max(0, Math.min(meta.height - labelHeight - 1, box.y1 + 2));
+    : Math.max(0, Math.min(meta.height - chipHeight - 1, box.y1 + 2));
 
-  fillRect(buffer, meta, x, y, labelWidth, labelHeight, { r: 0, g: 0, b: 0 }, 0.72);
-  fillRect(buffer, meta, x, y, labelWidth, 2, color, 1);
-  drawText(buffer, meta, text, x + paddingX, y + paddingY, {
+  fillRect(buffer, meta, x, y, chipWidth, chipHeight, { r: 10, g: 14, b: 18 }, 0.78);
+
+  for (let bx = x; bx < x + chipWidth; bx += 1) {
+    blendPixel(buffer, meta, bx, y, color, 0.28);
+    blendPixel(buffer, meta, bx, y + chipHeight - 1, color, 0.28);
+  }
+  for (let by = y + 1; by < y + chipHeight - 1; by += 1) {
+    blendPixel(buffer, meta, x, by, color, 0.28);
+    blendPixel(buffer, meta, x + chipWidth - 1, by, color, 0.28);
+  }
+
+  const textY = y + paddingY;
+  drawText(buffer, meta, labelWithSep, x + paddingX, textY, {
     scale,
-    color: { r: 255, g: 255, b: 255 },
-    shadowColor: { r: 0, g: 0, b: 0 },
+    color: { r: 235, g: 242, b: 245 },
+    shadowColor: { r: 10, g: 14, b: 18 },
+  });
+  drawText(buffer, meta, confText, x + paddingX + labelWithSepWidth + scale, textY, {
+    scale,
+    color: { r: 180, g: 195, b: 205 },
+    shadowColor: { r: 10, g: 14, b: 18 },
   });
 }
 
-function drawCrosshair(buffer, meta, x, y, color = { r: 255, g: 255, b: 255 }) {
-  for (let dx = -10; dx <= 10; dx += 1) {
-    setPixel(buffer, meta, x + dx, y, color);
+function drawCrosshair(buffer, meta, x, y, color = { r: 255, g: 255, b: 255 }, alpha = 1) {
+  const len = 8;
+  for (let dx = -len; dx <= len; dx += 1) {
+    if (dx === 0) continue;
+    blendPixel(buffer, meta, x + dx, y, color, alpha);
   }
-  for (let dy = -10; dy <= 10; dy += 1) {
-    setPixel(buffer, meta, x, y + dy, color);
+  for (let dy = -len; dy <= len; dy += 1) {
+    if (dy === 0) continue;
+    blendPixel(buffer, meta, x, y + dy, color, alpha);
   }
 }
 
@@ -302,10 +331,10 @@ function annotateImageMessage(msg, detections, options = {}) {
   try {
     const { buffer, meta } = decodeRosImage(msg);
     const colors = options.colors || [
-      { r: 0, g: 255, b: 255 },
-      { r: 255, g: 0, b: 255 },
-      { r: 255, g: 255, b: 0 },
-      { r: 0, g: 255, b: 0 },
+      { r: 92, g: 196, b: 214 },
+      { r: 86, g: 170, b: 176 },
+      { r: 232, g: 166, b: 76 },
+      { r: 140, g: 160, b: 180 },
     ];
 
     detections.forEach((det, idx) => {
@@ -315,10 +344,10 @@ function annotateImageMessage(msg, detections, options = {}) {
         return;
       }
       drawRectOnBuffer(buffer, meta, norm, {
-        color: colors[idx % colors.length],
-        thickness: options.thickness || 4,
+        color,
+        thickness: options.thickness || 2,
       });
-      drawDetectionLabel(buffer, meta, norm, formatDetectionLabel(det), color);
+      drawDetectionLabel(buffer, meta, norm, det, color);
     });
 
     if (options.drawCenter) {
@@ -327,7 +356,8 @@ function annotateImageMessage(msg, detections, options = {}) {
         meta,
         Math.floor(meta.width / 2),
         Math.floor(meta.height / 2),
-        { r: 255, g: 255, b: 255 }
+        { r: 180, g: 195, b: 205 },
+        0.55
       );
     }
 
