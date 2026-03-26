@@ -299,6 +299,41 @@
       cursor: not-allowed;
     }
 
+    #simulation-world-card {
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+
+    #simulation-world-card .tf-panel-card__left {
+      flex: 1 1 220px;
+    }
+
+    #simulation-world-card .tf-panel-card__pill {
+      margin-left: auto;
+      flex: 0 1 320px;
+      min-width: 0;
+    }
+
+    .simulation-world-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      width: 100%;
+    }
+
+    .simulation-world-controls select {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .simulation-world-controls .vm-control-btn {
+      flex: 0 0 auto;
+    }
+
     .tf-empty {
       display: none;
       margin-top: 8px;
@@ -427,12 +462,11 @@
               </div>
             </div>
             <div class="tf-panel-card__pill">
-              <div style="display: flex; gap: 6px; align-items: center;">
+              <div class="simulation-world-controls">
                 <select id="simulation-world-select" disabled>
                   <option value="default">Default boot scene</option>
                 </select>
                 <button id="apply-simulation-world-btn" class="vm-control-btn" disabled>Apply</button>
-                <button id="reset-simulation-world-btn" class="vm-control-btn" disabled>Reset</button>
               </div>
             </div>
           </div>
@@ -461,7 +495,6 @@
     const simulationWorldStatusEl = document.getElementById('simulation-world-status');
     const simulationWorldSelect = document.getElementById('simulation-world-select');
     const applySimulationWorldBtn = document.getElementById('apply-simulation-world-btn');
-    const resetSimulationWorldBtn = document.getElementById('reset-simulation-world-btn');
     let currentSimulationSelection = 'default';
     let lastVmState = 'unknown';
 
@@ -481,8 +514,6 @@
       startVmBtn.addEventListener('click', handleStartVm);
       stopVmBtn.addEventListener('click', handleStopVm);
       applySimulationWorldBtn.addEventListener('click', handleApplySimulationWorld);
-      resetSimulationWorldBtn.addEventListener('click', handleResetSimulationWorld);
-
       // Start polling for status updates
       startStatusPolling();
 
@@ -570,11 +601,9 @@
       vscode.postMessage({ command: 'setSimulationWorldPreset', preset: selectedValue });
     }
 
-    function handleResetSimulationWorld() {
-      simulationWorldStatusEl.textContent = 'Resetting to default boot scene...';
-      applySimulationWorldBtn.disabled = true;
-      resetSimulationWorldBtn.disabled = true;
-      vscode.postMessage({ command: 'resetSimulationWorld' });
+    function updateSimulationWorldSelectTitle() {
+      const selectedOption = simulationWorldSelect.options[simulationWorldSelect.selectedIndex];
+      simulationWorldSelect.title = selectedOption?.title || selectedOption?.textContent || '';
     }
 
     /**
@@ -879,13 +908,15 @@
       const defaultOption = document.createElement('option');
       defaultOption.value = 'default';
       defaultOption.textContent = 'Default boot scene';
+      defaultOption.title = 'Use the VM default boot scene';
       simulationWorldSelect.appendChild(defaultOption);
 
       normalizedPresets.forEach(preset => {
         const option = document.createElement('option');
         option.value = preset.name;
-        option.textContent = preset.description
-          ? `${preset.name} - ${preset.description}`
+        option.textContent = preset.name;
+        option.title = preset.description
+          ? `${preset.name}: ${preset.description}`
           : preset.name;
         simulationWorldSelect.appendChild(option);
       });
@@ -895,8 +926,8 @@
         simulationWorldSelect.value = 'default';
         simulationWorldSelect.disabled = true;
         applySimulationWorldBtn.disabled = true;
-        resetSimulationWorldBtn.disabled = true;
         simulationWorldStatusEl.textContent = reason || 'Runtime world switching is unavailable right now';
+        updateSimulationWorldSelectTitle();
         return;
       }
 
@@ -916,7 +947,7 @@
 
       simulationWorldSelect.disabled = false;
       applySimulationWorldBtn.disabled = simulationWorldSelect.value === currentSimulationSelection;
-      resetSimulationWorldBtn.disabled = normalizedSelection.mode === 'default';
+      updateSimulationWorldSelectTitle();
     }
 
     /**
@@ -943,6 +974,7 @@
 
     simulationWorldSelect.addEventListener('change', () => {
       applySimulationWorldBtn.disabled = simulationWorldSelect.disabled || simulationWorldSelect.value === currentSimulationSelection;
+      updateSimulationWorldSelectTitle();
     });
 
     // Initialize when DOM is ready
