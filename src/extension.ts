@@ -17,6 +17,10 @@ import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
+function isRuntimeWorldSwitchAllowed(configId: string | undefined): boolean {
+  return configId !== 'lerobot';
+}
+
 // Menu action types for deterministic option handling
 type MenuAction =
   | 'auth.login'
@@ -311,6 +315,18 @@ async function serverSettingsMessageHandler(message: any, api: {
           return;
         }
 
+        const currentConfig = vmManagerIntegration.getLastUsedConfig();
+        if (!isRuntimeWorldSwitchAllowed(currentConfig?.id)) {
+          webview.postMessage({
+            command: 'updateSimulationWorldData',
+            presets: [],
+            selection: { mode: 'default' },
+            available: false,
+            reason: 'Simulation world switching is disabled for Lerobot arm VMs'
+          });
+          return;
+        }
+
         const state = unifiedStatusCoordinator?.getState();
         const vmRunning = state?.vmState === 'running';
         if (!vmRunning) {
@@ -378,6 +394,7 @@ async function serverSettingsMessageHandler(message: any, api: {
 
         // Send updated VM types data
         await serverSettingsMessageHandler({ command: 'getVmTypes' }, api);
+        await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
         break;
       }
 
@@ -450,6 +467,12 @@ async function serverSettingsMessageHandler(message: any, api: {
       case 'setSimulationWorldPreset': {
         const { preset } = message;
         if (!preset || !vmManagerIntegration) return;
+        const currentConfig = vmManagerIntegration.getLastUsedConfig();
+        if (!isRuntimeWorldSwitchAllowed(currentConfig?.id)) {
+          void vscode.window.showInformationMessage('Simulation world switching is disabled for Lerobot arm VMs');
+          await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
+          break;
+        }
 
         telemetry?.trackEvent('serverSettings.simulationWorld.setPreset', { preset, phase: 'start' });
         const resultMessage = await vmManagerIntegration.setGazeboPreset(preset);
@@ -462,6 +485,12 @@ async function serverSettingsMessageHandler(message: any, api: {
 
       case 'resetSimulationWorld': {
         if (!vmManagerIntegration) return;
+        const currentConfig = vmManagerIntegration.getLastUsedConfig();
+        if (!isRuntimeWorldSwitchAllowed(currentConfig?.id)) {
+          void vscode.window.showInformationMessage('Simulation world switching is disabled for Lerobot arm VMs');
+          await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
+          break;
+        }
 
         telemetry?.trackEvent('serverSettings.simulationWorld.reset', { phase: 'start' });
         const resultMessage = await vmManagerIntegration.resetGazeboSelection();
