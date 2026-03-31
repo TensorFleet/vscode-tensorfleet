@@ -74,8 +74,14 @@ type TriggerResponse = {
   message?: string;
 };
 
+const TWIST_TYPE_PATTERNS = ['geometry_msgs/Twist', 'geometry_msgs/msg/Twist'];
+
+function isTwistTopic(type: string): boolean {
+  return TWIST_TYPE_PATTERNS.some((pattern) => type === pattern || type.endsWith('/' + pattern));
+}
+
 const DEFAULT_GROUND_CONFIG: TeleopConfig = {
-  topic: '/cmd_vel',
+  topic: '/cmd_vel_raw',
   publishRate: 10,
   upButton: { field: 'linear-x', value: 1 },
   downButton: { field: 'linear-x', value: -1 },
@@ -121,7 +127,7 @@ const DRONE_BUTTONS: TeleopButtonDefinition[] = [
 const GROUND_PROFILE: TeleopProfile = {
   kind: 'ground',
   title: 'Teleop Control',
-  subtitle: 'Ground robot velocity control using `/cmd_vel`.',
+  subtitle: 'Ground robot velocity control using `/cmd_vel_raw`.',
   storageKey: 'teleopConfig:ground',
   defaultConfig: DEFAULT_GROUND_CONFIG,
   buttonDefinitions: GROUND_BUTTONS,
@@ -368,7 +374,9 @@ export function TeleopPanel(): React.JSX.Element {
 
   useEffect(() => {
     const updateTopics = () => {
-      const topics = getTopicSuggestions().map((topic) => topic.topic);
+      const topics = getTopicSuggestions()
+        .filter((t) => isTwistTopic(t.type))
+        .map((t) => t.topic);
       setAvailableTopics(topics);
     };
 
