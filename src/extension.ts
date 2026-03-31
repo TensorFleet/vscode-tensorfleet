@@ -1874,12 +1874,17 @@ async function getStandalonePanelHtml(
   const vmManagerUrl = regions.getVmManagerUrl();
   const nodeId = vmManagerIntegration?.snapshot.nodeId ?? '';
   const token = await auth.getToken(context);
+  const currentVmConfig = vmManagerIntegration?.getLastUsedConfig() ?? null;
+
+  const serializedVmManagerUrl = JSON.stringify(vmManagerUrl);
+  const serializedVmConfig = JSON.stringify(currentVmConfig ?? null).replace(/</g, '\\u003c');
 
   const tfConfigScript = `
   <script>
-    window.TENSORFLEET_VM_MANAGER_URL = "${vmManagerUrl}";
-    ${nodeId ? `window.TENSORFLEET_NODE_ID = "${nodeId}";` : ''}
-    ${token ? `window.TENSORFLEET_JWT = "${token}";` : ''}
+    window.TENSORFLEET_VM_MANAGER_URL = ${serializedVmManagerUrl};
+    window.TENSORFLEET_VM_CONFIG = ${serializedVmConfig};
+    ${nodeId ? `window.TENSORFLEET_NODE_ID = ${JSON.stringify(nodeId)};` : ''}
+    ${token ? `window.TENSORFLEET_JWT = ${JSON.stringify(token)};` : ''}
   </script>
   `;
 
