@@ -43,6 +43,7 @@ export const ImagePanel: React.FC = () => {
   const [cameraModel, setCameraModel] = useState<ICameraModel | null>(null);
   const [show3DAnnotations, setShow3DAnnotations] = useState<boolean>(false);
   const [showImageInfo, setShowImageInfo] = useState<boolean>(false);
+  const [headerCollapsed, setHeaderCollapsed] = useState<boolean>(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -544,7 +545,7 @@ export const ImagePanel: React.FC = () => {
       console.log('Connection settings changed:', settings);
       // TODO: Implement reconnection logic if needed
     }}>
-      <div className="image-panel">
+      <div className={`image-panel ${headerCollapsed ? 'header-collapsed' : ''}`}>
         {/* HEADER PANEL */}
         <div className="image-panel-header-panel">
           {/* Layer 1: Title + Status */}
@@ -699,6 +700,16 @@ export const ImagePanel: React.FC = () => {
           </div>
         </details>
       </div>
+
+      <button
+        className="header-collapse-toggle"
+        type="button"
+        onClick={() => setHeaderCollapsed(prev => !prev)}
+        title={headerCollapsed ? 'Show controls' : 'Hide controls'}
+        aria-label={headerCollapsed ? 'Show controls' : 'Hide controls'}
+      >
+        <span className="header-collapse-chevron">{headerCollapsed ? '▼' : '▲'}</span>
+      </button>
 
       <div className="canvas-container">
         <canvas ref={canvasRef} onContextMenu={handleContextMenu} />
