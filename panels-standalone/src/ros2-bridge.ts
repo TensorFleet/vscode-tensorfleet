@@ -33,6 +33,67 @@ export interface Subscription {
   type: string;
 }
 
+const IMAGE_TOPIC_TYPES = new Set([
+  "sensor_msgs/msg/Image",
+  "sensor_msgs/msg/CompressedImage",
+  "sensor_msgs/Image",
+  "sensor_msgs/CompressedImage",
+]);
+
+// Topics grouped by VM config ID — only the relevant set is shown in the dropdown.
+// Keys match TEMPLATE_TO_CONFIG_ID values in vm-manager.ts.
+const TOPICS_BY_VM_CONFIG: Record<string, Subscription[]> = {
+  px4: [
+    { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image" },
+    { topic: "/drone_camera/down/image_raw", type: "sensor_msgs/msg/Image" },
+    { topic: "/drone_camera/image_annotated", type: "sensor_msgs/msg/Image" },
+    { topic: "/drone_camera/follow_annotated", type: "sensor_msgs/msg/Image" },
+    { topic: "/drone_camera/down/image_annotated", type: "sensor_msgs/msg/Image" },
+  ],
+  ardupilot: [
+    { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image" },
+    { topic: "/drone_camera/down/image_raw", type: "sensor_msgs/msg/Image" },
+    { topic: "/drone_camera/image_annotated", type: "sensor_msgs/msg/Image" },
+    { topic: "/drone_camera/follow_annotated", type: "sensor_msgs/msg/Image" },
+    { topic: "/drone_camera/down/image_annotated", type: "sensor_msgs/msg/Image" },
+  ],
+  simple_robot: [
+    { topic: "/camera/image_raw", type: "sensor_msgs/msg/Image" },
+    { topic: "/camera/image_annotated", type: "sensor_msgs/msg/Image" },
+    { topic: "/camera/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
+    { topic: "/camera/color/image_raw", type: "sensor_msgs/msg/Image" },
+    { topic: "/camera/color/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
+    { topic: "/usb_cam/image_raw", type: "sensor_msgs/msg/Image" },
+    { topic: "/usb_cam/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
+  ],
+  lerobot: [
+    { topic: "/so_arm101/agent_camera/image_raw", type: "sensor_msgs/msg/Image" },
+    { topic: "/so_arm101/side_camera/image_raw", type: "sensor_msgs/msg/Image" },
+    { topic: "/so_arm101/wrist_camera/image_raw", type: "sensor_msgs/msg/Image" },
+  ],
+};
+
+// Minimal fallback when no VM config is known.
+const GENERIC_FALLBACKS: Subscription[] = [
+  { topic: "/image_raw", type: "sensor_msgs/msg/Image" },
+  { topic: "/image", type: "sensor_msgs/msg/Image" },
+  { topic: "/camera/image_raw", type: "sensor_msgs/msg/Image" },
+  { topic: "/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
+];
+
+function isImageTopicType(type: string): boolean {
+  return IMAGE_TOPIC_TYPES.has(type);
+}
+
+/**
+ * Returns true for topics that are bridge/transport artifacts rather than real camera feeds:
+ * - "/wall" suffix — wall-clock time republications added by the Foxglove bridge
+ * - "/out/" prefix — Foxglove bridge internal output topics (e.g. /out/compressedDepth)
+ */
+function isBridgeNoiseTopic(topic: string): boolean {
+  return topic.endsWith('/wall') || topic.startsWith('/out/');
+}
+
 /** ---------- Bridge Implementation ---------- */
 
 export class ROS2Bridge {
@@ -434,27 +495,43 @@ export class ROS2Bridge {
     return this.client?.getTopicType(topic);
   }
 
+  /**
+   * Returns image topics split into three groups:
+   * - `primary`: live topics that match the active VM config (the feeds you care about)
+   * - `other`: live topics that are real camera feeds but not in the config (e.g. unexpected publishers)
+   * - `suggested`: config-specific topics not yet confirmed on the wire
+   *
+   * Bridge noise (wall-clock republications, /out/* internals) is stripped from all groups.
+   * The VM config ID is read from `window.TENSORFLEET_VM_CONFIG_ID` injected by extension.ts.
+   */
+  getImageTopicsGrouped(): { primary: Subscription[]; other: Subscription[]; suggested: Subscription[] } {
+    const vmConfigId = (typeof window !== 'undefined' ? (window as any).TENSORFLEET_VM_CONFIG_ID : '') ?? '';
+    const configTopics = TOPICS_BY_VM_CONFIG[vmConfigId] ?? GENERIC_FALLBACKS;
+    const configTopicSet = new Set(configTopics.map(t => t.topic));
+
+    const primary: Subscription[] = [];
+    const other: Subscription[] = [];
+    const suggestedMap = new Map<string, Subscription>(configTopics.map(t => [t.topic, t]));
+
+    for (const sub of this.getAvailableTopics()) {
+      if (!isImageTopicType(sub.type)) continue;
+      if (isBridgeNoiseTopic(sub.topic)) continue;
+
+      if (configTopicSet.has(sub.topic)) {
+        primary.push(sub);
+      } else {
+        other.push(sub);
+      }
+      suggestedMap.delete(sub.topic);
+    }
+
+    return { primary, other, suggested: Array.from(suggestedMap.values()) };
+  }
+
+  /** @deprecated Use getImageTopicsGrouped() for UI. Kept for compatibility. */
   getAvailableImageTopics(): Subscription[] {
-    // A few common image topic guesses for convenience
-    return [
-      { topic: "/so_arm101/agent_camera/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/so_arm101/side_camera/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/so_arm101/wrist_camera/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/drone_camera/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/camera/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/camera/image_annotated", type: "sensor_msgs/msg/Image" },
-      { topic: "/camera/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
-      { topic: "/camera/color/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/camera/color/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
-      { topic: "/camera/depth/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/camera/rgb/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/camera/rgb/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
-      { topic: "/usb_cam/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/usb_cam/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
-      { topic: "/image", type: "sensor_msgs/msg/Image" },
-      { topic: "/image_raw", type: "sensor_msgs/msg/Image" },
-      { topic: "/image_compressed", type: "sensor_msgs/msg/CompressedImage" },
-    ];
+    const { primary, other, suggested } = this.getImageTopicsGrouped();
+    return [...primary, ...other, ...suggested];
   }
 
   /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
