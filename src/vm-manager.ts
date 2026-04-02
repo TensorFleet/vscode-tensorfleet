@@ -119,7 +119,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       description: 'PX4 flight stack with Gazebo simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "static_obstacles_01",
+        world_components: "static_obstacles_01;static_ground",
         gazebo_px4_enabled: "true"
       }
     },
@@ -129,7 +129,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       description: 'ArduPilot flight stack with Gazebo simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "static_obstacles_01",
+        world_components: "static_obstacles_01;static_ground",
         gazebo_ardupilot_enabled: "true"
       }
     },
@@ -139,7 +139,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       description: 'Basic ground robot with Gazebo simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "static_obstacles_01",
+        world_components: "static_obstacles_01;static_ground",
         simple_robot_enabled: "true"
       }
     },
@@ -149,7 +149,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       description: 'Basic robotics arm simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "lerobot/lerobot_world_01",
+        world_components: "lerobot/lerobot_world_01;static_ground",
         gazebo_lerobot_enabled: "true"
       }
     },
