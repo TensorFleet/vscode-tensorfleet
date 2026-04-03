@@ -73,6 +73,10 @@ function loadConfigSources() {
   return { cfg, marker, markerEnv, network };
 }
 
+function hasAnyValue(...values) {
+  return values.some((value) => typeof value === "string" && value.trim() !== "");
+}
+
 /**
  * Resolve the base/VM manager URL from various sources
  */
@@ -146,7 +150,7 @@ function resolveProxyConnection(baseUrl, markerEnv) {
  *   3. Hardcoded safe defaults
  */
 function getTensorfleetSettings() {
-  const { markerEnv, network } = loadConfigSources();
+  const { marker, markerEnv, network } = loadConfigSources();
 
   const frameId =
     process.env.SETPOINT_FRAME_ID ||
@@ -159,12 +163,33 @@ function getTensorfleetSettings() {
   const { vmManagerUrl, nodeId, token, proxyUrl, useProxy } = resolveProxyConnection(baseUrl, markerEnv);
 
   const fallbackHost = host || markerEnv.r2bHost || "127.0.0.1";
+  const managedEnv = Boolean(marker?.managedEnv);
+  const hasManagedConnectionInfo = hasAnyValue(
+    process.env.ROSBRIDGE_URL,
+    process.env.R2B_HOST,
+    process.env.TENSORFLEET_NODE_ID,
+    process.env.TENSORFLEET_PROXY_URL,
+    process.env.TENSORFLEET_VM_MANAGER_URL,
+    markerEnv.rosbridgeUrl,
+    markerEnv.r2bHost,
+    markerEnv.nodeId,
+    markerEnv.proxyUrl,
+    markerEnv.vmManagerUrl,
+    network.vm_ip,
+    network.rosbridge_url
+  );
+  const connectionHint =
+    managedEnv && !hasManagedConnectionInfo
+      ? "This workspace is marked managed by TensorFleet, but .tensorfleet does not contain rosbridge/proxy metadata. Re-sync the workspace metadata or set ROSBRIDGE_URL / TENSORFLEET_* variables before running scripts from a shell."
+      : "";
 
   return {
     baseUrl: vmManagerUrl || baseUrl || "",
+    connectionHint,
     frameId,
     rosbridgeUrl,
     host: fallbackHost,
+    managedEnv,
     port: Number(port),
     vmManagerUrl,
     nodeId,
