@@ -96,10 +96,16 @@ export default defineConfig({
         replacement: `${tensorfleetUtilDir}$1`,
       },
 
+      // ✅ tensorfleet-ros bare import:
+      // import "... from 'tensorfleet-ros'"
+      // -> packages/tensorfleet-ros/src/index.ts
+      {
+        find: /^tensorfleet-ros$/,
+        replacement: `${tensorfleetRosDir}/index`,
+      },
       // ✅ tensorfleet-ros deep imports:
       // import "... from 'tensorfleet-ros/ros2-bridge'"
       // -> packages/tensorfleet-ros/src/ros2-bridge.ts
-      // Note: Only match deep imports (with trailing /), bare imports use package.json exports
       {
         find: /^tensorfleet-ros\/(.+)$/,
         replacement: `${tensorfleetRosDir}/$1`,
