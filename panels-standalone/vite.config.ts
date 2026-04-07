@@ -10,6 +10,9 @@ const typesDir = resolve(rootDir, "./packages/@types");
 // ✅ tensorfleet-util resolves to SOURCE in dev/build (like your @lichtblick packages)
 const tensorfleetUtilDir = resolve(rootDir, "./packages/tensorfleet-util/src");
 
+// ✅ tensorfleet-ros resolves to SOURCE in dev/build
+const tensorfleetRosDir = resolve(rootDir, "./packages/tensorfleet-ros/src");
+
 const vmProxyTarget =
   process.env.VM_MANAGER_PROXY ?? process.env.VITE_VM_MANAGER_PROXY ?? "http://localhost:8080";
 const wsProxyTarget = vmProxyTarget.replace(/^http/, "ws");
@@ -91,6 +94,14 @@ export default defineConfig({
       {
         find: /^tensorfleet-util(\/.*)?$/,
         replacement: `${tensorfleetUtilDir}$1`,
+      },
+
+      // ✅ tensorfleet-ros deep imports:
+      // import "... from 'tensorfleet-ros/ros2-bridge'"
+      // -> packages/tensorfleet-ros/src/ros2-bridge.ts
+      {
+        find: /^tensorfleet-ros(\/.*)?$/,
+        replacement: `${tensorfleetRosDir}$1`,
       },
 
       {
