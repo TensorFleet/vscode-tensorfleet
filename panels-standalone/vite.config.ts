@@ -99,9 +99,10 @@ export default defineConfig({
       // ✅ tensorfleet-ros deep imports:
       // import "... from 'tensorfleet-ros/ros2-bridge'"
       // -> packages/tensorfleet-ros/src/ros2-bridge.ts
+      // Note: Only match deep imports (with trailing /), bare imports use package.json exports
       {
-        find: /^tensorfleet-ros(\/.*)?$/,
-        replacement: `${tensorfleetRosDir}$1`,
+        find: /^tensorfleet-ros\/(.+)$/,
+        replacement: `${tensorfleetRosDir}/$1`,
       },
 
       {
