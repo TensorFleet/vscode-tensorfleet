@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ros2Bridge } from 'tensorfleet-ros';
-import { fetchFeaturedEntities, FeaturedEntityData } from 'tensorfleet-util/ros/fetch-featured-entities';
+import { fetchFeaturedEntities, FeaturedEntityData } from 'tensorfleet-util';
 import './ESimViewPanel.css';
 import {
   EntityClickMessage,
