@@ -101,7 +101,7 @@ export default defineConfig({
       // -> packages/tensorfleet-ros/src/index.ts
       {
         find: /^tensorfleet-ros$/,
-        replacement: `${tensorfleetRosDir}/index`,
+        replacement: `${tensorfleetRosDir}/index.ts`,
       },
       // ✅ tensorfleet-ros deep imports:
       // import "... from 'tensorfleet-ros/ros2-bridge'"
