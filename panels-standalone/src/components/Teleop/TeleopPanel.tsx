@@ -55,6 +55,7 @@ type TeleopServiceAction = {
   label: string;
   service: string;
   tone?: 'primary' | 'secondary' | 'danger';
+  description?: string;
 };
 
 type TeleopProfile = {
@@ -152,14 +153,28 @@ const GROUND_PROFILE: TeleopProfile = {
 };
 
 const DRONE_SERVICE_ACTIONS: TeleopServiceAction[] = [
-  { id: 'arm', label: 'Arm', service: '/drone/arm' },
-  { id: 'takeoff', label: 'Takeoff', service: '/drone/takeoff' },
-  { id: 'land', label: 'Land', service: '/drone/land', tone: 'secondary' },
-  { id: 'enable_external', label: 'Enable Ext. Control', service: '/drone/enable_external_control', tone: 'secondary' },
-  { id: 'disable_external', label: 'Disable Ext. Control', service: '/drone/disable_external_control', tone: 'secondary' },
-  { id: 'stop', label: 'Emergency Stop', service: '/drone/stop', tone: 'danger' },
-  { id: 'disarm', label: 'Disarm', service: '/drone/disarm', tone: 'danger' },
+  { id: 'arm', label: 'Arm', service: '/drone/arm', description: 'Prepare motors for flight.' },
+  { id: 'takeoff', label: 'Take Off', service: '/drone/takeoff', description: 'Lift into controlled flight.' },
+  { id: 'land', label: 'Land', service: '/drone/land', tone: 'secondary', description: 'Exit flight and descend.' },
+  { id: 'stop', label: 'Stop Motion', service: '/drone/stop', tone: 'secondary', description: 'Send zero motion and clear inputs.' },
+  { id: 'disarm', label: 'Disarm', service: '/drone/disarm', tone: 'danger', description: 'Cut motors when safe.' },
 ];
+
+const ENABLE_MANUAL_CONTROL_ACTION: TeleopServiceAction = {
+  id: 'enable_external',
+  label: 'Enable Manual Control',
+  service: '/drone/enable_external_control',
+  tone: 'primary',
+  description: 'Switch to OFFBOARD or GUIDED for pad input.',
+};
+
+const DISABLE_MANUAL_CONTROL_ACTION: TeleopServiceAction = {
+  id: 'disable_external',
+  label: 'Exit Manual Control',
+  service: '/drone/disable_external_control',
+  tone: 'secondary',
+  description: 'Hand control back to hold mode.',
+};
 
 function createDroneProfile(vmConfig: TensorFleetVmConfig | null): TeleopProfile {
   const vehicleLabel = vmConfig?.name?.trim() || 'Drone';
@@ -354,6 +369,7 @@ export function TeleopPanel(): React.JSX.Element {
     tone: ServiceFeedbackTone;
     message: string;
   } | null>(null);
+  const [manualControlEnabled, setManualControlEnabled] = useState(false);
 
   const wasPublishingRef = useRef(false);
   const keyboardActionMap = useMemo(() => getKeyboardActionMap(profile), [profile]);
@@ -465,11 +481,12 @@ export function TeleopPanel(): React.JSX.Element {
   const canPublish = isConnected && config.publishRate > 0;
   const hasTopic = Boolean(config.topic);
   const enabled = canPublish && hasTopic;
+  const teleopInputEnabled = profile.kind === 'drone' ? enabled && manualControlEnabled : enabled;
 
   useEffect(() => {
-    const isPublishing = enabled && orderedActiveBindings.length > 0;
+    const isPublishing = teleopInputEnabled && orderedActiveBindings.length > 0;
 
-    if (!enabled) {
+    if (!teleopInputEnabled) {
       wasPublishingRef.current = false;
       return;
     }
@@ -481,10 +498,10 @@ export function TeleopPanel(): React.JSX.Element {
     }
 
     wasPublishingRef.current = isPublishing;
-  }, [config.topic, enabled, orderedActiveBindings]);
+  }, [config.topic, orderedActiveBindings, teleopInputEnabled]);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!teleopInputEnabled) {
       setKeyboardActions([]);
       return;
     }
@@ -547,7 +564,7 @@ export function TeleopPanel(): React.JSX.Element {
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [enabled, keyboardActionMap, profile.buttonDefinitions]);
+  }, [keyboardActionMap, profile.buttonDefinitions, teleopInputEnabled]);
 
   const handlePadAction = useCallback((pad: TeleopPadDefinition, action?: DirectionalPadAction) => {
     setPadActions((previous) => {
@@ -588,6 +605,14 @@ export function TeleopPanel(): React.JSX.Element {
           response?.message?.trim() ||
           (succeeded ? `${action.label} succeeded.` : `${action.label} failed.`);
 
+        if (succeeded && action.id === 'enable_external') {
+          setManualControlEnabled(true);
+        }
+
+        if (succeeded && (action.id === 'disable_external' || action.id === 'land' || action.id === 'disarm')) {
+          setManualControlEnabled(false);
+        }
+
         if (action.id === 'stop' || action.id === 'disable_external') {
           setPadActions({});
           setKeyboardActions([]);
@@ -617,6 +642,17 @@ export function TeleopPanel(): React.JSX.Element {
     },
     [],
   );
+
+  const currentManualControlAction = manualControlEnabled
+    ? DISABLE_MANUAL_CONTROL_ACTION
+    : ENABLE_MANUAL_CONTROL_ACTION;
+  const flightActions = profile.kind === 'drone' ? profile.serviceActions.filter((action) => action.id !== 'stop' && action.id !== 'disarm') : [];
+  const safetyActions = profile.kind === 'drone' ? profile.serviceActions.filter((action) => action.id === 'stop' || action.id === 'disarm') : [];
+  const inputStatusLabel = !enabled
+    ? 'Unavailable'
+    : manualControlEnabled
+      ? 'Live'
+      : 'Locked';
 
   return (
     <ConnectionSettingsProvider
@@ -726,44 +762,109 @@ export function TeleopPanel(): React.JSX.Element {
           {canPublish && profile.kind === 'drone' && (
             <div className="drone-layout">
               <div className="drone-pads-row">
+                <div className="teleop-ops-card">
+                  <div className="ops-header">
+                    <h3>Operator Flow</h3>
+                    <p>Arm, take off, enable manual control, fly, then exit manual control before landing.</p>
+                  </div>
+                  <div className="ops-status-grid">
+                    <div className="ops-status-tile">
+                      <span className="ops-status-label">Connection</span>
+                      <span className={`ops-status-value ${isConnected ? 'is-on' : 'is-off'}`}>
+                        {isConnected ? 'Connected' : 'Disconnected'}
+                      </span>
+                    </div>
+                    <div className="ops-status-tile">
+                      <span className="ops-status-label">Manual Control</span>
+                      <span className={`ops-status-value ${manualControlEnabled ? 'is-on' : 'is-off'}`}>
+                        {manualControlEnabled ? 'On' : 'Off'}
+                      </span>
+                    </div>
+                    <div className="ops-status-tile">
+                      <span className="ops-status-label">Pad Input</span>
+                      <span className={`ops-status-value ${teleopInputEnabled ? 'is-on' : 'is-idle'}`}>
+                        {inputStatusLabel}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="ops-section">
+                    <div className="ops-section-header">
+                      <h4>Manual Control</h4>
+                      <p>{currentManualControlAction.description}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className={`action-btn tone-${currentManualControlAction.tone ?? 'primary'} manual-toggle-btn`}
+                      disabled={!isConnected || busyServiceId !== null}
+                      onClick={() => void invokeService(currentManualControlAction)}
+                    >
+                      {busyServiceId === currentManualControlAction.id ? 'Working…' : currentManualControlAction.label}
+                    </button>
+                  </div>
+
+                  <div className="ops-section">
+                    <div className="ops-section-header">
+                      <h4>Flight</h4>
+                      <p>Use these for setup and recovery.</p>
+                    </div>
+                    <div className="actions-list compact">
+                      {flightActions.map((action) => (
+                        <button
+                          type="button"
+                          key={action.id}
+                          className={`action-btn tone-${action.tone ?? 'primary'}`}
+                          disabled={!isConnected || busyServiceId !== null}
+                          onClick={() => void invokeService(action)}
+                          title={action.description}
+                        >
+                          {busyServiceId === action.id ? 'Working…' : action.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="ops-section danger-zone">
+                    <div className="ops-section-header">
+                      <h4>Safety</h4>
+                      <p>Use only when you need to halt or shut down.</p>
+                    </div>
+                    <div className="actions-list compact">
+                      {safetyActions.map((action) => (
+                        <button
+                          type="button"
+                          key={action.id}
+                          className={`action-btn tone-${action.tone ?? 'primary'}`}
+                          disabled={!isConnected || busyServiceId !== null}
+                          onClick={() => void invokeService(action)}
+                          title={action.description}
+                        >
+                          {busyServiceId === action.id ? 'Working…' : action.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {serviceFeedback && (
+                    <div className={`svc-feedback tone-${serviceFeedback.tone}`}>{serviceFeedback.message}</div>
+                  )}
+                </div>
+
                 {profile.pads.map((pad) => (
                   <div className={`drone-pad-card pad-${pad.id}`} key={pad.id}>
                     <div className="pad-card-header">
                       <h3>{pad.title}</h3>
-                      <p>{pad.description}</p>
+                      <p>{manualControlEnabled ? pad.description : 'Enable manual control to use this pad.'}</p>
                     </div>
                     <div className="pad-card-body">
                       <DirectionalPad
                         onAction={(action) => handlePadAction(pad, action)}
-                        disabled={!enabled}
+                        disabled={!teleopInputEnabled}
                         activeAction={getPadActiveAction(pad, orderedActiveBindings)}
                       />
                     </div>
                   </div>
                 ))}
-              </div>
-              <div className="drone-sidebar">
-                <h3 className="sidebar-heading">Flight Actions</h3>
-                <div className="actions-list">
-                  {profile.serviceActions.map((action, idx) => (
-                    <React.Fragment key={action.id}>
-                      {action.tone === 'danger' && idx > 0 && profile.serviceActions[idx - 1]?.tone !== 'danger' && (
-                        <div className="actions-divider" />
-                      )}
-                      <button
-                        type="button"
-                        className={`action-btn tone-${action.tone ?? 'primary'}`}
-                        disabled={!isConnected || busyServiceId !== null}
-                        onClick={() => void invokeService(action)}
-                      >
-                        {busyServiceId === action.id ? 'Working\u2026' : action.label}
-                      </button>
-                    </React.Fragment>
-                  ))}
-                </div>
-                {serviceFeedback && (
-                  <div className={`svc-feedback tone-${serviceFeedback.tone}`}>{serviceFeedback.message}</div>
-                )}
               </div>
             </div>
           )}

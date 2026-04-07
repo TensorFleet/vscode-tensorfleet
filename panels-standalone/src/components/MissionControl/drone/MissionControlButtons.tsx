@@ -17,7 +17,13 @@ import React, { useCallback, useMemo, useState } from "react";
  * The component only emits requests. It does not perform control actions.
  */
 
-type MissionAction = "arm" | "disarm" | "takeoff" | "land" | "rtl" | "goto";
+type MissionAction =
+  | "arm"
+  | "disarm"
+  | "takeoff"
+  | "land"
+  | "rtl"
+  | "goto";
 
 interface AppRequestDetail<T = any> {
   category: "mission_control";

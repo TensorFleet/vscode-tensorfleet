@@ -332,9 +332,9 @@
    ============================================ */
 .drone-layout {
   display: flex;
-  gap: 20px;
+  gap: 16px;
   width: 100%;
-  max-width: 1000px;
+  max-width: 1180px;
   align-items: stretch;
 }
 
@@ -343,6 +343,104 @@
   gap: 16px;
   flex: 1 1 auto;
   min-width: 0;
+  align-items: stretch;
+}
+
+.teleop-ops-card {
+  flex: 0 0 300px;
+  background: rgba(17, 21, 32, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.ops-header h3,
+.ops-section-header h4 {
+  margin: 0;
+}
+
+.ops-header h3 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.ops-header p,
+.ops-section-header p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.ops-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ops-status-tile {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  min-height: 66px;
+}
+
+.ops-status-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.34);
+  line-height: 1.25;
+}
+
+.ops-status-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.2;
+}
+
+.ops-status-value.is-on {
+  color: #86efac;
+}
+
+.ops-status-value.is-off {
+  color: #fca5a5;
+}
+
+.ops-status-value.is-idle {
+  color: #fcd34d;
+}
+
+.ops-section {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.ops-section-header h4 {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.manual-toggle-btn {
+  min-height: 40px;
+}
+
+.danger-zone {
+  margin-top: auto;
 }
 
 /* --- Pad cards --- */
@@ -394,8 +492,9 @@
 .pad-card-header p {
   margin: 4px 0 0;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.25);
-  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.3);
+  line-height: 1.45;
+  min-height: 32px;
 }
 
 .pad-card-body {
@@ -428,38 +527,14 @@
   pointer-events: none;
 }
 
-/* --- Drone sidebar --- */
-.drone-sidebar {
-  flex: 0 0 190px;
-  background: rgba(17, 21, 32, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.02);
-}
-
-.sidebar-heading {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.45);
-}
-
 .actions-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.actions-divider {
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(220, 38, 38, 0.2), transparent);
-  margin: 4px 0;
+.actions-list.compact {
+  gap: 8px;
 }
 
 /* --- Action buttons --- */
@@ -815,20 +890,22 @@ kbd {
     flex-direction: column;
   }
 
-  .drone-sidebar {
+  .drone-pads-row {
+    flex-direction: column;
+  }
+
+  .teleop-ops-card {
     flex: none;
     width: 100%;
+  }
+
+  .ops-status-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .actions-list {
     flex-direction: row;
     flex-wrap: wrap;
-  }
-
-  .actions-divider {
-    width: 100%;
-    height: 1px;
-    margin: 2px 0;
   }
 
   .action-btn {
@@ -838,13 +915,13 @@ kbd {
 }
 
 @media (max-width: 480px) {
-  .drone-pads-row {
-    flex-direction: column;
-  }
-
   .teleop-footer {
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
+  }
+
+  .ops-status-grid {
+    grid-template-columns: 1fr;
   }
 }
