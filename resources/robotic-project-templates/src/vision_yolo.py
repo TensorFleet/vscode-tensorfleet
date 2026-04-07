@@ -142,6 +142,84 @@ def _get_yolo_model():
     return YOLO_MODEL
 
 
+_COCO_CLASSES = [
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck",
+    "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench",
+    "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra",
+    "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
+    "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
+    "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork",
+    "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli",
+    "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant",
+    "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard",
+    "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book",
+    "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
+]
+
+_DETECTION_COLORS = [
+    (92, 196, 214),
+    (86, 170, 176),
+    (232, 166, 76),
+    (140, 160, 180),
+    (214, 96, 96),
+]
+
+
+def _draw_detections(img_rgb, results):
+    """Draw mission-UI style annotations onto an RGB image using OpenCV."""
+    _require_cv2()
+    out = img_rgb.copy()
+    h, w = out.shape[:2]
+
+    boxes = results[0].boxes
+    if boxes is None or len(boxes) == 0:
+        return out
+
+    for idx, box in enumerate(boxes):
+        xyxy = box.xyxy[0].tolist()
+        x1, y1, x2, y2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+        score = float(box.conf[0])
+        cls_id = int(box.cls[0])
+        label = _COCO_CLASSES[cls_id] if cls_id < len(_COCO_CLASSES) else f"class_{cls_id}"
+        label = label.replace("_", " ").title()
+
+        color_rgb = _DETECTION_COLORS[idx % len(_DETECTION_COLORS)]
+        color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
+        overlay = out.copy()
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), color_bgr, 2)
+        cv2.addWeighted(overlay, 0.88, out, 0.12, 0, out)
+
+        score_pct = int(round(score * 100))
+        text = f"{label} . {score_pct}%"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.42
+        thickness = 1
+        (tw, th), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+
+        pad_x, pad_y = 6, 3
+        chip_w = tw + pad_x * 2
+        chip_h = th + baseline + pad_y * 2
+
+        cx = max(0, min(w - chip_w - 1, x1))
+        cy = y1 - chip_h - 2
+        if cy < 0:
+            cy = y1 + 2
+
+        chip_overlay = out.copy()
+        cv2.rectangle(chip_overlay, (cx, cy), (cx + chip_w, cy + chip_h),
+                      (10, 14, 18), cv2.FILLED)
+        cv2.addWeighted(chip_overlay, 0.78, out, 0.22, 0, out)
+
+        # 1px accent border: blend color_bgr at 0.28 over near-black chip
+        border_bgr = tuple(int(10 * 0.72 + c * 0.28) for c in color_bgr)
+        cv2.rectangle(out, (cx, cy), (cx + chip_w, cy + chip_h), border_bgr, 1)
+
+        cv2.putText(out, text, (cx + pad_x, cy + pad_y + th),
+                    font, font_scale, (235, 242, 245), thickness, cv2.LINE_AA)
+
+    return out
+
+
 def _run_yolo_on_image(img_np):
     """Run YOLO on an RGB image and return an annotated RGB image."""
     print("Running YOLO inference on image ...")
@@ -151,8 +229,7 @@ def _run_yolo_on_image(img_np):
         results = model(bgr, verbose=False, device="cpu")
     except TypeError:
         results = model(bgr, verbose=False)
-    annotated_bgr = results[0].plot()
-    annotated_rgb = annotated_bgr[..., ::-1]
+    annotated_rgb = _draw_detections(img_np, results)
     print("YOLO inference finished.")
     return annotated_rgb
 

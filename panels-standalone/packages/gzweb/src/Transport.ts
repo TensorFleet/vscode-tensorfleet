@@ -246,18 +246,41 @@ export class Transport {
   }
 
   /**
+   * Normalize filesystem-like asset URIs so websocket requests and replies use
+   * the same assetMap key even when one side resolves `..` path segments.
+   */
+  private normalizeAssetUri(uri: string): string {
+    if (
+      !uri ||
+      uri.startsWith("http://") ||
+      uri.startsWith("https://") ||
+      uri.startsWith("data:") ||
+      uri.startsWith("model://")
+    ) {
+      return uri;
+    }
+
+    try {
+      return new URL(uri, "file:///").pathname;
+    } catch (_error) {
+      return uri;
+    }
+  }
+
+  /**
    * Get an asset from Gazebo
    */
   public getAsset(_uri: string, _cb: AssetCb) {
+    const normalizedUri = this.normalizeAssetUri(_uri);
     let asset: Asset = {
-      uri: _uri,
+      uri: normalizedUri,
       cb: _cb,
     };
 
-    console.log(`Getting asset via websocket - ${_uri}`);
+    console.log(`Getting asset via websocket - ${normalizedUri}`);
 
-    this.assetMap.set(_uri, asset);
-    this.sendMessage(["asset", "", "", _uri]);
+    this.assetMap.set(normalizedUri, asset);
+    this.sendMessage(["asset", "", "", normalizedUri]);
   }
 
   /**
@@ -462,12 +485,11 @@ export class Transport {
 
         // Run the callback associated with the asset. This lets the requester
         // process the asset message.
-        if (this.assetMap.has(frameParts[1])) {
-          this.assetMap.get(frameParts[1])!.cb(msg["data"], error);
+        const assetUri = this.normalizeAssetUri(frameParts[1]);
+        if (this.assetMap.has(assetUri)) {
+          this.assetMap.get(assetUri)!.cb(msg["data"], error);
         } else {
-          console.error(
-            `No resource callback for ${this.assetMap.get(frameParts[1])!.uri}`,
-          );
+          console.error(`No resource callback for ${frameParts[1]}`);
         }
       } else if (frameParts[0] == "pub") {
         // Handle actions and messages.

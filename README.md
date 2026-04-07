@@ -143,6 +143,8 @@ TensorFleet surfaces VM health through a lightweight status bar item — no extr
    - `tensorfleet.vmManager.apiBaseUrl`: base URL for the VM Manager API (defaults to `https://eu.vm.tensorfleet.net`).  
    - `tensorfleet.vmManager.authToken`: optional bearer token sent to `/vms/self/*` APIs when your server enforces JWT auth.
 
+   The Virtual Machine Settings panel also exposes `Simulation World` controls backed by the VM Manager guest proxy. World and preset switches are restart-based, so active autopilot vehicles respawn into the newly selected scene.
+
 2. **Watch the status bar**  
    The indicator auto-polls every 30 seconds and rotates through intuitive states:
    - `🟡 VM Starting…`  

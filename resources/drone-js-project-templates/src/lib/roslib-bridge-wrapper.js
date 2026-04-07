@@ -12,6 +12,9 @@ class ROSLibBridgeWrapper {
   constructor() {
     this.ros = null;
     this.isConnectedFlag = false;
+    this.connectionDetails = null;
+    this._lastConnectionError = null;
+    this._lastCloseInfo = null;
 
     this.subscriptions = new Map();
     this.messageHandlers = new Map();
@@ -35,7 +38,6 @@ class ROSLibBridgeWrapper {
   }
 
   connect() {
-    console.log("[ROS] Connected")
     const settings = getTensorfleetSettings();
 
     const useProxy = settings.useProxy && settings.proxyUrl;
@@ -52,9 +54,28 @@ class ROSLibBridgeWrapper {
 
       ros = new ROSLIB.Ros({});
       this.attachProxySocket(ros, proxyWs);
+      this.connectionDetails = {
+        mode: "proxy",
+        endpoint: settings.proxyUrl,
+        hint: settings.connectionHint,
+        targetPort: settings.targetPort,
+        nodeId: settings.nodeId,
+      };
     } else {
       const directUrl = settings.rosbridgeUrl || "ws://127.0.0.1:9091";
       ros = new ROSLIB.Ros({ url: directUrl });
+      this.connectionDetails = {
+        mode: "direct",
+        endpoint: directUrl,
+        hint: settings.connectionHint,
+      };
+    }
+
+    console.log(
+      `[ROS] Initializing ${this.connectionDetails.mode} bridge connection to ${this.describeConnectionTarget()}`
+    );
+    if (settings.connectionHint) {
+      console.warn(`[ROS] ${settings.connectionHint}`);
     }
 
     this.ros = ros;
@@ -67,8 +88,10 @@ class ROSLibBridgeWrapper {
     if (!this.ros) return;
 
     this.ros.on("connection", async () => {
-      console.log('[ROS] Ros "connection" event');
+      console.log(`[ROS] Connected to ${this.describeConnectionTarget()}`);
       this.isConnectedFlag = true;
+      this._lastConnectionError = null;
+      this._lastCloseInfo = null;
 
       this._startMavrosHeartbeatParamSetter();
 
@@ -81,12 +104,14 @@ class ROSLibBridgeWrapper {
       this._rebuildAllTopics();
     });
 
-    this.ros.on("error", () => {
+    this.ros.on("error", (err) => {
       this.isConnectedFlag = false;
+      this._lastConnectionError = err || new Error("Unknown ROS bridge error");
     });
 
-    this.ros.on("close", () => {
+    this.ros.on("close", (event) => {
       this.isConnectedFlag = false;
+      this._lastCloseInfo = event || { code: 1006, reason: "connection closed" };
 
       if (this._resubscribeTimer) {
         clearInterval(this._resubscribeTimer);
@@ -156,6 +181,21 @@ class ROSLibBridgeWrapper {
 
   isConnected() {
     return this.isConnectedFlag;
+  }
+
+  describeConnectionTarget() {
+    if (!this.connectionDetails) {
+      return "unknown target";
+    }
+    if (this.connectionDetails.mode === "proxy") {
+      const { endpoint, nodeId, targetPort } = this.connectionDetails;
+      return `${endpoint} (node=${nodeId || "unknown"}, port=${targetPort || "unknown"})`;
+    }
+    return this.connectionDetails.endpoint || "unknown target";
+  }
+
+  describeConnectionHint() {
+    return this.connectionDetails?.hint || "";
   }
 
   subscribe(subscription, handler) {
@@ -495,11 +535,38 @@ class ROSLibBridgeWrapper {
   async waitForConnection(timeoutMs = 10000) {
     if (this.isConnected()) return;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Connection timeout")), timeoutMs);
+      const timer = setTimeout(() => {
+        const hint = this.describeConnectionHint();
+        reject(
+          new Error(
+            `Connection timeout while waiting for ROS bridge at ${this.describeConnectionTarget()}${hint ? ` (${hint})` : ""}`
+          )
+        );
+      }, timeoutMs);
       const check = () => {
         if (this.isConnected()) {
           clearTimeout(timer);
           resolve();
+        } else if (this._lastConnectionError) {
+          clearTimeout(timer);
+          const message =
+            this._lastConnectionError.message || String(this._lastConnectionError);
+          const hint = this.describeConnectionHint();
+          reject(
+            new Error(
+              `ROS bridge connection failed for ${this.describeConnectionTarget()}: ${message}${hint ? ` (${hint})` : ""}`
+            )
+          );
+        } else if (this._lastCloseInfo) {
+          clearTimeout(timer);
+          const code = this._lastCloseInfo.code ?? "unknown";
+          const reason = this._lastCloseInfo.reason || "connection closed";
+          const hint = this.describeConnectionHint();
+          reject(
+            new Error(
+              `ROS bridge connection closed for ${this.describeConnectionTarget()} (code ${code}: ${reason})${hint ? ` (${hint})` : ""}`
+            )
+          );
         } else {
           setTimeout(check, 100);
         }

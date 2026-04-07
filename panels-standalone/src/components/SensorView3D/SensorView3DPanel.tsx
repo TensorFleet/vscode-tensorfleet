@@ -32,8 +32,7 @@ import { DEFAULT_SCENE_EXTENSION_CONFIG } from "@lichtblick/suite-base/panels/Th
 import type { InterfaceMode } from "@lichtblick/suite-base/panels/ThreeDeeRender/types";
 import type { Asset } from "@lichtblick/suite-base/components/PanelExtensionAdapter";
 
-import { ros2Bridge } from "tensorfleet-ros";
-import type { Subscription as Ros2BridgeSubscription } from "@/ros2-bridge";
+import { ros2Bridge, type Subscription as Ros2BridgeSubscription } from "tensorfleet-ros";
 import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
 
 export type Sensor3DViewPanelProps = {
