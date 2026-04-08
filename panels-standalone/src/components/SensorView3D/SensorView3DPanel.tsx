@@ -46,6 +46,7 @@ const LS_DECAY_TIME_KEY = "sensor3d.decayTime";
 const LS_SHOW_TF_KEY = "sensor3d.showTf";
 const LS_FOLLOW_FRAME_KEY = "sensor3d.followFrame";
 const LS_PANEL_COLLAPSED_KEY = "sensor3d.panelCollapsed";
+const LS_SHOW_DIAGNOSTICS_KEY = "sensor3d.showDiagnostics";
 const LS_LIDAR_COLOR_FIELD_KEY = "sensor3d.lidar.colorField";
 const LS_LIDAR_COLOR_MAP_KEY = "sensor3d.lidar.colorMap";
 const LS_LIDAR_POINT_SHAPE_KEY = "sensor3d.lidar.pointShape";
@@ -59,6 +60,7 @@ const AUTO_VISIBLE_SCHEMA_NAMES = new Set([
   "foxglove.PointCloud",
 ]);
 const TF_SCHEMA_NAMES = new Set(["tf2_msgs/TFMessage", "tf2_msgs/msg/TFMessage"]);
+const ODOMETRY_SCHEMA_NAMES = new Set(["nav_msgs/Odometry", "nav_msgs/msg/Odometry"]);
 const PANEL_LIST_SCHEMA_HINTS = [
   "LaserScan",
   "PointCloud",
@@ -83,6 +85,10 @@ const PANEL_COLORS = {
   inputBackground: "rgba(255, 255, 255, 0.08)",
   inputBorder: "rgba(255, 255, 255, 0.12)",
 };
+const ZERO_TRANSLATION = { x: 0, y: 0, z: 0 };
+const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
+const SIMPLE_ROBOT_CAMERA_TRANSLATION = { x: 0.25, y: 0, z: 0.15 };
+const SIMPLE_ROBOT_LIDAR_TRANSLATION = { x: 0, y: 0, z: 0.3 };
 
 function shouldAutoShowTopic(topic: Pick<Topic, "name" | "schemaName">): boolean {
   if (AUTO_VISIBLE_SCHEMA_NAMES.has(topic.schemaName)) {
@@ -111,17 +117,16 @@ function shouldListTopicInPanel(topic: Pick<Topic, "name" | "schemaName">): bool
 }
 
 function choosePreferredFrame(frameNames: string[], current?: string): string | undefined {
-  if (current && frameNames.includes(current)) {
-    return current;
-  }
-
   const exactPriority = [
     "odom",
     "map",
     "world",
     "base_link",
+    "base_footprint",
     "simple_bot/base_link",
     "x500_0",
+    "lidar",
+    "laser",
   ];
   for (const preferred of exactPriority) {
     if (frameNames.includes(preferred)) {
@@ -129,12 +134,24 @@ function choosePreferredFrame(frameNames: string[], current?: string): string | 
     }
   }
 
-  const suffixPriority = ["/odom", "/map", "/world", "/base_link"];
+  const suffixPriority = [
+    "/odom",
+    "/map",
+    "/world",
+    "/base_link",
+    "/base_footprint",
+    "/lidar",
+    "/laser",
+  ];
   for (const suffix of suffixPriority) {
     const match = frameNames.find((name) => name.endsWith(suffix));
     if (match) {
       return match;
     }
+  }
+
+  if (current && frameNames.includes(current)) {
+    return current;
   }
 
   return frameNames[0];
@@ -219,6 +236,10 @@ function isTfTopic(topic: Pick<Topic, "name" | "schemaName">): boolean {
   );
 }
 
+function isOdometryTopic(topic: Pick<Topic, "name" | "schemaName">): boolean {
+  return topic.name === "/odom" || ODOMETRY_SCHEMA_NAMES.has(topic.schemaName);
+}
+
 function sortTopicsForPanel(a: Topic, b: Topic): number {
   const aPriority = shouldAutoShowTopic(a) ? 0 : 1;
   const bPriority = shouldAutoShowTopic(b) ? 0 : 1;
@@ -251,6 +272,83 @@ function defaultTopicSettings(
   }
 
   return base;
+}
+
+function getTopicKindLabel(topic: Pick<Topic, "name" | "schemaName">): string {
+  if (topic.schemaName.includes("LaserScan")) {
+    return "Lidar";
+  }
+  if (topic.schemaName.includes("PointCloud")) {
+    return topic.name.toLowerCase().includes("depth") ? "Depth points" : "Point cloud";
+  }
+  const parts = topic.schemaName.split("/");
+  return parts[parts.length - 1] ?? topic.schemaName;
+}
+
+function normalizeFrameIdForMatching(frameId: string | undefined): string | undefined {
+  if (!frameId) {
+    return undefined;
+  }
+  return frameId.startsWith("/") ? frameId.slice(1) : frameId;
+}
+
+function getSimpleRobotFramePrefix(frameId: string | undefined): string | undefined {
+  const normalized = normalizeFrameIdForMatching(frameId);
+  if (!normalized) {
+    return undefined;
+  }
+
+  for (const suffix of ["lidar_link/lidar", "camera_link/camera", "base_link"]) {
+    if (normalized.endsWith(suffix)) {
+      return normalized.slice(0, normalized.length - suffix.length);
+    }
+  }
+  return undefined;
+}
+
+function toRendererMessageEvent(
+  topic: string,
+  schemaName: string,
+  msg: any,
+): { event: MessageEvent<any>; receiveNs: bigint } {
+  const header = msg?.header as
+    | { stamp?: { sec?: number; nanosec?: number; nsec?: number } }
+    | undefined;
+
+  let publishNs: bigint | undefined;
+  if (header?.stamp) {
+    const sec = header.stamp.sec ?? 0;
+    const nanosec = header.stamp.nanosec ?? (header.stamp as any).nsec ?? 0;
+    publishNs = BigInt(sec) * 1_000_000_000n + BigInt(nanosec);
+  }
+
+  const nowNs = BigInt(Date.now()) * 1_000_000n;
+  const receiveNs = publishNs ?? nowNs;
+
+  return {
+    receiveNs,
+    event: {
+      topic,
+      schemaName,
+      receiveTime: fromNanoSec(receiveNs),
+      publishTime: publishNs ? fromNanoSec(publishNs) : undefined,
+      message: msg,
+      sizeInBytes: estimateSizeInBytes(msg),
+    },
+  };
+}
+
+function getHeaderStampNs(msg: any): bigint | undefined {
+  const header = msg?.header as
+    | { stamp?: { sec?: number; nanosec?: number; nsec?: number } }
+    | undefined;
+  if (!header?.stamp) {
+    return undefined;
+  }
+
+  const sec = header.stamp.sec ?? 0;
+  const nanosec = header.stamp.nanosec ?? (header.stamp as any).nsec ?? 0;
+  return BigInt(sec) * 1_000_000_000n + BigInt(nanosec);
 }
 
 export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
@@ -331,6 +429,10 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(LS_PANEL_COLLAPSED_KEY) === "true";
   });
+  const [showDiagnostics, setShowDiagnostics] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(LS_SHOW_DIAGNOSTICS_KEY) === "true";
+  });
   const [lidarColorField, setLidarColorField] = useState<"range" | "intensity">(() => {
     if (typeof window === "undefined") return "range";
     const stored = window.localStorage.getItem(LS_LIDAR_COLOR_FIELD_KEY);
@@ -360,8 +462,14 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
 
   // Frames discovered from TF messages
   const framesSetRef = useRef<Set<string>>(new Set());
+  const tfFramesSetRef = useRef<Set<string>>(new Set());
+  const aliasFramesRef = useRef<Map<string, string>>(new Map());
+  const fallbackFramesRef = useRef<Set<string>>(new Set());
   const [frames, setFrames] = useState<string[]>([]);
   const [displayFrame, setDisplayFrame] = useState<string | undefined>(undefined);
+  const topicMessageCountsRef = useRef<Record<string, number>>({});
+  const topicFrameIdsRef = useRef<Map<string, string>>(new Map());
+  const [, setDiagnosticsTick] = useState(0);
 
   // Active ROS topic subscriptions created via ros2Bridge.subscribe
   const liveSubsRef = useRef<Map<string, () => void>>(new Map());
@@ -469,17 +577,20 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       return;
     }
     const set = framesSetRef.current;
+    const tfSet = tfFramesSetRef.current;
     let changed = false;
 
     for (const t of msg.transforms) {
-      const parent = t?.header?.frame_id as string | undefined;
-      const child = t?.child_frame_id as string | undefined;
+      const parent = normalizeFrameIdForMatching(t?.header?.frame_id as string | undefined);
+      const child = normalizeFrameIdForMatching(t?.child_frame_id as string | undefined);
       if (parent && !set.has(parent)) {
         set.add(parent);
+        tfSet.add(parent);
         changed = true;
       }
       if (child && !set.has(child)) {
         set.add(child);
+        tfSet.add(child);
         changed = true;
       }
     }
@@ -491,12 +602,245 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     }
   }, []);
 
+  const updateFramesFromOdometryMessage = useCallback((msg: any) => {
+    if (!msg || typeof msg !== "object") {
+      return;
+    }
+
+    const set = framesSetRef.current;
+    const tfSet = tfFramesSetRef.current;
+    let changed = false;
+
+    const parent = normalizeFrameIdForMatching(msg?.header?.frame_id as string | undefined);
+    const child = normalizeFrameIdForMatching(msg?.child_frame_id as string | undefined);
+
+    for (const frame of [parent, child]) {
+      if (!frame) {
+        continue;
+      }
+      if (!set.has(frame)) {
+        set.add(frame);
+        changed = true;
+      }
+      tfSet.add(frame);
+    }
+
+    if (changed) {
+      const arr = Array.from(set).sort();
+      setFrames(arr);
+      setDisplayFrame((prev) => choosePreferredFrame(arr, prev));
+    }
+  }, []);
+
+  const resolveFrameId = useCallback((frameId: string | undefined): string | undefined => {
+    const normalized = normalizeFrameIdForMatching(frameId);
+    if (!normalized) {
+      return undefined;
+    }
+
+    const tfFrames = Array.from(tfFramesSetRef.current);
+
+    // Always check for shorter suffix matches first. When both short-form
+    // (e.g. "lidar") and long-form (e.g. "simple_bot_include/simple_bot/lidar_link/lidar")
+    // frames exist in the TF tree, preferring the shorter alias ensures the scan's
+    // frame gets connected to the display frame's tree via ensureAliasedFrame.
+    let bestMatch: string | undefined;
+    for (const candidate of tfFrames) {
+      if (normalized.endsWith(`/${candidate}`)) {
+        if (!bestMatch || candidate.length > bestMatch.length) {
+          bestMatch = candidate;
+        }
+      }
+    }
+    if (bestMatch) {
+      return bestMatch;
+    }
+
+    if (tfFrames.includes(normalized)) {
+      return normalized;
+    }
+
+    return normalized;
+  }, []);
+
+  const ensureAliasedFrame = useCallback((frameId: string | undefined): string | undefined => {
+    const normalized = normalizeFrameIdForMatching(frameId);
+    if (!normalized) {
+      return undefined;
+    }
+
+    const canonical = resolveFrameId(normalized);
+    if (!renderer || !canonical || canonical === normalized) {
+      return canonical ?? normalized;
+    }
+
+    const aliases = aliasFramesRef.current;
+    if (aliases.get(normalized) === canonical) {
+      return canonical;
+    }
+
+    renderer.addCoordinateFrame(canonical);
+    renderer.addCoordinateFrame(normalized);
+    renderer.addTransform(
+      canonical,
+      normalized,
+      0n,
+      ZERO_TRANSLATION,
+      IDENTITY_ROTATION,
+      ["transforms", `frame:${normalized}`],
+    );
+    aliases.set(normalized, canonical);
+    return canonical;
+  }, [renderer, resolveFrameId]);
+
+  const ensureSimpleRobotFallbackFrames = useCallback((frameId: string | undefined) => {
+    const prefix = getSimpleRobotFramePrefix(frameId);
+    if (!renderer || !prefix) {
+      return;
+    }
+
+    const fallbackKey = `${prefix}base_link`;
+    if (fallbackFramesRef.current.has(fallbackKey)) {
+      return;
+    }
+
+    const baseFrame = `${prefix}base_link`;
+    const lidarLinkFrame = `${prefix}lidar_link`;
+    const lidarFrame = `${prefix}lidar_link/lidar`;
+    const cameraLinkFrame = `${prefix}camera_link`;
+    const cameraFrame = `${prefix}camera_link/camera`;
+
+    renderer.addCoordinateFrame(baseFrame);
+    renderer.addCoordinateFrame(lidarLinkFrame);
+    renderer.addCoordinateFrame(lidarFrame);
+    renderer.addCoordinateFrame(cameraLinkFrame);
+    renderer.addCoordinateFrame(cameraFrame);
+    renderer.addTransform(baseFrame, lidarLinkFrame, 0n, SIMPLE_ROBOT_LIDAR_TRANSLATION, IDENTITY_ROTATION);
+    renderer.addTransform(lidarLinkFrame, lidarFrame, 0n, ZERO_TRANSLATION, IDENTITY_ROTATION);
+    renderer.addTransform(baseFrame, cameraLinkFrame, 0n, SIMPLE_ROBOT_CAMERA_TRANSLATION, IDENTITY_ROTATION);
+    renderer.addTransform(cameraLinkFrame, cameraFrame, 0n, ZERO_TRANSLATION, IDENTITY_ROTATION);
+
+    const set = framesSetRef.current;
+    for (const synthesizedFrame of [
+      baseFrame,
+      lidarLinkFrame,
+      lidarFrame,
+      cameraLinkFrame,
+      cameraFrame,
+    ]) {
+      set.add(synthesizedFrame);
+    }
+    fallbackFramesRef.current.add(fallbackKey);
+    const arr = Array.from(set).sort();
+    setFrames(arr);
+    setDisplayFrame((prev) => choosePreferredFrame(arr, prev));
+  }, [renderer]);
+
+  const updateFramesFromMessage = useCallback((msg: any) => {
+    if (!msg || typeof msg !== "object") {
+      return;
+    }
+
+    const set = framesSetRef.current;
+    let changed = false;
+
+    const parent = resolveFrameId(msg?.header?.frame_id as string | undefined);
+    const child = resolveFrameId(msg?.child_frame_id as string | undefined);
+
+    if (parent && !set.has(parent)) {
+      set.add(parent);
+      changed = true;
+    }
+    if (child && !set.has(child)) {
+      set.add(child);
+      changed = true;
+    }
+
+    if (changed) {
+      const arr = Array.from(set).sort();
+      setFrames(arr);
+      setDisplayFrame((prev) => choosePreferredFrame(arr, prev));
+    }
+  }, [resolveFrameId]);
+
+  const normalizeMessageFrameIds = useCallback((msg: any): any => {
+    if (!msg || typeof msg !== "object") {
+      return msg;
+    }
+
+    let nextMsg = msg;
+
+    const normalizedHeaderFrame =
+      ensureAliasedFrame(msg?.header?.frame_id as string | undefined) ??
+      resolveFrameId(msg?.header?.frame_id as string | undefined);
+    if (normalizedHeaderFrame && normalizedHeaderFrame !== msg?.header?.frame_id) {
+      nextMsg = {
+        ...nextMsg,
+        header: {
+          ...(nextMsg.header ?? {}),
+          frame_id: normalizedHeaderFrame,
+        },
+      };
+    }
+
+    const normalizedChildFrame =
+      ensureAliasedFrame(msg?.child_frame_id as string | undefined) ??
+      resolveFrameId(msg?.child_frame_id as string | undefined);
+    if (normalizedChildFrame && normalizedChildFrame !== nextMsg?.child_frame_id) {
+      nextMsg = {
+        ...nextMsg,
+        child_frame_id: normalizedChildFrame,
+      };
+    }
+
+    return nextMsg;
+  }, [ensureAliasedFrame, resolveFrameId]);
+
+  const applyOdometryTransform = useCallback((msg: any, receiveNs: bigint) => {
+    if (!renderer || !msg || typeof msg !== "object") {
+      return;
+    }
+
+    const parentFrame = normalizeFrameIdForMatching(msg?.header?.frame_id as string | undefined);
+    const childFrame = normalizeFrameIdForMatching(msg?.child_frame_id as string | undefined);
+    const position = msg?.pose?.pose?.position;
+    const orientation = msg?.pose?.pose?.orientation;
+
+    if (!parentFrame || !childFrame || !position || !orientation) {
+      return;
+    }
+
+    renderer.addCoordinateFrame(parentFrame);
+    renderer.addCoordinateFrame(childFrame);
+    renderer.addTransform(
+      parentFrame,
+      childFrame,
+      getHeaderStampNs(msg) ?? receiveNs,
+      {
+        x: typeof position.x === "number" ? position.x : 0,
+        y: typeof position.y === "number" ? position.y : 0,
+        z: typeof position.z === "number" ? position.z : 0,
+      },
+      {
+        x: typeof orientation.x === "number" ? orientation.x : 0,
+        y: typeof orientation.y === "number" ? orientation.y : 0,
+        z: typeof orientation.z === "number" ? orientation.z : 0,
+        w: typeof orientation.w === "number" ? orientation.w : 1,
+      },
+      ["transforms", `frame:${childFrame}`],
+    );
+  }, [renderer]);
+
   // ---- ROS2Bridge wiring: available topics + live messages -----------------------
 
   useEffect(() => {
     if (!renderer) return;
 
     const liveSubs = liveSubsRef.current;
+    const tfSubscriptions: Ros2BridgeSubscription[] = [
+      { topic: "/tf", type: "tf2_msgs/msg/TFMessage" },
+      { topic: "/tf_static", type: "tf2_msgs/msg/TFMessage" },
+    ];
 
     const computeDesiredSubscriptions = (
       topicsList: Ros2BridgeSubscription[],
@@ -549,8 +893,11 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       r: Renderer,
     ) => {
       const current = liveSubs;
-
-      const desiredTopics = new Set(desired.map((d) => d.topic));
+      const requiredSubscriptions = new Map<string, Ros2BridgeSubscription>();
+      for (const sub of [...tfSubscriptions, ...desired]) {
+        requiredSubscriptions.set(sub.topic, sub);
+      }
+      const desiredTopics = new Set(requiredSubscriptions.keys());
 
       // Unsubscribe from topics no longer needed
       for (const [topic, unsubscribe] of current.entries()) {
@@ -561,7 +908,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       }
 
       // Subscribe to new topics
-      for (const d of desired) {
+      for (const d of requiredSubscriptions.values()) {
         if (current.has(d.topic)) {
           continue;
         }
@@ -584,6 +931,24 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
               msg = (raw as { msg: any }).msg;
             }
 
+            const isOdometryMessage =
+              d.topic === "/odom" || (typeof d.type === "string" && ODOMETRY_SCHEMA_NAMES.has(d.type));
+
+            if (isOdometryMessage) {
+              updateFramesFromOdometryMessage(msg);
+            }
+
+            msg = normalizeMessageFrameIds(msg);
+            ensureSimpleRobotFallbackFrames(msg?.header?.frame_id as string | undefined);
+            updateFramesFromMessage(msg);
+            const topicFrameId = normalizeFrameIdForMatching(
+              msg?.header?.frame_id as string | undefined,
+            );
+            if (topicFrameId) {
+              topicFrameIdsRef.current.set(d.topic, topicFrameId);
+            }
+            topicMessageCountsRef.current[d.topic] = (topicMessageCountsRef.current[d.topic] ?? 0) + 1;
+
             // If this is a TF message, harvest frames
             if (
               d.topic === "/tf" ||
@@ -592,33 +957,10 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
             ) {
               updateFramesFromTfMessage(msg);
             }
-
-            const header = msg?.header as
-              | { stamp?: { sec?: number; nanosec?: number; nsec?: number } }
-              | undefined;
-
-            let publishNs: bigint | undefined;
-            if (header?.stamp) {
-              const sec = header.stamp.sec ?? 0;
-              const nanosec =
-                header.stamp.nanosec ??
-                (header.stamp as any).nsec ??
-                0;
-              publishNs =
-                BigInt(sec) * 1_000_000_000n + BigInt(nanosec);
+            const { event, receiveNs } = toRendererMessageEvent(d.topic, d.type, msg);
+            if (isOdometryMessage) {
+              applyOdometryTransform(msg, receiveNs);
             }
-
-            const nowNs = BigInt(Date.now()) * 1_000_000n;
-            const receiveNs = publishNs ?? nowNs;
-
-            const event: MessageEvent<any> = {
-              topic: d.topic,
-              schemaName: d.type,
-              receiveTime: fromNanoSec(receiveNs),
-              publishTime: publishNs ? fromNanoSec(publishNs) : undefined,
-              message: msg,
-              sizeInBytes: estimateSizeInBytes(msg),
-            };
 
             // Drive renderer time forward and feed the message
             r.setCurrentTime(receiveNs);
@@ -668,6 +1010,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
 
       renderer.setTopics(topicObjects);
       const desired = computeDesiredSubscriptions(topicsList, renderer);
+      const odometrySubscriptions = topicsList.filter(isOdometryTopic);
       const visibleTopics = topicObjects
         .filter(
           (topic) =>
@@ -677,7 +1020,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
         )
         .sort(sortTopicsForPanel);
       setTopics(visibleTopics);
-      reconcileSubscriptions(desired, renderer);
+      reconcileSubscriptions(desired.concat(odometrySubscriptions), renderer);
       if (topicsNeedingDefaults.length > 0) {
         renderer.queueAnimationFrame();
       }
@@ -696,7 +1039,29 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       }
       liveSubs.clear();
     };
-  }, [renderer, updateFramesFromTfMessage, pointSize, decayTime]);
+  }, [renderer, updateFramesFromTfMessage, updateFramesFromOdometryMessage, updateFramesFromMessage, normalizeMessageFrameIds, ensureSimpleRobotFallbackFrames, applyOdometryTransform, pointSize, decayTime]);
+
+  useEffect(() => {
+    aliasFramesRef.current.clear();
+    fallbackFramesRef.current.clear();
+    topicFrameIdsRef.current.clear();
+    topicMessageCountsRef.current = {};
+    setDiagnosticsTick((prev) => prev + 1);
+  }, [renderer]);
+
+  useEffect(() => {
+    if (!renderer || !showDiagnostics || typeof window === "undefined") {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setDiagnosticsTick((prev) => prev + 1);
+    }, 500);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [renderer, showDiagnostics]);
 
   // ---- Global point size & decay: persist + push into renderer config -----------
 
@@ -777,10 +1142,9 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       }
     }
     if (!renderer) return;
-    renderer.config = {
-      ...renderer.config,
-      followMode: followFrame ? "follow-position" : "follow-none",
-    };
+    renderer.updateConfig((draft) => {
+      draft.followMode = followFrame ? "follow-position" : "follow-none";
+    });
     renderer.queueAnimationFrame();
   }, [renderer, followFrame]);
 
@@ -793,6 +1157,16 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       }
     }
   }, [panelCollapsed]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(LS_SHOW_DIAGNOSTICS_KEY, String(showDiagnostics));
+      } catch {
+        // ignore
+      }
+    }
+  }, [showDiagnostics]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -828,13 +1202,24 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
   // ---- Apply selected display frame into renderer config ------------------------
 
   useEffect(() => {
-    if (!renderer || !displayFrame) return;
-    renderer.config = {
-      ...renderer.config,
-      followTf: displayFrame,
-    };
+    if (!renderer) return;
+    if (!displayFrame) {
+      renderer.updateConfig((draft) => {
+        draft.followTf = undefined;
+      });
+      renderer.setFollowFrameId(undefined);
+      renderer.queueAnimationFrame();
+      return;
+    }
+
+    ensureAliasedFrame(displayFrame);
+    renderer.addCoordinateFrame(displayFrame);
+    renderer.updateConfig((draft) => {
+      draft.followTf = displayFrame;
+    });
+    renderer.setFollowFrameId(displayFrame);
     renderer.queueAnimationFrame();
-  }, [renderer, displayFrame]);
+  }, [renderer, displayFrame, ensureAliasedFrame]);
 
   // ---- Topic visibility helpers ---------------------------------------------------
 
@@ -848,6 +1233,37 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     },
     [renderer, topics],
   );
+
+  useEffect(() => {
+    const visibleLaserTopic = topics.find(
+      (topic) => isTopicVisible(topic.name) && isLaserScanTopic(topic),
+    );
+    if (!visibleLaserTopic) {
+      return;
+    }
+
+    const laserFrame = topicFrameIdsRef.current.get(visibleLaserTopic.name);
+    if (!laserFrame) {
+      return;
+    }
+
+    const simpleRobotPrefix = getSimpleRobotFramePrefix(laserFrame);
+    const preferredLaserRenderFrame =
+      simpleRobotPrefix != undefined ? `${simpleRobotPrefix}base_link` : laserFrame;
+
+    const currentFrame = normalizeFrameIdForMatching(displayFrame);
+    const currentIsCamera =
+      currentFrame != undefined &&
+      currentFrame.toLowerCase().includes("camera") &&
+      !currentFrame.toLowerCase().includes("lidar") &&
+      !currentFrame.toLowerCase().includes("laser");
+
+    if (!displayFrame || currentIsCamera) {
+      setDisplayFrame((prev) =>
+        prev === preferredLaserRenderFrame ? prev : preferredLaserRenderFrame,
+      );
+    }
+  }, [topics, displayFrame, isTopicVisible]);
 
   const toggleTopicVisibility = useCallback(
     (topicName: string) => {
@@ -873,6 +1289,56 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
 
   const { className, style } = props;
   const poseFrames = choosePoseFrames(frames, displayFrame);
+  const currentFollowFrameId = renderer?.followFrameId;
+  const visibleTopicCount = topics.filter((topic) => isTopicVisible(topic.name)).length;
+  const rendererDiagnostics = showDiagnostics && renderer
+    ? {
+        followFrameId: currentFollowFrameId,
+        fixedFrameId: renderer.fixedFrameId,
+        hasDisplayFrame: displayFrame ? renderer.transformTree.hasFrame(displayFrame) : false,
+        followError: renderer.settings.errors.errors.errorAtPath(["general", "followTf"]),
+        displayFrameError: displayFrame
+          ? renderer.settings.errors.errors.errorAtPath(["transforms", `frame:${displayFrame}`])
+          : undefined,
+      }
+    : undefined;
+  const scanRenderableDiagnostics = (() => {
+    if (!showDiagnostics || !renderer) {
+      return undefined;
+    }
+    const extension = renderer.sceneExtensions.get("foxglove.LaserScans") as
+      | { renderables?: Map<string, any> }
+      | undefined;
+    const renderable = extension?.renderables?.get("/scan");
+    if (!renderable) {
+      return undefined;
+    }
+
+    const child = Array.isArray(renderable.children) ? renderable.children[0] : undefined;
+    const positionAttr = child?.geometry?.attributes?.position;
+
+    return {
+      frameId: renderable.userData?.frameId as string | undefined,
+      visible: Boolean(renderable.visible),
+      childVisible: child ? Boolean(child.visible) : undefined,
+      pointCount:
+        typeof positionAttr?.count === "number"
+          ? positionAttr.count
+          : Array.isArray(positionAttr?.array)
+            ? positionAttr.array.length
+            : undefined,
+      childCount: Array.isArray(renderable.children) ? renderable.children.length : undefined,
+    };
+  })();
+  const topicDiagnostics = showDiagnostics
+    ? topics.map((topic) => ({
+        name: topic.name,
+        visible: isTopicVisible(topic.name),
+        kind: getTopicKindLabel(topic),
+        messageCount: topicMessageCountsRef.current[topic.name] ?? 0,
+        error: renderer?.settings.errors.errors.errorAtPath(["topics", topic.name]),
+      }))
+    : [];
 
   return (
     <ConnectionSettingsProvider onSettingsChange={(settings) => {
@@ -946,7 +1412,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
                   Sensor View
                 </div>
                 <div style={{ marginTop: 3, color: PANEL_COLORS.textSecondary }}>
-                  Clean 3D scan view with world-frame controls
+                  Live lidar, depth, and point-cloud view
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -975,8 +1441,42 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
             {panelCollapsed && (
               <div style={{ marginTop: 10, color: PANEL_COLORS.textSecondary }}>
                 <div>Frame: {displayFrame ?? "none"}</div>
-                <div>Topics: {topics.length}</div>
+                <div>Visible topics: {visibleTopicCount}/{topics.length}</div>
+                <div>Follow: {currentFollowFrameId ?? "none"}</div>
               </div>
+            )}
+
+            {!panelCollapsed && (
+            <div
+              style={{
+                marginBottom: 14,
+                padding: 12,
+                borderRadius: 12,
+                background: "linear-gradient(180deg, rgba(105, 183, 255, 0.16) 0%, rgba(255,255,255,0.04) 100%)",
+                border: `1px solid ${PANEL_COLORS.cardBorder}`,
+              }}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                  gap: 10,
+                }}
+              >
+                <div>
+                  <div style={{ color: PANEL_COLORS.textSecondary, marginBottom: 3 }}>Frame</div>
+                  <div style={{ fontWeight: 600, wordBreak: "break-word" }}>{displayFrame ?? "auto"}</div>
+                </div>
+                <div>
+                  <div style={{ color: PANEL_COLORS.textSecondary, marginBottom: 3 }}>Sources</div>
+                  <div style={{ fontWeight: 600 }}>{visibleTopicCount}/{topics.length} visible</div>
+                </div>
+                <div>
+                  <div style={{ color: PANEL_COLORS.textSecondary, marginBottom: 3 }}>TF</div>
+                  <div style={{ fontWeight: 600 }}>{showTf ? "Full tree" : "Pose only"}</div>
+                </div>
+              </div>
+            </div>
             )}
 
             {!panelCollapsed && poseFrames.length > 0 && (
@@ -1132,6 +1632,98 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
                 onChange={(e) => setPointSize(Number(e.target.value))}
                 style={{ width: "100%", accentColor: PANEL_COLORS.accent }}
               />
+            </div>
+            )}
+
+            {!panelCollapsed && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+                marginBottom: 14,
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600 }}>Diagnostics</div>
+                <div style={{ color: PANEL_COLORS.textSecondary }}>
+                  Keep renderer internals out of the main control flow until you need them.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDiagnostics((prev) => !prev)}
+                style={{
+                  border: `1px solid ${PANEL_COLORS.cardBorder}`,
+                  background: showDiagnostics ? "rgba(105, 183, 255, 0.18)" : "rgba(255,255,255,0.06)",
+                  color: PANEL_COLORS.textPrimary,
+                  borderRadius: 8,
+                  padding: "7px 11px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {showDiagnostics ? "Hide" : "Show"}
+              </button>
+            </div>
+            )}
+
+            {!panelCollapsed && showDiagnostics && (
+            <div
+              style={{
+                marginBottom: 14,
+                padding: 10,
+                borderRadius: 10,
+                background: "rgba(255,255,255,0.04)",
+                border: `1px solid ${PANEL_COLORS.cardBorder}`,
+              }}
+            >
+              <div style={{ marginBottom: 8, fontWeight: 600 }}>Renderer Status</div>
+              <div style={{ color: PANEL_COLORS.textSecondary, lineHeight: 1.45 }}>
+                <div>Selected frame: {displayFrame ?? "none"}</div>
+                <div>Renderer follow frame: {rendererDiagnostics?.followFrameId ?? "none"}</div>
+                <div>Fixed frame: {rendererDiagnostics?.fixedFrameId ?? "none"}</div>
+                <div>Display frame exists: {rendererDiagnostics?.hasDisplayFrame ? "yes" : "no"}</div>
+                <div>Scan renderable: {scanRenderableDiagnostics ? "present" : "missing"}</div>
+                {scanRenderableDiagnostics && (
+                  <>
+                    <div>Scan frame: {scanRenderableDiagnostics.frameId ?? "none"}</div>
+                    <div>Scan visible: {scanRenderableDiagnostics.visible ? "yes" : "no"}</div>
+                    <div>Scan child visible: {scanRenderableDiagnostics.childVisible ? "yes" : "no"}</div>
+                    <div>Scan points: {scanRenderableDiagnostics.pointCount ?? 0}</div>
+                    <div>Scan children: {scanRenderableDiagnostics.childCount ?? 0}</div>
+                  </>
+                )}
+                {rendererDiagnostics?.followError && <div>Follow error: {rendererDiagnostics.followError}</div>}
+                {rendererDiagnostics?.displayFrameError && (
+                  <div>Frame error: {rendererDiagnostics.displayFrameError}</div>
+                )}
+              </div>
+            </div>
+            )}
+
+            {!panelCollapsed && showDiagnostics && topicDiagnostics.length > 0 && (
+            <div
+              style={{
+                marginBottom: 14,
+                padding: 10,
+                borderRadius: 10,
+                background: "rgba(255,255,255,0.04)",
+                border: `1px solid ${PANEL_COLORS.cardBorder}`,
+              }}
+            >
+              <div style={{ marginBottom: 8, fontWeight: 600 }}>Topic Diagnostics</div>
+              <div style={{ display: "grid", gap: 6, color: PANEL_COLORS.textSecondary }}>
+                {topicDiagnostics
+                  .filter((topic) => topic.visible || topic.messageCount > 0 || topic.error)
+                  .map((topic) => (
+                    <div key={topic.name}>
+                      {topic.name} | {topic.kind} | msgs: {topic.messageCount}
+                      {topic.error ? ` | ${topic.error}` : ""}
+                    </div>
+                  ))}
+              </div>
             </div>
             )}
 
@@ -1312,18 +1904,29 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
                       checked={isTopicVisible(t.name)}
                       onChange={() => toggleTopicVisibility(t.name)}
                     />
-                    <span
-                      style={{
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        fontFamily:
-                          'ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace',
-                        fontSize: 11.5,
-                      }}
-                    >
-                      {t.name}
-                    </span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          fontFamily:
+                            'ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace',
+                          fontSize: 11.5,
+                        }}
+                      >
+                        {t.name}
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 2,
+                          color: PANEL_COLORS.textSecondary,
+                          fontSize: 10.5,
+                        }}
+                      >
+                        {getTopicKindLabel(t)}
+                      </div>
+                    </div>
                   </label>
                 ))}
               </div>
@@ -1367,10 +1970,32 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
 // -----------------------------------------------------------------------------
 
 function estimateSizeInBytes(obj: any): number {
-  try {
-    const json = JSON.stringify(obj);
-    return typeof json === "string" ? json.length : 0;
-  } catch {
+  if (!obj || typeof obj !== "object") {
     return 0;
   }
+
+  const data = obj.data;
+  if (typeof obj.point_step === "number" && typeof obj.width === "number") {
+    return obj.point_step * obj.width * (typeof obj.height === "number" ? obj.height : 1);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return data.byteLength;
+  }
+  if (data instanceof ArrayBuffer) {
+    return data.byteLength;
+  }
+
+  const rangesLength =
+    ArrayBuffer.isView(obj.ranges) ? obj.ranges.byteLength : Array.isArray(obj.ranges) ? obj.ranges.length * 4 : 0;
+  const intensitiesLength =
+    ArrayBuffer.isView(obj.intensities)
+      ? obj.intensities.byteLength
+      : Array.isArray(obj.intensities)
+        ? obj.intensities.length * 4
+        : 0;
+  if (rangesLength || intensitiesLength) {
+    return rangesLength + intensitiesLength;
+  }
+
+  return 0;
 }
