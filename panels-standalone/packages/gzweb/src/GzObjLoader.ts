@@ -18,6 +18,24 @@ export class GzObjLoader {
   private mtlLoader: MTLLoader = new MTLLoader();
   private container: Group;
 
+  private decodeText(data: any): string {
+    if (typeof data === "string") {
+      return data;
+    }
+    if (data instanceof Uint8Array) {
+      return new TextDecoder().decode(data);
+    }
+    if (data instanceof ArrayBuffer) {
+      return new TextDecoder().decode(new Uint8Array(data));
+    }
+    if (ArrayBuffer.isView(data)) {
+      return new TextDecoder().decode(
+        new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+      );
+    }
+    return String(data ?? "");
+  }
+
   /**
    * Load OBJ meshes
    *
@@ -98,7 +116,7 @@ export class GzObjLoader {
         function (_error: any) {
           // Use the find resource callback to get the mesh
           that.findResourceCb(that.uri, function (mesh: any) {
-            that.onObjLoaded(that.objLoader.parse(mesh));
+            that.onObjLoaded(that.objLoader.parse(that.decodeText(mesh)));
           });
         },
       );
@@ -246,7 +264,22 @@ export class GzObjLoader {
       newText += line += "\n";
     }
 
-    this.applyMaterial(this.mtlLoader.parse(newText, null));
+    const materialCreator = this.mtlLoader.parse(newText, null);
+    const scene = this.scene;
+    materialCreator.loadTexture = function (
+      url: string,
+      mapping?: any,
+      onLoad?: any,
+      onProgress?: any,
+    ) {
+      const texture = scene.loadTexture(url, onLoad, onProgress);
+      if (mapping !== undefined) {
+        texture.mapping = mapping;
+      }
+      return texture;
+    };
+
+    this.applyMaterial(materialCreator);
   }
 
   /**
@@ -286,8 +319,19 @@ export class GzObjLoader {
             if (typeof _text === "string") {
               that.loadMTL(_text as string);
             } else {
-              console.error("Unable to load file", mtlPath);
+              that.loadMTL(that.decodeText(_text));
             }
+          },
+          undefined,
+          function (_error: any) {
+            const mtlUri = `${that.mtlLoader.path || ""}${mtlPath}`;
+            that.findResourceCb(mtlUri, function (mtl: any, error?: string) {
+              if (error !== undefined) {
+                console.error("Unable to load file", mtlUri);
+                return;
+              }
+              that.loadMTL(that.decodeText(mtl));
+            });
           },
         );
       }

@@ -25,7 +25,6 @@ interface VmStatusResponse {
   vm_id?: string;
   ip_address?: string;
   updated_at?: string;
-  vm_id?: string;
   vmId?: string;
 }
 
@@ -80,6 +79,20 @@ export interface VMConfigOption extends vscode.QuickPickItem {
   config: VMConfig;
 }
 
+export interface GazeboPreset {
+  name: string;
+  description?: string;
+  base_world: string;
+  world_components: string[];
+  model_components: string[];
+}
+
+export interface GazeboSelection {
+  mode: 'default' | 'world' | 'preset';
+  world?: string;
+  preset?: string;
+}
+
 export class VMManagerIntegration implements vscode.Disposable {
   private readonly context: vscode.ExtensionContext;
   private readonly statusBarItem: vscode.StatusBarItem;
@@ -106,7 +119,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       description: 'PX4 flight stack with Gazebo simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "static_bodies_01",
+        world_components: "static_obstacles_01;static_ground",
         gazebo_px4_enabled: "true"
       }
     },
@@ -116,7 +129,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       description: 'ArduPilot flight stack with Gazebo simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "static_bodies_01",
+        world_components: "static_obstacles_01;static_ground",
         gazebo_ardupilot_enabled: "true"
       }
     },
@@ -126,7 +139,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       description: 'Basic ground robot with Gazebo simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "static_bodies_01;simple_bot_include",
+        world_components: "static_obstacles_01;static_ground",
         simple_robot_enabled: "true"
       }
     },
@@ -146,7 +159,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       description: 'Basic robotics arm simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "lerobot/lerobot_world_01",
+        world_components: "lerobot/lerobot_world_01;static_ground",
         gazebo_lerobot_enabled: "true"
       }
     },
@@ -695,6 +708,42 @@ export class VMManagerIntegration implements vscode.Disposable {
       this.trackVmEvent('vm.stop', { phase: 'error' });
       this.handleCommandError('stop', error);
     }
+  }
+
+  async listGazeboPresets(): Promise<GazeboPreset[]> {
+    const response = await this.apiRequest<{ presets?: GazeboPreset[] }>(
+      'GET',
+      '/vms/self/tensorfleet/api/v1/presets'
+    );
+    return response.presets ?? [];
+  }
+
+  async getGazeboSelection(): Promise<GazeboSelection> {
+    return this.apiRequest<GazeboSelection>(
+      'GET',
+      '/vms/self/tensorfleet/api/v1/gazebo/world'
+    );
+  }
+
+  async setGazeboPreset(preset: string): Promise<string> {
+    const trimmedPreset = preset.trim();
+    const response = await this.apiRequest<{ message?: string }>(
+      'POST',
+      '/vms/self/tensorfleet/api/v1/gazebo/world',
+      { preset: trimmedPreset }
+    );
+    this.outputChannel.appendLine(`[VM Manager] Gazebo preset switch requested: ${trimmedPreset}`);
+    return response.message ?? `Gazebo preset '${trimmedPreset}' switch requested`;
+  }
+
+  async resetGazeboSelection(): Promise<string> {
+    const response = await this.apiRequest<{ message?: string }>(
+      'POST',
+      '/vms/self/tensorfleet/api/v1/gazebo/world',
+      { reset: true }
+    );
+    this.outputChannel.appendLine('[VM Manager] Gazebo selection reset requested');
+    return response.message ?? 'Gazebo selection reset requested';
   }
 
   private async restartVm() {

@@ -4,6 +4,9 @@
 
 The TensorFleet drone simulation runs on PX4 and provides a virtual environment for testing drone scripts and tutorials. Consistent simulation state is crucial for reliable testing, so restarting the simulation between runs ensures predictable behavior.
 
+For the current vision demos, use the drone VM with the x500 front/down cameras
+and the colored landing pad added to the existing `e2e_test_world.sdf`.
+
 ## Methods to Restart Simulation
 
 ### Method 1: Manual Restart via Map Panel (Recommended for Beginners)
@@ -47,6 +50,23 @@ For automated workflows or advanced users, you can restart the simulation progra
 ```bash
 bun run src/restart_sim.js
 ```
+
+#### Vision demo setup
+
+For `vision:yolo`, verify the front camera topic is available after restart.
+
+For `vision:landing`, make sure the VM world includes the colored landing pad in:
+
+```text
+~/firecracker-vm/assets/opt/gazebo/worlds/e2e_test_world.sdf
+```
+
+The expected image topics in that world are:
+
+- `/drone_camera/image_raw`
+- `/drone_camera/down/image_raw`
+- `/drone_camera/image_raw/compressed`
+- `/drone_camera/down/image_raw/compressed`
 
 #### What it does
 - Initializes ROS bridge connection using ROSLibBridgeWrapper
@@ -112,6 +132,7 @@ This test confirms that the restart process properly resets the drone's flight s
 ### Inconsistent State
 - Always restart simulation between test runs
 - Ensure no other processes are interfering with the simulation
+- If image topics are missing, verify the VM bridge config and the x500 camera model were updated together
 
 ## Best Practices
 
