@@ -98,6 +98,9 @@ const ALL_POINTCLOUD_DATATYPES = new Set<string>([
 const INVALID_POINTCLOUD = "INVALID_POINTCLOUD";
 
 const tempColor = { r: 0, g: 0, b: 0, a: 0 };
+function toColorByte(value: number): number {
+  return Math.round(Math.min(Math.max(value, 0), 1) * 255);
+}
 const tempMinMaxColor: THREE.Vector2Tuple = [0, 0];
 const tempFieldReaders: PointCloudFieldReaders = {
   xReader: zeroReader,
@@ -698,15 +701,27 @@ export class PointCloudHistoryRenderable extends Renderable<PointCloudHistoryUse
         const pointOffset = i * pointStep;
         const colorValue = packedColorReader(view, pointOffset);
         colorConverter(tempColor, colorValue);
-        colorAttribute.setXYZW(i, tempColor.r, tempColor.g, tempColor.b, tempColor.a);
+        colorAttribute.setXYZW(
+          i,
+          toColorByte(tempColor.r),
+          toColorByte(tempColor.g),
+          toColorByte(tempColor.b),
+          toColorByte(tempColor.a),
+        );
         if (settings.stixelsEnabled) {
-          stixelColorAttribute.setXYZW(i * 2, tempColor.r, tempColor.g, tempColor.b, tempColor.a);
+          stixelColorAttribute.setXYZW(
+            i * 2,
+            toColorByte(tempColor.r),
+            toColorByte(tempColor.g),
+            toColorByte(tempColor.b),
+            toColorByte(tempColor.a),
+          );
           stixelColorAttribute.setXYZW(
             i * 2 + 1,
-            tempColor.r,
-            tempColor.g,
-            tempColor.b,
-            tempColor.a,
+            toColorByte(tempColor.r),
+            toColorByte(tempColor.g),
+            toColorByte(tempColor.b),
+            toColorByte(tempColor.a),
           );
         }
       }
