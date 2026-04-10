@@ -71,6 +71,10 @@ const TOPICS_BY_VM_CONFIG: Record<string, Subscription[]> = {
     { topic: "/so_arm101/side_camera/image_raw", type: "sensor_msgs/msg/Image" },
     { topic: "/so_arm101/wrist_camera/image_raw", type: "sensor_msgs/msg/Image" },
   ],
+  turtlebot4: [
+    { topic: "/turtlebot4/oakd/rgb/preview/image_raw", type: "sensor_msgs/msg/Image" },
+    { topic: "/turtlebot4/oakd/rgb/preview/depth", type: "sensor_msgs/msg/Image" },
+  ],
 };
 
 // Minimal fallback when no VM config is known.
