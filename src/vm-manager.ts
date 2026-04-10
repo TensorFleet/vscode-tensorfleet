@@ -149,7 +149,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       description: 'TurtleBot4 mobile robot with Gazebo simulation',
       sim_config: {
         config_version: "0.0.1",
-        world_components: "static_bodies_01;turtlebot4_include",
+        world_components: "static_bodies_01;static_ground",
         gazebo_turtlebot4_enabled: "true"
       }
     },
