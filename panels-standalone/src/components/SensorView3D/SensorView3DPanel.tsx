@@ -28,7 +28,10 @@ import type {
 } from "@lichtblick/suite-base/panels/ThreeDeeRender/IRenderer";
 import { DEFAULT_CAMERA_STATE } from "@lichtblick/suite-base/panels/ThreeDeeRender/camera";
 import { DEFAULT_PUBLISH_SETTINGS } from "@lichtblick/suite-base/panels/ThreeDeeRender/renderables/PublishSettings";
-import { DEFAULT_SCENE_EXTENSION_CONFIG } from "@lichtblick/suite-base/panels/ThreeDeeRender/SceneExtensionConfig";
+import {
+  DEFAULT_SCENE_EXTENSION_CONFIG,
+  type SceneExtensionConfig,
+} from "@lichtblick/suite-base/panels/ThreeDeeRender/SceneExtensionConfig";
 import type { InterfaceMode } from "@lichtblick/suite-base/panels/ThreeDeeRender/types";
 import type { Asset } from "@lichtblick/suite-base/components/PanelExtensionAdapter";
 
@@ -58,9 +61,44 @@ const AUTO_VISIBLE_SCHEMA_NAMES = new Set([
   "sensor_msgs/PointCloud2",
   "sensor_msgs/msg/PointCloud2",
   "foxglove.PointCloud",
+  "nav_msgs/OccupancyGrid",
+  "nav_msgs/msg/OccupancyGrid",
+  "ros.nav_msgs.OccupancyGrid",
 ]);
-const TF_SCHEMA_NAMES = new Set(["tf2_msgs/TFMessage", "tf2_msgs/msg/TFMessage"]);
-const ODOMETRY_SCHEMA_NAMES = new Set(["nav_msgs/Odometry", "nav_msgs/msg/Odometry"]);
+const TF_SCHEMA_NAMES = new Set([
+  "tf2_msgs/TFMessage",
+  "tf2_msgs/msg/TFMessage",
+  "ros.tf2_msgs.TFMessage",
+]);
+const ODOMETRY_SCHEMA_NAMES = new Set([
+  "nav_msgs/Odometry",
+  "nav_msgs/msg/Odometry",
+  "ros.nav_msgs.Odometry",
+]);
+const OCCUPANCY_GRID_SCHEMA_NAMES = new Set([
+  "nav_msgs/OccupancyGrid",
+  "nav_msgs/msg/OccupancyGrid",
+  "ros.nav_msgs.OccupancyGrid",
+]);
+const TURTLEBOT4_AUTO_VISIBLE_TOPIC_NAMES = new Set([
+  "/turtlebot4/scan",
+  "/turtlebot4/map",
+  "/turtlebot4/local_costmap/costmap",
+  "/turtlebot4/global_costmap/costmap",
+]);
+const STANDALONE_3D_HIDDEN_BY_DEFAULT_TOPIC_NAMES = new Set([
+  "/turtlebot4/oakd/rgb/preview/depth/points",
+]);
+const TURTLEBOT4_SENSOR_TOPIC_DEFAULTS: Ros2BridgeSubscription[] = [
+  { topic: "/turtlebot4/scan", type: "sensor_msgs/msg/LaserScan" },
+  { topic: "/turtlebot4/odom", type: "nav_msgs/msg/Odometry" },
+  { topic: "/turtlebot4/tf", type: "tf2_msgs/msg/TFMessage" },
+  { topic: "/turtlebot4/tf_static", type: "tf2_msgs/msg/TFMessage" },
+  { topic: "/turtlebot4/oakd/rgb/preview/depth/points", type: "sensor_msgs/msg/PointCloud2" },
+  { topic: "/turtlebot4/map", type: "nav_msgs/msg/OccupancyGrid" },
+  { topic: "/turtlebot4/local_costmap/costmap", type: "nav_msgs/msg/OccupancyGrid" },
+  { topic: "/turtlebot4/global_costmap/costmap", type: "nav_msgs/msg/OccupancyGrid" },
+];
 const PANEL_LIST_SCHEMA_HINTS = [
   "LaserScan",
   "PointCloud",
@@ -89,31 +127,101 @@ const ZERO_TRANSLATION = { x: 0, y: 0, z: 0 };
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
 const SIMPLE_ROBOT_CAMERA_TRANSLATION = { x: 0.25, y: 0, z: 0.15 };
 const SIMPLE_ROBOT_LIDAR_TRANSLATION = { x: 0, y: 0, z: 0.3 };
+const STANDALONE_3D_SCENE_EXTENSION_CONFIG: SceneExtensionConfig = {
+  ...DEFAULT_SCENE_EXTENSION_CONFIG,
+  extensionsById: Object.fromEntries(
+    Object.entries(DEFAULT_SCENE_EXTENSION_CONFIG.extensionsById).filter(
+      ([extensionId]) => extensionId !== "foxglove.Images",
+    ),
+  ),
+};
 
-function shouldAutoShowTopic(topic: Pick<Topic, "name" | "schemaName">): boolean {
-  if (AUTO_VISIBLE_SCHEMA_NAMES.has(topic.schemaName)) {
+function getActiveVmConfigId(): string {
+  return (typeof window !== "undefined" ? (window as any).TENSORFLEET_VM_CONFIG_ID : "") ?? "";
+}
+
+function mergeTopicDefaults(
+  topicsList: Ros2BridgeSubscription[],
+  defaults: Ros2BridgeSubscription[],
+): Ros2BridgeSubscription[] {
+  const merged = new Map<string, Ros2BridgeSubscription>();
+  for (const sub of defaults) {
+    merged.set(sub.topic, sub);
+  }
+  for (const sub of topicsList) {
+    merged.set(sub.topic, sub);
+  }
+  return Array.from(merged.values());
+}
+
+type TopicLike = Partial<Pick<Topic, "name" | "schemaName">>;
+
+function shouldAutoShowTopic(topic: TopicLike): boolean {
+  const name = topic.name ?? "";
+  const schemaName = topic.schemaName ?? "";
+  if (STANDALONE_3D_HIDDEN_BY_DEFAULT_TOPIC_NAMES.has(name)) {
+    return false;
+  }
+  if (AUTO_VISIBLE_SCHEMA_NAMES.has(schemaName)) {
+    return true;
+  }
+  if (TURTLEBOT4_AUTO_VISIBLE_TOPIC_NAMES.has(name)) {
     return true;
   }
   return (
-    topic.name === "/scan" ||
-    topic.name === "/x500/scan" ||
-    topic.name.endsWith("/points")
+    name === "/scan" ||
+    name === "/x500/scan" ||
+    name.endsWith("/points")
   );
 }
 
-function isLaserScanTopic(topic: Pick<Topic, "name" | "schemaName">): boolean {
+function isLaserScanTopic(topic: TopicLike): boolean {
+  const name = topic.name ?? "";
+  const schemaName = topic.schemaName ?? "";
   return (
-    topic.schemaName.includes("LaserScan") ||
-    topic.name === "/scan" ||
-    topic.name === "/x500/scan"
+    schemaName.includes("LaserScan") ||
+    name === "/scan" ||
+    name === "/turtlebot4/scan" ||
+    name === "/x500/scan"
   );
 }
 
-function shouldListTopicInPanel(topic: Pick<Topic, "name" | "schemaName">): boolean {
+function shouldListTopicInPanel(topic: TopicLike): boolean {
+  const name = topic.name ?? "";
+  const schemaName = topic.schemaName ?? "";
+  if (STANDALONE_3D_HIDDEN_BY_DEFAULT_TOPIC_NAMES.has(name)) {
+    return true;
+  }
   if (shouldAutoShowTopic(topic)) {
     return true;
   }
-  return PANEL_LIST_SCHEMA_HINTS.some((hint) => topic.schemaName.includes(hint));
+  return PANEL_LIST_SCHEMA_HINTS.some((hint) => schemaName.includes(hint));
+}
+
+function shouldSubscribeTopicInStandalone3d(topic: TopicLike): boolean {
+  return shouldListTopicInPanel(topic) || isTfTopic(topic) || isOdometryTopic(topic);
+}
+
+function isTopicVisibleInRenderer(
+  renderer: Renderer | undefined,
+  topic: Pick<Topic, "name" | "schemaName">,
+): boolean {
+  const configuredVisibility = (renderer?.config as any)?.topics?.[topic.name]?.visible;
+  if (configuredVisibility !== undefined) {
+    return Boolean(configuredVisibility);
+  }
+  return shouldAutoShowTopic(topic);
+}
+
+function shouldKeepTopicRegisteredWithRenderer(
+  renderer: Renderer | undefined,
+  topic: Pick<Topic, "name" | "schemaName">,
+): boolean {
+  return (
+    isTfTopic(topic) ||
+    isOdometryTopic(topic) ||
+    isTopicVisibleInRenderer(renderer, topic)
+  );
 }
 
 function choosePreferredFrame(frameNames: string[], current?: string): string | undefined {
@@ -228,16 +336,34 @@ function choosePoseFrames(frameNames: string[], displayFrame?: string): string[]
   return preferred.slice(0, 3);
 }
 
-function isTfTopic(topic: Pick<Topic, "name" | "schemaName">): boolean {
+function isTfTopic(topic: TopicLike): boolean {
+  const name = topic.name ?? "";
+  const schemaName = topic.schemaName ?? "";
   return (
-    topic.name === "/tf" ||
-    topic.name === "/tf_static" ||
-    TF_SCHEMA_NAMES.has(topic.schemaName)
+    name === "/tf" ||
+    name === "/tf_static" ||
+    name.endsWith("/tf") ||
+    name.endsWith("/tf_static") ||
+    TF_SCHEMA_NAMES.has(schemaName)
   );
 }
 
-function isOdometryTopic(topic: Pick<Topic, "name" | "schemaName">): boolean {
-  return topic.name === "/odom" || ODOMETRY_SCHEMA_NAMES.has(topic.schemaName);
+function isOdometryTopic(topic: TopicLike): boolean {
+  const name = topic.name ?? "";
+  const schemaName = topic.schemaName ?? "";
+  return (
+    name === "/odom" ||
+    name.endsWith("/odom") ||
+    ODOMETRY_SCHEMA_NAMES.has(schemaName)
+  );
+}
+
+function isOccupancyGridTopic(topic: TopicLike): boolean {
+  return OCCUPANCY_GRID_SCHEMA_NAMES.has(topic.schemaName ?? "");
+}
+
+function getOccupancyGridColorMode(topicName: string): "map" | "costmap" {
+  return topicName.includes("costmap") ? "costmap" : "map";
 }
 
 function sortTopicsForPanel(a: Topic, b: Topic): number {
@@ -268,6 +394,22 @@ function defaultTopicSettings(
       colorField: "range" as const,
       colorMap: "turbo" as const,
       explicitAlpha: 0.92,
+    };
+  }
+
+  if (isOccupancyGridTopic(topic)) {
+    return {
+      ...base,
+      colorMode: getOccupancyGridColorMode(topic.name),
+      alpha: topic.name.includes("costmap") ? 0.7 : 1,
+    };
+  }
+
+  if (STANDALONE_3D_HIDDEN_BY_DEFAULT_TOPIC_NAMES.has(topic.name)) {
+    return {
+      ...base,
+      visible: false,
+      explicitAlpha: 0.25,
     };
   }
 
@@ -459,6 +601,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
 
   // Available topics (for topic visibility UI)
   const [topics, setTopics] = useState<Topic[]>([]);
+  const [topicVisibilityVersion, setTopicVisibilityVersion] = useState(0);
 
   // Frames discovered from TF messages
   const framesSetRef = useRef<Set<string>>(new Set());
@@ -499,7 +642,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       config: initialConfigRef.current,
       interfaceMode,
       fetchAsset,
-      sceneExtensionConfig: DEFAULT_SCENE_EXTENSION_CONFIG,
+      sceneExtensionConfig: STANDALONE_3D_SCENE_EXTENSION_CONFIG,
       displayTemporaryError: (msg: string) => {
         // Hook into your snackbar/toast here if you want
         // eslint-disable-next-line no-console
@@ -841,6 +984,12 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       { topic: "/tf", type: "tf2_msgs/msg/TFMessage" },
       { topic: "/tf_static", type: "tf2_msgs/msg/TFMessage" },
     ];
+    if (getActiveVmConfigId() === "turtlebot4") {
+      tfSubscriptions.push(
+        { topic: "/turtlebot4/tf", type: "tf2_msgs/msg/TFMessage" },
+        { topic: "/turtlebot4/tf_static", type: "tf2_msgs/msg/TFMessage" },
+      );
+    }
 
     const computeDesiredSubscriptions = (
       topicsList: Ros2BridgeSubscription[],
@@ -854,6 +1003,18 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       for (const t of topicsList) {
         const topicName = t.topic;
         const schemaName = t.type;
+        const topicInfo = { name: topicName, schemaName };
+        if (!shouldSubscribeTopicInStandalone3d(topicInfo)) {
+          continue;
+        }
+
+        if (
+          !isTfTopic(topicInfo) &&
+          !isOdometryTopic(topicInfo) &&
+          !isTopicVisibleInRenderer(r, topicInfo)
+        ) {
+          continue;
+        }
 
         const subsForTopic = topicSubs.get(topicName) ?? [];
         const subsForSchema = schemaSubs.get(schemaName) ?? [];
@@ -931,8 +1092,10 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
               msg = (raw as { msg: any }).msg;
             }
 
-            const isOdometryMessage =
-              d.topic === "/odom" || (typeof d.type === "string" && ODOMETRY_SCHEMA_NAMES.has(d.type));
+            const isOdometryMessage = isOdometryTopic({
+              name: d.topic,
+              schemaName: d.type,
+            });
 
             if (isOdometryMessage) {
               updateFramesFromOdometryMessage(msg);
@@ -950,11 +1113,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
             topicMessageCountsRef.current[d.topic] = (topicMessageCountsRef.current[d.topic] ?? 0) + 1;
 
             // If this is a TF message, harvest frames
-            if (
-              d.topic === "/tf" ||
-              d.topic === "/tf_static" ||
-              (typeof d.type === "string" && d.type.includes("tf2_msgs/msg/TFMessage"))
-            ) {
+            if (isTfTopic({ name: d.topic, schemaName: d.type })) {
               updateFramesFromTfMessage(msg);
             }
             const { event, receiveNs } = toRendererMessageEvent(d.topic, d.type, msg);
@@ -974,7 +1133,12 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     };
 
     const handleTopicsChanged = (topicsList: Ros2BridgeSubscription[]) => {
-      const topicObjects: Topic[] = topicsList.map(
+      const effectiveTopicsList =
+        getActiveVmConfigId() === "turtlebot4"
+          ? mergeTopicDefaults(topicsList, TURTLEBOT4_SENSOR_TOPIC_DEFAULTS)
+          : topicsList;
+
+      const topicObjects: Topic[] = effectiveTopicsList.map(
         (t) =>
           ({
             name: t.topic,
@@ -1008,18 +1172,18 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
         });
       }
 
-      renderer.setTopics(topicObjects);
-      const desired = computeDesiredSubscriptions(topicsList, renderer);
-      const odometrySubscriptions = topicsList.filter(isOdometryTopic);
-      const visibleTopics = topicObjects
-        .filter(
-          (topic) =>
-            desired.some((item) => item.topic === topic.name) &&
-            !isTfTopic(topic) &&
-            shouldListTopicInPanel(topic),
-        )
+      const desired = computeDesiredSubscriptions(effectiveTopicsList, renderer);
+      const odometrySubscriptions = effectiveTopicsList.filter((topic) =>
+        isOdometryTopic({ name: topic.topic, schemaName: topic.type }),
+      );
+      const panelTopics = topicObjects
+        .filter((topic) => !isTfTopic(topic) && shouldListTopicInPanel(topic))
         .sort(sortTopicsForPanel);
-      setTopics(visibleTopics);
+      const rendererTopics = topicObjects.filter((topic) =>
+        shouldKeepTopicRegisteredWithRenderer(renderer, topic),
+      );
+      renderer.setTopics(rendererTopics);
+      setTopics(panelTopics);
       reconcileSubscriptions(desired.concat(odometrySubscriptions), renderer);
       if (topicsNeedingDefaults.length > 0) {
         renderer.queueAnimationFrame();
@@ -1039,7 +1203,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       }
       liveSubs.clear();
     };
-  }, [renderer, updateFramesFromTfMessage, updateFramesFromOdometryMessage, updateFramesFromMessage, normalizeMessageFrameIds, ensureSimpleRobotFallbackFrames, applyOdometryTransform, pointSize, decayTime]);
+  }, [renderer, updateFramesFromTfMessage, updateFramesFromOdometryMessage, updateFramesFromMessage, normalizeMessageFrameIds, ensureSimpleRobotFallbackFrames, applyOdometryTransform, pointSize, decayTime, topicVisibilityVersion]);
 
   useEffect(() => {
     aliasFramesRef.current.clear();
@@ -1074,12 +1238,15 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       }
     }
     if (!renderer) return;
-    const cfg = renderer.config as any;
-    cfg.topics ??= {};
-    for (const name of Object.keys(cfg.topics)) {
-      cfg.topics[name] ??= {};
-      cfg.topics[name].pointSize = pointSize;
-    }
+    renderer.updateConfig((draft) => {
+      draft.topics ??= {};
+      for (const name of Object.keys(draft.topics)) {
+        draft.topics[name] = {
+          ...(draft.topics[name] ?? {}),
+          pointSize,
+        };
+      }
+    });
     renderer.queueAnimationFrame();
   }, [pointSize, renderer]);
 
@@ -1092,12 +1259,15 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       }
     }
     if (!renderer) return;
-    const cfg = renderer.config as any;
-    cfg.topics ??= {};
-    for (const name of Object.keys(cfg.topics)) {
-      cfg.topics[name] ??= {};
-      cfg.topics[name].decayTime = decayTime;
-    }
+    renderer.updateConfig((draft) => {
+      draft.topics ??= {};
+      for (const name of Object.keys(draft.topics)) {
+        draft.topics[name] = {
+          ...(draft.topics[name] ?? {}),
+          decayTime,
+        };
+      }
+    });
     renderer.queueAnimationFrame();
   }, [decayTime, renderer]);
 
@@ -1274,6 +1444,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
         const current = draft.topics[topicName]?.visible ?? isTopicVisible(topicName);
         draft.topics[topicName]!.visible = !current;
       });
+      setTopicVisibilityVersion((prev) => prev + 1);
       renderer.queueAnimationFrame();
     },
     [renderer, isTopicVisible],
@@ -1306,10 +1477,14 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     if (!showDiagnostics || !renderer) {
       return undefined;
     }
+    const diagnosticLaserTopic =
+      topics.find((topic) => isLaserScanTopic(topic) && isTopicVisible(topic.name))?.name ??
+      topics.find((topic) => isLaserScanTopic(topic))?.name ??
+      "/scan";
     const extension = renderer.sceneExtensions.get("foxglove.LaserScans") as
       | { renderables?: Map<string, any> }
       | undefined;
-    const renderable = extension?.renderables?.get("/scan");
+    const renderable = extension?.renderables?.get(diagnosticLaserTopic);
     if (!renderable) {
       return undefined;
     }
@@ -1318,6 +1493,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     const positionAttr = child?.geometry?.attributes?.position;
 
     return {
+      topic: diagnosticLaserTopic,
       frameId: renderable.userData?.frameId as string | undefined,
       visible: Boolean(renderable.visible),
       childVisible: child ? Boolean(child.visible) : undefined,
@@ -1689,6 +1865,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
                 {scanRenderableDiagnostics && (
                   <>
                     <div>Scan frame: {scanRenderableDiagnostics.frameId ?? "none"}</div>
+                    <div>Scan topic: {scanRenderableDiagnostics.topic}</div>
                     <div>Scan visible: {scanRenderableDiagnostics.visible ? "yes" : "no"}</div>
                     <div>Scan child visible: {scanRenderableDiagnostics.childVisible ? "yes" : "no"}</div>
                     <div>Scan points: {scanRenderableDiagnostics.pointCount ?? 0}</div>

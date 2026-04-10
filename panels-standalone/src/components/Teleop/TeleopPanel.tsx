@@ -18,8 +18,18 @@ import { DirectionalPadAction, TeleopConfig } from './types';
 import './TeleopPanel.css';
 import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
 
+function getActiveVmConfigId(): string {
+  return (typeof window !== 'undefined' ? (window as any).TENSORFLEET_VM_CONFIG_ID : '') ?? '';
+}
+
+function getDefaultTeleopTopic(): string {
+  return getActiveVmConfigId() === 'turtlebot4'
+    ? '/turtlebot4/cmd_vel_unstamped'
+    : '/cmd_vel';
+}
+
 const DEFAULT_CONFIG: TeleopConfig = {
-  topic: '/cmd_vel',
+  topic: getDefaultTeleopTopic(),
   publishRate: 10,
   upButton: { field: 'linear-x', value: 1 },
   downButton: { field: 'linear-x', value: -1 },
@@ -57,17 +67,30 @@ function shouldIgnoreKeyboardEvent(target: EventTarget | null): boolean {
 export function TeleopPanel(): React.JSX.Element {
   // Load config from localStorage or use defaults
   const [config, setConfig] = useState<TeleopConfig>(() => {
+    const defaultTopic = getDefaultTeleopTopic();
     const saved = localStorage.getItem('teleopConfig');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        const savedTopic = typeof parsed?.topic === 'string' ? parsed.topic : undefined;
+        const shouldAdoptVmDefault =
+          !savedTopic ||
+          savedTopic === '/cmd_vel' ||
+          savedTopic === '/turtlebot4/cmd_vel';
         // Merge with defaults to handle missing fields
-        return { ...DEFAULT_CONFIG, ...parsed };
+        return {
+          ...DEFAULT_CONFIG,
+          ...parsed,
+          topic: shouldAdoptVmDefault ? defaultTopic : savedTopic,
+        };
       } catch (e) {
         console.error('Failed to parse saved teleop config:', e);
       }
     }
-    return DEFAULT_CONFIG;
+    return {
+      ...DEFAULT_CONFIG,
+      topic: defaultTopic,
+    };
   });
 
   const [padAction, setPadAction] = useState<DirectionalPadAction | undefined>();
@@ -81,6 +104,25 @@ export function TeleopPanel(): React.JSX.Element {
   useEffect(() => {
     localStorage.setItem('teleopConfig', JSON.stringify(config));
   }, [config]);
+
+  useEffect(() => {
+    const defaultTopic = getDefaultTeleopTopic();
+    setConfig((prev) => {
+      if (
+        prev.topic === defaultTopic ||
+        (getActiveVmConfigId() === 'turtlebot4' &&
+          prev.topic !== '/cmd_vel' &&
+          prev.topic !== '/turtlebot4/cmd_vel')
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        topic: defaultTopic,
+      };
+    });
+  }, []);
 
   // Check ROS connection status
   useEffect(() => {
@@ -321,7 +363,7 @@ export function TeleopPanel(): React.JSX.Element {
                     type="text"
                     value={config.topic ?? ''}
                     onChange={(e) => setConfig({ ...config, topic: e.target.value })}
-                    placeholder="/cmd_vel"
+                    placeholder={getDefaultTeleopTopic()}
                   />
                 )}
               </div>

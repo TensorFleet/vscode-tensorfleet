@@ -73,7 +73,6 @@ const TOPICS_BY_VM_CONFIG: Record<string, Subscription[]> = {
   ],
   turtlebot4: [
     { topic: "/turtlebot4/oakd/rgb/preview/image_raw", type: "sensor_msgs/msg/Image" },
-    { topic: "/turtlebot4/oakd/rgb/preview/depth", type: "sensor_msgs/msg/Image" },
   ],
 };
 
