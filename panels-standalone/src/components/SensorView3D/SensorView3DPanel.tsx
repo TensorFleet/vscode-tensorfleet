@@ -14,7 +14,7 @@ import React, {
 } from "react";
 
 import { fromNanoSec } from "@lichtblick/rostime";
-import type { MessageEvent, Topic } from "@lichtblick/suite";
+import type { MessageEvent, SettingsTreeAction, Topic } from "@lichtblick/suite";
 
 import ThemeProvider from "@lichtblick/suite-base/theme/ThemeProvider";
 import { PANEL_STYLE } from "@lichtblick/suite-base/panels/ThreeDeeRender/constants";
@@ -222,6 +222,65 @@ function shouldKeepTopicRegisteredWithRenderer(
     isOdometryTopic(topic) ||
     isTopicVisibleInRenderer(renderer, topic)
   );
+}
+
+type TopicRenderableLike = {
+  userData?: {
+    settings?: {
+      visible?: boolean;
+    };
+  };
+  visible?: boolean;
+};
+
+function syncExistingRenderableVisibility(
+  renderer: Renderer,
+  topicName: string,
+  visible: boolean,
+): void {
+  for (const extension of renderer.sceneExtensions.values()) {
+    const renderable = (extension.renderables as Map<string, TopicRenderableLike> | undefined)?.get(
+      topicName,
+    );
+    if (!renderable) {
+      continue;
+    }
+    if (renderable.userData?.settings) {
+      renderable.userData.settings.visible = visible;
+    }
+    renderable.visible = visible;
+  }
+}
+
+function applyTopicVisibilityChange(
+  renderer: Renderer,
+  topicName: string,
+  visible: boolean,
+): boolean {
+  let handled = false;
+
+  for (const extension of renderer.sceneExtensions.values()) {
+    for (const node of extension.settingsNodes()) {
+      if (node.path[0] !== "topics" || node.path[1] !== topicName) {
+        continue;
+      }
+      extension.handleSettingsAction({
+        action: "update",
+        payload: {
+          path: [...node.path, "visible"],
+          input: "boolean",
+          value: visible,
+        },
+      } as SettingsTreeAction);
+      handled = true;
+    }
+  }
+
+  // The standalone panel mutates config directly, so existing renderables need
+  // their live visibility state updated immediately instead of waiting for a
+  // message or a renderer-wide reset.
+  syncExistingRenderableVisibility(renderer, topicName, visible);
+  return handled;
 }
 
 function choosePreferredFrame(frameNames: string[], current?: string): string | undefined {
@@ -1183,6 +1242,13 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
         shouldKeepTopicRegisteredWithRenderer(renderer, topic),
       );
       renderer.setTopics(rendererTopics);
+      for (const topic of topicObjects) {
+        syncExistingRenderableVisibility(
+          renderer,
+          topic.name,
+          isTopicVisibleInRenderer(renderer, topic),
+        );
+      }
       setTopics(panelTopics);
       reconcileSubscriptions(desired.concat(odometrySubscriptions), renderer);
       if (topicsNeedingDefaults.length > 0) {
@@ -1438,12 +1504,16 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
   const toggleTopicVisibility = useCallback(
     (topicName: string) => {
       if (!renderer) return;
-      renderer.updateConfig((draft) => {
-        draft.topics ??= {};
-        draft.topics[topicName] ??= {};
-        const current = draft.topics[topicName]?.visible ?? isTopicVisible(topicName);
-        draft.topics[topicName]!.visible = !current;
-      });
+      const nextVisible = !isTopicVisible(topicName);
+      const handled = applyTopicVisibilityChange(renderer, topicName, nextVisible);
+      if (!handled) {
+        renderer.updateConfig((draft) => {
+          draft.topics ??= {};
+          draft.topics[topicName] ??= {};
+          draft.topics[topicName]!.visible = nextVisible;
+        });
+        syncExistingRenderableVisibility(renderer, topicName, nextVisible);
+      }
       setTopicVisibilityVersion((prev) => prev + 1);
       renderer.queueAnimationFrame();
     },
