@@ -80,6 +80,12 @@ const OCCUPANCY_GRID_SCHEMA_NAMES = new Set([
   "nav_msgs/msg/OccupancyGrid",
   "ros.nav_msgs.OccupancyGrid",
 ]);
+const POLYGON_STAMPED_SCHEMA_NAME = "geometry_msgs/msg/PolygonStamped";
+const BARE_POLYGON_SCHEMA_NAMES = new Set([
+  "geometry_msgs/Polygon",
+  "geometry_msgs/msg/Polygon",
+  "ros.geometry_msgs.Polygon",
+]);
 const TURTLEBOT4_AUTO_VISIBLE_TOPIC_NAMES = new Set([
   "/turtlebot4/scan",
   "/turtlebot4/map",
@@ -127,6 +133,7 @@ const ZERO_TRANSLATION = { x: 0, y: 0, z: 0 };
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
 const SIMPLE_ROBOT_CAMERA_TRANSLATION = { x: 0.25, y: 0, z: 0.15 };
 const SIMPLE_ROBOT_LIDAR_TRANSLATION = { x: 0, y: 0, z: 0.3 };
+const CAMERA_OPTICAL_ROTATION = { x: -0.5, y: 0.5, z: -0.5, w: 0.5 };
 const STANDALONE_3D_SCENE_EXTENSION_CONFIG: SceneExtensionConfig = {
   ...DEFAULT_SCENE_EXTENSION_CONFIG,
   extensionsById: Object.fromEntries(
@@ -421,6 +428,14 @@ function isOccupancyGridTopic(topic: TopicLike): boolean {
   return OCCUPANCY_GRID_SCHEMA_NAMES.has(topic.schemaName ?? "");
 }
 
+function isBarePolygonSchemaName(schemaName: string | undefined): boolean {
+  return BARE_POLYGON_SCHEMA_NAMES.has(schemaName ?? "");
+}
+
+function getRenderableSchemaName(schemaName: string): string {
+  return isBarePolygonSchemaName(schemaName) ? POLYGON_STAMPED_SCHEMA_NAME : schemaName;
+}
+
 function getOccupancyGridColorMode(topicName: string): "map" | "costmap" {
   return topicName.includes("costmap") ? "costmap" : "map";
 }
@@ -499,7 +514,16 @@ function getSimpleRobotFramePrefix(frameId: string | undefined): string | undefi
     return undefined;
   }
 
-  for (const suffix of ["lidar_link/lidar", "camera_link/camera", "base_link"]) {
+  for (const suffix of [
+    "lidar_link/lidar",
+    "rplidar_link/rplidar",
+    "camera_link/camera",
+    "camera_link",
+    "oakd_rgb_camera_frame",
+    "oakd_rgb_camera_optical_frame",
+    "oakd_rgb_camera_frame/rgbd_camera",
+    "base_link",
+  ]) {
     if (normalized.endsWith(suffix)) {
       return normalized.slice(0, normalized.length - suffix.length);
     }
@@ -536,6 +560,49 @@ function toRendererMessageEvent(
       message: msg,
       sizeInBytes: estimateSizeInBytes(msg),
     },
+  };
+}
+
+function inferSyntheticPolygonFrameId(
+  topicName: string,
+  displayFrame: string | undefined,
+  frameNames: string[],
+): string | undefined {
+  if (topicName.includes("/global_costmap/")) {
+    return (
+      frameNames.find((name) => name === "map" || name.endsWith("/map")) ??
+      choosePreferredFrame(frameNames, displayFrame) ??
+      displayFrame
+    );
+  }
+
+  if (topicName.includes("/local_costmap/")) {
+    return (
+      frameNames.find((name) => name === "odom" || name.endsWith("/odom")) ??
+      choosePreferredFrame(frameNames, displayFrame) ??
+      displayFrame
+    );
+  }
+
+  return displayFrame ?? choosePreferredFrame(frameNames, displayFrame);
+}
+
+function toSyntheticPolygonStamped(
+  topicName: string,
+  msg: any,
+  displayFrame: string | undefined,
+  frameNames: string[],
+): any {
+  if (!msg || typeof msg !== "object") {
+    return msg;
+  }
+
+  return {
+    header: {
+      stamp: { sec: 0, nanosec: 0 },
+      frame_id: inferSyntheticPolygonFrameId(topicName, displayFrame, frameNames) ?? "",
+    },
+    polygon: msg,
   };
 }
 
@@ -669,6 +736,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
   const fallbackFramesRef = useRef<Set<string>>(new Set());
   const [frames, setFrames] = useState<string[]>([]);
   const [displayFrame, setDisplayFrame] = useState<string | undefined>(undefined);
+  const displayFrameRef = useRef<string | undefined>(undefined);
   const topicMessageCountsRef = useRef<Record<string, number>>({});
   const topicFrameIdsRef = useRef<Map<string, string>>(new Map());
   const [, setDiagnosticsTick] = useState(0);
@@ -896,7 +964,8 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
   }, [renderer, resolveFrameId]);
 
   const ensureSimpleRobotFallbackFrames = useCallback((frameId: string | undefined) => {
-    const prefix = getSimpleRobotFramePrefix(frameId);
+    const normalized = normalizeFrameIdForMatching(frameId);
+    const prefix = getSimpleRobotFramePrefix(normalized);
     if (!renderer || !prefix) {
       return;
     }
@@ -909,26 +978,58 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     const baseFrame = `${prefix}base_link`;
     const lidarLinkFrame = `${prefix}lidar_link`;
     const lidarFrame = `${prefix}lidar_link/lidar`;
+    const rplidarLinkFrame = `${prefix}rplidar_link`;
+    const rplidarFrame = `${prefix}rplidar_link/rplidar`;
     const cameraLinkFrame = `${prefix}camera_link`;
     const cameraFrame = `${prefix}camera_link/camera`;
+    const oakdCameraFrame = `${prefix}oakd_rgb_camera_frame`;
+    const oakdOpticalFrame = `${prefix}oakd_rgb_camera_optical_frame`;
+    const rgbdCameraFrame = `${prefix}oakd_rgb_camera_frame/rgbd_camera`;
+
+    const opticalFrames = new Set<string>([oakdOpticalFrame, rgbdCameraFrame]);
+    if (normalized && (normalized.includes("optical") || normalized.endsWith("rgbd_camera"))) {
+      opticalFrames.add(normalized);
+    }
 
     renderer.addCoordinateFrame(baseFrame);
     renderer.addCoordinateFrame(lidarLinkFrame);
     renderer.addCoordinateFrame(lidarFrame);
+    renderer.addCoordinateFrame(rplidarLinkFrame);
+    renderer.addCoordinateFrame(rplidarFrame);
     renderer.addCoordinateFrame(cameraLinkFrame);
     renderer.addCoordinateFrame(cameraFrame);
+    renderer.addCoordinateFrame(oakdCameraFrame);
+    for (const opticalFrame of opticalFrames) {
+      renderer.addCoordinateFrame(opticalFrame);
+    }
     renderer.addTransform(baseFrame, lidarLinkFrame, 0n, SIMPLE_ROBOT_LIDAR_TRANSLATION, IDENTITY_ROTATION);
     renderer.addTransform(lidarLinkFrame, lidarFrame, 0n, ZERO_TRANSLATION, IDENTITY_ROTATION);
+    renderer.addTransform(baseFrame, rplidarLinkFrame, 0n, SIMPLE_ROBOT_LIDAR_TRANSLATION, IDENTITY_ROTATION);
+    renderer.addTransform(rplidarLinkFrame, rplidarFrame, 0n, ZERO_TRANSLATION, IDENTITY_ROTATION);
     renderer.addTransform(baseFrame, cameraLinkFrame, 0n, SIMPLE_ROBOT_CAMERA_TRANSLATION, IDENTITY_ROTATION);
     renderer.addTransform(cameraLinkFrame, cameraFrame, 0n, ZERO_TRANSLATION, IDENTITY_ROTATION);
+    renderer.addTransform(baseFrame, oakdCameraFrame, 0n, SIMPLE_ROBOT_CAMERA_TRANSLATION, IDENTITY_ROTATION);
+    for (const opticalFrame of opticalFrames) {
+      renderer.addTransform(
+        oakdCameraFrame,
+        opticalFrame,
+        0n,
+        ZERO_TRANSLATION,
+        CAMERA_OPTICAL_ROTATION,
+      );
+    }
 
     const set = framesSetRef.current;
     for (const synthesizedFrame of [
       baseFrame,
       lidarLinkFrame,
       lidarFrame,
+      rplidarLinkFrame,
+      rplidarFrame,
       cameraLinkFrame,
       cameraFrame,
+      oakdCameraFrame,
+      ...opticalFrames,
     ]) {
       set.add(synthesizedFrame);
     }
@@ -1062,7 +1163,8 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       for (const t of topicsList) {
         const topicName = t.topic;
         const schemaName = t.type;
-        const topicInfo = { name: topicName, schemaName };
+        const renderableSchemaName = getRenderableSchemaName(schemaName);
+        const topicInfo = { name: topicName, schemaName: renderableSchemaName };
         if (!shouldSubscribeTopicInStandalone3d(topicInfo)) {
           continue;
         }
@@ -1076,10 +1178,13 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
         }
 
         const subsForTopic = topicSubs.get(topicName) ?? [];
-        const subsForSchema = schemaSubs.get(schemaName) ?? [];
+        const subsForSchema = schemaSubs.get(renderableSchemaName) ?? [];
 
         const allSubs = subsForTopic.concat(subsForSchema);
         if (allSubs.length === 0) {
+          if (isBarePolygonSchemaName(schemaName)) {
+            desired.push({ topic: topicName, type: schemaName });
+          }
           continue;
         }
 
@@ -1151,9 +1256,18 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
               msg = (raw as { msg: any }).msg;
             }
 
+            if (isBarePolygonSchemaName(d.type)) {
+              msg = toSyntheticPolygonStamped(
+                d.topic,
+                msg,
+                displayFrameRef.current,
+                Array.from(framesSetRef.current),
+              );
+            }
+
             const isOdometryMessage = isOdometryTopic({
               name: d.topic,
-              schemaName: d.type,
+              schemaName: getRenderableSchemaName(d.type),
             });
 
             if (isOdometryMessage) {
@@ -1175,7 +1289,11 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
             if (isTfTopic({ name: d.topic, schemaName: d.type })) {
               updateFramesFromTfMessage(msg);
             }
-            const { event, receiveNs } = toRendererMessageEvent(d.topic, d.type, msg);
+            const { event, receiveNs } = toRendererMessageEvent(
+              d.topic,
+              getRenderableSchemaName(d.type),
+              msg,
+            );
             if (isOdometryMessage) {
               applyOdometryTransform(msg, receiveNs);
             }
@@ -1201,7 +1319,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
         (t) =>
           ({
             name: t.topic,
-            schemaName: t.type,
+            schemaName: getRenderableSchemaName(t.type),
             datatype: t.type,
           } as unknown as Topic),
       );
@@ -1278,6 +1396,10 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     topicMessageCountsRef.current = {};
     setDiagnosticsTick((prev) => prev + 1);
   }, [renderer]);
+
+  useEffect(() => {
+    displayFrameRef.current = displayFrame;
+  }, [displayFrame]);
 
   useEffect(() => {
     if (!renderer || !showDiagnostics || typeof window === "undefined") {
