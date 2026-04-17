@@ -508,6 +508,10 @@ function normalizeFrameIdForMatching(frameId: string | undefined): string | unde
   return frameId.startsWith("/") ? frameId.slice(1) : frameId;
 }
 
+function isOpticalFrameId(frameId: string | undefined): boolean {
+  return normalizeFrameIdForMatching(frameId)?.toLowerCase().includes("optical") ?? false;
+}
+
 function getSimpleRobotFramePrefix(frameId: string | undefined): string | undefined {
   const normalized = normalizeFrameIdForMatching(frameId);
   if (!normalized) {
@@ -603,6 +607,33 @@ function toSyntheticPolygonStamped(
       frame_id: inferSyntheticPolygonFrameId(topicName, displayFrame, frameNames) ?? "",
     },
     polygon: msg,
+  };
+}
+
+function rewriteTurtlebot4DepthPointCloudFrameId(topicName: string, msg: any): any {
+  if (
+    topicName !== "/turtlebot4/oakd/rgb/preview/depth/points" ||
+    !msg ||
+    typeof msg !== "object"
+  ) {
+    return msg;
+  }
+
+  const frameId = normalizeFrameIdForMatching(msg?.header?.frame_id as string | undefined);
+  if (frameId !== "oakd_rgb_camera_optical_frame") {
+    return msg;
+  }
+
+  // Live TurtleBot4 samples publish this cloud with an optical-frame header,
+  // but the XYZ values already behave like camera-frame coordinates
+  // (forward/lateral/up). Treating them as optical points adds the
+  // camera->optical rotation a second time and destroys registration.
+  return {
+    ...msg,
+    header: {
+      ...(msg.header ?? {}),
+      frame_id: "oakd_rgb_camera_frame",
+    },
   };
 }
 
@@ -910,10 +941,13 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
 
     const tfFrames = Array.from(tfFramesSetRef.current);
 
-    // Always check for shorter suffix matches first. When both short-form
-    // (e.g. "lidar") and long-form (e.g. "simple_bot_include/simple_bot/lidar_link/lidar")
-    // frames exist in the TF tree, preferring the shorter alias ensures the scan's
-    // frame gets connected to the display frame's tree via ensureAliasedFrame.
+    // If the exact frame exists in TF, trust that path and do not collapse it
+    // onto a shorter suffix alias. Suffix aliasing is only a fallback for
+    // messages whose frame ids differ from the TF tree by a namespace prefix.
+    if (tfFrames.includes(normalized)) {
+      return normalized;
+    }
+
     let bestMatch: string | undefined;
     for (const candidate of tfFrames) {
       if (normalized.endsWith(`/${candidate}`)) {
@@ -924,10 +958,6 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     }
     if (bestMatch) {
       return bestMatch;
-    }
-
-    if (tfFrames.includes(normalized)) {
-      return normalized;
     }
 
     return normalized;
@@ -942,6 +972,11 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     const canonical = resolveFrameId(normalized);
     if (!renderer || !canonical || canonical === normalized) {
       return canonical ?? normalized;
+    }
+
+    const existingFrame = renderer.transformTree.frame(normalized);
+    if (existingFrame?.parent() != undefined) {
+      return normalized;
     }
 
     const aliases = aliasFramesRef.current;
@@ -986,10 +1021,28 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     const oakdOpticalFrame = `${prefix}oakd_rgb_camera_optical_frame`;
     const rgbdCameraFrame = `${prefix}oakd_rgb_camera_frame/rgbd_camera`;
 
-    const opticalFrames = new Set<string>([oakdOpticalFrame, rgbdCameraFrame]);
-    if (normalized && (normalized.includes("optical") || normalized.endsWith("rgbd_camera"))) {
+    const opticalFrames = new Set<string>([oakdOpticalFrame]);
+    if (isOpticalFrameId(normalized)) {
       opticalFrames.add(normalized);
     }
+
+    const addFallbackTransformIfMissing = (
+      parentFrameId: string,
+      childFrameId: string,
+      translation: typeof ZERO_TRANSLATION,
+      rotation: typeof IDENTITY_ROTATION,
+    ) => {
+      renderer.addCoordinateFrame(parentFrameId);
+      renderer.addCoordinateFrame(childFrameId);
+
+      const childFrame = renderer.transformTree.frame(childFrameId);
+      const existingParentId = childFrame?.parent()?.id;
+      if (existingParentId != undefined && existingParentId !== parentFrameId) {
+        return;
+      }
+
+      renderer.addTransform(parentFrameId, childFrameId, 0n, translation, rotation);
+    };
 
     renderer.addCoordinateFrame(baseFrame);
     renderer.addCoordinateFrame(lidarLinkFrame);
@@ -999,21 +1052,52 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     renderer.addCoordinateFrame(cameraLinkFrame);
     renderer.addCoordinateFrame(cameraFrame);
     renderer.addCoordinateFrame(oakdCameraFrame);
+    renderer.addCoordinateFrame(rgbdCameraFrame);
     for (const opticalFrame of opticalFrames) {
       renderer.addCoordinateFrame(opticalFrame);
     }
-    renderer.addTransform(baseFrame, lidarLinkFrame, 0n, SIMPLE_ROBOT_LIDAR_TRANSLATION, IDENTITY_ROTATION);
-    renderer.addTransform(lidarLinkFrame, lidarFrame, 0n, ZERO_TRANSLATION, IDENTITY_ROTATION);
-    renderer.addTransform(baseFrame, rplidarLinkFrame, 0n, SIMPLE_ROBOT_LIDAR_TRANSLATION, IDENTITY_ROTATION);
-    renderer.addTransform(rplidarLinkFrame, rplidarFrame, 0n, ZERO_TRANSLATION, IDENTITY_ROTATION);
-    renderer.addTransform(baseFrame, cameraLinkFrame, 0n, SIMPLE_ROBOT_CAMERA_TRANSLATION, IDENTITY_ROTATION);
-    renderer.addTransform(cameraLinkFrame, cameraFrame, 0n, ZERO_TRANSLATION, IDENTITY_ROTATION);
-    renderer.addTransform(baseFrame, oakdCameraFrame, 0n, SIMPLE_ROBOT_CAMERA_TRANSLATION, IDENTITY_ROTATION);
+    addFallbackTransformIfMissing(
+      baseFrame,
+      lidarLinkFrame,
+      SIMPLE_ROBOT_LIDAR_TRANSLATION,
+      IDENTITY_ROTATION,
+    );
+    addFallbackTransformIfMissing(lidarLinkFrame, lidarFrame, ZERO_TRANSLATION, IDENTITY_ROTATION);
+    addFallbackTransformIfMissing(
+      baseFrame,
+      rplidarLinkFrame,
+      SIMPLE_ROBOT_LIDAR_TRANSLATION,
+      IDENTITY_ROTATION,
+    );
+    addFallbackTransformIfMissing(
+      rplidarLinkFrame,
+      rplidarFrame,
+      ZERO_TRANSLATION,
+      IDENTITY_ROTATION,
+    );
+    addFallbackTransformIfMissing(
+      baseFrame,
+      cameraLinkFrame,
+      SIMPLE_ROBOT_CAMERA_TRANSLATION,
+      IDENTITY_ROTATION,
+    );
+    addFallbackTransformIfMissing(cameraLinkFrame, cameraFrame, ZERO_TRANSLATION, IDENTITY_ROTATION);
+    addFallbackTransformIfMissing(
+      baseFrame,
+      oakdCameraFrame,
+      SIMPLE_ROBOT_CAMERA_TRANSLATION,
+      IDENTITY_ROTATION,
+    );
+    addFallbackTransformIfMissing(
+      oakdCameraFrame,
+      rgbdCameraFrame,
+      ZERO_TRANSLATION,
+      IDENTITY_ROTATION,
+    );
     for (const opticalFrame of opticalFrames) {
-      renderer.addTransform(
+      addFallbackTransformIfMissing(
         oakdCameraFrame,
         opticalFrame,
-        0n,
         ZERO_TRANSLATION,
         CAMERA_OPTICAL_ROTATION,
       );
@@ -1029,6 +1113,7 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
       cameraLinkFrame,
       cameraFrame,
       oakdCameraFrame,
+      rgbdCameraFrame,
       ...opticalFrames,
     ]) {
       set.add(synthesizedFrame);
@@ -1264,6 +1349,8 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
                 Array.from(framesSetRef.current),
               );
             }
+
+            msg = rewriteTurtlebot4DepthPointCloudFrameId(d.topic, msg);
 
             const isOdometryMessage = isOdometryTopic({
               name: d.topic,
