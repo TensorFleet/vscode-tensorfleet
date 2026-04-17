@@ -101,6 +101,9 @@ const tempColor = { r: 0, g: 0, b: 0, a: 0 };
 function toColorByte(value: number): number {
   return Math.round(Math.min(Math.max(value, 0), 1) * 255);
 }
+function isFinitePoint(x: number, y: number, z: number): boolean {
+  return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z);
+}
 const tempMinMaxColor: THREE.Vector2Tuple = [0, 0];
 const tempFieldReaders: PointCloudFieldReaders = {
   xReader: zeroReader,
@@ -325,7 +328,7 @@ export class PointCloudHistoryRenderable extends Renderable<PointCloudHistoryUse
     const stixelPositionAttribute = latestStixelEntry.renderable.geometry.attributes.position!;
     const stixelColorAttribute = latestStixelEntry.renderable.geometry.attributes.color!;
     // Iterate the point cloud data to update position and color attributes
-    this.#updatePointCloudBuffers(
+    const validPointCount = this.#updatePointCloudBuffers(
       pointCloud,
       tempFieldReaders,
       pointCount,
@@ -335,6 +338,8 @@ export class PointCloudHistoryRenderable extends Renderable<PointCloudHistoryUse
       stixelPositionAttribute,
       stixelColorAttribute,
     );
+    latestPointsEntry.renderable.geometry.resize(validPointCount);
+    latestStixelEntry.renderable.geometry.resize(settings.stixelsEnabled ? validPointCount * 2 : 0);
   }
 
   public startFrame(currentTime: bigint, renderFrameId: string, fixedFrameId: string): void {
@@ -601,6 +606,7 @@ export class PointCloudHistoryRenderable extends Renderable<PointCloudHistoryUse
 
   #minMaxColorValues(
     output: THREE.Vector2Tuple,
+    readers: Pick<PointCloudFieldReaders, "xReader" | "yReader" | "zReader">,
     colorReader: FieldReader,
     view: DataView,
     pointCount: number,
@@ -615,12 +621,26 @@ export class PointCloudHistoryRenderable extends Renderable<PointCloudHistoryUse
     ) {
       for (let i = 0; i < pointCount; i++) {
         const pointOffset = i * pointStep;
+        const x = readers.xReader(view, pointOffset);
+        const y = readers.yReader(view, pointOffset);
+        const z = readers.zReader(view, pointOffset);
+        if (!isFinitePoint(x, y, z)) {
+          continue;
+        }
         const colorValue = colorReader(view, pointOffset);
+        if (!Number.isFinite(colorValue)) {
+          continue;
+        }
         minColorValue = Math.min(minColorValue, colorValue);
         maxColorValue = Math.max(maxColorValue, colorValue);
       }
       minColorValue = settings.minValue ?? minColorValue;
       maxColorValue = settings.maxValue ?? maxColorValue;
+    }
+
+    if (!Number.isFinite(minColorValue) || !Number.isFinite(maxColorValue)) {
+      minColorValue = settings.minValue ?? 0;
+      maxColorValue = settings.maxValue ?? minColorValue;
     }
 
     output[0] = minColorValue;
@@ -636,7 +656,7 @@ export class PointCloudHistoryRenderable extends Renderable<PointCloudHistoryUse
     colorAttribute: THREE.BufferAttribute,
     stixelPositionAttribute: THREE.BufferAttribute,
     stixelColorAttribute: THREE.BufferAttribute,
-  ): void {
+  ): number {
     const data = pointCloud.data;
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     const pointStep = getStride(pointCloud);
@@ -651,37 +671,53 @@ export class PointCloudHistoryRenderable extends Renderable<PointCloudHistoryUse
       alphaReader,
     } = readers;
 
-    // Update position attribute
+    let validPointCount = 0;
+
+    // Compact finite XYZ points into the live draw range so invalid samples do
+    // not produce stretched sheets or detached columns in organized clouds.
     for (let i = 0; i < pointCount; i++) {
       const pointOffset = i * pointStep;
       const x = xReader(view, pointOffset);
       const y = yReader(view, pointOffset);
       const z = zReader(view, pointOffset);
-      positionAttribute.setXYZ(i, x, y, z);
-      if (settings.stixelsEnabled) {
-        stixelPositionAttribute.setXYZ(i * 2, x, y, z);
-        stixelPositionAttribute.setXYZ(i * 2 + 1, x, y, 0);
+      if (!isFinitePoint(x, y, z)) {
+        continue;
       }
+      positionAttribute.setXYZ(validPointCount, x, y, z);
+      if (settings.stixelsEnabled) {
+        stixelPositionAttribute.setXYZ(validPointCount * 2, x, y, z);
+        stixelPositionAttribute.setXYZ(validPointCount * 2 + 1, x, y, 0);
+      }
+      validPointCount++;
     }
 
     // Update color attribute
     if (settings.colorMode === "rgba-fields") {
+      let validPointIndex = 0;
       for (let i = 0; i < pointCount; i++) {
         const pointOffset = i * pointStep;
+        const x = xReader(view, pointOffset);
+        const y = yReader(view, pointOffset);
+        const z = zReader(view, pointOffset);
+        if (!isFinitePoint(x, y, z)) {
+          continue;
+        }
         const r = redReader(view, pointOffset);
         const g = greenReader(view, pointOffset);
         const b = blueReader(view, pointOffset);
         const a = alphaReader(view, pointOffset);
-        colorAttribute.setXYZW(i, r, g, b, a);
+        colorAttribute.setXYZW(validPointIndex, r, g, b, a);
         if (settings.stixelsEnabled) {
-          stixelColorAttribute.setXYZW(i * 2, r, g, b, a);
-          stixelColorAttribute.setXYZW(i * 2 + 1, r, g, b, a);
+          stixelColorAttribute.setXYZW(validPointIndex * 2, r, g, b, a);
+          stixelColorAttribute.setXYZW(validPointIndex * 2 + 1, r, g, b, a);
         }
+        validPointIndex++;
       }
     } else {
       // Iterate the point cloud data to determine min/max color values (if needed)
       this.#minMaxColorValues(
         tempMinMaxColor,
+        readers,
         packedColorReader,
         view,
         pointCount,
@@ -697,12 +733,19 @@ export class PointCloudHistoryRenderable extends Renderable<PointCloudHistoryUse
         maxColorValue,
       );
 
+      let validPointIndex = 0;
       for (let i = 0; i < pointCount; i++) {
         const pointOffset = i * pointStep;
+        const x = xReader(view, pointOffset);
+        const y = yReader(view, pointOffset);
+        const z = zReader(view, pointOffset);
+        if (!isFinitePoint(x, y, z)) {
+          continue;
+        }
         const colorValue = packedColorReader(view, pointOffset);
         colorConverter(tempColor, colorValue);
         colorAttribute.setXYZW(
-          i,
+          validPointIndex,
           toColorByte(tempColor.r),
           toColorByte(tempColor.g),
           toColorByte(tempColor.b),
@@ -710,20 +753,21 @@ export class PointCloudHistoryRenderable extends Renderable<PointCloudHistoryUse
         );
         if (settings.stixelsEnabled) {
           stixelColorAttribute.setXYZW(
-            i * 2,
+            validPointIndex * 2,
             toColorByte(tempColor.r),
             toColorByte(tempColor.g),
             toColorByte(tempColor.b),
             toColorByte(tempColor.a),
           );
           stixelColorAttribute.setXYZW(
-            i * 2 + 1,
+            validPointIndex * 2 + 1,
             toColorByte(tempColor.r),
             toColorByte(tempColor.g),
             toColorByte(tempColor.b),
             toColorByte(tempColor.a),
           );
         }
+        validPointIndex++;
       }
     }
 
@@ -731,6 +775,7 @@ export class PointCloudHistoryRenderable extends Renderable<PointCloudHistoryUse
     colorAttribute.needsUpdate = true;
     stixelPositionAttribute.needsUpdate = true;
     stixelColorAttribute.needsUpdate = true;
+    return validPointCount;
   }
 }
 
