@@ -9,12 +9,13 @@
 // - Simplified lifecycle management (no render sync needed)
 // - Removed framework components (Stack, EmptyState, ThemeProvider)
 
-import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { ros2Bridge } from '../../ros2-bridge';
 import { getTopicSuggestions } from '../../utils/discoveredTopics';
 import { DirectionalPad } from './DirectionalPad';
 import { geometryMsgOptions } from './constants';
 import { DirectionalPadAction, TeleopConfig } from './types';
+import { getTeleopProfile, getTeleopStorageKey, TeleopTopicConfig } from './profiles';
 import './TeleopPanel.css';
 import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
 
@@ -22,20 +23,57 @@ function getActiveVmConfigId(): string {
   return (typeof window !== 'undefined' ? (window as any).TENSORFLEET_VM_CONFIG_ID : '') ?? '';
 }
 
-function getDefaultTeleopTopic(): string {
-  return getActiveVmConfigId() === 'turtlebot4'
-    ? '/turtlebot4/cmd_vel_unstamped'
-    : '/cmd_vel';
+function dedupeTopics(topics: TeleopTopicConfig[]): TeleopTopicConfig[] {
+  const seen = new Set<string>();
+  return topics.filter((topic) => {
+    if (seen.has(topic.topic)) {
+      return false;
+    }
+    seen.add(topic.topic);
+    return true;
+  });
 }
 
-const DEFAULT_CONFIG: TeleopConfig = {
-  topic: getDefaultTeleopTopic(),
-  publishRate: 10,
-  upButton: { field: 'linear-x', value: 1 },
-  downButton: { field: 'linear-x', value: -1 },
-  leftButton: { field: 'angular-z', value: 1 },
-  rightButton: { field: 'angular-z', value: -1 },
-};
+function getPublishMessage(topicType: string | undefined, message: {
+  linear: { x: number; y: number; z: number };
+  angular: { x: number; y: number; z: number };
+}) {
+  if (topicType?.includes('TwistStamped')) {
+    return {
+      messageType: topicType,
+      message: {
+        header: {
+          stamp: { sec: 0, nanosec: 0 },
+          frame_id: '',
+        },
+        twist: message,
+      },
+    };
+  }
+
+  return {
+    messageType: topicType ?? 'geometry_msgs/msg/Twist',
+    message,
+  };
+}
+
+function getDisplayedTwist(message: Record<string, unknown> | null) {
+  if (!message) {
+    return undefined;
+  }
+
+  if ('twist' in message) {
+    return message.twist as {
+      linear: { x: number; y: number; z: number };
+      angular: { x: number; y: number; z: number };
+    };
+  }
+
+  return message as {
+    linear: { x: number; y: number; z: number };
+    angular: { x: number; y: number; z: number };
+  };
+}
 
 const KEYBOARD_ACTIONS: Record<string, DirectionalPadAction> = {
   arrowup: DirectionalPadAction.UP,
@@ -65,64 +103,73 @@ function shouldIgnoreKeyboardEvent(target: EventTarget | null): boolean {
 }
 
 export function TeleopPanel(): React.JSX.Element {
+  const activeVmConfigId = getActiveVmConfigId();
+  const teleopProfile = useMemo(() => getTeleopProfile(activeVmConfigId), [activeVmConfigId]);
+  const storageKey = useMemo(() => getTeleopStorageKey(activeVmConfigId), [activeVmConfigId]);
+
   // Load config from localStorage or use defaults
   const [config, setConfig] = useState<TeleopConfig>(() => {
-    const defaultTopic = getDefaultTeleopTopic();
-    const saved = localStorage.getItem('teleopConfig');
+    const saved = localStorage.getItem(storageKey) ?? localStorage.getItem('teleopConfig');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        const savedTopic = typeof parsed?.topic === 'string' ? parsed.topic : undefined;
-        const shouldAdoptVmDefault =
-          !savedTopic ||
-          savedTopic === '/cmd_vel' ||
-          savedTopic === '/turtlebot4/cmd_vel';
-        // Merge with defaults to handle missing fields
         return {
-          ...DEFAULT_CONFIG,
+          ...teleopProfile.defaultConfig,
           ...parsed,
-          topic: shouldAdoptVmDefault ? defaultTopic : savedTopic,
         };
       } catch (e) {
         console.error('Failed to parse saved teleop config:', e);
       }
     }
-    return {
-      ...DEFAULT_CONFIG,
-      topic: defaultTopic,
-    };
+    return teleopProfile.defaultConfig;
   });
 
   const [padAction, setPadAction] = useState<DirectionalPadAction | undefined>();
   const [keyboardAction, setKeyboardAction] = useState<DirectionalPadAction | undefined>();
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<Record<string, unknown> | null>(null);
-  const [availableTopics, setAvailableTopics] = useState<string[]>([]);
+  const [discoveredTopics, setDiscoveredTopics] = useState<TeleopTopicConfig[]>([]);
   const activeAction = keyboardAction ?? padAction;
+
+  const availableTopics = useMemo(() => {
+    const preferredTopicNames = new Set(teleopProfile.preferredTopics.map((topic) => topic.topic));
+    const discoveredCompatibleTopics = discoveredTopics.filter((topic) =>
+      teleopProfile.compatibleMessageTypes.includes(topic.type),
+    );
+    const otherCompatibleTopics = discoveredCompatibleTopics.filter(
+      (topic) => !preferredTopicNames.has(topic.topic),
+    );
+
+    if (teleopProfile.topicSelectionMode === 'strict') {
+      return dedupeTopics(teleopProfile.preferredTopics);
+    }
+
+    return dedupeTopics([...teleopProfile.preferredTopics, ...otherCompatibleTopics]);
+  }, [discoveredTopics, teleopProfile]);
+
+  const selectedTopicType = useMemo(() => {
+    return availableTopics.find((topic) => topic.topic === config.topic)?.type;
+  }, [availableTopics, config.topic]);
 
   // Save config to localStorage when it changes
   useEffect(() => {
-    localStorage.setItem('teleopConfig', JSON.stringify(config));
-  }, [config]);
+    localStorage.setItem(storageKey, JSON.stringify(config));
+  }, [config, storageKey]);
 
   useEffect(() => {
-    const defaultTopic = getDefaultTeleopTopic();
     setConfig((prev) => {
-      if (
-        prev.topic === defaultTopic ||
-        (getActiveVmConfigId() === 'turtlebot4' &&
-          prev.topic !== '/cmd_vel' &&
-          prev.topic !== '/turtlebot4/cmd_vel')
-      ) {
+      if (teleopProfile.topicSelectionMode !== 'strict') {
         return prev;
       }
 
-      return {
-        ...prev,
-        topic: defaultTopic,
-      };
+      const allowedTopics = new Set(teleopProfile.preferredTopics.map((topic) => topic.topic));
+      if (prev.topic && allowedTopics.has(prev.topic)) {
+        return prev;
+      }
+
+      return { ...prev, topic: teleopProfile.defaultConfig.topic };
     });
-  }, []);
+  }, [teleopProfile]);
 
   // Check ROS connection status
   useEffect(() => {
@@ -141,8 +188,8 @@ export function TeleopPanel(): React.JSX.Element {
   // Discover available topics for dropdown
   useEffect(() => {
     const updateTopics = () => {
-      const topics = getTopicSuggestions().map((t) => t.topic);
-      setAvailableTopics(topics);
+      const topics = getTopicSuggestions().map((t) => ({ topic: t.topic, type: t.type }));
+      setDiscoveredTopics(topics);
     };
 
     updateTopics();
@@ -218,26 +265,28 @@ export function TeleopPanel(): React.JSX.Element {
     }
 
     const message = buildTwistMessage(activeAction);
+    const publishPayload = getPublishMessage(selectedTopicType, message);
     const intervalMs = 1000 / config.publishRate;
 
     // Publish immediately
-    ros2Bridge.publish(config.topic, 'geometry_msgs/Twist', message);
-    setLastMessage(message);
+    ros2Bridge.publish(config.topic, publishPayload.messageType, publishPayload.message);
+    setLastMessage(publishPayload.message);
 
     // Then publish at configured rate
     const intervalHandle = setInterval(() => {
-      ros2Bridge.publish(config.topic!, 'geometry_msgs/Twist', message);
-      setLastMessage(message);
+      ros2Bridge.publish(config.topic!, publishPayload.messageType, publishPayload.message);
+      setLastMessage(publishPayload.message);
     }, intervalMs);
 
     return () => {
       clearInterval(intervalHandle);
     };
-  }, [activeAction, config.topic, config.publishRate, isConnected, buildTwistMessage]);
+  }, [activeAction, config.topic, config.publishRate, isConnected, buildTwistMessage, selectedTopicType]);
 
   const canPublish = isConnected && config.publishRate > 0;
   const hasTopic = Boolean(config.topic);
-  const enabled = canPublish && hasTopic;
+  const enabled = teleopProfile.layout === 'twist-pad' && canPublish && hasTopic;
+  const displayedTwist = getDisplayedTwist(lastMessage);
 
   useEffect(() => {
     if (!enabled) {
@@ -328,7 +377,7 @@ export function TeleopPanel(): React.JSX.Element {
         <div className="teleop-header-panel">
           <div className="header-top">
             <div className="header-title-section">
-              <h2 className="panel-title">Teleop Control</h2>
+              <h2 className="panel-title">{teleopProfile.title}</h2>
               <div className="header-actions">
                 <ConnectionSettingsTrigger />
               </div>
@@ -350,10 +399,11 @@ export function TeleopPanel(): React.JSX.Element {
                     className="setting-input setting-select"
                     value={config.topic ?? ''}
                     onChange={(e) => setConfig({ ...config, topic: e.target.value })}
+                    disabled={teleopProfile.topicSelectionMode === 'strict' && availableTopics.length <= 1}
                   >
                     {availableTopics.map((topic) => (
-                      <option key={topic} value={topic}>
-                        {topic}
+                      <option key={topic.topic} value={topic.topic}>
+                        {topic.label ? `${topic.label} • ${topic.topic}` : topic.topic}
                       </option>
                     ))}
                   </select>
@@ -363,7 +413,8 @@ export function TeleopPanel(): React.JSX.Element {
                     type="text"
                     value={config.topic ?? ''}
                     onChange={(e) => setConfig({ ...config, topic: e.target.value })}
-                    placeholder={getDefaultTeleopTopic()}
+                    placeholder={teleopProfile.defaultConfig.topic ?? '/cmd_vel'}
+                    disabled={teleopProfile.layout !== 'twist-pad'}
                   />
                 )}
               </div>
@@ -385,11 +436,12 @@ export function TeleopPanel(): React.JSX.Element {
             </div>
           </div>
 
-          <details className="advanced-settings">
-            <summary>
-              <span>Button Mapping Configuration</span>
-            </summary>
-            <div className="button-config">
+          {teleopProfile.showAdvancedMapping && (
+            <details className="advanced-settings">
+              <summary>
+                <span>Button Mapping Configuration</span>
+              </summary>
+              <div className="button-config">
               {/* Up Button */}
               <div className="button-config-group">
                 <h4>Up Button</h4>
@@ -513,18 +565,25 @@ export function TeleopPanel(): React.JSX.Element {
                   </div>
                 </div>
               </div>
-            </div>
-          </details>
+              </div>
+            </details>
+          )}
         </div>
 
         <div className="control-section">
-          {!canPublish && (
+          {teleopProfile.layout !== 'twist-pad' && (
+            <div className="empty-state">
+              <p>{teleopProfile.description}</p>
+              <p>Use the config-specific teleop workflow for this VM rather than a generic velocity pad.</p>
+            </div>
+          )}
+          {teleopProfile.layout === 'twist-pad' && !canPublish && (
             <div className="empty-state">
               {!isConnected && <p>Connect to a ROS data source to enable control</p>}
               {isConnected && config.publishRate <= 0 && <p>Invalid publish rate configuration</p>}
             </div>
           )}
-          {canPublish && !hasTopic && (
+          {teleopProfile.layout === 'twist-pad' && canPublish && !hasTopic && (
             <div className="empty-state">
               <p>Select a publish topic in the settings above</p>
             </div>
@@ -540,21 +599,21 @@ export function TeleopPanel(): React.JSX.Element {
           )}
         </div>
 
-        {lastMessage && enabled && (
+        {displayedTwist && enabled && (
           <div className="status-panel">
             <h3>Last Published Message</h3>
             <div className="twist-display">
               <div>
                 <span className="field-name">linear:</span> x=
-                {(lastMessage.linear as { x: number }).x.toFixed(2)}, y=
-                {(lastMessage.linear as { y: number }).y.toFixed(2)}, z=
-                {(lastMessage.linear as { z: number }).z.toFixed(2)}
+                {displayedTwist.linear.x.toFixed(2)}, y=
+                {displayedTwist.linear.y.toFixed(2)}, z=
+                {displayedTwist.linear.z.toFixed(2)}
               </div>
               <div>
                 <span className="field-name">angular:</span> x=
-                {(lastMessage.angular as { x: number }).x.toFixed(2)}, y=
-                {(lastMessage.angular as { y: number }).y.toFixed(2)}, z=
-                {(lastMessage.angular as { z: number }).z.toFixed(2)}
+                {displayedTwist.angular.x.toFixed(2)}, y=
+                {displayedTwist.angular.y.toFixed(2)}, z=
+                {displayedTwist.angular.z.toFixed(2)}
               </div>
             </div>
           </div>
