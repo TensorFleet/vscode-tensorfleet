@@ -182,6 +182,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     htmlTemplate: 'sensor-3d-standalone'
   },
   {
+    id: "tensorfleet-nav2-panel",
+    title: "Nav2 operator",
+    description: "Monitor NavigateToPose status, send simple goals, and inspect TurtleBot4 topic health.",
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openNav2Panel',
+    actionLabel: 'Open Nav2 Operator',
+    panelKind: 'standard',
+    htmlTemplate: 'nav2-standalone'
+  },
+  {
     id: "tensorfleet-raw-messages-panel",
     title: 'Raw Messages',
     description: 'Display raw ROS2 messages in real-time - monitor and debug message traffic.',
@@ -1816,6 +1826,11 @@ async function openDedicatedPanel(
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
       }
 
+      if (view.htmlTemplate == 'nav2-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+
       if (view.htmlTemplate == 'raw-messages-standalone') {
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
@@ -1942,6 +1957,10 @@ async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, 
     return getStandalonePanelHtml('sensor_view_3d', webview, context, cspSource);
   }
 
+  if (view.htmlTemplate === 'nav2-standalone') {
+    return getStandalonePanelHtml('nav2', webview, context, cspSource);
+  }
+
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
@@ -1991,7 +2010,7 @@ async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, 
 }
 
 async function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d' | 'gzweb' | 'featured_entities',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d' | 'nav2' | 'gzweb' | 'featured_entities',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
