@@ -3,7 +3,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { DroneController } from "tensorfleet-util/drone/mission-control/drone-controller";
 
 /** Keep this in sync with the UI emitter */
-type MissionAction = "arm" | "disarm" | "takeoff" | "land" | "rtl" | "goto";
+type MissionAction =
+  | "arm"
+  | "disarm"
+  | "takeoff"
+  | "land"
+  | "rtl"
+  | "goto";
 
 interface AppRequestDetail<T = any> {
   category: "mission_control";
