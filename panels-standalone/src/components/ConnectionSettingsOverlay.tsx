@@ -41,6 +41,7 @@ export const ConnectionSettingsOverlay: React.FC<ConnectionSettingsOverlayProps>
     (window as any).TENSORFLEET_NODE_ID = settings.nodeId;
     (window as any).TENSORFLEET_JWT = settings.token;
     (window as any).TENSORFLEET_USE_PROXY = settings.useProxy;
+    (window as any).TENSORFLEET_TARGET_PORT = settings.targetPort;
 
     // Notify parent via postMessage
     window.parent.postMessage({

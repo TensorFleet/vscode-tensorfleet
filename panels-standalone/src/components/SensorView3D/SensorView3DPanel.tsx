@@ -87,23 +87,23 @@ const BARE_POLYGON_SCHEMA_NAMES = new Set([
   "ros.geometry_msgs.Polygon",
 ]);
 const TURTLEBOT4_AUTO_VISIBLE_TOPIC_NAMES = new Set([
-  "/turtlebot4/scan",
-  "/turtlebot4/map",
-  "/turtlebot4/local_costmap/costmap",
-  "/turtlebot4/global_costmap/costmap",
+  "/scan",
+  "/map",
+  "/local_costmap/costmap",
+  "/global_costmap/costmap",
 ]);
 const STANDALONE_3D_HIDDEN_BY_DEFAULT_TOPIC_NAMES = new Set([
-  "/turtlebot4/oakd/rgb/preview/depth/points",
+  "/oakd/rgb/preview/depth/points",
 ]);
 const TURTLEBOT4_SENSOR_TOPIC_DEFAULTS: Ros2BridgeSubscription[] = [
-  { topic: "/turtlebot4/scan", type: "sensor_msgs/msg/LaserScan" },
-  { topic: "/turtlebot4/odom", type: "nav_msgs/msg/Odometry" },
-  { topic: "/turtlebot4/tf", type: "tf2_msgs/msg/TFMessage" },
-  { topic: "/turtlebot4/tf_static", type: "tf2_msgs/msg/TFMessage" },
-  { topic: "/turtlebot4/oakd/rgb/preview/depth/points", type: "sensor_msgs/msg/PointCloud2" },
-  { topic: "/turtlebot4/map", type: "nav_msgs/msg/OccupancyGrid" },
-  { topic: "/turtlebot4/local_costmap/costmap", type: "nav_msgs/msg/OccupancyGrid" },
-  { topic: "/turtlebot4/global_costmap/costmap", type: "nav_msgs/msg/OccupancyGrid" },
+  { topic: "/scan", type: "sensor_msgs/msg/LaserScan" },
+  { topic: "/odom", type: "nav_msgs/msg/Odometry" },
+  { topic: "/tf", type: "tf2_msgs/msg/TFMessage" },
+  { topic: "/tf_static", type: "tf2_msgs/msg/TFMessage" },
+  { topic: "/oakd/rgb/preview/depth/points", type: "sensor_msgs/msg/PointCloud2" },
+  { topic: "/map", type: "nav_msgs/msg/OccupancyGrid" },
+  { topic: "/local_costmap/costmap", type: "nav_msgs/msg/OccupancyGrid" },
+  { topic: "/global_costmap/costmap", type: "nav_msgs/msg/OccupancyGrid" },
 ];
 const PANEL_LIST_SCHEMA_HINTS = [
   "LaserScan",
@@ -188,7 +188,7 @@ function isLaserScanTopic(topic: TopicLike): boolean {
   return (
     schemaName.includes("LaserScan") ||
     name === "/scan" ||
-    name === "/turtlebot4/scan" ||
+    name === "/scan" ||
     name === "/x500/scan"
   );
 }
@@ -612,7 +612,7 @@ function toSyntheticPolygonStamped(
 
 function rewriteTurtlebot4DepthPointCloudFrameId(topicName: string, msg: any): any {
   if (
-    topicName !== "/turtlebot4/oakd/rgb/preview/depth/points" ||
+    topicName !== "/oakd/rgb/preview/depth/points" ||
     !msg ||
     typeof msg !== "object"
   ) {
@@ -1231,8 +1231,8 @@ export const Sensor3DViewPanel: React.FC<Sensor3DViewPanelProps> = (props) => {
     ];
     if (getActiveVmConfigId() === "turtlebot4") {
       tfSubscriptions.push(
-        { topic: "/turtlebot4/tf", type: "tf2_msgs/msg/TFMessage" },
-        { topic: "/turtlebot4/tf_static", type: "tf2_msgs/msg/TFMessage" },
+        { topic: "/tf", type: "tf2_msgs/msg/TFMessage" },
+        { topic: "/tf_static", type: "tf2_msgs/msg/TFMessage" },
       );
     }
 

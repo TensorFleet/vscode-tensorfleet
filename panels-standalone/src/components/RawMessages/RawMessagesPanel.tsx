@@ -36,7 +36,7 @@ type DiffObject = Record<string, DiffResult>;
 
 const MESSAGE_RATE_WINDOW_MS = 1000; // Calculate rate over 1 second
 const DEFAULT_TOPIC = "/clock";
-const TURTLEBOT4_ACTION_TOPIC_PREFIX = "/turtlebot4/navigate_to_pose/_action/";
+const TURTLEBOT4_ACTION_TOPIC_PREFIX = "/navigate_to_pose/_action/";
 const TURTLEBOT4_STATUS_KEYWORDS = ["battery", "dock", "hazard", "imu"] as const;
 
 type PinnedTopic = {
@@ -47,14 +47,14 @@ type PinnedTopic = {
 };
 
 const TURTLEBOT4_CORE_PINNED_TOPICS = [
-  { topic: "/turtlebot4/navigate_to_pose/_action/status", label: "Nav2 Status" },
-  { topic: "/turtlebot4/navigate_to_pose/_action/feedback", label: "Nav2 Feedback" },
-  { topic: "/turtlebot4/navigate_to_pose/_action/result", label: "Nav2 Result" },
-  { topic: "/turtlebot4/odom", label: "Odometry" },
-  { topic: "/turtlebot4/scan", label: "Lidar Scan" },
-  { topic: "/turtlebot4/map", label: "SLAM Map" },
-  { topic: "/turtlebot4/local_costmap/costmap", label: "Local Costmap" },
-  { topic: "/turtlebot4/global_costmap/costmap", label: "Global Costmap" },
+  { topic: "/navigate_to_pose/_action/status", label: "Nav2 Status" },
+  { topic: "/navigate_to_pose/_action/feedback", label: "Nav2 Feedback" },
+  { topic: "/navigate_to_pose/_action/result", label: "Nav2 Result" },
+  { topic: "/odom", label: "Odometry" },
+  { topic: "/scan", label: "Lidar Scan" },
+  { topic: "/map", label: "SLAM Map" },
+  { topic: "/local_costmap/costmap", label: "Local Costmap" },
+  { topic: "/global_costmap/costmap", label: "Global Costmap" },
 ] as const;
 
 const jsonTreeTheme: Theme = {
@@ -83,28 +83,28 @@ function getActiveVmConfigId(): string {
 }
 
 function getTurtleBot4PinnedLabel(topic: string): string {
-  if (topic === "/turtlebot4/navigate_to_pose/_action/status") {
+  if (topic === "/navigate_to_pose/_action/status") {
     return "Nav2 Status";
   }
-  if (topic === "/turtlebot4/navigate_to_pose/_action/feedback") {
+  if (topic === "/navigate_to_pose/_action/feedback") {
     return "Nav2 Feedback";
   }
-  if (topic === "/turtlebot4/navigate_to_pose/_action/result") {
+  if (topic === "/navigate_to_pose/_action/result") {
     return "Nav2 Result";
   }
-  if (topic === "/turtlebot4/odom") {
+  if (topic === "/odom") {
     return "Odometry";
   }
-  if (topic === "/turtlebot4/scan") {
+  if (topic === "/scan") {
     return "Lidar Scan";
   }
-  if (topic === "/turtlebot4/map") {
+  if (topic === "/map") {
     return "SLAM Map";
   }
-  if (topic === "/turtlebot4/local_costmap/costmap") {
+  if (topic === "/local_costmap/costmap") {
     return "Local Costmap";
   }
-  if (topic === "/turtlebot4/global_costmap/costmap") {
+  if (topic === "/global_costmap/costmap") {
     return "Global Costmap";
   }
 
@@ -160,9 +160,6 @@ function getTurtleBot4PinnedTopics(discoveredTopics: DiscoveredTopic[]): PinnedT
     .filter((topic) => {
       if (topic.topic.startsWith(TURTLEBOT4_ACTION_TOPIC_PREFIX)) {
         return true;
-      }
-      if (!topic.topic.startsWith("/turtlebot4/")) {
-        return false;
       }
       const normalizedTopic = topic.topic.toLowerCase();
       return TURTLEBOT4_STATUS_KEYWORDS.some((keyword) => normalizedTopic.includes(keyword));

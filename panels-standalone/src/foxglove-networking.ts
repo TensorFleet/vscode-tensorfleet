@@ -86,6 +86,103 @@ type ResolvedService = {
   responseEncoding: "cdr";
 };
 
+type ServiceSchemaOverride = {
+  schemaName: string;
+  schemaEncoding: "ros2msg";
+  schema: string;
+};
+
+const CANCEL_GOAL_REQUEST_SCHEMA = `action_msgs/msg/GoalInfo goal_info
+================================================================================
+MSG: action_msgs/msg/GoalInfo
+unique_identifier_msgs/msg/UUID goal_id
+builtin_interfaces/msg/Time stamp
+================================================================================
+MSG: unique_identifier_msgs/msg/UUID
+uint8[16] uuid
+================================================================================
+MSG: builtin_interfaces/msg/Time
+int32 sec
+uint32 nanosec
+`;
+
+function hasSchemaText(schema: string | undefined): boolean {
+  return typeof schema === "string" && schema.trim().length > 0;
+}
+
+function createSendGoalRequestSchema(actionBaseType: string): ServiceSchemaOverride {
+  return {
+    schemaName: `${actionBaseType}_SendGoal_Request`,
+    schemaEncoding: "ros2msg",
+    schema: `unique_identifier_msgs/msg/UUID goal_id
+${actionBaseType}_Goal goal
+================================================================================
+MSG: unique_identifier_msgs/msg/UUID
+uint8[16] uuid
+================================================================================
+MSG: ${actionBaseType}_Goal
+geometry_msgs/msg/PoseStamped pose
+string behavior_tree
+================================================================================
+MSG: geometry_msgs/msg/PoseStamped
+std_msgs/msg/Header header
+geometry_msgs/msg/Pose pose
+================================================================================
+MSG: std_msgs/msg/Header
+builtin_interfaces/msg/Time stamp
+string frame_id
+================================================================================
+MSG: builtin_interfaces/msg/Time
+int32 sec
+uint32 nanosec
+================================================================================
+MSG: geometry_msgs/msg/Pose
+geometry_msgs/msg/Point position
+geometry_msgs/msg/Quaternion orientation
+================================================================================
+MSG: geometry_msgs/msg/Point
+float64 x
+float64 y
+float64 z
+================================================================================
+MSG: geometry_msgs/msg/Quaternion
+float64 x
+float64 y
+float64 z
+float64 w
+`,
+  };
+}
+
+function createGetResultRequestSchema(actionBaseType: string): ServiceSchemaOverride {
+  return {
+    schemaName: `${actionBaseType}_GetResult_Request`,
+    schemaEncoding: "ros2msg",
+    schema: `unique_identifier_msgs/msg/UUID goal_id
+================================================================================
+MSG: unique_identifier_msgs/msg/UUID
+uint8[16] uuid
+`,
+  };
+}
+
+function getFallbackServiceRequestSchema(service: AdvertisedService): ServiceSchemaOverride | null {
+  if (service.type.endsWith("_SendGoal")) {
+    return createSendGoalRequestSchema(service.type.slice(0, -"_SendGoal".length));
+  }
+  if (service.type.endsWith("_GetResult")) {
+    return createGetResultRequestSchema(service.type.slice(0, -"_GetResult".length));
+  }
+  if (service.type === "action_msgs/srv/CancelGoal") {
+    return {
+      schemaName: "action_msgs/srv/CancelGoal_Request",
+      schemaEncoding: "ros2msg",
+      schema: CANCEL_GOAL_REQUEST_SCHEMA,
+    };
+  }
+  return null;
+}
+
 /**
  * Connection configuration for FoxgloveWsClient
  * Currently routed through the vm-manager WebSocket proxy only.
@@ -145,6 +242,7 @@ export class FoxgloveWsClient {
   private serviceEncoding: "cdr" | undefined;
   private servicesById = new Map<number, ResolvedService>();
   private serviceWaiters = new Map<string, Set<() => void>>();
+  private availableServicesListeners = new Set<(services: string[]) => void>();
 
   // Capabilities
   private supportedEncodings: string[] | undefined;
@@ -225,6 +323,11 @@ export class FoxgloveWsClient {
 
     this.client.on("close", (ev) => {
       this.isOpenFlag = false;
+      if (this.servicesByName.size > 0 || this.servicesById.size > 0) {
+        this.servicesByName.clear();
+        this.servicesById.clear();
+        this.notifyAvailableServicesChanged();
+      }
       this.onClose?.(ev as unknown as CloseEvent);
     });
 
@@ -357,14 +460,31 @@ export class FoxgloveWsClient {
           const reqSchemaName = service.request?.schemaName ?? `${service.type}_Request`;
           const resSchemaName = service.response?.schemaName ?? `${service.type}_Response`;
 
-          const reqSchema = service.request?.schema ?? service.requestSchema ?? "";
+          let reqSchema = service.request?.schema ?? service.requestSchema ?? "";
           const resSchema = service.response?.schema ?? service.responseSchema ?? "";
+
+          let requestSchemaName = reqSchemaName;
+          let requestSchemaEncoding = service.request?.schemaEncoding ?? "ros2msg";
+
+          const fallbackRequestSchema = getFallbackServiceRequestSchema(service);
+          if (fallbackRequestSchema) {
+            requestSchemaName = fallbackRequestSchema.schemaName;
+            requestSchemaEncoding = fallbackRequestSchema.schemaEncoding;
+            reqSchema = fallbackRequestSchema.schema;
+            console.warn(
+              `[FoxgloveWsClient] Overriding request schema for service ${service.name} (${service.type})`,
+            );
+          } else if (!hasSchemaText(reqSchema)) {
+            console.warn(
+              `[FoxgloveWsClient] Service ${service.name} (${service.type}) advertised without a request schema`,
+            );
+          }
 
           const parsedReq = parseChannel({
             messageEncoding: "cdr",
             schema: {
-              name: reqSchemaName,
-              encoding: service.request?.schemaEncoding ?? "ros2msg",
+              name: requestSchemaName,
+              encoding: requestSchemaEncoding,
               data: textEncoder.encode(reqSchema),
             },
           }, parseOpts);
@@ -381,7 +501,7 @@ export class FoxgloveWsClient {
           for (const [n, d] of parsedReq.datatypes) this.datatypesFromChannels.set(n, d);
           for (const [n, d] of parsedRes.datatypes) this.datatypesFromChannels.set(n, d);
 
-          const msgdefReq = rosDatatypesToMessageDefinition(parsedReq.datatypes, reqSchemaName);
+          const msgdefReq = rosDatatypesToMessageDefinition(parsedReq.datatypes, requestSchemaName);
           const requestWriter = new Ros2MessageWriter(msgdefReq);
 
           const resolved: ResolvedService = {
@@ -408,9 +528,26 @@ export class FoxgloveWsClient {
         }
       }
 
+      this.notifyAvailableServicesChanged();
+
       // Now that services are available, try executing any queued setup service calls
       if (needsStartup && this.areStartupServicesReady()) {
         this.processSetupServiceCalls();
+      }
+    });
+
+    this.client.on("unadvertiseServices", (serviceIds: number[]) => {
+      let changed = false;
+      for (const serviceId of serviceIds) {
+        const resolved = this.servicesById.get(serviceId);
+        if (!resolved) {
+          continue;
+        }
+        this.servicesById.delete(serviceId);
+        changed = this.servicesByName.delete(resolved.service.name) || changed;
+      }
+      if (changed) {
+        this.notifyAvailableServicesChanged();
       }
     });
 
@@ -919,7 +1056,7 @@ export class FoxgloveWsClient {
         // remove waiter
         const set = this.serviceWaiters.get(serviceName);
         if (set) {
-          set.delete(resolve);
+          set.delete(wrappedResolve);
           if (set.size === 0) this.serviceWaiters.delete(serviceName);
         }
         reject(new Error(`Timeout waiting for service: ${serviceName}`));
@@ -939,7 +1076,9 @@ export class FoxgloveWsClient {
     });
   }
 
-  public async callService<T = any>(call: ServiceCallRequest): Promise<T> {
+  public async callService<T = any>(
+    call: ServiceCallRequest & { timeoutMs?: number },
+  ): Promise<T> {
     const { serviceName, request } = call;
     const svc = this.servicesByName.get(serviceName);
     if (!svc) {
@@ -971,7 +1110,7 @@ export class FoxgloveWsClient {
       const timeout = setTimeout(() => {
         this.serviceCallbacks.delete(callId);
         reject(new Error(`Service call timeout: ${serviceName}`));
-      }, 30000);
+      }, call.timeoutMs ?? 30000);
 
       this.serviceCallbacks.set(callId, (resp) => {
         clearTimeout(timeout);
@@ -1169,5 +1308,32 @@ export class FoxgloveWsClient {
 
   getTopicType(topic: string): string | undefined {
     return this.channelsByTopic.get(topic)?.channel.schemaName;
+  }
+
+  getAvailableServices(): string[] {
+    return Array.from(this.servicesByName.keys()).sort((left, right) => left.localeCompare(right));
+  }
+
+  onAvailableServicesChanged(cb: (services: string[]) => void): () => void {
+    this.availableServicesListeners.add(cb);
+    try {
+      cb(this.getAvailableServices());
+    } catch (error) {
+      console.error("[FoxgloveWsClient] availableServices initial callback error:", error);
+    }
+    return () => {
+      this.availableServicesListeners.delete(cb);
+    };
+  }
+
+  private notifyAvailableServicesChanged() {
+    const services = this.getAvailableServices();
+    for (const listener of this.availableServicesListeners) {
+      try {
+        listener(services);
+      } catch (error) {
+        console.error("[FoxgloveWsClient] availableServices listener error:", error);
+      }
+    }
   }
 }

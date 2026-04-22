@@ -269,20 +269,21 @@ const PROFILES: Record<string, TeleopProfile> = {
   turtlebot4: createGroundProfile({
     id: "turtlebot4",
     title: "TurtleBot4 Teleop",
-    description: "Uses the diff-drive controller command topic for operator teleop.",
+    description: "Operator teleop publishes to `/cmd_vel_raw` before VM-side deadman filtering.",
     preferredTopics: [
       {
-        topic: "/turtlebot4/diffdrive_controller/cmd_vel",
-        type: "geometry_msgs/msg/TwistStamped",
-        label: "Diff-drive controller",
+        topic: "/cmd_vel_raw",
+        type: "geometry_msgs/msg/Twist",
+        label: "Primary velocity command",
       },
+      { topic: "/cmd_vel", type: "geometry_msgs/msg/Twist" },
     ],
-    compatibleMessageTypes: TWIST_STAMPED_TYPES,
+    compatibleMessageTypes: GENERIC_TWIST_TYPES,
     topicSelectionMode: "strict",
     showAdvancedMapping: false,
     defaultConfig: {
       ...DEFAULT_GROUND_CONFIG,
-      topic: "/turtlebot4/diffdrive_controller/cmd_vel",
+      topic: "/cmd_vel_raw",
     },
   }),
   px4: createDroneProfile(

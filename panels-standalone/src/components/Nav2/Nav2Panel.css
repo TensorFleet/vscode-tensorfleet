@@ -66,6 +66,13 @@
   color: #cbd5e1;
 }
 
+.nav2-goal-state--ready,
+.nav2-chip--healthy {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+}
+
+.nav2-goal-state--sending,
 .nav2-goal-state--accepted,
 .nav2-goal-state--executing,
 .nav2-chip--receiving,
@@ -75,15 +82,23 @@
 }
 
 .nav2-goal-state--canceling,
-.nav2-chip--stale {
+.nav2-chip--stale,
+.nav2-chip--warning,
+.nav2-chip--pending {
   background: rgba(245, 158, 11, 0.18);
   color: #fcd34d;
 }
 
+.nav2-goal-state--blocked,
 .nav2-goal-state--canceled,
 .nav2-goal-state--aborted,
+.nav2-goal-state--rejected,
 .nav2-chip--missing,
-.nav2-connection--disconnected {
+.nav2-chip--error,
+.nav2-chip--blocked,
+.nav2-connection--disconnected,
+.nav2-banner--fail,
+.nav2-banner--blocked {
   background: rgba(239, 68, 68, 0.16);
   color: #fca5a5;
 }
@@ -97,6 +112,24 @@
 .nav2-goal-state--unknown {
   background: rgba(99, 102, 241, 0.18);
   color: #c7d2fe;
+}
+
+.nav2-banner--summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  font-weight: 600;
+}
+
+.nav2-banner--pass {
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #bbf7d0;
+}
+
+.nav2-banner--in-progress {
+  border-color: rgba(59, 130, 246, 0.45);
+  color: #bfdbfe;
 }
 
 .nav2-banner {
@@ -135,6 +168,10 @@
   border: 1px solid #1f2937;
   background: rgba(7, 12, 23, 0.92);
   box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.04);
+}
+
+.nav2-card--full {
+  grid-column: 1 / -1;
 }
 
 .nav2-card h2 {
@@ -267,6 +304,10 @@
   margin-top: 1rem;
 }
 
+.nav2-facts--compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .nav2-facts div {
   display: grid;
   gap: 0.2rem;
@@ -317,14 +358,77 @@
   color: #9fb3c8;
 }
 
+.nav2-health-row__meta--stacked {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.nav2-inline-list {
+  margin-top: 0.75rem;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.nav2-inline-list li {
+  margin-left: 1rem;
+}
+
+.nav2-inline-tag {
+  display: inline-flex;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.nav2-debug-stack {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.nav2-handoff-actions {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.nav2-handoff-guidance,
+.nav2-handoff-copy-state {
+  margin-bottom: 0.85rem;
+}
+
+.nav2-handoff-preview {
+  margin: 0;
+  max-height: 24rem;
+  overflow: auto;
+  padding: 0.95rem;
+  border-radius: 0.9rem;
+  background: #020617;
+  border: 1px solid #1e293b;
+  color: #dbeafe;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .nav2-debug-section + .nav2-debug-section {
   margin-top: 1rem;
 }
 
-.nav2-debug-section h3 {
+.nav2-debug-section summary {
+  cursor: pointer;
   color: #cbd5e1;
-  margin-bottom: 0.45rem;
   font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.nav2-debug-section[open] summary {
+  margin-bottom: 0.45rem;
 }
 
 .nav2-debug-section pre {
@@ -345,7 +449,8 @@
   }
 
   .nav2-form,
-  .nav2-kpis {
+  .nav2-kpis,
+  .nav2-facts--compact {
     grid-template-columns: 1fr;
   }
 
@@ -355,6 +460,15 @@
   }
 
   .nav2-health-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .nav2-handoff-actions {
+    width: 100%;
+  }
+
+  .nav2-banner--summary {
     flex-direction: column;
     align-items: flex-start;
   }
