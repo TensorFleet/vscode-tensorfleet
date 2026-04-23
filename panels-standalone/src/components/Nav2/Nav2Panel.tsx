@@ -1,90 +1,39 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import clipboard from "@lichtblick/suite-base/util/clipboard";
-import { ros2Bridge, type Subscription } from "../../ros2-bridge";
+import type { TfGraphSnapshot } from "tensorfleet-util/ros/ros-bridge-api";
 import {
-  type TfEdgeSnapshot,
-  type TfGraphSnapshot,
-} from "tensorfleet-util/ros/ros-bridge-api";
+  ACTION_FEEDBACK_TOPIC,
+  ACTION_STATUS_TOPIC,
+  CMD_VEL_NAV_TOPIC,
+  PLAN_TOPIC,
+  SEND_GOAL_SERVICE,
+  TRANSFORMED_GLOBAL_PLAN_TOPIC,
+  VM_CONFIG_ID,
+} from "./runtime/nav2RuntimeConstants";
+import {
+  createFeedbackSnippet,
+  findTfEdge,
+  formatNumber,
+  formatPose,
+  formatRosDuration,
+  formatTimeAgo,
+  getRecentTimestamp,
+} from "./runtime/nav2RuntimeUtils";
+import type {
+  ActiveGoal,
+  GoalState,
+  HealthSeverity,
+  LifecycleCheck,
+  LifecycleHealth,
+  PreflightStatus,
+  TfHealth,
+  TopicHealth,
+  ValidationSummary,
+  ValidationSummaryState,
+} from "./runtime/nav2RuntimeTypes";
+import { useNav2Runtime } from "./runtime/useNav2Runtime";
 import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from "../ConnectionSettingsProvider";
 import "./Nav2Panel.css";
-
-type GoalState =
-  | "blocked"
-  | "ready"
-  | "sending"
-  | "accepted"
-  | "executing"
-  | "canceling"
-  | "succeeded"
-  | "canceled"
-  | "aborted"
-  | "rejected"
-  | "unknown";
-
-type ValidationSummaryState = "blocked" | "pass" | "fail" | "in-progress";
-type HealthSeverity = "healthy" | "warning" | "error" | "unknown" | "pending";
-
-type TopicHealthConfig = {
-  topic: string;
-  label: string;
-  type: string;
-  staleAfterMs: number;
-  isStatic?: boolean;
-};
-
-type TopicHealth = TopicHealthConfig & {
-  advertised: boolean;
-  lastMessageAt: number | null;
-  status: "missing" | "advertised" | "receiving" | "stale";
-};
-
-type LifecycleSpec = {
-  node: string;
-  required: boolean;
-  evidenceTopics: string[];
-};
-
-type LifecycleCheck = {
-  pending: boolean;
-  lastCheckedAt: number | null;
-  response: Record<string, unknown> | null;
-  error: string | null;
-};
-
-type LifecycleHealth = {
-  node: string;
-  required: boolean;
-  serviceName: string;
-  status: HealthSeverity;
-  detail: string;
-  response: Record<string, unknown> | null;
-};
-
-type TfHealth = {
-  status: "healthy" | "error" | "pending";
-  detail: string;
-  baseFrame: string | null;
-  missingFrames: string[];
-  missingEdges: string[];
-  staleEdges: string[];
-};
-
-type ValidationSummary = {
-  state: ValidationSummaryState;
-  title: string;
-  detail: string;
-};
-
-type ActiveGoal = {
-  uuid: number[];
-  key: string;
-};
-
-type PreflightStatus = {
-  state: "pending" | "ready" | "blocked";
-  missingTopics: string[];
-  missingServices: string[];
-};
 
 type DebugSection = {
   id: string;
@@ -96,419 +45,6 @@ type CopyFeedback = {
   type: "idle" | "info" | "error";
   message: string;
 };
-
-const VM_CONFIG_ID = (typeof window !== "undefined" ? (window as any).TENSORFLEET_VM_CONFIG_ID : "") ?? "";
-const ACTION_PREFIX = "/navigate_to_pose/_action";
-const SEND_GOAL_SERVICE = `${ACTION_PREFIX}/send_goal`;
-const GET_RESULT_SERVICE = `${ACTION_PREFIX}/get_result`;
-const CANCEL_GOAL_SERVICE = `${ACTION_PREFIX}/cancel_goal`;
-const ACTION_STATUS_TOPIC = `${ACTION_PREFIX}/status`;
-const ACTION_FEEDBACK_TOPIC = `${ACTION_PREFIX}/feedback`;
-const TF_TOPIC = "/tf";
-const TF_STATIC_TOPIC = "/tf_static";
-const PLAN_TOPIC = "/plan";
-const TRANSFORMED_GLOBAL_PLAN_TOPIC = "/transformed_global_plan";
-const CMD_VEL_NAV_TOPIC = "/cmd_vel_nav";
-const STOP_STATUS_TOPIC = "/stop_status";
-const TF_EDGE_STALE_AFTER_MS = 5_000;
-const PRE_FLIGHT_DISCOVERY_GRACE_MS = 1_500;
-const LIFECYCLE_POLL_MS = 5_000;
-
-const REQUIRED_ACTION_SERVICES = [SEND_GOAL_SERVICE, GET_RESULT_SERVICE, CANCEL_GOAL_SERVICE];
-const REQUIRED_ACTION_TOPICS = [ACTION_STATUS_TOPIC, ACTION_FEEDBACK_TOPIC, TF_TOPIC, TF_STATIC_TOPIC];
-
-const TOPIC_HEALTH_CONFIGS: TopicHealthConfig[] = [
-  { topic: "/map", label: "SLAM map", type: "nav_msgs/msg/OccupancyGrid", staleAfterMs: 15_000 },
-  { topic: "/scan", label: "Lidar scan", type: "sensor_msgs/msg/LaserScan", staleAfterMs: 5_000 },
-  { topic: "/odom", label: "Odometry", type: "nav_msgs/msg/Odometry", staleAfterMs: 5_000 },
-  {
-    topic: "/pose",
-    label: "Localized pose",
-    type: "geometry_msgs/msg/PoseWithCovarianceStamped",
-    staleAfterMs: 5_000,
-  },
-  { topic: TF_TOPIC, label: "TF", type: "tf2_msgs/msg/TFMessage", staleAfterMs: 5_000 },
-  { topic: TF_STATIC_TOPIC, label: "TF static", type: "tf2_msgs/msg/TFMessage", staleAfterMs: 60_000, isStatic: true },
-  {
-    topic: "/local_costmap/costmap",
-    label: "Local costmap",
-    type: "nav_msgs/msg/OccupancyGrid",
-    staleAfterMs: 15_000,
-  },
-  {
-    topic: "/global_costmap/costmap",
-    label: "Global costmap",
-    type: "nav_msgs/msg/OccupancyGrid",
-    staleAfterMs: 15_000,
-  },
-  { topic: PLAN_TOPIC, label: "Global plan", type: "nav_msgs/msg/Path", staleAfterMs: 5_000 },
-  {
-    topic: TRANSFORMED_GLOBAL_PLAN_TOPIC,
-    label: "Transformed global plan",
-    type: "nav_msgs/msg/Path",
-    staleAfterMs: 5_000,
-  },
-  { topic: CMD_VEL_NAV_TOPIC, label: "Nav cmd_vel", type: "geometry_msgs/msg/TwistStamped", staleAfterMs: 5_000 },
-  {
-    topic: STOP_STATUS_TOPIC,
-    label: "Stop status",
-    type: "irobot_create_msgs/msg/StopStatus",
-    staleAfterMs: 15_000,
-  },
-  {
-    topic: ACTION_STATUS_TOPIC,
-    label: "Action status",
-    type: "action_msgs/msg/GoalStatusArray",
-    staleAfterMs: 5_000,
-  },
-  {
-    topic: ACTION_FEEDBACK_TOPIC,
-    label: "Action feedback",
-    type: "nav2_msgs/action/NavigateToPose_FeedbackMessage",
-    staleAfterMs: 5_000,
-  },
-];
-
-const LIFECYCLE_SPECS: LifecycleSpec[] = [
-  {
-    node: "controller_server",
-    required: true,
-    evidenceTopics: [CMD_VEL_NAV_TOPIC, "/local_costmap/costmap"],
-  },
-  {
-    node: "planner_server",
-    required: true,
-    evidenceTopics: [PLAN_TOPIC, "/global_costmap/costmap"],
-  },
-  {
-    node: "bt_navigator",
-    required: true,
-    evidenceTopics: [ACTION_STATUS_TOPIC, ACTION_FEEDBACK_TOPIC, TRANSFORMED_GLOBAL_PLAN_TOPIC],
-  },
-  {
-    node: "recoveries_server",
-    required: false,
-    evidenceTopics: [STOP_STATUS_TOPIC],
-  },
-  {
-    node: "amcl",
-    required: false,
-    evidenceTopics: ["/pose"],
-  },
-];
-
-function nowMs(): number {
-  return Date.now();
-}
-
-function snakeToCamel(value: string): string {
-  return value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
-}
-
-function getRecordEntry(record: Record<string, unknown>, key: string): unknown {
-  if (key in record) {
-    return record[key];
-  }
-  const camelKey = snakeToCamel(key);
-  if (camelKey in record) {
-    return record[camelKey];
-  }
-  return null;
-}
-
-function getNestedRecordEntry(value: unknown, keys: string[]): unknown {
-  let current: unknown = value;
-  for (const key of keys) {
-    if (!current || typeof current !== "object") {
-      return null;
-    }
-    current = getRecordEntry(current as Record<string, unknown>, key);
-  }
-  return current;
-}
-
-function normalizeRosMessage(message: unknown): Record<string, unknown> | null {
-  if (!message || typeof message !== "object") {
-    return null;
-  }
-  const record = message as Record<string, unknown>;
-  if (record.msg && typeof record.msg === "object") {
-    return record.msg as Record<string, unknown>;
-  }
-  return record;
-}
-
-function formatTimeAgo(timestamp: number | null): string {
-  if (timestamp == null) {
-    return "never";
-  }
-  const deltaMs = Math.max(0, nowMs() - timestamp);
-  if (deltaMs < 1_000) {
-    return "just now";
-  }
-  if (deltaMs < 60_000) {
-    return `${Math.floor(deltaMs / 1_000)}s ago`;
-  }
-  return `${Math.floor(deltaMs / 60_000)}m ago`;
-}
-
-function formatRosDuration(value: unknown): string {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    if (value < 60) {
-      return `${value.toFixed(1)}s`;
-    }
-    const minutes = Math.floor(value / 60);
-    const seconds = value % 60;
-    return `${minutes}m ${seconds.toFixed(0)}s`;
-  }
-  if (!value || typeof value !== "object") {
-    return "n/a";
-  }
-  const record = value as Record<string, unknown>;
-  const sec = Number(getRecordEntry(record, "sec") ?? getRecordEntry(record, "secs") ?? 0);
-  const nanosec = Number(getRecordEntry(record, "nanosec") ?? getRecordEntry(record, "nsecs") ?? 0);
-  if (!Number.isFinite(sec) || !Number.isFinite(nanosec)) {
-    return "n/a";
-  }
-  const totalSeconds = sec + nanosec / 1_000_000_000;
-  if (totalSeconds < 60) {
-    return `${totalSeconds.toFixed(1)}s`;
-  }
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}m ${seconds.toFixed(0)}s`;
-}
-
-function formatNumber(value: unknown, digits = 2): string {
-  const numeric = typeof value === "string" ? Number(value) : value;
-  if (typeof numeric !== "number" || Number.isNaN(numeric)) {
-    return "n/a";
-  }
-  return numeric.toFixed(digits);
-}
-
-function degreesToQuaternion(yawDegrees: number) {
-  const radians = (yawDegrees * Math.PI) / 180;
-  const halfYaw = radians / 2;
-  return {
-    x: 0,
-    y: 0,
-    z: Math.sin(halfYaw),
-    w: Math.cos(halfYaw),
-  };
-}
-
-function quaternionToYawDegrees(orientation: unknown): number | null {
-  if (!orientation || typeof orientation !== "object") {
-    return null;
-  }
-  const record = orientation as Record<string, unknown>;
-  const x = Number(record.x ?? 0);
-  const y = Number(record.y ?? 0);
-  const z = Number(record.z ?? 0);
-  const w = Number(record.w ?? 1);
-  const sinyCosp = 2 * (w * z + x * y);
-  const cosyCosp = 1 - 2 * (y * y + z * z);
-  return (Math.atan2(sinyCosp, cosyCosp) * 180) / Math.PI;
-}
-
-function formatPose(pose: unknown): string {
-  if (!pose || typeof pose !== "object") {
-    return "n/a";
-  }
-  const record = pose as Record<string, unknown>;
-  const position = (record.position ?? {}) as Record<string, unknown>;
-  const orientation = (record.orientation ?? {}) as Record<string, unknown>;
-  const yaw = quaternionToYawDegrees(orientation);
-  return `x ${formatNumber(position.x)}  y ${formatNumber(position.y)}  yaw ${yaw == null ? "n/a" : yaw.toFixed(1)}deg`;
-}
-
-function extractStampedPose(message: Record<string, unknown> | null): Record<string, unknown> | null {
-  if (!message) {
-    return null;
-  }
-  if (message.pose && typeof message.pose === "object") {
-    const nestedPose = message.pose as Record<string, unknown>;
-    if (nestedPose.pose && typeof nestedPose.pose === "object") {
-      return nestedPose.pose as Record<string, unknown>;
-    }
-    return nestedPose;
-  }
-  return null;
-}
-
-function getPoseCoordinates(pose: Record<string, unknown> | null): { x: number; y: number; yaw: number | null } | null {
-  if (!pose) {
-    return null;
-  }
-  const position = (pose.position ?? {}) as Record<string, unknown>;
-  const orientation = (pose.orientation ?? {}) as Record<string, unknown>;
-  const x = Number(position.x);
-  const y = Number(position.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    return null;
-  }
-  return { x, y, yaw: quaternionToYawDegrees(orientation) };
-}
-
-function computeTopicHealth(topics: Subscription[], messageTimestamps: Record<string, number | null>): TopicHealth[] {
-  const advertisedTopics = new Set(topics.map((topic) => topic.topic));
-  const currentTime = nowMs();
-
-  return TOPIC_HEALTH_CONFIGS.map((config) => {
-    const lastMessageAt = messageTimestamps[config.topic] ?? null;
-    let status: TopicHealth["status"] = "missing";
-
-    if (advertisedTopics.has(config.topic)) {
-      status = "advertised";
-    }
-    if (lastMessageAt != null) {
-      status = config.isStatic || currentTime - lastMessageAt <= config.staleAfterMs ? "receiving" : "stale";
-    }
-
-    return {
-      ...config,
-      advertised: advertisedTopics.has(config.topic),
-      lastMessageAt,
-      status,
-    };
-  });
-}
-
-function getRecentTimestamp(messageTimestamps: Record<string, number | null>, topic: string): number | null {
-  return messageTimestamps[topic] ?? null;
-}
-
-function isFresh(timestamp: number | null, staleAfterMs: number): boolean {
-  return timestamp != null && nowMs() - timestamp <= staleAfterMs;
-}
-
-function getPathPointCount(message: Record<string, unknown> | null): number {
-  const poses = message?.poses;
-  return Array.isArray(poses) ? poses.length : 0;
-}
-
-function getTwistSummary(message: Record<string, unknown> | null): string {
-  if (!message) {
-    return "n/a";
-  }
-  const twistCandidate = (message.twist && typeof message.twist === "object" ? message.twist : message) as Record<
-    string,
-    unknown
-  >;
-  const linear = (twistCandidate.linear ?? {}) as Record<string, unknown>;
-  const angular = (twistCandidate.angular ?? {}) as Record<string, unknown>;
-  return `vx ${formatNumber(linear.x)}  wz ${formatNumber(angular.z)}`;
-}
-
-function createGoalUuid(): number[] {
-  const bytes = new Uint8Array(16);
-  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
-  }
-  return Array.from(bytes.values());
-}
-
-function uuidToKey(value: unknown): string | null {
-  const uuidArray = extractUuidArray(value);
-  if (!uuidArray) {
-    return null;
-  }
-  return uuidArray.map((byte) => ((byte % 256) + 256) % 256).map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function extractUuidArray(value: unknown): number[] | null {
-  if (Array.isArray(value)) {
-    const numbers = value.map((item) => Number(item));
-    return numbers.every(Number.isFinite) ? numbers : null;
-  }
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  const directUuid = getRecordEntry(record, "uuid");
-  if (Array.isArray(directUuid)) {
-    return extractUuidArray(directUuid);
-  }
-  const goalId = getRecordEntry(record, "goal_id");
-  if (goalId && typeof goalId === "object") {
-    return extractUuidArray(goalId);
-  }
-  const goalInfo = getRecordEntry(record, "goal_info");
-  if (goalInfo && typeof goalInfo === "object") {
-    return extractUuidArray(goalInfo);
-  }
-  return null;
-}
-
-function getGoalStatusEntry(
-  statusMessage: Record<string, unknown> | null,
-  activeGoalKey: string | null,
-): Record<string, unknown> | null {
-  if (!statusMessage || !activeGoalKey) {
-    return null;
-  }
-  const statusList = getRecordEntry(statusMessage, "status_list");
-  if (!Array.isArray(statusList)) {
-    return null;
-  }
-  for (const entry of statusList) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-    const record = entry as Record<string, unknown>;
-    const goalInfo = getRecordEntry(record, "goal_info");
-    if (goalInfo && uuidToKey(goalInfo) === activeGoalKey) {
-      return record;
-    }
-  }
-  return null;
-}
-
-function getFeedbackForGoal(
-  feedbackMessage: Record<string, unknown> | null,
-  activeGoalKey: string | null,
-): Record<string, unknown> | null {
-  if (!feedbackMessage || !activeGoalKey) {
-    return null;
-  }
-  const goalId = getRecordEntry(feedbackMessage, "goal_id");
-  return uuidToKey(goalId) === activeGoalKey ? feedbackMessage : null;
-}
-
-function mapActionStatusCodeToGoalState(statusCode: unknown): GoalState | null {
-  const numeric = Number(statusCode);
-  if (!Number.isFinite(numeric)) {
-    return null;
-  }
-  switch (numeric) {
-    case 1:
-      return "accepted";
-    case 2:
-      return "executing";
-    case 3:
-      return "canceling";
-    case 4:
-      return "succeeded";
-    case 5:
-      return "canceled";
-    case 6:
-      return "aborted";
-    default:
-      return "unknown";
-  }
-}
-
-function mapResultStatusToGoalState(resultMessage: Record<string, unknown> | null): GoalState | null {
-  if (!resultMessage) {
-    return null;
-  }
-  return mapActionStatusCodeToGoalState(resultMessage.status);
-}
 
 function getGoalStateClassName(state: GoalState): string {
   return `nav2-goal-state nav2-goal-state--${state}`;
@@ -524,332 +60,6 @@ function getTopicChipClassName(state: TopicHealth["status"]): string {
 
 function getHealthChipClassName(state: HealthSeverity | TfHealth["status"]): string {
   return `nav2-chip nav2-chip--${state}`;
-}
-
-function getLifecycleServiceName(node: string): string {
-  return `/${node}/get_state`;
-}
-
-function parseLifecycleLabel(response: Record<string, unknown> | null): string | null {
-  if (!response) {
-    return null;
-  }
-  const currentState = response.current_state;
-  if (!currentState || typeof currentState !== "object") {
-    return null;
-  }
-  const label = (currentState as Record<string, unknown>).label;
-  return typeof label === "string" && label.trim() ? label.trim() : null;
-}
-
-function computeLifecycleHealth(
-  availableServices: string[],
-  lifecycleChecks: Record<string, LifecycleCheck>,
-  messageTimestamps: Record<string, number | null>,
-): LifecycleHealth[] {
-  return LIFECYCLE_SPECS.map((spec) => {
-    const serviceName = getLifecycleServiceName(spec.node);
-    const serviceAdvertised = availableServices.includes(serviceName);
-    const evidenceFresh = spec.evidenceTopics.some((topic) => isFresh(messageTimestamps[topic] ?? null, 10_000));
-    const check = lifecycleChecks[spec.node];
-
-    if (!serviceAdvertised) {
-      if (evidenceFresh) {
-        return {
-          node: spec.node,
-          required: spec.required,
-          serviceName,
-          status: "unknown",
-          detail: "Lifecycle service missing, but related traffic is active.",
-          response: null,
-        };
-      }
-      return {
-        node: spec.node,
-        required: spec.required,
-        serviceName,
-        status: spec.required ? "error" : "unknown",
-        detail: spec.required ? "Lifecycle service not advertised." : "Lifecycle service not advertised.",
-        response: null,
-      };
-    }
-
-    if (!check || check.pending) {
-      return {
-        node: spec.node,
-        required: spec.required,
-        serviceName,
-        status: "pending",
-        detail: "Waiting for lifecycle state.",
-        response: check?.response ?? null,
-      };
-    }
-
-    if (check.error) {
-      return {
-        node: spec.node,
-        required: spec.required,
-        serviceName,
-        status: "error",
-        detail: check.error,
-        response: check.response,
-      };
-    }
-
-    const label = parseLifecycleLabel(check.response);
-    if (!label) {
-      return {
-        node: spec.node,
-        required: spec.required,
-        serviceName,
-        status: "unknown",
-        detail: "Lifecycle response missing current_state label.",
-        response: check.response,
-      };
-    }
-
-    const normalizedLabel = label.toLowerCase();
-    if (normalizedLabel === "active") {
-      return {
-        node: spec.node,
-        required: spec.required,
-        serviceName,
-        status: "healthy",
-        detail: "Lifecycle state is active.",
-        response: check.response,
-      };
-    }
-    if (["inactive", "configuring", "activating", "deactivating", "cleaningup", "shuttingdown", "unconfigured"].includes(normalizedLabel)) {
-      return {
-        node: spec.node,
-        required: spec.required,
-        serviceName,
-        status: "warning",
-        detail: `Lifecycle state is ${normalizedLabel}.`,
-        response: check.response,
-      };
-    }
-    return {
-      node: spec.node,
-      required: spec.required,
-      serviceName,
-      status: "error",
-      detail: `Lifecycle state is ${normalizedLabel}.`,
-      response: check.response,
-    };
-  });
-}
-
-function findTfEdge(
-  edges: TfEdgeSnapshot[],
-  parentFrame: string,
-  childFrame: string,
-): TfEdgeSnapshot | null {
-  return edges.find((edge) => edge.parentFrame === parentFrame && edge.childFrame === childFrame) ?? null;
-}
-
-function edgeIsStale(edge: TfEdgeSnapshot | null): boolean {
-  return !!edge && !edge.isStatic && nowMs() - edge.lastMessageAt > TF_EDGE_STALE_AFTER_MS;
-}
-
-function computeTfHealth(snapshot: TfGraphSnapshot, connectionStatus: "connected" | "connecting" | "disconnected"): TfHealth {
-  if (connectionStatus !== "connected") {
-    return {
-      status: "pending",
-      detail: "Waiting for Foxglove bridge connection.",
-      baseFrame: null,
-      missingFrames: [],
-      missingEdges: [],
-      staleEdges: [],
-    };
-  }
-
-  const frameSet = new Set(ros2Bridge.getKnownTfFrames());
-  const baseFrame = frameSet.has("base_link") ? "base_link" : frameSet.has("base_footprint") ? "base_footprint" : null;
-  const missingFrames: string[] = [];
-
-  if (!frameSet.has("map")) {
-    missingFrames.push("map");
-  }
-  if (!frameSet.has("odom")) {
-    missingFrames.push("odom");
-  }
-  if (!baseFrame) {
-    missingFrames.push("base_link/base_footprint");
-  }
-
-  const allEdges = [...snapshot.dynamicEdges, ...snapshot.staticEdges];
-  const missingEdges: string[] = [];
-  const staleEdges: string[] = [];
-  const mapToOdom = findTfEdge(allEdges, "map", "odom");
-  const odomToBase = baseFrame ? findTfEdge(allEdges, "odom", baseFrame) : null;
-
-  if (!mapToOdom) {
-    missingEdges.push("map -> odom");
-  } else if (edgeIsStale(mapToOdom)) {
-    staleEdges.push("map -> odom");
-  }
-  if (baseFrame) {
-    if (!odomToBase) {
-      missingEdges.push(`odom -> ${baseFrame}`);
-    } else if (edgeIsStale(odomToBase)) {
-      staleEdges.push(`odom -> ${baseFrame}`);
-    }
-  }
-
-  if (missingFrames.length > 0 || missingEdges.length > 0 || staleEdges.length > 0) {
-    const parts: string[] = [];
-    if (missingFrames.length > 0) {
-      parts.push(`missing frames: ${missingFrames.join(", ")}`);
-    }
-    if (missingEdges.length > 0) {
-      parts.push(`missing edges: ${missingEdges.join(", ")}`);
-    }
-    if (staleEdges.length > 0) {
-      parts.push(`stale dynamic edges: ${staleEdges.join(", ")}`);
-    }
-    return {
-      status: "error",
-      detail: parts.join("; "),
-      baseFrame,
-      missingFrames,
-      missingEdges,
-      staleEdges,
-    };
-  }
-
-  return {
-    status: "healthy",
-    detail: `Observed usable TF chain map -> odom -> ${baseFrame}.`,
-    baseFrame,
-    missingFrames,
-    missingEdges,
-    staleEdges,
-  };
-}
-
-function computePreflightStatus(
-  connectionStatus: "connected" | "connecting" | "disconnected",
-  availableTopics: Subscription[],
-  availableServices: string[],
-  connectedAt: number | null,
-): PreflightStatus {
-  if (connectionStatus !== "connected") {
-    return { state: "pending", missingTopics: [], missingServices: [] };
-  }
-
-  const discoverySettled =
-    connectedAt != null &&
-    (nowMs() - connectedAt >= PRE_FLIGHT_DISCOVERY_GRACE_MS || availableTopics.length > 0 || availableServices.length > 0);
-
-  if (!discoverySettled) {
-    return { state: "pending", missingTopics: [], missingServices: [] };
-  }
-
-  const topicSet = new Set(availableTopics.map((topic) => topic.topic));
-  const missingTopics = REQUIRED_ACTION_TOPICS.filter((topic) => !topicSet.has(topic));
-  const missingServices = REQUIRED_ACTION_SERVICES.filter((service) => !availableServices.includes(service));
-  return missingTopics.length > 0 || missingServices.length > 0
-    ? { state: "blocked", missingTopics, missingServices }
-    : { state: "ready", missingTopics: [], missingServices: [] };
-}
-
-function computeValidationSummary(
-  connectionStatus: "connected" | "connecting" | "disconnected",
-  preflightStatus: PreflightStatus,
-  goalState: GoalState,
-  tfHealth: TfHealth,
-  lifecycleHealth: LifecycleHealth[],
-): ValidationSummary {
-  const lifecycleErrors = lifecycleHealth.filter((entry) => entry.required && entry.status === "error");
-  const hasHardInfrastructureFailure = tfHealth.status === "error" || lifecycleErrors.length > 0;
-
-  if (connectionStatus !== "connected") {
-    return {
-      state: "blocked",
-      title: "Validation blocked",
-      detail: "Foxglove bridge is disconnected.",
-    };
-  }
-
-  if (preflightStatus.state === "pending") {
-    return {
-      state: "in-progress",
-      title: "Checking Nav2 prerequisites",
-      detail: "Discovering action endpoints and TF topics.",
-    };
-  }
-
-  if (preflightStatus.state === "blocked") {
-    return {
-      state: "blocked",
-      title: "Validation blocked",
-      detail: "Hidden NavigateToPose action endpoints are not fully advertised by Foxglove.",
-    };
-  }
-
-  if (goalState === "succeeded") {
-    if (!hasHardInfrastructureFailure) {
-      return {
-        state: "pass",
-        title: "PASS",
-        detail: "NavigateToPose reached terminal success with healthy required TF and lifecycle state.",
-      };
-    }
-    return {
-      state: "fail",
-      title: "FAIL",
-      detail: "Goal succeeded, but required TF or lifecycle validation is failing.",
-    };
-  }
-
-  if (goalState === "aborted" || goalState === "rejected" || goalState === "canceled" || goalState === "unknown") {
-    return {
-      state: "fail",
-      title: "FAIL",
-      detail: "NavigateToPose did not complete successfully.",
-    };
-  }
-
-  if (goalState === "sending" || goalState === "accepted" || goalState === "executing" || goalState === "canceling") {
-    if (hasHardInfrastructureFailure) {
-      return {
-        state: "fail",
-        title: "FAIL",
-        detail: "A goal is in progress, but TF or required lifecycle health is failing.",
-      };
-    }
-    return {
-      state: "in-progress",
-      title: "IN PROGRESS",
-      detail: "A NavigateToPose validation goal is active.",
-    };
-  }
-
-  if (hasHardInfrastructureFailure) {
-    return {
-      state: "blocked",
-      title: "Validation blocked",
-      detail: "Required TF or lifecycle health is failing before a validation goal has completed.",
-    };
-  }
-
-  return {
-    state: "in-progress",
-    title: "IN PROGRESS",
-    detail: "Prerequisites are ready. Send a NavigateToPose goal to validate the stack.",
-  };
-}
-
-function getFeedbackMetric(feedbackMessage: Record<string, unknown> | null, key: string): unknown {
-  if (!feedbackMessage) {
-    return null;
-  }
-  const feedback = getRecordEntry(feedbackMessage, "feedback");
-  if (!feedback || typeof feedback !== "object") {
-    return null;
-  }
-  return getRecordEntry(feedback as Record<string, unknown>, key);
 }
 
 function createDebugSections(args: {
@@ -910,27 +120,6 @@ function compactJson(value: unknown, maxChars = 320): string {
   } catch {
     return String(value);
   }
-}
-
-function createFeedbackSnippet(feedbackMessage: Record<string, unknown> | null): Record<string, unknown> | null {
-  if (!feedbackMessage) {
-    return null;
-  }
-  const feedback = getRecordEntry(feedbackMessage, "feedback");
-  if (!feedback || typeof feedback !== "object") {
-    return null;
-  }
-  const feedbackRecord = feedback as Record<string, unknown>;
-  const currentPose = getRecordEntry(feedbackRecord, "current_pose");
-  const currentPoseRecord = currentPose && typeof currentPose === "object" ? (currentPose as Record<string, unknown>) : null;
-  const currentPoseValue = getNestedRecordEntry(currentPoseRecord, ["pose"]);
-  return {
-    distance_remaining: getRecordEntry(feedbackRecord, "distance_remaining"),
-    number_of_recoveries: getRecordEntry(feedbackRecord, "number_of_recoveries"),
-    navigation_time: getRecordEntry(feedbackRecord, "navigation_time"),
-    estimated_time_remaining: getRecordEntry(feedbackRecord, "estimated_time_remaining"),
-    current_pose: currentPoseValue ? formatPose(currentPoseValue) : null,
-  };
 }
 
 function createKeyTfEdges(snapshot: TfGraphSnapshot, baseFrame: string | null) {
@@ -1145,245 +334,53 @@ function createLlmSummary(args: {
 }
 
 export function Nav2Panel(): React.JSX.Element {
-  const [connectionStatus, setConnectionStatus] = useState<"connected" | "connecting" | "disconnected">("connecting");
-  const [connectedAt, setConnectedAt] = useState<number | null>(null);
-  const [availableTopics, setAvailableTopics] = useState<Subscription[]>([]);
-  const [availableServices, setAvailableServices] = useState<string[]>([]);
-  const [messageTimestamps, setMessageTimestamps] = useState<Record<string, number | null>>({});
-  const [odomMessage, setOdomMessage] = useState<Record<string, unknown> | null>(null);
-  const [poseMessage, setPoseMessage] = useState<Record<string, unknown> | null>(null);
-  const [planMessage, setPlanMessage] = useState<Record<string, unknown> | null>(null);
-  const [transformedPlanMessage, setTransformedPlanMessage] = useState<Record<string, unknown> | null>(null);
-  const [cmdVelNavMessage, setCmdVelNavMessage] = useState<Record<string, unknown> | null>(null);
-  const [stopStatusMessage, setStopStatusMessage] = useState<Record<string, unknown> | null>(null);
-  const [actionStatusMessage, setActionStatusMessage] = useState<Record<string, unknown> | null>(null);
-  const [actionFeedbackMessage, setActionFeedbackMessage] = useState<Record<string, unknown> | null>(null);
-  const [tfGraphSnapshot, setTfGraphSnapshot] = useState<TfGraphSnapshot>(ros2Bridge.getTfGraphSnapshot());
   const [goalX, setGoalX] = useState("0.0");
   const [goalY, setGoalY] = useState("0.0");
   const [goalYaw, setGoalYaw] = useState("0.0");
-  const [goalState, setGoalState] = useState<GoalState>("blocked");
-  const [activeGoal, setActiveGoal] = useState<ActiveGoal | null>(null);
-  const [sendGoalResponse, setSendGoalResponse] = useState<Record<string, unknown> | null>(null);
-  const [resultResponse, setResultResponse] = useState<Record<string, unknown> | null>(null);
-  const [lifecycleChecks, setLifecycleChecks] = useState<Record<string, LifecycleCheck>>({});
-  const [requestState, setRequestState] = useState<{ type: "idle" | "info" | "error"; message: string }>({
-    type: "idle",
-    message: "",
-  });
   const [copyFeedback, setCopyFeedback] = useState<CopyFeedback>({ type: "idle", message: "" });
-  const [isSendingGoal, setIsSendingGoal] = useState(false);
-  const [isCancelingGoal, setIsCancelingGoal] = useState(false);
-  const activeGoalTokenRef = useRef(0);
+  const {
+    connectionStatus,
+    messageTimestamps,
+    planMessage,
+    transformedPlanMessage,
+    stopStatusMessage,
+    actionStatusMessage,
+    actionFeedbackMessage,
+    tfGraphSnapshot,
+    goalState,
+    activeGoal,
+    sendGoalResponse,
+    resultResponse,
+    lifecycleChecks,
+    requestState,
+    isSendingGoal,
+    isCancelingGoal,
+    preflightStatus,
+    activeGoalStatusEntry,
+    activeGoalFeedback,
+    robotPose,
+    currentMapPose,
+    helperPose,
+    helperPoseSource,
+    currentMapCoordinates,
+    lifecycleHealth,
+    tfHealth,
+    knownTfFrames,
+    validationSummary,
+    topicHealth,
+    planPointCount,
+    transformedPlanPointCount,
+    cmdVelSummary,
+    feedbackDistanceRemaining,
+    feedbackRecoveries,
+    feedbackNavigationTime,
+    feedbackEta,
+    sendGoal,
+    cancelGoal,
+    fillGoalFromCurrentPose,
+    fillSmallForwardTestGoal,
+  } = useNav2Runtime();
 
-  useEffect(() => {
-    const updateConnectionStatus = () => {
-      setConnectionStatus(ros2Bridge.isConnected() ? "connected" : "disconnected");
-    };
-
-    updateConnectionStatus();
-    const connectionTimer = window.setInterval(updateConnectionStatus, 1_000);
-    const tfSnapshotTimer = window.setInterval(() => {
-      setTfGraphSnapshot(ros2Bridge.getTfGraphSnapshot());
-    }, 1_000);
-
-    const unsubscribeTopics = ros2Bridge.onAvailableTopicsChanged((topics) => {
-      setAvailableTopics(topics);
-    });
-    const unsubscribeServices = ros2Bridge.onAvailableServicesChanged((services) => {
-      setAvailableServices(services);
-    });
-
-    const markTopicMessage = (topic: string) => {
-      setMessageTimestamps((current) => ({ ...current, [topic]: nowMs() }));
-      setTfGraphSnapshot(ros2Bridge.getTfGraphSnapshot());
-    };
-
-    const subscriptions = TOPIC_HEALTH_CONFIGS.map((config) =>
-      ros2Bridge.subscribe({ topic: config.topic, type: config.type }, (message) => {
-        const rosMessage = normalizeRosMessage(message);
-        markTopicMessage(config.topic);
-        if (config.topic === "/odom") {
-          setOdomMessage(rosMessage);
-        } else if (config.topic === "/pose") {
-          setPoseMessage(rosMessage);
-        } else if (config.topic === PLAN_TOPIC) {
-          setPlanMessage(rosMessage);
-        } else if (config.topic === TRANSFORMED_GLOBAL_PLAN_TOPIC) {
-          setTransformedPlanMessage(rosMessage);
-        } else if (config.topic === CMD_VEL_NAV_TOPIC) {
-          setCmdVelNavMessage(rosMessage);
-        } else if (config.topic === STOP_STATUS_TOPIC) {
-          setStopStatusMessage(rosMessage);
-        } else if (config.topic === ACTION_STATUS_TOPIC) {
-          setActionStatusMessage(rosMessage);
-        } else if (config.topic === ACTION_FEEDBACK_TOPIC) {
-          setActionFeedbackMessage(rosMessage);
-        }
-      }),
-    );
-
-    return () => {
-      unsubscribeTopics();
-      unsubscribeServices();
-      subscriptions.forEach((unsubscribe) => unsubscribe());
-      clearInterval(connectionTimer);
-      clearInterval(tfSnapshotTimer);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (connectionStatus === "connected") {
-      setConnectedAt((current) => current ?? nowMs());
-      return;
-    }
-    setConnectedAt(null);
-    setGoalState("blocked");
-  }, [connectionStatus]);
-
-  useEffect(() => {
-    if (connectionStatus !== "connected") {
-      return;
-    }
-
-    let cancelled = false;
-    const pollLifecycle = async () => {
-      await Promise.all(
-        LIFECYCLE_SPECS.map(async (spec) => {
-          const serviceName = getLifecycleServiceName(spec.node);
-          const serviceAdvertised = availableServices.includes(serviceName);
-
-          if (!serviceAdvertised) {
-            setLifecycleChecks((current) => ({
-              ...current,
-              [spec.node]: {
-                pending: false,
-                lastCheckedAt: current[spec.node]?.lastCheckedAt ?? null,
-                response: current[spec.node]?.response ?? null,
-                error: null,
-              },
-            }));
-            return;
-          }
-
-          setLifecycleChecks((current) => ({
-            ...current,
-            [spec.node]: {
-              pending: true,
-              lastCheckedAt: current[spec.node]?.lastCheckedAt ?? null,
-              response: current[spec.node]?.response ?? null,
-              error: null,
-            },
-          }));
-
-          try {
-            const response = (await ros2Bridge.callService<Record<string, unknown>>(serviceName, {}, { timeoutMs: 5_000 })) ?? null;
-            if (cancelled) {
-              return;
-            }
-            setLifecycleChecks((current) => ({
-              ...current,
-              [spec.node]: {
-                pending: false,
-                lastCheckedAt: nowMs(),
-                response,
-                error: null,
-              },
-            }));
-          } catch (error) {
-            if (cancelled) {
-              return;
-            }
-            setLifecycleChecks((current) => ({
-              ...current,
-              [spec.node]: {
-                pending: false,
-                lastCheckedAt: nowMs(),
-                response: current[spec.node]?.response ?? null,
-                error: error instanceof Error ? error.message : String(error),
-              },
-            }));
-          }
-        }),
-      );
-    };
-
-    void pollLifecycle();
-    const timer = window.setInterval(() => {
-      void pollLifecycle();
-    }, LIFECYCLE_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [availableServices, connectionStatus]);
-
-  const preflightStatus = useMemo(
-    () => computePreflightStatus(connectionStatus, availableTopics, availableServices, connectedAt),
-    [availableServices, availableTopics, connectedAt, connectionStatus],
-  );
-
-  useEffect(() => {
-    if (preflightStatus.state === "blocked") {
-      setGoalState("blocked");
-    } else if (preflightStatus.state === "ready" && goalState === "blocked") {
-      setGoalState("ready");
-    }
-  }, [goalState, preflightStatus.state]);
-
-  const activeGoalStatusEntry = useMemo(
-    () => getGoalStatusEntry(actionStatusMessage, activeGoal?.key ?? null),
-    [actionStatusMessage, activeGoal],
-  );
-  const activeGoalFeedback = useMemo(
-    () => getFeedbackForGoal(actionFeedbackMessage, activeGoal?.key ?? null),
-    [actionFeedbackMessage, activeGoal],
-  );
-
-  useEffect(() => {
-    if (!activeGoalStatusEntry) {
-      return;
-    }
-    const nextGoalState = mapActionStatusCodeToGoalState(activeGoalStatusEntry.status);
-    if (!nextGoalState) {
-      return;
-    }
-    setGoalState((current) => {
-      if (current === "sending" && nextGoalState === "unknown") {
-        return current;
-      }
-      return nextGoalState;
-    });
-  }, [activeGoalStatusEntry]);
-
-  const robotPose = useMemo(() => extractStampedPose(odomMessage), [odomMessage]);
-  const currentMapPose = useMemo(() => extractStampedPose(poseMessage), [poseMessage]);
-  const helperPose = currentMapPose ?? robotPose;
-  const helperPoseSource = currentMapPose ? "localized pose" : robotPose ? "odometry fallback" : "unavailable";
-  const currentMapCoordinates = useMemo(() => getPoseCoordinates(helperPose), [helperPose]);
-
-  const lifecycleHealth = useMemo(
-    () => computeLifecycleHealth(availableServices, lifecycleChecks, messageTimestamps),
-    [availableServices, lifecycleChecks, messageTimestamps],
-  );
-  const tfHealth = useMemo(() => computeTfHealth(tfGraphSnapshot, connectionStatus), [connectionStatus, tfGraphSnapshot]);
-  const knownTfFrames = useMemo(() => ros2Bridge.getKnownTfFrames(), [tfGraphSnapshot]);
-  const validationSummary = useMemo(
-    () => computeValidationSummary(connectionStatus, preflightStatus, goalState, tfHealth, lifecycleHealth),
-    [connectionStatus, goalState, lifecycleHealth, preflightStatus, tfHealth],
-  );
-
-  const topicHealth = useMemo(
-    () => computeTopicHealth(availableTopics, messageTimestamps),
-    [availableTopics, messageTimestamps],
-  );
-  const planPointCount = useMemo(() => getPathPointCount(planMessage), [planMessage]);
-  const transformedPlanPointCount = useMemo(
-    () => getPathPointCount(transformedPlanMessage),
-    [transformedPlanMessage],
-  );
-  const cmdVelSummary = useMemo(() => getTwistSummary(cmdVelNavMessage), [cmdVelNavMessage]);
   const debugSections = useMemo(
     () =>
       createDebugSections({
@@ -1411,23 +408,15 @@ export function Nav2Panel(): React.JSX.Element {
   );
 
   const requiredLifecycleFailures = lifecycleHealth.filter((entry) => entry.required && entry.status === "error");
-  const feedbackDistanceRemaining = getFeedbackMetric(activeGoalFeedback, "distance_remaining");
-  const feedbackRecoveries = getFeedbackMetric(activeGoalFeedback, "number_of_recoveries");
-  const feedbackNavigationTime = getFeedbackMetric(activeGoalFeedback, "navigation_time");
-  const feedbackEta = getFeedbackMetric(activeGoalFeedback, "estimated_time_remaining");
   const handoffGeneratedAt = useMemo(() => new Date().toISOString(), [
     actionFeedbackMessage,
     actionStatusMessage,
     activeGoal,
-    availableServices,
-    availableTopics,
-    cmdVelNavMessage,
     connectionStatus,
     goalState,
     lifecycleChecks,
     messageTimestamps,
     planMessage,
-    poseMessage,
     preflightStatus,
     requestState,
     resultResponse,
@@ -1549,178 +538,35 @@ export function Nav2Panel(): React.JSX.Element {
     return () => clearTimeout(timer);
   }, [copyFeedback]);
 
-  async function waitForGoalResult(goal: ActiveGoal, token: number) {
-    try {
-      const response =
-        (await ros2Bridge.callService<Record<string, unknown>>(
-          GET_RESULT_SERVICE,
-          { goal_id: { uuid: goal.uuid } },
-          { timeoutMs: 300_000 },
-        )) ?? null;
-      if (activeGoalTokenRef.current !== token) {
-        return;
-      }
-      setResultResponse(response);
-      const terminalGoalState = mapResultStatusToGoalState(response);
-      if (terminalGoalState) {
-        setGoalState(terminalGoalState);
-      }
-    } catch (error) {
-      if (activeGoalTokenRef.current !== token) {
-        return;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      setResultResponse({ error: message });
-      setRequestState({
-        type: "error",
-        message: `get_result failed: ${message}`,
-      });
-      setGoalState("unknown");
-    }
-  }
-
   async function handleSendGoal() {
     const x = Number(goalX);
     const y = Number(goalY);
     const yaw = Number(goalYaw);
-
-    if (![x, y, yaw].every(Number.isFinite)) {
-      setRequestState({ type: "error", message: "Goal fields must be valid numbers." });
-      return;
-    }
-    if (preflightStatus.state !== "ready") {
-      setRequestState({
-        type: "error",
-        message: "NavigateToPose validation is blocked until all hidden action endpoints are advertised.",
-      });
-      return;
-    }
-
-    const uuid = createGoalUuid();
-    const goal: ActiveGoal = { uuid, key: uuidToKey(uuid)! };
-    const token = activeGoalTokenRef.current + 1;
-    activeGoalTokenRef.current = token;
-
-    setIsSendingGoal(true);
-    setGoalState("sending");
-    setActiveGoal(goal);
-    setSendGoalResponse(null);
-    setActionFeedbackMessage(null);
-    setActionStatusMessage(null);
-    setResultResponse(null);
-    setRequestState({ type: "idle", message: "" });
-
-    try {
-      const response =
-        (await ros2Bridge.callService<Record<string, unknown>>(
-          SEND_GOAL_SERVICE,
-          {
-            goal_id: { uuid },
-            goal: {
-              pose: {
-                header: {
-                  frame_id: "map",
-                  stamp: { sec: 0, nanosec: 0 },
-                },
-                pose: {
-                  position: { x, y, z: 0 },
-                  orientation: degreesToQuaternion(yaw),
-                },
-              },
-              behavior_tree: "",
-            },
-          },
-          { timeoutMs: 10_000 },
-        )) ?? null;
-
-      setSendGoalResponse(response);
-      const accepted = Boolean(response?.accepted);
-      if (!accepted) {
-        setGoalState("rejected");
-        setRequestState({
-          type: "error",
-          message: "send_goal rejected the validation request.",
-        });
-        return;
-      }
-
-      setGoalState("accepted");
-      setRequestState({
-        type: "info",
-        message: "NavigateToPose goal accepted. Waiting for feedback, status, and terminal result.",
-      });
-      void waitForGoalResult(goal, token);
-    } catch (error) {
-      setGoalState("unknown");
-      setRequestState({
-        type: "error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setIsSendingGoal(false);
-    }
+    await sendGoal({ x, y, yaw });
   }
 
   async function handleCancelGoal() {
-    if (!activeGoal) {
-      setRequestState({ type: "error", message: "No active goal is available to cancel." });
-      return;
-    }
-    setIsCancelingGoal(true);
-    setGoalState("canceling");
-    try {
-      const response =
-        (await ros2Bridge.callService<Record<string, unknown>>(
-          CANCEL_GOAL_SERVICE,
-          {
-            goal_info: {
-              goal_id: { uuid: activeGoal.uuid },
-              stamp: { sec: 0, nanosec: 0 },
-            },
-          },
-          { timeoutMs: 10_000 },
-        )) ?? null;
-      const goalsCanceling = Array.isArray(response?.goals_canceling) ? response.goals_canceling.length : 0;
-      setRequestState({
-        type: goalsCanceling > 0 ? "info" : "error",
-        message:
-          goalsCanceling > 0
-            ? "cancel_goal accepted the request. Waiting for terminal canceled state."
-            : "cancel_goal returned without any goals_canceling entries.",
-      });
-    } catch (error) {
-      setRequestState({
-        type: "error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setIsCancelingGoal(false);
-    }
+    await cancelGoal();
   }
 
   function useCurrentPose() {
-    if (!currentMapCoordinates) {
-      setRequestState({ type: "error", message: "Current map pose is not available yet." });
+    const goal = fillGoalFromCurrentPose();
+    if (!goal) {
       return;
     }
-    setGoalX(currentMapCoordinates.x.toFixed(2));
-    setGoalY(currentMapCoordinates.y.toFixed(2));
-    setGoalYaw((currentMapCoordinates.yaw ?? 0).toFixed(1));
-    setRequestState({ type: "info", message: "Filled goal fields from the robot's current map pose." });
+    setGoalX(goal.x.toFixed(2));
+    setGoalY(goal.y.toFixed(2));
+    setGoalYaw(goal.yaw.toFixed(1));
   }
 
   function useSmallForwardTestGoal() {
-    if (!currentMapCoordinates) {
-      setRequestState({ type: "error", message: "Current map pose is not available yet." });
+    const goal = fillSmallForwardTestGoal();
+    if (!goal) {
       return;
     }
-    setGoalX((currentMapCoordinates.x + 0.5).toFixed(2));
-    setGoalY(currentMapCoordinates.y.toFixed(2));
-    setGoalYaw((currentMapCoordinates.yaw ?? 0).toFixed(1));
-    setRequestState({
-      type: "info",
-      message: "Filled a small absolute test goal 0.5 m ahead on map X. Adjust if your scene uses a different axis convention.",
-    });
+    setGoalX(goal.x.toFixed(2));
+    setGoalY(goal.y.toFixed(2));
+    setGoalYaw(goal.yaw.toFixed(1));
   }
 
   async function handleCopyLlmSummary() {
@@ -1905,7 +751,11 @@ export function Nav2Panel(): React.JSX.Element {
               </div>
               <div className="nav2-kpi">
                 <span>Recoveries</span>
-                <strong>{feedbackRecoveries ?? "n/a"}</strong>
+                <strong>
+                  {typeof feedbackRecoveries === "number" || typeof feedbackRecoveries === "string"
+                    ? String(feedbackRecoveries)
+                    : "n/a"}
+                </strong>
               </div>
               <div className="nav2-kpi">
                 <span>Navigation time</span>
