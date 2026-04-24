@@ -141,6 +141,11 @@ Current extension truth for the active Layer 2 slice:
 - the panel is map-first and driven by the extracted shared Nav2 runtime seam
 - the dedicated `MapCanvas` surface now renders live occupancy-grid data from
   `/map` and tolerates Foxglove typed-array payload shapes
+- `MapCanvas` now exposes a floating layers checklist for the base map, global
+  costmap, local costmap, active plan, lidar, and depth obstacles
+- lidar and depth obstacle overlays are extension-side visualization aids: they
+  are projected into the map frame from TF and rendered below robot / target
+  markers, not introduced as new product-contract surfaces
 
 Practical implication:
 

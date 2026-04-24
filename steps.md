@@ -241,6 +241,7 @@ Current visible shell components:
 - `MapCanvas`
 - `MapControls`
 - `MapLegend`
+- floating `Layers` control with checklist popover
 - `CurrentStateCard`
 - `SelectedDestinationCard`
 - `ProgressCard`
@@ -256,15 +257,26 @@ Current runtime seam:
 
 Current map-canvas truth:
 
-- `MapCanvas.tsx` now owns `/map` subscription, occupancy rendering, map
-  controls, pointer target placement, and route/marker overlays
+- `MapCanvas.tsx` now owns `/map`, `/global_costmap/costmap`, and
+  `/local_costmap/costmap` subscriptions; occupancy rendering; map controls;
+  pointer target placement; and route/marker overlays
 - live occupancy rendering now tolerates Foxglove array and typed-array
   payloads so valid `/map` traffic does not fall back to the placeholder canvas
+- the map now has a Google Maps-style floating `Layers` button with checklist
+  toggles for Map, Global costmap, Local costmap, Plan, Lidar, and Depth
+  obstacles
+- Plan is operator-toggleable instead of always visible
+- Lidar and depth obstacle overlays are projected into the `map` frame with a
+  local `TransformTree` built from `/tf` and `/tf_static`
+- Lidar and depth obstacles render on dedicated canvases beneath robot and
+  target markers so sensor points do not obscure the primary navigation state
 
 Current Layer 2 topics and services already used by the panel/runtime:
 
 - `/map`
 - `/scan`
+- depth `sensor_msgs/msg/PointCloud2` topic discovered from advertised topics,
+  preferring `/oakd/rgb/preview/depth/points`
 - `/odom`
 - `/pose`
 - `/tf`
@@ -330,12 +342,23 @@ Runtime done when:
 Implement:
 
 - render the real occupancy grid from `/map`
+- render global and local costmaps as optional overlays
+- expose a floating layers checklist for Map, Global costmap, Local costmap,
+  Plan, Lidar, and Depth obstacles
+- let the operator toggle the active plan overlay
+- project lidar and depth obstacle points into map coordinates before drawing
 - use placeholder content only when a live map is not available
 - keep map-first interaction as the center of the panel
 
 Runtime done when:
 
 - live `/map` renders occupancy content rather than the placeholder map
+- live `/global_costmap/costmap` and `/local_costmap/costmap` can be toggled
+  without disrupting target placement
+- the Plan layer can be hidden and restored while preserving current route
+  state
+- lidar and depth obstacle layers show `No TF` or `Waiting` instead of drawing
+  incorrect points when projection inputs are unavailable
 - lack of `/map` falls back to placeholder content instead of a broken canvas
 - the map remains usable as the main target-selection surface
 
@@ -362,12 +385,15 @@ Implement:
 - route overlay from the active plan
 - target marker aligned with the selected or sent target
 - staged preview line before send
+- keep sensor overlays visually below robot and target markers
 
 Runtime done when:
 
 - live pose places the robot marker correctly on the map
 - selecting a target shows a destination marker in the expected location
 - active route data renders a visible route overlay
+- route visibility follows the Plan layer toggle
+- lidar/depth overlay points do not cover the robot or destination markers
 - route and markers remain aligned while the map view is zoomed
 
 ### 2.6 `CurrentStateCard`
@@ -460,10 +486,14 @@ Treat Step 2 as complete only when these runtime checks pass:
 - disconnected bridge shows offline header and state card
 - connected bridge without `/map` shows waiting-for-map
 - live `/map` and `/pose` activate readiness chips
+- layers popover toggles map, costmaps, plan, lidar, and depth obstacle
+  visibility without placing a target
 - clicking the map selects a target and updates the destination card
 - sending a goal changes the state, actions, and progress UI
 - active run shows route, progress, distance remaining, and ETA when feedback is
   available
+- lidar and depth obstacle overlays either project into the map frame or report
+  waiting / no-TF state
 - cancel transitions to canceled state and disables the right buttons while
   pending
 - clear removes the target only when no active run exists
@@ -485,7 +515,6 @@ criteria:
 
 - `RunHistoryPanel`
 - `GoalDetailsInspector`
-- `MapOverlayToggleBar`
 - `RuntimeHealthDrawer`
 
 ## Step 3: Runtime Wiring

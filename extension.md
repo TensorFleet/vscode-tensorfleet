@@ -42,6 +42,7 @@ Important files for the current Layer 2 slice:
 - `panels-standalone/src/ros2-bridge.ts`
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
 - `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `panels-standalone/src/components/VacuumControl/mapOverlayUtils.ts`
 - `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
 - `panels-standalone/src/components/Nav2/runtime/nav2RuntimeConstants.ts`
 - `panels-standalone/src/components/SensorView3D/SensorView3DPanel.tsx`
@@ -63,6 +64,11 @@ Current notable extension state:
 - `MapCanvas.tsx` now accepts both plain-array and typed-array occupancy-grid
   payloads from Foxglove so live `/map` data renders instead of falling back to
   placeholder content.
+- `MapCanvas.tsx` now has a floating `Layers` control with checklist toggles
+  for Map, Global costmap, Local costmap, Plan, Lidar, and Depth obstacles.
+- `mapOverlayUtils.ts` owns extension-local sensor overlay projection for lidar
+  and depth obstacle points using `/tf`, `/tf_static`, and a local
+  `TransformTree`.
 - `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts` is the
   shared runtime seam used by both the debug-facing Nav2 panel and the operator
   panel.
@@ -103,6 +109,8 @@ Current runtime topic and service map for this slice:
 
 - `/map`
 - `/scan`
+- depth point cloud topic discovered from advertised `sensor_msgs/msg/PointCloud2`
+  topics, preferring `/oakd/rgb/preview/depth/points`
 - `/odom`
 - `/pose`
 - `/tf`
@@ -136,6 +144,7 @@ Files:
 
 - `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
 - `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/mapOverlayUtils.ts`
 - `~/vscode-tensorfleet/panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
 
 Purpose:
@@ -152,6 +161,15 @@ Current expectation:
 - `MapCanvas` is the dedicated internal map seam for rendering and placement
 - `MapCanvas` now renders the live occupancy grid correctly for Foxglove
   payloads that expose occupancy data as typed arrays
+- `MapCanvas` now renders optional global and local costmap overlays on
+  dedicated raster canvases
+- `MapCanvas` now exposes a floating `Layers` button and checklist popover for
+  Map, Global costmap, Local costmap, Plan, Lidar, and Depth obstacles
+- Plan visibility is operator-toggleable from the layers popover
+- lidar and depth obstacles are projected into `map` frame with the local
+  `TransformTree` in `mapOverlayUtils.ts`
+- sensor overlays render on dedicated canvases below robot and target markers
+  so projected points do not hide primary navigation markers
 - Step 2 should be completed by hardening each visible component against live
   runtime behavior rather than by adding more mock-only UI
 
@@ -248,6 +266,9 @@ vacuum adapter.
    Continue finishing the single-panel operator flow:
 
    - map rendering
+   - layer visibility controls
+   - costmap overlays
+   - projected lidar and depth obstacle overlays
    - target placement
    - route overlay
    - progress state
@@ -300,6 +321,10 @@ vacuum adapter.
    - `/global_costmap/costmap` as global planner costmap
 
    This should be a robot/SLAM map panel, not an OpenLayers GPS map.
+
+   This is now lower priority than before for the current Layer 2 slice because
+   `Vacuum Control` already renders the base occupancy map and local/global
+   costmaps as operator overlays.
 
 6. Robot status panel
 
@@ -366,6 +391,11 @@ Then run the extension against the VM and validate:
 - `Vacuum Control` receives `/map` and renders the occupancy map when present.
 - live `/map` rendering still works when Foxglove delivers occupancy data as a
   typed array rather than a plain JS array.
+- the layers popover toggles Map, Global costmap, Local costmap, Plan, Lidar,
+  and Depth obstacles without placing a target.
+- global and local costmaps align with the active map viewport when enabled.
+- lidar and depth obstacle overlays either project into `map` frame or clearly
+  show waiting / no-TF state.
 - `Vacuum Control` receives live pose and can place a target from the map.
 - `Vacuum Control` can send a goal through `/navigate_to_pose/_action/send_goal`.
 - `Vacuum Control` shows live progress from advertised Nav2 feedback when
