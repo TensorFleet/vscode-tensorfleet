@@ -3,15 +3,15 @@
 This file is the extension-side companion to:
 
 - `steps.md`
-- `docs/VACUUM_STACK_PLAN.md`
+- `VACUUM_STACK_PLAN.md`
 
 It captures what the VS Code extension needs to know to use the current
 TurtleBot4/Nav2 VM stack as an operator and debugging surface.
 
 The important constraint is that this phase should stay extension-side. The VM
-already exposes enough TurtleBot4, SLAM, and Nav2 surfaces for panel validation.
-Do not block this work on a vacuum adapter, mission lifecycle, docking behavior,
-or normalized backend contract.
+already exposes enough TurtleBot4, SLAM, and Nav2 surfaces for panel
+validation. Do not block this work on a vacuum adapter, mission lifecycle,
+docking behavior, or a normalized backend contract.
 
 ## Current Integration Goal
 
@@ -21,10 +21,10 @@ current TurtleBot4/Nav2 VM backend.
 The extension should:
 
 1. Connect to the running VM bridge endpoints.
-2. Prefer TurtleBot4 topic defaults when the active VM config is `turtlebot4`.
-3. Show live map, lidar, odom/TF, RGB/depth camera, point cloud, costmap, and
-   robot status data where current panels support those message types.
-4. Expose enough Nav2 action visibility to debug goal execution.
+2. Focus Layer 2 work on the single-panel `Vacuum Control` operator workflow.
+3. Show live map, lidar, odom/TF, costmap, and navigation status data where the
+   current panels support those message types.
+4. Expose enough Nav2 action visibility to drive and validate goal execution.
 5. Record panel gaps as extension follow-up tasks rather than adding a new
    robotics-stack layer.
 
@@ -34,15 +34,16 @@ The extension repo is:
 
 - `~/vscode-tensorfleet`
 
-Important files inspected for this integration:
+Important files for the current Layer 2 slice:
 
-- `src/vm-manager.ts`
 - `src/extension.ts`
 - `src/regions.ts`
 - `src/templates/drone-view-list.html`
 - `panels-standalone/src/ros2-bridge.ts`
-- `panels-standalone/src/components/ImagePanel.tsx`
-- `panels-standalone/src/components/Teleop/TeleopPanel.tsx`
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
+- `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
+- `panels-standalone/src/components/Nav2/runtime/nav2RuntimeConstants.ts`
 - `panels-standalone/src/components/SensorView3D/SensorView3DPanel.tsx`
 - `panels-standalone/src/components/RawMessages/RawMessagesPanel.tsx`
 - `panels-standalone/src/components/MissionControl/MissionControl.tsx`
@@ -50,22 +51,26 @@ Important files inspected for this integration:
 
 Current notable extension state:
 
-- `src/vm-manager.ts` already contains a `turtlebot4` VM config.
 - `src/regions.ts` already defines Foxglove and ROS bridge ports:
   - Foxglove: `8765`
   - rosbridge: `9091`
 - `src/extension.ts` injects `window.TENSORFLEET_VM_CONFIG_ID` into standalone
   panels when a VM config is known.
-- `panels-standalone/src/ros2-bridge.ts` already groups image topic suggestions
-  by VM config, but it does not yet include a TurtleBot4 image/default topic
-  group.
-- `TeleopPanel.tsx` currently defaults to `/cmd_vel`; TurtleBot4 should default
-  to `/turtlebot4/cmd_vel`.
-- `SensorView3DPanel.tsx` is already close to useful for TurtleBot4 because it
-  can render LaserScan, PointCloud2, TF, odometry, occupancy grid, and costmap
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
+  already exists as the current Layer 2 operator shell.
+- `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+  now holds the dedicated map rendering and interaction surface for that shell.
+- `MapCanvas.tsx` now accepts both plain-array and typed-array occupancy-grid
+  payloads from Foxglove so live `/map` data renders instead of falling back to
+  placeholder content.
+- `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts` is the
+  shared runtime seam used by both the debug-facing Nav2 panel and the operator
+  panel.
+- `SensorView3DPanel.tsx` is already useful as a supporting debug surface
+  because it can render LaserScan, TF, odometry, occupancy grid, and costmap
   style data through the Lichtblick renderer.
 - `MissionControl.tsx` and `DroneMap.tsx` are currently drone/GPS oriented and
-  should not be treated as the primary SLAM map panel yet.
+  should not be treated as the primary SLAM map panel.
 
 ## VM Bridge Endpoints
 
@@ -83,118 +88,72 @@ The current standalone panel path primarily uses Foxglove:
 `ros2-bridge.ts` currently defines `ConnectionMode = "foxglove"`, so new panel
 work should assume Foxglove first unless a panel explicitly needs rosbridge.
 
-## TurtleBot4 Topic Map
+## Vacuum Control Current Truth
 
-Use these topics as the initial extension-side mapping.
+The current Layer 2 focus is the dedicated `Vacuum Control` panel rather than a
+broader TurtleBot4 preset effort across every existing panel.
 
-Navigation action:
+Current runtime seam:
 
-- `/turtlebot4/navigate_to_pose`
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
+- `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
 
-SLAM and map:
+Current runtime topic and service map for this slice:
 
-- `/turtlebot4/map`
-- `/turtlebot4/map_metadata`
+- `/map`
+- `/scan`
+- `/odom`
+- `/pose`
+- `/tf`
+- `/tf_static`
+- `/plan`
+- `/transformed_global_plan`
+- `/cmd_vel_nav`
+- `/local_costmap/costmap`
+- `/global_costmap/costmap`
+- `/stop_status`
+- `/navigate_to_pose/_action/send_goal`
+- `/navigate_to_pose/_action/get_result`
+- `/navigate_to_pose/_action/cancel_goal`
+- `/navigate_to_pose/_action/status`
+- `/navigate_to_pose/_action/feedback`
 
-Lidar:
+Important correction:
 
-- `/turtlebot4/scan`
+- older `/turtlebot4/*` topic guidance in earlier versions of this file reflects
+  an outdated assumption for this slice
+- the current operator panel and shared Nav2 runtime are built around the
+  global topics and action paths listed above
+- do not re-scope current Step 2 work around namespaced topic defaults unless
+  the runtime changes again
 
-Odometry and TF:
+## Supporting Panel Mapping
 
-- `/turtlebot4/odom`
-- `/turtlebot4/tf`
-- `/turtlebot4/tf_static`
+### Vacuum Control
 
-RGB camera:
+Files:
 
-- `/turtlebot4/oakd/rgb/preview/image_raw`
+- `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
+- `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `~/vscode-tensorfleet/panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
 
-Camera info:
+Purpose:
 
-- `/turtlebot4/oakd/rgb/preview/camera_info`
+- the primary Layer 2 operator surface
+- map-first goal selection
+- operator-facing state, progress, and actions
+- `NavigateToPose` send/cancel workflow using the shared runtime seam
 
-Depth camera:
+Current expectation:
 
-- `/turtlebot4/oakd/rgb/preview/depth`
-
-Point cloud:
-
-- `/turtlebot4/oakd/rgb/preview/depth/points`
-
-Velocity and debug:
-
-- `/turtlebot4/cmd_vel`
-- `/turtlebot4/cmd_vel_nav`
-- `/turtlebot4/cmd_vel_smoothed`
-
-Costmaps:
-
-- `/turtlebot4/local_costmap/costmap`
-- `/turtlebot4/global_costmap/costmap`
-
-Basic robot status topics that are useful if present on the bridge:
-
-- battery state topic under the TurtleBot4 namespace
-- hazard detection topic under the TurtleBot4 namespace
-- dock status topic under the TurtleBot4 namespace
-- IMU topic under the TurtleBot4 namespace
-
-The exact status topic names should be discovered from Foxglove topic
-advertisements before hard-coding UI labels.
-
-## Panel Mapping
-
-### Image Panel
-
-File:
-
-- `~/vscode-tensorfleet/panels-standalone/src/components/ImagePanel.tsx`
-
-Primary TurtleBot4 default:
-
-- `/turtlebot4/oakd/rgb/preview/image_raw`
-
-Additional camera-related suggestions:
-
-- `/turtlebot4/oakd/rgb/preview/depth`
-- `/turtlebot4/oakd/rgb/preview/camera_info` for metadata, not as an image
-  stream selector
-
-Needed extension-side work:
-
-1. [x] Add a `turtlebot4` entry in `TOPICS_BY_VM_CONFIG` in
-   `panels-standalone/src/ros2-bridge.ts`.
-2. [x] Ensure `ImagePanel` auto-selects the TurtleBot4 RGB image when the VM config
-   is `turtlebot4`.
-3. [x] Keep discovered live topics in the dropdown so unexpected camera publishers
-   remain debuggable.
-
-This should work with the current VM as long as Foxglove advertises the image
-topic and the existing image decoder path accepts the message encoding.
-
-### Teleop Panel
-
-File:
-
-- `~/vscode-tensorfleet/panels-standalone/src/components/Teleop/TeleopPanel.tsx`
-
-Primary TurtleBot4 default:
-
-- `/turtlebot4/cmd_vel`
-
-Needed extension-side work:
-
-1. Make the default topic depend on `window.TENSORFLEET_VM_CONFIG_ID`.
-2. Use `/turtlebot4/cmd_vel` when the config is `turtlebot4`.
-3. Preserve the current `/cmd_vel` default for simple robot and other generic
-   configs.
-4. Keep the topic dropdown discovery-based so `/turtlebot4/cmd_vel_nav` and
-   `/turtlebot4/cmd_vel_smoothed` can be inspected but not accidentally used as
-   the main manual teleop command topic.
-
-This should work immediately because the VM already exposes a TurtleBot4
-velocity control surface.
+- this panel is the center of the current Layer 2 extension work
+- `Header` and `StatusStrip` remain inline in `VacuumControlPanel.tsx`
+- `MapCanvas` is the dedicated internal map seam for rendering and placement
+- `MapCanvas` now renders the live occupancy grid correctly for Foxglove
+  payloads that expose occupancy data as typed arrays
+- Step 2 should be completed by hardening each visible component against live
+  runtime behavior rather than by adding more mock-only UI
 
 ### 3D Sensor View
 
@@ -202,37 +161,27 @@ File:
 
 - `~/vscode-tensorfleet/panels-standalone/src/components/SensorView3D/SensorView3DPanel.tsx`
 
-Primary TurtleBot4 defaults:
+Useful current Layer 2 topics:
 
-- `/turtlebot4/scan`
-- `/turtlebot4/odom`
-- `/turtlebot4/tf`
-- `/turtlebot4/tf_static`
-- `/turtlebot4/oakd/rgb/preview/depth/points`
-- `/turtlebot4/local_costmap/costmap`
-- `/turtlebot4/global_costmap/costmap`
-- `/turtlebot4/map`
+- `/scan`
+- `/odom`
+- `/tf`
+- `/tf_static`
+- `/map`
+- `/local_costmap/costmap`
+- `/global_costmap/costmap`
 
 Needed extension-side work:
 
-1. Update TF detection to include namespaced TF topics:
-   - `/turtlebot4/tf`
-   - `/turtlebot4/tf_static`
-2. Update odometry detection to include:
-   - `/turtlebot4/odom`
-3. Update auto-visible topic rules to include:
-   - `/turtlebot4/scan`
-   - `/turtlebot4/oakd/rgb/preview/depth/points`
-   - `/turtlebot4/map`
-   - `/turtlebot4/local_costmap/costmap`
-   - `/turtlebot4/global_costmap/costmap`
-4. For occupancy grids, use map coloring for `/turtlebot4/map` and costmap
-   coloring for local/global costmaps.
-5. Keep renderer config discovery-based so the panel still works with other
+1. Keep TF, odom, lidar, map, and costmap visibility aligned with the global
+   topic map used by the Nav2 runtime seam.
+2. For occupancy grids, use map coloring for `/map` and costmap coloring for
+   local/global costmaps.
+3. Keep renderer config discovery-based so the panel still works with other
    robots.
 
-This is the best current place to validate lidar, point cloud, TF, odom, map,
-and costmaps without building a new SLAM-specific panel first.
+This is the best supporting surface for validating lidar, TF, odom, map, and
+costmaps without mixing raw debug UI into the main operator panel.
 
 ### Raw Messages Panel
 
@@ -240,26 +189,23 @@ File:
 
 - `~/vscode-tensorfleet/panels-standalone/src/components/RawMessages/RawMessagesPanel.tsx`
 
-Useful TurtleBot4 defaults:
+Useful current Layer 2 topics:
 
-- `/turtlebot4/navigate_to_pose/_action/status` if advertised
-- `/turtlebot4/navigate_to_pose/_action/feedback` if advertised
-- `/turtlebot4/navigate_to_pose/_action/result` if advertised
-- `/turtlebot4/odom`
-- `/turtlebot4/scan`
-- `/turtlebot4/map`
-- `/turtlebot4/local_costmap/costmap`
-- `/turtlebot4/global_costmap/costmap`
-- status topics discovered under `/turtlebot4/*battery*`, `/turtlebot4/*dock*`,
-  `/turtlebot4/*hazard*`, and `/turtlebot4/*imu*`
+- `/navigate_to_pose/_action/status` if advertised
+- `/navigate_to_pose/_action/feedback` if advertised
+- `/odom`
+- `/scan`
+- `/map`
+- `/local_costmap/costmap`
+- `/global_costmap/costmap`
 
 Needed extension-side work:
 
-1. Add a TurtleBot4 quick-filter or default pinned topic set.
-2. Prefer advertised action status/feedback/result topics over hard-coded
-   assumptions where possible.
-3. Use Raw Messages as the first Nav2 visibility surface before adding a richer
-   Nav2 goal panel.
+1. Add a pinned topic set aligned with the current global Nav2/SLAM runtime.
+2. Prefer advertised action status/feedback topics over hard-coded assumptions
+   where possible.
+3. Use Raw Messages as the first detailed Nav2 visibility surface before adding
+   richer diagnostics.
 
 This should work now for any advertised topic because the raw panel is already
 generic.
@@ -273,51 +219,47 @@ Files:
 
 Current state:
 
-- This panel is drone/GPS oriented.
-- It uses a `DroneStateModel`.
-- `DroneMap` is an OpenLayers world map with GPS-style vehicle state.
-- It is not currently a SLAM occupancy-grid map panel.
+- this panel is drone/GPS oriented
+- it uses a `DroneStateModel`
+- `DroneMap` is an OpenLayers world map with GPS-style vehicle state
+- it is not currently a SLAM occupancy-grid map panel
 
-Do not use this panel as the primary TurtleBot4 SLAM map validation surface
-without rewriting it.
+Do not use this panel as the primary SLAM map validation surface without
+rewriting it.
 
 Useful extension-side follow-up:
 
 1. Either rename/scope the current panel as drone-specific, or
 2. add a new robot map panel that renders `nav_msgs/msg/OccupancyGrid` from:
-   - `/turtlebot4/map`
-   - `/turtlebot4/local_costmap/costmap`
-   - `/turtlebot4/global_costmap/costmap`
+   - `/map`
+   - `/local_costmap/costmap`
+   - `/global_costmap/costmap`
 
-For the current step, prefer the 3D sensor panel and raw messages panel for map
-and costmap validation.
+For the current step, prefer `Vacuum Control`, the 3D sensor panel, and raw
+messages for map and costmap validation.
 
 ## Features We Can Add On The VS Code Extension Side Right Now
 
 These features should work with the current VM stack and do not require a new
 vacuum adapter.
 
-1. TurtleBot4 panel preset
+1. Vacuum Control component hardening
 
-   Add a preset that selects:
+   Continue finishing the single-panel operator flow:
 
-   - image topic: `/turtlebot4/oakd/rgb/preview/image_raw`
-   - teleop topic: `/turtlebot4/cmd_vel`
-   - lidar topic: `/turtlebot4/scan`
-   - odom topic: `/turtlebot4/odom`
-   - TF topics: `/turtlebot4/tf`, `/turtlebot4/tf_static`
-   - map topic: `/turtlebot4/map`
-   - costmap topics: `/turtlebot4/local_costmap/costmap`,
-     `/turtlebot4/global_costmap/costmap`
+   - map rendering
+   - target placement
+   - route overlay
+   - progress state
+   - action state
 
-   This is the highest-value first extension change.
+   This is the highest-value current Layer 2 extension work.
 
-2. TurtleBot4 3D debug layout
+2. 3D debug layout
 
    Add a one-click layout or panel state that makes the 3D sensor view show:
 
    - lidar scan
-   - depth point cloud
    - odom/follow frame
    - map occupancy grid
    - local/global costmaps
@@ -332,39 +274,36 @@ vacuum adapter.
 
    - status
    - feedback
-   - result
 
    The first version can be read-only. It only needs to show whether a goal is
    active, succeeded, canceled, or failed, plus the latest feedback fields that
    are present.
 
-4. Nav2 goal sender
+4. Goal details / diagnostics surface
 
-   Add a simple goal publisher/client for:
+   Add a small read-only surface that exposes:
 
-   - `/turtlebot4/navigate_to_pose`
+   - active goal status
+   - latest feedback values
+   - terminal result summary
 
-   The first version can accept numeric x/y/yaw in the map frame. Do not add
-   room cleaning, zone cleaning, or mission semantics yet.
-
-   If the Foxglove bridge action-client path is not available in the current
-   extension networking layer, defer this to a small transport follow-up and
-   keep read-only status in Raw Messages.
+   This complements `Vacuum Control` without forcing raw debug details into the
+   operator cards.
 
 5. Occupancy-grid map panel
 
    Add a new robot map panel that renders `nav_msgs/msg/OccupancyGrid` directly
    in canvas:
 
-   - `/turtlebot4/map` as the SLAM map
-   - `/turtlebot4/local_costmap/costmap` as local planner costmap
-   - `/turtlebot4/global_costmap/costmap` as global planner costmap
+   - `/map` as the SLAM map
+   - `/local_costmap/costmap` as local planner costmap
+   - `/global_costmap/costmap` as global planner costmap
 
    This should be a robot/SLAM map panel, not an OpenLayers GPS map.
 
-6. TurtleBot4 robot status panel
+6. Robot status panel
 
-   Add a compact robot status panel using discovered TurtleBot4 status topics:
+   Add a compact robot status panel using discovered runtime status topics:
 
    - battery percentage/voltage/current
    - IMU presence and latest timestamp
@@ -378,7 +317,7 @@ vacuum adapter.
 
 7. Topic health checklist
 
-   Add a panel section that marks each expected TurtleBot4 topic as:
+   Add a panel section that marks each expected Layer 2 topic as:
 
    - advertised
    - receiving messages
@@ -390,49 +329,49 @@ vacuum adapter.
 
 8. First-mile operator dashboard
 
-   Add an `Open TurtleBot4 Dashboard` command that opens:
+   Add an `Open Navigation Dashboard` command that opens:
 
-   - Image Panel
-   - Teleop Panel
+   - Vacuum Control
    - 3D Sensor View
    - Raw Messages Panel
 
-   The command should apply the TurtleBot4 topic preset and leave the current
-   drone mission-control panel out unless it has been rewritten for SLAM maps.
+   The command should leave the current drone mission-control panel out unless
+   it has been rewritten for SLAM maps.
 
 ## Recommended Immediate Extension Patch
 
 The next patch in `~/vscode-tensorfleet` should be small and concrete:
 
-1. [x] Add `turtlebot4` to `TOPICS_BY_VM_CONFIG` in
-   `panels-standalone/src/ros2-bridge.ts`.
-2. [ ] Make `TeleopPanel.tsx` choose `/turtlebot4/cmd_vel` for the `turtlebot4`
-   VM config.
-3. [ ] Update `SensorView3DPanel.tsx` helper functions so namespaced TurtleBot4 TF,
-   odom, scan, point cloud, map, and costmap topics are auto-listed and
-   auto-visible.
-4. [ ] Add a small TurtleBot4 pinned-topic set to `RawMessagesPanel.tsx`.
+1. [ ] Keep `steps.md` aligned with the actual `Vacuum Control` component state.
+2. [ ] Keep `extension.md` aligned with the global Layer 2 topic map used by
+   `useNav2Runtime.ts`.
+3. [ ] Continue finishing `VacuumControlPanel.tsx` component behavior as a
+   runtime-testable operator surface.
+4. [ ] Keep `RawMessagesPanel.tsx` and `SensorView3DPanel.tsx` useful as
+   supporting debug surfaces for the same runtime topics.
 5. [x] Build the extension panels and verify the panel bundle compiles.
 
 Suggested verification after patching:
 
 ```sh
 cd ~/vscode-tensorfleet
-bun run build:panels
 bun run typecheck
+bun run --cwd panels-standalone build
 ```
 
 Then run the extension against the VM and validate:
 
 - Foxglove connection reaches `ws://172.16.0.10:8765`.
-- Image Panel receives `/turtlebot4/oakd/rgb/preview/image_raw`.
-- Teleop publishes to `/turtlebot4/cmd_vel`.
-- 3D Sensor View shows `/turtlebot4/scan`.
-- 3D Sensor View receives `/turtlebot4/tf`, `/turtlebot4/tf_static`, and
-  `/turtlebot4/odom`.
-- 3D Sensor View can list or display `/turtlebot4/map` and costmaps.
-- Raw Messages can inspect Nav2 action status/feedback/result topics if they
-  are advertised.
+- `Vacuum Control` connects and shows the live connection state.
+- `Vacuum Control` receives `/map` and renders the occupancy map when present.
+- live `/map` rendering still works when Foxglove delivers occupancy data as a
+  typed array rather than a plain JS array.
+- `Vacuum Control` receives live pose and can place a target from the map.
+- `Vacuum Control` can send a goal through `/navigate_to_pose/_action/send_goal`.
+- `Vacuum Control` shows live progress from advertised Nav2 feedback when
+  available.
+- supporting debug panels can inspect `/scan`, `/odom`, `/tf`, `/tf_static`,
+  `/map`, and costmaps as needed.
 
 ## Not In Scope For This Extension Step
 
