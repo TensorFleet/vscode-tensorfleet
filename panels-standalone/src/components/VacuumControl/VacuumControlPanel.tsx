@@ -46,9 +46,13 @@ function formatDistance(distance: number | null): string {
   return distance < 10 ? `${distance.toFixed(1)} m` : `${distance.toFixed(0)} m`;
 }
 
-function formatEta(value: unknown): string {
+function formatCoordinate(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "n/a";
+}
+
+function formatRecoveries(value: unknown): string {
   const numeric = toFiniteNumber(value);
-  return numeric != null ? formatRosDuration(numeric) : formatRosDuration(value);
+  return numeric == null ? "0" : String(Math.max(0, Math.round(numeric)));
 }
 
 function distanceBetween(
@@ -59,6 +63,16 @@ function distanceBetween(
     return null;
   }
   return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+function bearingBetween(
+  a: { x: number; y: number } | null,
+  b: { x: number; y: number } | null,
+): number | null {
+  if (!a || !b) {
+    return null;
+  }
+  return (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
 }
 
 function headingLabel(yaw: number): string {
@@ -390,6 +404,23 @@ function SendIcon(props: { className?: string }) {
   );
 }
 
+function StopIcon(props: { className?: string }) {
+  return (
+    <svg aria-hidden="true" className={props.className} viewBox="0 0 20 20">
+      <rect x="5" y="5" width="10" height="10" rx="2" />
+    </svg>
+  );
+}
+
+function ClearIcon(props: { className?: string }) {
+  return (
+    <svg aria-hidden="true" className={props.className} viewBox="0 0 20 20">
+      <path d="M5 5l10 10" />
+      <path d="M15 5 5 15" />
+    </svg>
+  );
+}
+
 function getChipTone(isActive: boolean, tone: Exclude<StatusChipTone, "inactive">): StatusChipTone {
   return isActive ? tone : "inactive";
 }
@@ -410,6 +441,26 @@ function getProgressLabel(routeVisualState: RouteVisualState): string {
   return "Awaiting run start";
 }
 
+function getReadinessIssue(args: {
+  connectionStatus: "connected" | "connecting" | "disconnected";
+  mapReady: boolean;
+  poseReady: boolean;
+  preflightReady: boolean;
+}): string | null {
+  if (args.connectionStatus !== "connected") {
+    return "Connect to the robot before starting a run.";
+  }
+  if (!args.mapReady) {
+    return "Waiting for a live map before starting.";
+  }
+  if (!args.poseReady) {
+    return "Waiting for the robot position before starting.";
+  }
+  if (!args.preflightReady) {
+    return "Final navigation checks are still running.";
+  }
+  return null;
+}
 
 export function VacuumControlPanel() {
   const runtime = useNav2Runtime();
@@ -420,21 +471,28 @@ export function VacuumControlPanel() {
   const currentPose = runtime.currentMapCoordinates;
   const mapStatus = getTopicState(runtime.topicHealth, "/map");
   const isGoalActive = ACTIVE_GOAL_STATES.has(runtime.goalState);
-  const hasTarget = draftTarget != null;
+  const displayedTarget = sentTarget ?? draftTarget;
+  const hasTarget = displayedTarget != null;
+  const mapReady = mapStatus === "receiving";
+  const poseReady = currentPose != null;
+  const preflightReady = runtime.preflightStatus.state === "ready";
   const routeVisualState = getRouteVisualState(runtime.goalState, hasTarget);
   const operatorState = getOperatorState({
     connectionStatus: runtime.connectionStatus,
     mapStatus,
-    poseAvailable: currentPose != null,
-    preflightReady: runtime.preflightStatus.state === "ready",
+    poseAvailable: poseReady,
+    preflightReady,
     goalState: runtime.goalState,
     targetSelected: hasTarget,
   });
 
-  const displayedTarget = sentTarget ?? draftTarget;
   const destinationDistance = distanceBetween(currentPose, displayedTarget);
+  const destinationBearing = bearingBetween(currentPose, displayedTarget);
+  const feedbackDistanceRemaining = toFiniteNumber(runtime.feedbackDistanceRemaining);
   const routeDistanceRemaining =
-    toFiniteNumber(runtime.feedbackDistanceRemaining) ?? (isGoalActive ? destinationDistance : null);
+    routeVisualState === "completed"
+      ? 0
+      : feedbackDistanceRemaining ?? (isGoalActive ? destinationDistance : null);
   const showProgressMetric =
     routeVisualState === "active" ||
     routeVisualState === "completed" ||
@@ -444,7 +502,7 @@ export function VacuumControlPanel() {
     if (runtime.goalState === "succeeded") {
       return 1;
     }
-    const remaining = toFiniteNumber(runtime.feedbackDistanceRemaining);
+    const remaining = feedbackDistanceRemaining;
     if (remaining == null || initialRouteDistance == null || initialRouteDistance <= 0) {
       return displayedTarget && isGoalActive ? 0.12 : 0;
     }
@@ -467,7 +525,7 @@ export function VacuumControlPanel() {
       label: "Ready",
       icon: "ready" as const,
       state: getChipTone(
-        runtime.preflightStatus.state === "ready" && Boolean(currentPose) && mapStatus === "receiving",
+        preflightReady && poseReady && mapReady,
         "success",
       ),
     },
@@ -477,9 +535,50 @@ export function VacuumControlPanel() {
       state: getChipTone(hasTarget, "active"),
     },
   ] as const;
-  const targetDistanceLabel = draftTarget ? formatDistance(distanceBetween(currentPose, draftTarget)) : null;
-  const targetHeadingLabel = draftTarget ? headingLabel(draftTarget.yaw) : null;
+  const readinessIssue = getReadinessIssue({
+    connectionStatus: runtime.connectionStatus,
+    mapReady,
+    poseReady,
+    preflightReady,
+  });
+  const targetDistanceLabel = displayedTarget ? formatDistance(destinationDistance) : null;
+  const targetHeadingLabel = displayedTarget ? headingLabel(displayedTarget.yaw) : null;
+  const targetBearingLabel =
+    destinationBearing == null ? "n/a" : `${headingLabel(destinationBearing)} · ${Math.round(((destinationBearing % 360) + 360) % 360)} deg`;
+  const primaryActionLabel = (() => {
+    if (runtime.isSendingGoal) {
+      return "Sending...";
+    }
+    if (routeVisualState === "failed") {
+      return "Retry run";
+    }
+    if (routeVisualState === "completed" || routeVisualState === "canceled") {
+      return "Run again";
+    }
+    return "Start run";
+  })();
+  const actionHint = (() => {
+    if (isGoalActive) {
+      return runtime.isCancelingGoal ? "Stop request sent. Waiting for the robot to confirm." : "Robot is moving. Stop the run before changing destination.";
+    }
+    if (!hasTarget) {
+      return "Click the map to choose a destination.";
+    }
+    return readinessIssue ?? "Destination is ready to send.";
+  })();
   const progressLabel = getProgressLabel(routeVisualState);
+  const progressStatusLabel = (() => {
+    if (routeVisualState === "completed") {
+      return "Complete";
+    }
+    if (routeVisualState === "failed") {
+      return "Attention";
+    }
+    if (routeVisualState === "canceled") {
+      return "Stopped";
+    }
+    return "Running";
+  })();
   const progressBarWidth = (() => {
     if (!showProgressMetric) {
       return 0;
@@ -609,11 +708,9 @@ export function VacuumControlPanel() {
 
           <div className="vacuum-sidebar">
 
-            {/* ── Card 1: Current State ── */}
-            <section className="vacuum-panel-card">
+            <section className={`vacuum-panel-card vacuum-panel-card--state vacuum-panel-card--${operatorState.tone}`} aria-live="polite">
               <div className="vacuum-panel-card__head">
                 <p className="vacuum-panel-card__eyebrow">Current State</p>
-                <span className={`vacuum-panel-indicator vacuum-panel-indicator--${operatorState.tone}`} />
               </div>
               <div className="vacuum-state-row">
                 <div className={`vacuum-state-icon vacuum-state-icon--${operatorState.tone}`}>
@@ -625,24 +722,58 @@ export function VacuumControlPanel() {
                 </div>
                 <VacuumMark className="vacuum-state-row__disc" aria-hidden="true" />
               </div>
+              <div className="vacuum-readiness-grid" aria-label="Run readiness">
+                <div className={`vacuum-readiness-item ${runtime.connectionStatus === "connected" ? "vacuum-readiness-item--ready" : ""}`}>
+                  <span>Connection</span>
+                  <strong>{runtime.connectionStatus === "connected" ? "Online" : runtime.connectionStatus === "connecting" ? "Connecting" : "Offline"}</strong>
+                </div>
+                <div className={`vacuum-readiness-item ${mapReady ? "vacuum-readiness-item--ready" : ""}`}>
+                  <span>Map</span>
+                  <strong>{mapReady ? "Live" : "Waiting"}</strong>
+                </div>
+                <div className={`vacuum-readiness-item ${poseReady ? "vacuum-readiness-item--ready" : ""}`}>
+                  <span>Position</span>
+                  <strong>{poseReady ? "Known" : "Waiting"}</strong>
+                </div>
+              </div>
             </section>
 
-            {/* ── Card 2: Selected Destination ── */}
-            <section className="vacuum-panel-card">
+            <section className={`vacuum-panel-card vacuum-panel-card--destination ${displayedTarget ? "vacuum-panel-card--destination-selected" : ""}`}>
               <div className="vacuum-panel-card__head">
                 <p className="vacuum-panel-card__eyebrow">Selected Destination</p>
+                {displayedTarget ? (
+                  <span className="vacuum-destination-status">Selected</span>
+                ) : null}
               </div>
-              {draftTarget ? (
-                <div className="vacuum-dest-row">
-                  <div className="vacuum-dest-row__icon-wrap">
-                    <DirectionIcon className="vacuum-dest-row__icon" direction={draftTarget.yaw} />
+              {displayedTarget ? (
+                <>
+                  <div className="vacuum-dest-row">
+                    <div className="vacuum-dest-row__icon-wrap">
+                      <DirectionIcon className="vacuum-dest-row__icon" direction={displayedTarget.yaw} />
+                    </div>
+                    <div className="vacuum-dest-row__text">
+                      <p className="vacuum-dest-row__title">Destination selected</p>
+                      <p className="vacuum-dest-row__sub">{targetDistanceLabel} from robot</p>
+                    </div>
+                    <CompassIcon className="vacuum-compass vacuum-compass--sm" direction={displayedTarget.yaw} />
                   </div>
-                  <div className="vacuum-dest-row__text">
-                    <p className="vacuum-dest-row__title">Destination selected</p>
-                    <p className="vacuum-dest-row__sub">{targetDistanceLabel} · {targetHeadingLabel}</p>
+                  <div className="vacuum-destination-details">
+                    <div>
+                      <span>Facing</span>
+                      <strong>{targetHeadingLabel}</strong>
+                    </div>
+                    <div>
+                      <span>Bearing</span>
+                      <strong>{targetBearingLabel}</strong>
+                    </div>
+                    <div>
+                      <span>Location</span>
+                      <strong>
+                        {formatCoordinate(displayedTarget.x)}, {formatCoordinate(displayedTarget.y)}
+                      </strong>
+                    </div>
                   </div>
-                  <CompassIcon className="vacuum-compass vacuum-compass--sm" direction={draftTarget.yaw} />
-                </div>
+                </>
               ) : (
                 <div className="vacuum-dest-row vacuum-dest-row--empty">
                   <div className="vacuum-dest-row__icon-wrap vacuum-dest-row__icon-wrap--muted">
@@ -656,69 +787,86 @@ export function VacuumControlPanel() {
               )}
             </section>
 
-            {/* ── Card 3: Progress (conditional) ── */}
             {showProgressMetric ? (
-              <section className="vacuum-panel-card">
+              <section className={`vacuum-panel-card vacuum-panel-card--progress vacuum-panel-card--progress-${routeVisualState}`}>
                 <div className="vacuum-panel-card__head">
                   <p className="vacuum-panel-card__eyebrow">Progress</p>
+                  <span className={`vacuum-progress-status vacuum-progress-status--${routeVisualState}`}>
+                    {progressStatusLabel}
+                  </span>
+                </div>
+                <div className="vacuum-progress-summary">
                   <strong className={`vacuum-progress-pct vacuum-progress-pct--${routeVisualState}`}>
                     {Math.round(routeProgress * 100)}%
                   </strong>
+                  <p className="vacuum-progress-label">{progressLabel}</p>
                 </div>
-                <p className="vacuum-progress-label">{progressLabel}</p>
                 <div className="vacuum-progress">
                   <div
                     className={`vacuum-progress__bar vacuum-progress__bar--${routeVisualState}`}
                     style={{ width: `${displayedTarget ? progressBarWidth : 0}%` }}
                   />
                 </div>
-                {routeVisualState === "active" ? (
-                  <div className="vacuum-stats vacuum-stats--progress">
-                    <div>
-                      <span>Distance remaining</span>
-                      <strong>{formatDistance(routeDistanceRemaining)}</strong>
-                    </div>
-                    <div>
-                      <span>Est. time</span>
-                      <strong>{formatEta(runtime.feedbackEta)}</strong>
-                    </div>
+                <div className="vacuum-stats vacuum-stats--progress">
+                  <div>
+                    <span>Remaining</span>
+                    <strong>{formatDistance(routeDistanceRemaining)}</strong>
                   </div>
-                ) : null}
+                  <div>
+                    <span>Elapsed</span>
+                    <strong>{formatRosDuration(runtime.feedbackNavigationTime)}</strong>
+                  </div>
+                  <div>
+                    <span>Recoveries</span>
+                    <strong>{formatRecoveries(runtime.feedbackRecoveries)}</strong>
+                  </div>
+                </div>
               </section>
             ) : null}
 
-            {/* ── Card 4: Actions ── */}
-            <section className="vacuum-panel-card">
+            <section className="vacuum-panel-card vacuum-panel-card--actions">
               <div className="vacuum-panel-card__head">
                 <p className="vacuum-panel-card__eyebrow">Actions</p>
               </div>
+              <p className="vacuum-action-hint">{actionHint}</p>
               <div className="vacuum-actions">
-                {isGoalActive ? (
+                {runtime.connectionStatus !== "connected" ? (
+                  <button
+                    className="vacuum-action vacuum-action--primary"
+                    type="button"
+                    onClick={openOverlay}
+                  >
+                    <GearIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                    Connection settings
+                  </button>
+                ) : isGoalActive ? (
                   <button
                     className="vacuum-action vacuum-action--danger"
                     type="button"
                     onClick={() => void handleCancel()}
                     disabled={runtime.isCancelingGoal}
                   >
-                    {runtime.isCancelingGoal ? "Canceling…" : "Cancel run"}
+                    <StopIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                    {runtime.isCancelingGoal ? "Stopping..." : "Stop run"}
                   </button>
                 ) : (
                   <button
                     className="vacuum-action vacuum-action--primary"
                     type="button"
                     onClick={() => void handleSend()}
-                    disabled={!draftTarget || runtime.preflightStatus.state !== "ready" || runtime.isSendingGoal}
+                    disabled={!draftTarget || readinessIssue != null || runtime.isSendingGoal}
                   >
                     <SendIcon className="vacuum-action__icon" />
-                    {runtime.isSendingGoal ? "Sending…" : "Send"}
+                    {primaryActionLabel}
                   </button>
                 )}
                 <button
                   className="vacuum-action vacuum-action--ghost"
                   type="button"
                   onClick={handleClear}
-                  disabled={!draftTarget || isGoalActive}
+                  disabled={!hasTarget || isGoalActive}
                 >
+                  <ClearIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
                   Clear destination
                 </button>
               </div>

@@ -239,13 +239,14 @@ Current visible shell components:
 - connection / status pill
 - `StatusStrip`
 - `MapCanvas`
-- `MapControls`
+- `MapControls` with bounded zoom controls, reset, and zoom readout
 - `MapLegend`
 - floating `Layers` control with checklist popover
-- `CurrentStateCard`
-- `SelectedDestinationCard`
-- `ProgressCard`
-- `ActionsCard`
+- `CurrentStateCard` with operator state and readiness evidence
+- `SelectedDestinationCard` with distance, facing, bearing, and map coordinates
+- `ProgressCard` with progress percentage, remaining distance, elapsed
+  navigation time, and recovery count
+- `ActionsCard` with state-aware start / stop / clear / connection actions
 - settings entrypoint
 - shell-only `History` nav item
 
@@ -270,6 +271,28 @@ Current map-canvas truth:
   local `TransformTree` built from `/tf` and `/tf_static`
 - Lidar and depth obstacles render on dedicated canvases beneath robot and
   target markers so sensor points do not obscure the primary navigation state
+- map controls are isolated from pointer-based target placement and show bounded
+  zoom state
+- robot marker, destination marker labels, route overlay, and staged preview
+  line have been restyled for contrast against the occupancy map
+- route and staged preview visibility follow the Plan layer toggle
+
+Current right-column card truth:
+
+- `CurrentStateCard` is driven by connection, map, localization, preflight, and
+  goal state
+- `CurrentStateCard` does not duplicate the top status-strip badge; it uses
+  state title, detail, icon, and readiness evidence instead
+- `SelectedDestinationCard` renders the active displayed target, including a
+  sent target during an active run
+- `SelectedDestinationCard` shows empty state, distance from robot, target
+  facing, bearing from robot, and map coordinates
+- `ActionsCard` opens connection settings while disconnected, starts / retries /
+  reruns when ready, stops active runs, and only clears destinations when no run
+  is active
+- `ProgressCard` no longer shows ETA because `estimated_time_remaining` is not
+  reliable enough for the operator surface; it shows remaining distance, elapsed
+  navigation time, and recovery count from Nav2 feedback
 
 Current Layer 2 topics and services already used by the panel/runtime:
 
@@ -369,6 +392,8 @@ Implement:
 - zoom in
 - zoom out
 - reset / center zoom
+- zoom percentage readout
+- disabled states at zoom bounds
 - controls that do not interfere with pointer-based target selection
 
 Runtime done when:
@@ -376,6 +401,7 @@ Runtime done when:
 - zoom controls visually change the map viewport
 - reset returns the map to the default zoom
 - using the controls does not unintentionally place or rotate a target
+- zoom controls clearly report and bound the current viewport scale
 
 ### 2.5 `Robot Marker + Route Overlay`
 
@@ -386,6 +412,7 @@ Implement:
 - target marker aligned with the selected or sent target
 - staged preview line before send
 - keep sensor overlays visually below robot and target markers
+- route and marker styling remains readable over light and dark occupancy cells
 
 Runtime done when:
 
@@ -395,6 +422,7 @@ Runtime done when:
 - route visibility follows the Plan layer toggle
 - lidar/depth overlay points do not cover the robot or destination markers
 - route and markers remain aligned while the map view is zoomed
+- robot and target labels remain legible over the rendered map
 
 ### 2.6 `CurrentStateCard`
 
@@ -418,6 +446,8 @@ Runtime done when:
 - ready runtime without an active goal shows ready
 - active goal shows in-progress copy
 - terminal success, failure, and canceled outcomes map to the correct card
+- card shows readiness evidence for connection, map, and robot position
+- card does not duplicate the status-strip state badge
 
 ### 2.7 `SelectedDestinationCard`
 
@@ -425,44 +455,57 @@ Implement:
 
 - empty state when no target is selected
 - selected state with distance and heading derived from current pose and target
+- displayed sent target during active / terminal runs
+- target facing, bearing from robot, and map coordinates
 
 Runtime done when:
 
 - no target shows the empty card state
 - clicking the map updates the card to a selected state
-- displayed distance and heading update to match the chosen target
+- displayed distance, facing, bearing, and coordinates update to match the
+  chosen target
+- sending a goal keeps the sent destination visible while the run is active
 
 ### 2.8 `ActionsCard`
 
 Implement:
 
-- `Send`
-- `Cancel`
-- `Clear destination`
-- correct enable, disable, and loading behavior
+- open connection settings while disconnected
+- start run when destination and readiness checks are available
+- retry / run again labels for terminal states
+- stop run during an active goal
+- clear destination only when no run is active
+- action hint copy that explains the current allowed operation
 
 Runtime done when:
 
-- `Send` is disabled until a target exists and preflight is ready
+- disconnected state offers connection settings instead of a dead start action
+- no target disables start and explains that the map must be used
+- blocked readiness disables start and explains the missing prerequisite
 - sending a goal shows the sending state and starts the run
-- active runs swap the primary action to `Cancel`
-- cancel shows a pending state while cancellation is in progress
-- `Clear destination` works only when no active run exists
+- active runs swap the primary action to `Stop run`
+- stop shows a pending state while cancellation is in progress
+- terminal run allows retry / run again and clear destination
 
 ### 2.9 `ProgressCard`
 
 Implement:
 
 - show progress only once a run has started or reached a terminal state
+- show active / completed / failed / canceled progress status
 - show progress label, percent, and distance remaining
-- show ETA when feedback exposes it
+- show elapsed navigation time and recovery count from Nav2 feedback
+- omit ETA until it is proven reliable in runtime feedback
 
 Runtime done when:
 
 - idle state hides the progress card
 - sending or active run shows progress
-- live feedback updates distance remaining and ETA when available
+- live feedback updates distance remaining, elapsed navigation time, and
+  recovery count when available
 - success, failure, and canceled runs keep a correct terminal progress state
+- missing elapsed time or recovery feedback degrades to `n/a` / `0` without
+  breaking layout
 
 ### 2.10 `LeftNavRail`
 
@@ -490,8 +533,8 @@ Treat Step 2 as complete only when these runtime checks pass:
   visibility without placing a target
 - clicking the map selects a target and updates the destination card
 - sending a goal changes the state, actions, and progress UI
-- active run shows route, progress, distance remaining, and ETA when feedback is
-  available
+- active run shows route, progress, remaining distance, elapsed navigation time,
+  and recovery count when feedback is available
 - lidar and depth obstacle overlays either project into the map frame or report
   waiting / no-TF state
 - cancel transitions to canceled state and disables the right buttons while

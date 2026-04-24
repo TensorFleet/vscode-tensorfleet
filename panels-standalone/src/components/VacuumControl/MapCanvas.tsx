@@ -701,6 +701,16 @@ export function MapCanvas(props: MapCanvasProps) {
           worldToPercent(props.draftTarget, bounds),
         ]
       : null;
+  const routePointString = useMemo(
+    () =>
+      routePoints
+        .map((point) => {
+          const position = worldToPercent(point, bounds);
+          return `${position.left},${position.top}`;
+        })
+        .join(" "),
+    [bounds, routePoints],
+  );
   const mapPrompt = getMapPrompt(props.routeVisualState, hasTarget);
   const activeTargetLabel = getTargetLabel(props.routeVisualState);
   const overlayStatus: OverlayAvailability = {
@@ -799,11 +809,15 @@ export function MapCanvas(props: MapCanvasProps) {
           onPointerDown={(event) => {
             event.stopPropagation();
           }}
+          onClick={(event) => {
+            event.stopPropagation();
+          }}
         >
           <button
             type="button"
             className="vacuum-map-controls__button"
             onClick={() => setZoom((current) => clamp(current + 0.15, 0.8, 2.4))}
+            disabled={zoom >= 2.4}
             title="Zoom in"
             aria-label="Zoom in"
           >
@@ -813,15 +827,20 @@ export function MapCanvas(props: MapCanvasProps) {
             type="button"
             className="vacuum-map-controls__button"
             onClick={() => setZoom((current) => clamp(current - 0.15, 0.8, 2.4))}
+            disabled={zoom <= 0.8}
             title="Zoom out"
             aria-label="Zoom out"
           >
             <ZoomOutIcon className="vacuum-map-controls__icon" />
           </button>
+          <span className="vacuum-map-controls__readout" aria-live="polite">
+            {Math.round(zoom * 100)}%
+          </span>
           <button
             type="button"
             className="vacuum-map-controls__button"
             onClick={() => setZoom(1)}
+            disabled={zoom === 1}
             title="Center map"
             aria-label="Center map"
           >
@@ -933,24 +952,31 @@ export function MapCanvas(props: MapCanvasProps) {
             </defs>
 
             {visibleLayers.plan && routePoints.length > 1 ? (
-              <polyline
-                className={`vacuum-map-path vacuum-map-path--${props.routeVisualState}`}
-                points={routePoints
-                  .map((point) => {
-                    const position = worldToPercent(point, bounds);
-                    return `${position.left},${position.top}`;
-                  })
-                  .join(" ")}
-              />
+              <>
+                <polyline className="vacuum-map-path-casing" points={routePointString} />
+                <polyline
+                  className={`vacuum-map-path vacuum-map-path--${props.routeVisualState}`}
+                  points={routePointString}
+                />
+              </>
             ) : null}
-            {previewLine ? (
-              <line
-                className={`vacuum-map-preview-line vacuum-map-preview-line--${props.routeVisualState}`}
-                x1={previewLine[0].left}
-                y1={previewLine[0].top}
-                x2={previewLine[1].left}
-                y2={previewLine[1].top}
-              />
+            {visibleLayers.plan && previewLine ? (
+              <>
+                <line
+                  className="vacuum-map-preview-line-casing"
+                  x1={previewLine[0].left}
+                  y1={previewLine[0].top}
+                  x2={previewLine[1].left}
+                  y2={previewLine[1].top}
+                />
+                <line
+                  className={`vacuum-map-preview-line vacuum-map-preview-line--${props.routeVisualState}`}
+                  x1={previewLine[0].left}
+                  y1={previewLine[0].top}
+                  x2={previewLine[1].left}
+                  y2={previewLine[1].top}
+                />
+              </>
             ) : null}
           </svg>
           <canvas
