@@ -176,12 +176,13 @@ function extractTimestampNs(value: unknown): Time {
   return BigInt(Math.trunc(sec)) * 1_000_000_000n + BigInt(Math.trunc(nanosec));
 }
 
-function updateTransformTree(tree: TransformTree, message: Record<string, unknown> | null): void {
+function updateTransformTree(tree: TransformTree, message: Record<string, unknown> | null): Time | null {
   const transforms = getRecordEntry(message ?? {}, "transforms");
   if (!Array.isArray(transforms)) {
-    return;
+    return null;
   }
 
+  let latestTimestampNs: Time | null = null;
   for (const transformEntry of transforms) {
     if (!transformEntry || typeof transformEntry !== "object") {
       continue;
@@ -224,8 +225,32 @@ function updateTransformTree(tree: TransformTree, message: Record<string, unknow
       vec3FromValues(tx!, ty!, tz!),
       quatFromValues(qx!, qy!, qz!, qw!),
     );
-    tree.addTransform(childFrame, parentFrame, extractTimestampNs(transformRecord), frameTransform);
+    const timestampNs = extractTimestampNs(transformRecord);
+    tree.addTransform(childFrame, parentFrame, timestampNs, frameTransform);
+    if (latestTimestampNs == null || timestampNs > latestTimestampNs) {
+      latestTimestampNs = timestampNs;
+    }
   }
+
+  return latestTimestampNs;
+}
+
+function applyPointToMap(
+  tree: TransformTree,
+  outputPose: Pose,
+  inputPose: Pose,
+  sourceFrameId: string,
+  timestampNs: Time,
+): Pose | undefined {
+  return tree.apply(
+    outputPose,
+    inputPose,
+    MAP_FRAME_ID,
+    undefined,
+    sourceFrameId,
+    timestampNs,
+    timestampNs,
+  );
 }
 
 function projectPointsToMap(
@@ -233,6 +258,7 @@ function projectPointsToMap(
   sourceFrameId: string,
   timestampNs: Time,
   points: ProjectedMapPoint[],
+  latestTransformTimestampNs: Time | null,
 ): SensorProjection {
   if (points.length === 0) {
     return { points: [], status: "waiting" };
@@ -246,6 +272,7 @@ function projectPointsToMap(
   const inputPose = makePose();
   const outputPose = makePose();
   const projectedPoints: ProjectedMapPoint[] = [];
+  const fallbackTimestampNs = latestTransformTimestampNs ?? nowNs();
 
   for (const point of points) {
     inputPose.position.x = point.x;
@@ -256,17 +283,11 @@ function projectPointsToMap(
     inputPose.orientation.z = 0;
     inputPose.orientation.w = 1;
 
-    const projectedPose = tree.apply(
-      outputPose,
-      inputPose,
-      MAP_FRAME_ID,
-      undefined,
-      normalizedSource,
-      timestampNs,
-      timestampNs,
-    );
+    const projectedPose =
+      applyPointToMap(tree, outputPose, inputPose, normalizedSource, timestampNs) ??
+      applyPointToMap(tree, outputPose, inputPose, normalizedSource, fallbackTimestampNs);
     if (!projectedPose) {
-      return { points: [], status: "no-tf" };
+      continue;
     }
 
     projectedPoints.push({
@@ -274,6 +295,10 @@ function projectPointsToMap(
       y: projectedPose.position.y,
       z: projectedPose.position.z,
     });
+  }
+
+  if (projectedPoints.length === 0) {
+    return { points: [], status: "no-tf" };
   }
 
   return {
@@ -468,6 +493,7 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
       }),
     ),
   );
+  const latestTransformTimestampRef = useRef<Time | null>(null);
   const [tfRevision, setTfRevision] = useState(0);
   const [laserScanMessage, setLaserScanMessage] = useState<Record<string, unknown> | null>(null);
   const [depthTopic, setDepthTopic] = useState<Subscription | null>(() =>
@@ -478,7 +504,13 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
   useEffect(() => {
     const unsubscribes = TF_SUBSCRIPTIONS.map((subscription) =>
       ros2Bridge.subscribe(subscription, (message) => {
-        updateTransformTree(treeRef.current, normalizeRosMessage(message));
+        const latestTimestampNs = updateTransformTree(treeRef.current, normalizeRosMessage(message));
+        if (
+          latestTimestampNs != null &&
+          (latestTransformTimestampRef.current == null || latestTimestampNs > latestTransformTimestampRef.current)
+        ) {
+          latestTransformTimestampRef.current = latestTimestampNs;
+        }
         setTfRevision((current) => current + 1);
       }),
     );
@@ -524,7 +556,13 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
     if (!parsedScan) {
       return { points: [], status: "waiting" };
     }
-    return projectPointsToMap(treeRef.current, parsedScan.frameId, parsedScan.timestampNs, parsedScan.points);
+    return projectPointsToMap(
+      treeRef.current,
+      parsedScan.frameId,
+      parsedScan.timestampNs,
+      parsedScan.points,
+      latestTransformTimestampRef.current,
+    );
   }, [laserScanMessage, tfRevision]);
 
   const depthProjection = useMemo<SensorProjection>(() => {
@@ -542,6 +580,7 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
       parsedCloud.frameId,
       parsedCloud.timestampNs,
       parsedCloud.points,
+      latestTransformTimestampRef.current,
     );
     if (projected.status !== "live") {
       return projected;
