@@ -32,6 +32,7 @@
     "onCommand:tensorfleet.openImagePanel",
     "onCommand:tensorfleet.openTeleopsPanel",
     "onCommand:tensorfleet.openMapPanel",
+    "onCommand:tensorfleet.openVacuumControlPanel",
     "onCommand:tensorfleet.openNav2Panel",
     "onCommand:tensorfleet.openRawMessagesPanel",
     "onCommand:tensorfleet.openFeaturedEntitiesPanel",
@@ -163,6 +164,11 @@
       {
         "command": "tensorfleet.openMapPanel",
         "title": "Open Map Panel",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openVacuumControlPanel",
+        "title": "Open Vacuum Control Panel",
         "category": "TensorFleet"
       },
       {

@@ -70,6 +70,7 @@ export default defineConfig({
         image: resolve(rootDir, "image.html"),
         teleops: resolve(rootDir, "teleops.html"),
         map: resolve(rootDir, "mission_control.html"),
+        vacuum_control: resolve(rootDir, "vacuum_control.html"),
         nav2: resolve(rootDir, "nav2.html"),
         gzweb: resolve(rootDir, "gzweb.html"),
         raw_messages: resolve(rootDir, "raw_messages.html"),

@@ -182,6 +182,16 @@ const DRONE_VIEWS: DroneViewport[] = [
     htmlTemplate: 'sensor-3d-standalone'
   },
   {
+    id: "tensorfleet-vacuum-control-panel",
+    title: "Vacuum Control",
+    description: "Map-first operator shell for TurtleBot4 navigation with destination staging and run controls.",
+    image: "tensorfleet-icon.svg",
+    command: "tensorfleet.openVacuumControlPanel",
+    actionLabel: "Open Vacuum Control",
+    panelKind: "standard",
+    htmlTemplate: "vacuum-control-standalone"
+  },
+  {
     id: "tensorfleet-nav2-panel",
     title: "Nav2 operator",
     description: "Monitor NavigateToPose status, send simple goals, and inspect TurtleBot4 topic health.",
@@ -1831,6 +1841,11 @@ async function openDedicatedPanel(
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
       }
 
+      if (view.htmlTemplate == 'vacuum-control-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+
       if (view.htmlTemplate == 'raw-messages-standalone') {
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
@@ -1961,6 +1976,10 @@ async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, 
     return getStandalonePanelHtml('nav2', webview, context, cspSource);
   }
 
+  if (view.htmlTemplate === 'vacuum-control-standalone') {
+    return getStandalonePanelHtml('vacuum_control', webview, context, cspSource);
+  }
+
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
@@ -2010,7 +2029,7 @@ async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, 
 }
 
 async function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d' | 'nav2' | 'gzweb' | 'featured_entities',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'vacuum_control' | 'raw_messages' | 'sensor_view_3d' | 'nav2' | 'gzweb' | 'featured_entities',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
@@ -2018,7 +2037,9 @@ async function getStandalonePanelHtml(
   const htmlPath = path.join(__dirname, '..', 'panels-standalone', 'dist', `${panelName}.html`);
 
   if (!fs.existsSync(htmlPath)) {
-    throw new Error(`Standalone panel build not found: ${htmlPath}. Run 'bun run build' inside panels-standalone/`);
+    throw new Error(
+      `Standalone panel build not found: ${htmlPath}. Run 'bun run compile:dev' from the repo root or 'bun run build' inside panels-standalone/.`
+    );
   }
 
   let html = fs.readFileSync(htmlPath, 'utf8');
