@@ -9,3 +9,6 @@ dist/
 tensorfleet-drone-*.vsix
 
 .DS_Store
+
+.codex
+.idea/

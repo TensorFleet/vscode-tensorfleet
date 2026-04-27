@@ -9,6 +9,7 @@ const typesDir = resolve(rootDir, "./packages/@types");
 
 // ✅ tensorfleet-util resolves to SOURCE in dev/build (like your @lichtblick packages)
 const tensorfleetUtilDir = resolve(rootDir, "./packages/tensorfleet-util/src");
+const tensorfleetAuthDir = resolve(rootDir, "./packages/tensorfleet-auth/src");
 
 // ✅ tensorfleet-ros resolves to SOURCE in dev/build
 const tensorfleetRosDir = resolve(rootDir, "./packages/tensorfleet-ros/src");
@@ -95,6 +96,10 @@ export default defineConfig({
         find: /^tensorfleet-util(\/.*)?$/,
         replacement: `${tensorfleetUtilDir}$1`,
       },
+      {
+        find: /^tensorfleet-auth(\/.*)?$/,
+        replacement: `${tensorfleetAuthDir}$1`,
+      },
 
       // ✅ tensorfleet-ros bare import:
       // import "... from 'tensorfleet-ros'"
@@ -135,6 +140,7 @@ export default defineConfig({
     exclude: [
       // ✅ keep this excluded so Vite doesn't prebundle it weirdly
       "tensorfleet-util",
+      "tensorfleet-auth",
 
       "@lichtblick/wasm-bz2",
       "@lichtblick/wasm-zstd",

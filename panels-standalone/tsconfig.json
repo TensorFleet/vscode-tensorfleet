@@ -32,6 +32,8 @@
       // Local @types/*
       "@types/*": ["./packages/@types/*"],
 
+      "tensorfleet-auth": ["./packages/tensorfleet-auth/src/index.ts"],
+      "tensorfleet-auth/*": ["./packages/tensorfleet-auth/src/*"],
       "tensorfleet-util": ["./packages/tensorfleet-util/src/index.ts"],
       "tensorfleet-util/*": ["./packages/tensorfleet-util/src/*"]
     }

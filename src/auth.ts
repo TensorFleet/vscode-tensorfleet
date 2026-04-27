@@ -13,11 +13,9 @@
 
 import * as vscode from 'vscode';
 import * as http from 'http';
-import type { AddressInfo } from 'net';
 import { getBackendUrl as getRegionBackendUrl } from './regions';
 import {
-  initiateAuth,
-  createCallbackHandler,
+  startOAuthRedirectFlow,
   isValidJwtShape,
   verifyToken,
   extractUserProfile,
@@ -39,9 +37,7 @@ let loginInProgress = false;
 
 // Active login state for cancellation support
 let activeLoginState: {
-  server: http.Server;
-  timeoutId: NodeJS.Timeout;
-  reject: (error: Error) => void;
+  cancel: (error?: Error) => void;
 } | null = null;
 
 /**
@@ -51,9 +47,7 @@ let activeLoginState: {
 export function cancelLogin(): void {
   if (activeLoginState) {
     console.log('[Auth] Cancelling in-progress login');
-    clearTimeout(activeLoginState.timeoutId);
-    activeLoginState.server.close();
-    activeLoginState.reject(new Error('Login cancelled'));
+    activeLoginState.cancel(new Error('Login cancelled'));
     activeLoginState = null;
   }
   loginInProgress = false;
@@ -83,93 +77,38 @@ export async function authenticate(context: vscode.ExtensionContext): Promise<st
     const backendUrl = getBackendUrl();
     const config: OAuthConfig = { backendUrl };
 
-    // Step 1: Initiate OAuth flow using core module
-    const { state, authUrl } = await initiateAuth(config);
-
     vscode.window.showInformationMessage('Opening browser for authentication...');
 
-    // Step 2: Start local server with ephemeral port to receive callback
     const callbacks: OAuthCallbacks = {
       openBrowser: async (url: string) => {
-        vscode.env.openExternal(vscode.Uri.parse(url));
+        await vscode.env.openExternal(vscode.Uri.parse(url));
       },
+      onTokenReceived: async () => {},
+      onError: (error: Error) => {
+        console.error('[Auth] OAuth error:', error);
+      },
+    };
+
+    const flow = await startOAuthRedirectFlow({
+      backendUrl: config.backendUrl,
+      openBrowser: callbacks.openBrowser,
+      createServer: http.createServer,
       onTokenReceived: async (token: string) => {
         // Validate JWT shape before storing
         if (!isValidJwtShape(token)) {
           throw new Error('Invalid token format - not a valid JWT');
         }
       },
-      onError: (error: Error) => {
-        console.error('[Auth] OAuth error:', error);
-      }
-    };
-
-    // Create and start callback server
-    const server = http.createServer();
-    let timeoutId: NodeJS.Timeout;
-
-    // Store for cancellation
-    activeLoginState = { server, timeoutId: null as any, reject: () => {} };
-
-    const token = await new Promise<string>((resolve, reject) => {
-      // Update reject function
-      activeLoginState!.reject = reject;
-
-      server.on('listening', () => {
-        const addressInfo = server.address() as AddressInfo;
-        const port = addressInfo.port;
-        const callbackBaseUrl = `http://127.0.0.1:${port}/callback`;
-
-        // Create callback handler using core module
-        const handler = createCallbackHandler({
-          expectedState: state,
-          callbacks: {
-            openBrowser: callbacks.openBrowser,
-            onTokenReceived: async (token: string) => {
-              clearTimeout(timeoutId);
-              server.close();
-              await callbacks.onTokenReceived(token);
-              resolve(token);
-            },
-            onError: (error: Error) => {
-              clearTimeout(timeoutId);
-              server.close();
-              callbacks.onError(error);
-              reject(error);
-            }
-          }
-        });
-
-        // Attach request handler
-        server.on('request', handler);
-
-        // Step 3: Open browser with callbackBaseUrl appended
-        const finalAuthUrl = `${authUrl}&callbackBaseUrl=${encodeURIComponent(callbackBaseUrl)}`;
-        vscode.env.openExternal(vscode.Uri.parse(finalAuthUrl));
-      });
-
-      server.on('error', (err: Error) => {
-        activeLoginState = null;
-        reject(new Error(`Failed to start callback server: ${err.message}`));
-      });
-
-      // Listen on ephemeral port (0) bound to localhost
-      server.listen(0, '127.0.0.1');
-
-      // Timeout after 5 minutes
-      timeoutId = setTimeout(() => {
-        activeLoginState = null;
-        server.close();
-        reject(new Error('Authentication timeout'));
-      }, 5 * 60 * 1000);
-
-      // Update stored reference with actual timeoutId
-      if (activeLoginState) {
-        activeLoginState.timeoutId = timeoutId;
-      }
+      onError: callbacks.onError,
     });
 
-    // Step 4: Store token securely
+    activeLoginState = {
+      cancel: flow.cancel,
+    };
+
+    const token = await flow.tokenPromise;
+
+    // Store token securely
     await storeToken(context, token);
 
     vscode.window.showInformationMessage('Successfully authenticated!');
