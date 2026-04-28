@@ -4,3 +4,6 @@
 [submodule "panels-standalone/packages/tensorfleet-ros"]
 	path = panels-standalone/packages/tensorfleet-ros
 	url = https://github.com/TensorFleet/tensorfleet-ros.git
+[submodule "panels-standalone/packages/tensorfleet-auth"]
+	path = panels-standalone/packages/tensorfleet-auth
+	url = https://github.com/TensorFleet/tesnrofleet-auth.git
