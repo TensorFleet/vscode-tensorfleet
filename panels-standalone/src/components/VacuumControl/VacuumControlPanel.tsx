@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
 import { useNav2Runtime } from "../Nav2/runtime/useNav2Runtime";
-import { formatRosDuration } from "../Nav2/runtime/nav2RuntimeUtils";
+import { formatRosDuration, getPoseCoordinates } from "../Nav2/runtime/nav2RuntimeUtils";
 import type { GoalState, TopicHealth } from "../Nav2/runtime/nav2RuntimeTypes";
 import { MapCanvas, type MapCanvasTarget, type RouteVisualState } from "./MapCanvas";
 import "./VacuumControlPanel.css";
@@ -444,7 +444,6 @@ function getProgressLabel(routeVisualState: RouteVisualState): string {
 function getReadinessIssue(args: {
   connectionStatus: "connected" | "connecting" | "disconnected";
   mapReady: boolean;
-  poseReady: boolean;
   preflightReady: boolean;
 }): string | null {
   if (args.connectionStatus !== "connected") {
@@ -452,9 +451,6 @@ function getReadinessIssue(args: {
   }
   if (!args.mapReady) {
     return "Waiting for a live map before starting.";
-  }
-  if (!args.poseReady) {
-    return "Waiting for the robot position before starting.";
   }
   if (!args.preflightReady) {
     return "Final navigation checks are still running.";
@@ -468,7 +464,10 @@ export function VacuumControlPanel() {
   const [draftTarget, setDraftTarget] = useState<DraftTarget | null>(null);
   const [sentTarget, setSentTarget] = useState<DraftTarget | null>(null);
   const [initialRouteDistance, setInitialRouteDistance] = useState<number | null>(null);
-  const currentPose = runtime.currentMapCoordinates;
+  const currentPose = useMemo(
+    () => getPoseCoordinates(runtime.currentMapPose),
+    [runtime.currentMapPose],
+  );
   const mapStatus = getTopicState(runtime.topicHealth, "/map");
   const isGoalActive = ACTIVE_GOAL_STATES.has(runtime.goalState);
   const displayedTarget = sentTarget ?? draftTarget;
@@ -538,7 +537,6 @@ export function VacuumControlPanel() {
   const readinessIssue = getReadinessIssue({
     connectionStatus: runtime.connectionStatus,
     mapReady,
-    poseReady,
     preflightReady,
   });
   const targetDistanceLabel = displayedTarget ? formatDistance(destinationDistance) : null;

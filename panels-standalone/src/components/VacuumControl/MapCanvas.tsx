@@ -35,6 +35,7 @@ type OccupancyMap = {
   resolution: number;
   originX: number;
   originY: number;
+  originYaw: number;
   frameId: string | null;
   data: number[];
 };
@@ -62,6 +63,7 @@ type RasterLayerConfig = {
 
 type PointOverlayStyle = {
   fill: string;
+  haloFill?: string;
   radius: number;
 };
 
@@ -111,14 +113,27 @@ function toNumericArray(value: unknown): number[] | null {
   if (Array.isArray(value)) {
     return value.map((entry) => Number(entry));
   }
-  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(value)) {
-    return Array.from(value as ArrayLike<number>, (entry) => Number(entry));
+  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+    return Array.from(value as unknown as ArrayLike<number>, (entry) => Number(entry));
   }
   return null;
 }
 
 function mixChannel(start: number, end: number, amount: number): number {
   return Math.round(start + (end - start) * amount);
+}
+
+function quaternionToYawDegrees(orientation: Record<string, unknown> | null): number {
+  if (!orientation) {
+    return 0;
+  }
+  const x = toFiniteNumber(getRecordEntry(orientation, "x")) ?? 0;
+  const y = toFiniteNumber(getRecordEntry(orientation, "y")) ?? 0;
+  const z = toFiniteNumber(getRecordEntry(orientation, "z")) ?? 0;
+  const w = toFiniteNumber(getRecordEntry(orientation, "w")) ?? 1;
+  const sinyCosp = 2 * (w * z + x * y);
+  const cosyCosp = 1 - 2 * (y * y + z * z);
+  return (Math.atan2(sinyCosp, cosyCosp) * 180) / Math.PI;
 }
 
 function colorizeCostmapCell(
@@ -173,6 +188,10 @@ function parseOccupancyMap(message: Record<string, unknown> | null): OccupancyMa
     position && typeof position === "object"
       ? toFiniteNumber(getRecordEntry(position as Record<string, unknown>, "y"))
       : null;
+  const orientation =
+    origin && typeof origin === "object" && typeof getRecordEntry(origin as Record<string, unknown>, "orientation") === "object"
+      ? (getRecordEntry(origin as Record<string, unknown>, "orientation") as Record<string, unknown>)
+      : null;
   const data = toNumericArray(getRecordEntry(message, "data"));
   const header = getRecordEntry(message, "header");
   const frameId =
@@ -197,6 +216,7 @@ function parseOccupancyMap(message: Record<string, unknown> | null): OccupancyMa
     resolution,
     originX,
     originY,
+    originYaw: quaternionToYawDegrees(orientation),
     frameId: typeof frameId === "string" && frameId.length > 0 ? frameId : null,
     data,
   };
@@ -395,33 +415,51 @@ function getRasterLayerStyle(
   map: OccupancyMap | null,
   bounds: MapBounds,
   mode: RasterLayerMode,
+  projectPointToMap?: (point: ProjectedMapPoint, sourceFrameId: string | null) => ProjectedMapPoint | null,
 ): React.CSSProperties | undefined {
   if (!map || mode === "map") {
     return undefined;
   }
 
-  const topLeft = worldToPercent(
-    {
-      x: map.originX,
-      y: map.originY + map.height * map.resolution,
-    },
-    bounds,
-    { clampToViewport: false },
-  );
-  const bottomRight = worldToPercent(
-    {
-      x: map.originX + map.width * map.resolution,
-      y: map.originY,
-    },
-    bounds,
-    { clampToViewport: false },
+  const widthMeters = map.width * map.resolution;
+  const heightMeters = map.height * map.resolution;
+  const yawRadians = (map.originYaw * Math.PI) / 180;
+  const cosYaw = Math.cos(yawRadians);
+  const sinYaw = Math.sin(yawRadians);
+  const localCorners = [
+    { x: 0, y: heightMeters },
+    { x: widthMeters, y: heightMeters },
+    { x: widthMeters, y: 0 },
+    { x: 0, y: 0 },
+  ];
+  const worldCorners = localCorners.map((corner) => ({
+    x: map.originX + corner.x * cosYaw - corner.y * sinYaw,
+    y: map.originY + corner.x * sinYaw + corner.y * cosYaw,
+    z: 0,
+  }));
+  const projectedCorners = worldCorners.map((corner) =>
+    map.frameId && map.frameId !== "map" && projectPointToMap
+      ? projectPointToMap(corner, map.frameId)
+      : corner,
   );
 
+  if (projectedCorners.some((corner) => corner == null)) {
+    return { display: "none" };
+  }
+
+  const cornerPercents = (projectedCorners as ProjectedMapPoint[]).map((corner) =>
+    worldToPercent(corner, bounds, { clampToViewport: false }),
+  );
+  const left = Math.min(...cornerPercents.map((corner) => corner.left));
+  const right = Math.max(...cornerPercents.map((corner) => corner.left));
+  const top = Math.min(...cornerPercents.map((corner) => corner.top));
+  const bottom = Math.max(...cornerPercents.map((corner) => corner.top));
+
   return {
-    left: `${topLeft.left}%`,
-    top: `${topLeft.top}%`,
-    width: `${bottomRight.left - topLeft.left}%`,
-    height: `${bottomRight.top - topLeft.top}%`,
+    left: `${left}%`,
+    top: `${top}%`,
+    width: `${right - left}%`,
+    height: `${bottom - top}%`,
   };
 }
 
@@ -488,7 +526,8 @@ function drawPointOverlay(
     return;
   }
 
-  context.fillStyle = style.fill;
+  const glowRadius = style.radius * 5;
+
   for (const point of points) {
     const normalizedLeft = (point.x - bounds.minX) / bounds.width;
     const normalizedTop = 1 - (point.y - bounds.minY) / bounds.height;
@@ -498,14 +537,90 @@ function drawPointOverlay(
 
     const x = normalizedLeft * width;
     const y = normalizedTop * height;
-    if (x < -16 || y < -16 || x > width + 16 || y > height + 16) {
+    if (x < -glowRadius - 4 || y < -glowRadius - 4 || x > width + glowRadius + 4 || y > height + glowRadius + 4) {
       continue;
     }
 
+    if (style.haloFill) {
+      const gradient = context.createRadialGradient(x, y, style.radius * 0.4, x, y, glowRadius);
+      gradient.addColorStop(0, style.haloFill);
+      gradient.addColorStop(1, "rgba(0,0,0,0)");
+      context.fillStyle = gradient;
+      context.beginPath();
+      context.arc(x, y, glowRadius, 0, Math.PI * 2);
+      context.fill();
+    }
+
+    context.fillStyle = style.fill;
     context.beginPath();
     context.arc(x, y, style.radius, 0, Math.PI * 2);
     context.fill();
   }
+}
+
+const DEPTH_Z_LOW = 0.03;
+const DEPTH_Z_HIGH = 0.45;
+
+function drawDepthPointOverlay(
+  canvas: HTMLCanvasElement,
+  points: ProjectedMapPoint[],
+  bounds: MapBounds,
+): void {
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return;
+  }
+
+  const width = Math.max(1, Math.round(canvas.clientWidth));
+  const height = Math.max(1, Math.round(canvas.clientHeight));
+  const devicePixelRatio = window.devicePixelRatio || 1;
+
+  canvas.width = Math.max(1, Math.round(width * devicePixelRatio));
+  canvas.height = Math.max(1, Math.round(height * devicePixelRatio));
+  context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  context.clearRect(0, 0, width, height);
+
+  if (points.length === 0) {
+    return;
+  }
+
+  // Additive blending: dense clusters of overlapping halos accumulate naturally
+  context.globalCompositeOperation = "lighter";
+
+  const HALO_R = 8;
+
+  for (const point of points) {
+    const normalizedLeft = (point.x - bounds.minX) / bounds.width;
+    const normalizedTop = 1 - (point.y - bounds.minY) / bounds.height;
+    if (!Number.isFinite(normalizedLeft) || !Number.isFinite(normalizedTop)) {
+      continue;
+    }
+
+    const x = normalizedLeft * width;
+    const y = normalizedTop * height;
+    if (x < -HALO_R - 2 || y < -HALO_R - 2 || x > width + HALO_R + 2 || y > height + HALO_R + 2) {
+      continue;
+    }
+
+    // Map z-height to color: low (floor-level) → warm amber, high (obstacle) → vivid red-orange
+    const zNorm = Math.min(1, Math.max(0, (point.z - DEPTH_Z_LOW) / (DEPTH_Z_HIGH - DEPTH_Z_LOW)));
+    const r = 255;
+    const g = Math.round(158 - zNorm * 108); // 158 (amber) → 50 (red-orange)
+    const b = Math.round(36 - zNorm * 26);   // 36 → 10
+    const coreAlpha = 0.20 + zNorm * 0.22;   // 0.20 → 0.42 — modest per-point so clusters pop naturally
+    const haloAlpha = 0.048 + zNorm * 0.06;  // 0.048 → 0.11
+
+    const gradient = context.createRadialGradient(x, y, 0, x, y, HALO_R);
+    gradient.addColorStop(0, `rgba(${r},${g},${b},${coreAlpha.toFixed(3)})`);
+    gradient.addColorStop(0.3, `rgba(${r},${g},${b},${haloAlpha.toFixed(3)})`);
+    gradient.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.arc(x, y, HALO_R, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  context.globalCompositeOperation = "source-over";
 }
 
 function ZoomInIcon(props: { className?: string }) {
@@ -597,11 +712,12 @@ export function MapCanvas(props: MapCanvasProps) {
     () => choosePrimaryRasterMap(occupancyMap, globalCostmap, localCostmap),
     [occupancyMap, globalCostmap, localCostmap],
   );
-  const bounds = useMemo(
-    () => deriveBounds(primaryRasterMap, props.currentPose),
-    [primaryRasterMap, props.currentPose],
-  );
   const projectedSensorOverlays = useProjectedSensorOverlays(props.currentPose);
+  const displayedRobotPose = props.currentPose ?? projectedSensorOverlays.robotPose;
+  const bounds = useMemo(
+    () => deriveBounds(primaryRasterMap, displayedRobotPose),
+    [primaryRasterMap, displayedRobotPose],
+  );
 
   useEffect(() => {
     if (!mapCanvasRef.current) {
@@ -634,7 +750,7 @@ export function MapCanvas(props: MapCanvasProps) {
         ? projectedSensorOverlays.lidarPoints
         : [],
       bounds,
-      { fill: "rgba(88, 217, 255, 0.72)", radius: 1.5 },
+      { fill: "rgba(96, 224, 255, 0.92)", haloFill: "rgba(88, 217, 255, 0.18)", radius: 1.5 },
     );
   }, [
     bounds,
@@ -647,13 +763,12 @@ export function MapCanvas(props: MapCanvasProps) {
     if (!depthCanvasRef.current) {
       return;
     }
-    drawPointOverlay(
+    drawDepthPointOverlay(
       depthCanvasRef.current,
       visibleLayers.depthObstacles && projectedSensorOverlays.overlayStatus.depthObstacles === "live"
         ? projectedSensorOverlays.depthObstaclePoints
         : [],
       bounds,
-      { fill: "rgba(255, 179, 92, 0.68)", radius: 2 },
     );
   }, [
     bounds,
@@ -695,9 +810,9 @@ export function MapCanvas(props: MapCanvasProps) {
   const hasTarget = props.draftTarget != null;
   const displayedTarget = props.sentTarget ?? props.draftTarget;
   const previewLine =
-    props.routeVisualState === "staged" && props.currentPose && props.draftTarget
+    props.routeVisualState === "staged" && displayedRobotPose && props.draftTarget
       ? [
-          worldToPercent(props.currentPose, bounds),
+          worldToPercent(displayedRobotPose, bounds),
           worldToPercent(props.draftTarget, bounds),
         ]
       : null;
@@ -722,12 +837,12 @@ export function MapCanvas(props: MapCanvasProps) {
     depthObstacles: projectedSensorOverlays.overlayStatus.depthObstacles,
   };
   const globalCostmapStyle = useMemo(
-    () => getRasterLayerStyle(globalCostmap, bounds, "global-costmap"),
-    [globalCostmap, bounds],
+    () => getRasterLayerStyle(globalCostmap, bounds, "global-costmap", projectedSensorOverlays.projectPointToMap),
+    [bounds, globalCostmap, projectedSensorOverlays.projectPointToMap],
   );
   const localCostmapStyle = useMemo(
-    () => getRasterLayerStyle(localCostmap, bounds, "local-costmap"),
-    [localCostmap, bounds],
+    () => getRasterLayerStyle(localCostmap, bounds, "local-costmap", projectedSensorOverlays.projectPointToMap),
+    [bounds, localCostmap, projectedSensorOverlays.projectPointToMap],
   );
 
   function toggleLayer(layerKey: MapOverlayKey): void {
@@ -752,7 +867,7 @@ export function MapCanvas(props: MapCanvasProps) {
       props.onTargetStart({
         x: worldPoint.x,
         y: worldPoint.y,
-        yaw: props.currentPose?.yaw ?? 0,
+        yaw: displayedRobotPose?.yaw ?? 0,
       });
       return;
     }
@@ -910,7 +1025,14 @@ export function MapCanvas(props: MapCanvasProps) {
                           <span className="vacuum-map-layer-picker__item-copy">
                             <span className="vacuum-map-layer-picker__item-label">{layer.label}</span>
                             <span className="vacuum-map-layer-picker__item-status">
-                              {getOverlayStatusLabel(status)}
+                              {getOverlayStatusLabel(
+                                status,
+                                layer.key === "lidar"
+                                  ? projectedSensorOverlays.lidarTopic?.topic
+                                  : layer.key === "depthObstacles"
+                                    ? projectedSensorOverlays.depthTopic?.topic
+                                    : null,
+                              )}
                             </span>
                           </span>
                         </span>
@@ -942,12 +1064,12 @@ export function MapCanvas(props: MapCanvasProps) {
           <svg className="vacuum-map-stage__overlay vacuum-map-stage__overlay--plan" viewBox="0 0 100 100" preserveAspectRatio="none">
             <defs>
               <linearGradient id="vacuum-route-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#4ec7ff" />
-                <stop offset="100%" stopColor="#2d8df0" />
+                <stop offset="0%" stopColor="#63b7df" />
+                <stop offset="100%" stopColor="#397fc4" />
               </linearGradient>
               <linearGradient id="vacuum-preview-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#58d9ff" />
-                <stop offset="100%" stopColor="#38c8b0" />
+                <stop offset="0%" stopColor="#62d0c6" />
+                <stop offset="100%" stopColor="#4b9ed2" />
               </linearGradient>
             </defs>
 
@@ -988,8 +1110,8 @@ export function MapCanvas(props: MapCanvasProps) {
             className="vacuum-map-stage__overlay-canvas vacuum-map-stage__overlay-canvas--depth"
           />
 
-          {props.currentPose ? (() => {
-            const position = worldToPercent(props.currentPose, bounds);
+          {displayedRobotPose ? (() => {
+            const position = worldToPercent(displayedRobotPose, bounds);
             return (
               <div
                 className="vacuum-marker vacuum-marker--robot"
@@ -998,7 +1120,7 @@ export function MapCanvas(props: MapCanvasProps) {
                 <span className="vacuum-marker__robot-halo" />
                 <span
                   className="vacuum-marker__robot-body"
-                  style={{ transform: `translate(-50%, -50%) rotate(${props.currentPose.yaw ?? 0}deg)` }}
+                  style={{ transform: `translate(-50%, -50%) rotate(${displayedRobotPose.yaw ?? 0}deg)` }}
                 >
                   <svg viewBox="0 0 32 32" aria-hidden="true">
                     <circle cx="16" cy="16" r="11" className="vacuum-marker__robot-disc" />

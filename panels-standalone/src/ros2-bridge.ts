@@ -34,6 +34,10 @@ interface ConnectionSettings {
 }
 
 type TfEdgeRecord = TfEdgeSnapshot;
+type TfTransformRecord = Record<string, unknown> & {
+  header?: { frame_id?: string };
+  child_frame_id?: string;
+};
 
 export interface Subscription {
   topic: string;
@@ -111,6 +115,7 @@ export class ROS2Bridge {
 
   private messageHandlers = new Map<string, Set<(message: any) => void>>();
   private subscriptions = new Map<string, Subscription>();
+  private latestMessages = new Map<string, any>();
 
   // track discovered topics from the bridge
   private discoveredTopics: Map<string, string> = new Map(); // topic -> type
@@ -132,6 +137,7 @@ export class ROS2Bridge {
   private frameTopics = new Map<string, Set<string>>();
   private tfDynamicEdges = new Map<string, TfEdgeRecord>();
   private tfStaticEdges = new Map<string, TfEdgeRecord>();
+  private tfStaticTransforms = new Map<string, TfTransformRecord>();
   private tfGraphLastUpdatedAt: number | null = null;
 
   // Available topics change notifications
@@ -324,6 +330,8 @@ export class ROS2Bridge {
     }
     this.client = null;
     this.discoveredTopics.clear();
+    this.latestMessages.clear();
+    this.tfStaticTransforms.clear();
     this._notifyAvailableServicesChanged([]);
     // Clear server info on disconnect
     this.serverInfoReady = null;
@@ -370,6 +378,7 @@ export class ROS2Bridge {
     }
 
     this._forwardSubscription(subscription);
+    this.replayLatestMessage(topic, handler);
 
     return () => this.unsubscribe(topic, handler);
   }
@@ -378,6 +387,31 @@ export class ROS2Bridge {
     if (!this.client) return;
     // Foxglove subscribes by *topic name* (schemaName is resolved server-side)
     this.client.subscribe(sub.topic);
+  }
+
+  private replayLatestMessage(topic: string, handler: (message: any) => void): void {
+    const message = this.getReplayMessage(topic);
+    if (!message) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      const handlers = this.messageHandlers.get(topic);
+      if (handlers?.has(handler)) {
+        handler(message);
+      }
+    }, 0);
+  }
+
+  private getReplayMessage(topic: string): any | null {
+    if (this.isTfStaticTopic(topic) && this.tfStaticTransforms.size > 0) {
+      return {
+        topic,
+        type: "tf2_msgs/msg/TFMessage",
+        msg: { transforms: Array.from(this.tfStaticTransforms.values()) },
+      };
+    }
+    return this.latestMessages.get(topic) ?? null;
   }
 
   unsubscribe(topic: string, handler: (message: any) => void) {
@@ -725,18 +759,20 @@ export class ROS2Bridge {
       this.noteFrame(frameId, topic);
     }
 
+    this.latestMessages.set(topic, data);
+
     if (type === "tf2_msgs/msg/TFMessage" && Array.isArray(msg.transforms)) {
       const isStatic = this.isTfStaticTopic(topic);
-      for (const tf of msg.transforms as Array<{
-        header?: { frame_id?: string };
-        child_frame_id?: string;
-      }>) {
+      for (const tf of msg.transforms as TfTransformRecord[]) {
         const parent = tf.header?.frame_id;
         const child = tf.child_frame_id;
         if (parent) this.noteFrame(parent, topic);
         if (child) this.noteFrame(child, topic);
         if (parent && child) {
           this.noteTfEdge(topic, parent, child, receivedAt, isStatic);
+          if (isStatic) {
+            this.tfStaticTransforms.set(`${parent}->${child}`, tf);
+          }
         }
       }
     }

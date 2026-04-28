@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ObjectPool } from "@lichtblick/den/collection";
 import { ros2Bridge, type Subscription } from "../../ros2-bridge";
 import {
@@ -64,24 +64,35 @@ const TF_SUBSCRIPTIONS = [
   { topic: "/tf_static", type: "tf2_msgs/msg/TFMessage" },
 ] as const;
 
-const POINT_CLOUD_SCHEMA_NAMES = new Set([
-  "sensor_msgs/PointCloud2",
-  "sensor_msgs/msg/PointCloud2",
-  "foxglove.PointCloud",
-]);
-
 const ROS_POINT_CLOUD_SCHEMA_NAMES = new Set([
   "sensor_msgs/PointCloud2",
   "sensor_msgs/msg/PointCloud2",
 ]);
 
+const LASER_SCAN_SCHEMA_NAMES = new Set([
+  "sensor_msgs/LaserScan",
+  "sensor_msgs/msg/LaserScan",
+  "foxglove.LaserScan",
+]);
+
 const MAP_FRAME_ID = "map";
-const LIDAR_TOPIC = "/scan";
-const LIDAR_SCHEMA_NAME = "sensor_msgs/msg/LaserScan";
+const LIDAR_TOPIC_PREFERENCE = "/scan";
 const DEPTH_TOPIC_PREFERENCE = "/oakd/rgb/preview/depth/points";
 const MAX_LIDAR_POINTS = 900;
 const MAX_DEPTH_POINTS = 1_500;
 const MAX_DEPTH_DISTANCE_M = 6;
+const ROBOT_POSE_FRAME_CANDIDATES = [
+  "base_footprint",
+  "base_link",
+  "turtlebot4/base_footprint",
+  "turtlebot4/base_link",
+];
+const LIDAR_FRAME_FALLBACKS = [
+  "rplidar_link",
+  "turtlebot4/rplidar_link",
+  "base_scan",
+  "laser",
+];
 
 export const DEFAULT_OVERLAY_VISIBILITY: OverlayVisibility = {
   map: true,
@@ -130,6 +141,16 @@ function toFiniteNumber(value: unknown): number | null {
   return typeof numeric === "number" && Number.isFinite(numeric) ? numeric : null;
 }
 
+function toNumericArray(value: unknown): number[] | null {
+  if (Array.isArray(value)) {
+    return value.map((entry) => Number(entry));
+  }
+  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+    return Array.from(value as unknown as ArrayLike<number>, (entry) => Number(entry));
+  }
+  return null;
+}
+
 function toByteArray(value: unknown): Uint8Array | null {
   if (value instanceof Uint8Array) {
     return value;
@@ -149,6 +170,23 @@ function toByteArray(value: unknown): Uint8Array | null {
     return bytes;
   }
   return null;
+}
+
+function quaternionToYawDegrees(orientation: Pose["orientation"]): number {
+  const { x, y, z, w } = orientation;
+  const sinyCosp = 2 * (w * z + x * y);
+  const cosyCosp = 1 - 2 * (y * y + z * z);
+  return (Math.atan2(sinyCosp, cosyCosp) * 180) / Math.PI;
+}
+
+function getMessageFrameId(message: Record<string, unknown> | null): string | null {
+  if (!message) {
+    return null;
+  }
+  const header = getRecordEntry(message, "header");
+  const headerRecord =
+    header && typeof header === "object" ? (header as Record<string, unknown>) : null;
+  return normalizeFrameId(headerRecord ? getRecordEntry(headerRecord, "frame_id") : null);
 }
 
 function extractTimestampNs(value: unknown): Time {
@@ -253,9 +291,62 @@ function applyPointToMap(
   );
 }
 
+function projectPointToMap(
+  tree: TransformTree,
+  point: ProjectedMapPoint,
+  sourceFrameId: string | null,
+  latestTransformTimestampNs: Time | null,
+): ProjectedMapPoint | null {
+  const normalizedSource = normalizeFrameId(sourceFrameId);
+  if (!normalizedSource || !tree.hasFrame(MAP_FRAME_ID) || !tree.hasFrame(normalizedSource)) {
+    return null;
+  }
+  if (normalizedSource === MAP_FRAME_ID) {
+    return point;
+  }
+
+  const inputPose = makePose();
+  const outputPose = makePose();
+  inputPose.position.x = point.x;
+  inputPose.position.y = point.y;
+  inputPose.position.z = point.z;
+  inputPose.orientation.x = 0;
+  inputPose.orientation.y = 0;
+  inputPose.orientation.z = 0;
+  inputPose.orientation.w = 1;
+
+  const projectedPose = applyPointToMap(
+    tree,
+    outputPose,
+    inputPose,
+    normalizedSource,
+    latestTransformTimestampNs ?? nowNs(),
+  );
+  return projectedPose
+    ? {
+        x: projectedPose.position.x,
+        y: projectedPose.position.y,
+        z: projectedPose.position.z,
+      }
+    : null;
+}
+
+function getLidarSourceFrameCandidates(frameId: string): string[] {
+  const candidates = [frameId];
+  const normalized = normalizeFrameId(frameId);
+  if (normalized) {
+    const parts = normalized.split("/");
+    for (let count = parts.length - 1; count >= 1; count -= 1) {
+      candidates.push(parts.slice(0, count).join("/"));
+    }
+  }
+  candidates.push(...LIDAR_FRAME_FALLBACKS);
+  return Array.from(new Set(candidates));
+}
+
 function projectPointsToMap(
   tree: TransformTree,
-  sourceFrameId: string,
+  sourceFrameIds: string | string[],
   timestampNs: Time,
   points: ProjectedMapPoint[],
   latestTransformTimestampNs: Time | null,
@@ -264,9 +355,18 @@ function projectPointsToMap(
     return { points: [], status: "waiting" };
   }
 
-  const normalizedSource = normalizeFrameId(sourceFrameId);
+  const sourceFrameCandidates = Array.isArray(sourceFrameIds) ? sourceFrameIds : [sourceFrameIds];
+  const normalizedSource = sourceFrameCandidates
+    .map((sourceFrameId) => normalizeFrameId(sourceFrameId))
+    .find((sourceFrameId): sourceFrameId is string =>
+      !!sourceFrameId && tree.hasFrame(MAP_FRAME_ID) && tree.hasFrame(sourceFrameId),
+    );
   if (!normalizedSource || !tree.hasFrame(MAP_FRAME_ID) || !tree.hasFrame(normalizedSource)) {
     return { points: [], status: "no-tf" };
+  }
+
+  if (normalizedSource === MAP_FRAME_ID) {
+    return { points, status: "live" };
   }
 
   const inputPose = makePose();
@@ -307,21 +407,77 @@ function projectPointsToMap(
   };
 }
 
+function projectFramePoseToMap(
+  tree: TransformTree,
+  sourceFrameIds: string[],
+  latestTransformTimestampNs: Time | null,
+): PoseCoordinates | null {
+  if (!tree.hasFrame(MAP_FRAME_ID)) {
+    return null;
+  }
+
+  const inputPose = makePose();
+  const outputPose = makePose();
+  const timestampNs = latestTransformTimestampNs ?? nowNs();
+  for (const sourceFrameId of sourceFrameIds) {
+    const normalizedSource = normalizeFrameId(sourceFrameId);
+    if (!normalizedSource || !tree.hasFrame(normalizedSource)) {
+      continue;
+    }
+
+    const projectedPose = applyPointToMap(
+      tree,
+      outputPose,
+      inputPose,
+      normalizedSource,
+      timestampNs,
+    );
+    if (!projectedPose) {
+      continue;
+    }
+
+    return {
+      x: projectedPose.position.x,
+      y: projectedPose.position.y,
+      yaw: quaternionToYawDegrees(projectedPose.orientation),
+    };
+  }
+
+  return null;
+}
+
+function projectPointsFromRobotPose(
+  points: ProjectedMapPoint[],
+  robotPose: PoseCoordinates | null,
+): SensorProjection {
+  if (points.length === 0) {
+    return { points: [], status: "waiting" };
+  }
+  if (!robotPose) {
+    return { points: [], status: "no-tf" };
+  }
+
+  const yawRadians = ((robotPose.yaw ?? 0) * Math.PI) / 180;
+  const cosYaw = Math.cos(yawRadians);
+  const sinYaw = Math.sin(yawRadians);
+
+  return {
+    points: points.map((point) => ({
+      x: robotPose.x + point.x * cosYaw - point.y * sinYaw,
+      y: robotPose.y + point.x * sinYaw + point.y * cosYaw,
+      z: point.z,
+    })),
+    status: "live",
+  };
+}
+
 function parseLaserScan(message: Record<string, unknown> | null): ParsedLaserScan | null {
   if (!message) {
     return null;
   }
 
-  const header = getRecordEntry(message, "header");
-  const headerRecord =
-    header && typeof header === "object" ? (header as Record<string, unknown>) : null;
-  const frameId = normalizeFrameId(headerRecord ? getRecordEntry(headerRecord, "frame_id") : null);
-  const rangesValue = getRecordEntry(message, "ranges");
-  const ranges = Array.isArray(rangesValue)
-    ? rangesValue
-    : typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(rangesValue)
-      ? Array.from(rangesValue as ArrayLike<number>)
-      : null;
+  const frameId = getMessageFrameId(message);
+  const ranges = toNumericArray(getRecordEntry(message, "ranges"));
   const angleMin = toFiniteNumber(getRecordEntry(message, "angle_min"));
   const angleIncrement = toFiniteNumber(getRecordEntry(message, "angle_increment"));
   const rangeMin = toFiniteNumber(getRecordEntry(message, "range_min")) ?? 0;
@@ -382,16 +538,35 @@ function readPointField(
   view: DataView,
   pointOffset: number,
   field: { offset: number; datatype: number },
+  littleEndian: boolean,
 ): number | null {
   const offset = pointOffset + field.offset;
   if (offset < 0 || offset >= view.byteLength) {
     return null;
   }
+  if (field.datatype === 1 && offset + 1 <= view.byteLength) {
+    return view.getInt8(offset);
+  }
+  if (field.datatype === 2 && offset + 1 <= view.byteLength) {
+    return view.getUint8(offset);
+  }
+  if (field.datatype === 3 && offset + 2 <= view.byteLength) {
+    return view.getInt16(offset, littleEndian);
+  }
+  if (field.datatype === 4 && offset + 2 <= view.byteLength) {
+    return view.getUint16(offset, littleEndian);
+  }
+  if (field.datatype === 5 && offset + 4 <= view.byteLength) {
+    return view.getInt32(offset, littleEndian);
+  }
+  if (field.datatype === 6 && offset + 4 <= view.byteLength) {
+    return view.getUint32(offset, littleEndian);
+  }
   if (field.datatype === 7 && offset + 4 <= view.byteLength) {
-    return view.getFloat32(offset, true);
+    return view.getFloat32(offset, littleEndian);
   }
   if (field.datatype === 8 && offset + 8 <= view.byteLength) {
-    return view.getFloat64(offset, true);
+    return view.getFloat64(offset, littleEndian);
   }
   return null;
 }
@@ -406,11 +581,14 @@ function parsePointCloud2(message: Record<string, unknown> | null): ParsedPointC
     header && typeof header === "object" ? (header as Record<string, unknown>) : null;
   const frameId = normalizeFrameId(headerRecord ? getRecordEntry(headerRecord, "frame_id") : null);
   const pointStep = toFiniteNumber(getRecordEntry(message, "point_step"));
+  const rowStepValue = toFiniteNumber(getRecordEntry(message, "row_step"));
+  const widthValue = toFiniteNumber(getRecordEntry(message, "width"));
+  const heightValue = toFiniteNumber(getRecordEntry(message, "height"));
   const data = toByteArray(getRecordEntry(message, "data"));
   const fields = getPointCloudFieldMap(getRecordEntry(message, "fields"));
   const isBigEndian = Boolean(getRecordEntry(message, "is_bigendian"));
 
-  if (!frameId || !data || !fields || pointStep == null || pointStep <= 0 || isBigEndian) {
+  if (!frameId || !data || !fields || pointStep == null || pointStep <= 0) {
     return null;
   }
 
@@ -421,25 +599,47 @@ function parsePointCloud2(message: Record<string, unknown> | null): ParsedPointC
     return null;
   }
 
-  const pointCount = Math.floor(data.byteLength / pointStep);
-  if (pointCount <= 0) {
+  const width = widthValue != null && widthValue > 0 ? Math.trunc(widthValue) : null;
+  const height = heightValue != null && heightValue > 0 ? Math.trunc(heightValue) : null;
+  const rowStep =
+    rowStepValue != null && rowStepValue >= pointStep
+      ? Math.trunc(rowStepValue)
+      : width != null
+        ? width * pointStep
+        : data.byteLength;
+  const rows = width != null && height != null ? height : 1;
+  const columns = width ?? Math.floor(data.byteLength / pointStep);
+  const pointCount = rows * columns;
+  if (pointCount <= 0 || rowStep <= 0) {
     return null;
   }
 
   const stride = Math.max(1, Math.ceil(pointCount / MAX_DEPTH_POINTS));
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const points: ProjectedMapPoint[] = [];
+  const littleEndian = !isBigEndian;
 
-  for (let pointIndex = 0; pointIndex < pointCount; pointIndex += stride) {
-    const baseOffset = pointIndex * pointStep;
-    const x = readPointField(view, baseOffset, xField);
-    const y = readPointField(view, baseOffset, yField);
-    const z = readPointField(view, baseOffset, zField);
-    if ([x, y, z].some((value) => value == null || !Number.isFinite(value))) {
-      continue;
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      const pointIndex = row * columns + column;
+      if (pointIndex % stride !== 0) {
+        continue;
+      }
+
+      const baseOffset = row * rowStep + column * pointStep;
+      if (baseOffset < 0 || baseOffset + pointStep > view.byteLength) {
+        continue;
+      }
+
+      const x = readPointField(view, baseOffset, xField, littleEndian);
+      const y = readPointField(view, baseOffset, yField, littleEndian);
+      const z = readPointField(view, baseOffset, zField, littleEndian);
+      if ([x, y, z].some((value) => value == null || !Number.isFinite(value))) {
+        continue;
+      }
+
+      points.push({ x: x!, y: y!, z: z! });
     }
-
-    points.push({ x: x!, y: y!, z: z! });
   }
 
   return {
@@ -449,22 +649,49 @@ function parsePointCloud2(message: Record<string, unknown> | null): ParsedPointC
   };
 }
 
-export function getOverlayStatusLabel(state: OverlayState): string {
-  if (state === "live") {
-    return "Live";
+function getCompactTopicLabel(topic: string): string {
+  if (topic.length <= 18) {
+    return topic;
   }
-  if (state === "no-tf") {
-    return "No TF";
+
+  const parts = topic.split("/").filter(Boolean);
+  if (parts.length >= 2) {
+    return `.../${parts.slice(-2).join("/")}`;
   }
-  return "Waiting";
+  return topic.slice(0, 18);
 }
 
-export function getOverlayDisabled(state: OverlayState): boolean {
-  return state !== "live";
+export function getOverlayStatusLabel(state: OverlayState, sourceTopic?: string | null): string {
+  const topicLabel = sourceTopic ? ` ${getCompactTopicLabel(sourceTopic)}` : "";
+  if (state === "live") {
+    return `Live${topicLabel}`;
+  }
+  if (state === "no-tf") {
+    return `No TF${topicLabel}`;
+  }
+  return `Waiting${topicLabel}`;
+}
+
+export function getOverlayDisabled(_state: OverlayState): boolean {
+  return false;
+}
+
+export function selectLaserScanTopic(topics: Subscription[]): Subscription | null {
+  const candidates = topics.filter((topic) => LASER_SCAN_SCHEMA_NAMES.has(topic.type));
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return (
+    candidates.find((topic) => topic.topic === LIDAR_TOPIC_PREFERENCE) ??
+    candidates.find((topic) => topic.topic.toLowerCase().includes("scan")) ??
+    candidates[0] ??
+    null
+  );
 }
 
 export function selectDepthPointCloudTopic(topics: Subscription[]): Subscription | null {
-  const candidates = topics.filter((topic) => POINT_CLOUD_SCHEMA_NAMES.has(topic.type));
+  const candidates = topics.filter((topic) => ROS_POINT_CLOUD_SCHEMA_NAMES.has(topic.type));
   if (candidates.length === 0) {
     return null;
   }
@@ -481,7 +708,10 @@ export function selectDepthPointCloudTopic(topics: Subscription[]): Subscription
 }
 
 export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null): {
+  lidarTopic: Subscription | null;
   depthTopic: Subscription | null;
+  robotPose: PoseCoordinates | null;
+  projectPointToMap: (point: ProjectedMapPoint, sourceFrameId: string | null) => ProjectedMapPoint | null;
   lidarPoints: ProjectedMapPoint[];
   depthObstaclePoints: ProjectedMapPoint[];
   overlayStatus: Pick<OverlayAvailability, "lidar" | "depthObstacles">;
@@ -495,6 +725,9 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
   );
   const latestTransformTimestampRef = useRef<Time | null>(null);
   const [tfRevision, setTfRevision] = useState(0);
+  const [lidarTopic, setLidarTopic] = useState<Subscription | null>(() =>
+    selectLaserScanTopic(ros2Bridge.getAvailableTopics()),
+  );
   const [laserScanMessage, setLaserScanMessage] = useState<Record<string, unknown> | null>(null);
   const [depthTopic, setDepthTopic] = useState<Subscription | null>(() =>
     selectDepthPointCloudTopic(ros2Bridge.getAvailableTopics()),
@@ -520,24 +753,27 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
   }, []);
 
   useEffect(() => {
-    const unsubscribe = ros2Bridge.subscribe(
-      { topic: LIDAR_TOPIC, type: LIDAR_SCHEMA_NAME },
-      (message) => {
-        setLaserScanMessage(normalizeRosMessage(message));
-      },
-    );
+    const updateSensorTopics = (topics: Subscription[]) => {
+      setLidarTopic(selectLaserScanTopic(topics));
+      setDepthTopic(selectDepthPointCloudTopic(topics));
+    };
+
+    const unsubscribe = ros2Bridge.onAvailableTopicsChanged(updateSensorTopics);
+    updateSensorTopics(ros2Bridge.getAvailableTopics());
     return unsubscribe;
   }, []);
 
   useEffect(() => {
-    const updateDepthTopic = (topics: Subscription[]) => {
-      setDepthTopic(selectDepthPointCloudTopic(topics));
-    };
+    setLaserScanMessage(null);
+    if (!lidarTopic) {
+      return;
+    }
 
-    const unsubscribe = ros2Bridge.onAvailableTopicsChanged(updateDepthTopic);
-    updateDepthTopic(ros2Bridge.getAvailableTopics());
+    const unsubscribe = ros2Bridge.subscribe(lidarTopic, (message) => {
+      setLaserScanMessage(normalizeRosMessage(message));
+    });
     return unsubscribe;
-  }, []);
+  }, [lidarTopic]);
 
   useEffect(() => {
     setDepthCloudMessage(null);
@@ -551,19 +787,47 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
     return unsubscribe;
   }, [depthTopic]);
 
+  const robotPose = useMemo<PoseCoordinates | null>(() => {
+    const scanFrameId = getMessageFrameId(laserScanMessage);
+    const sourceFrames = scanFrameId
+      ? [...ROBOT_POSE_FRAME_CANDIDATES, scanFrameId]
+      : ROBOT_POSE_FRAME_CANDIDATES;
+    return projectFramePoseToMap(
+      treeRef.current,
+      sourceFrames,
+      latestTransformTimestampRef.current,
+    );
+  }, [laserScanMessage, tfRevision]);
+  const filterPose = currentPose ?? robotPose;
+  const projectSinglePointToMap = useCallback(
+    (point: ProjectedMapPoint, sourceFrameId: string | null) =>
+      projectPointToMap(
+        treeRef.current,
+        point,
+        sourceFrameId,
+        latestTransformTimestampRef.current,
+      ),
+    [tfRevision],
+  );
+
   const lidarProjection = useMemo<SensorProjection>(() => {
+    if (!lidarTopic) {
+      return { points: [], status: "waiting" };
+    }
+
     const parsedScan = parseLaserScan(laserScanMessage);
     if (!parsedScan) {
       return { points: [], status: "waiting" };
     }
-    return projectPointsToMap(
+    const projected = projectPointsToMap(
       treeRef.current,
-      parsedScan.frameId,
+      getLidarSourceFrameCandidates(parsedScan.frameId),
       parsedScan.timestampNs,
       parsedScan.points,
       latestTransformTimestampRef.current,
     );
-  }, [laserScanMessage, tfRevision]);
+    return projected.status === "live" ? projected : projectPointsFromRobotPose(parsedScan.points, robotPose);
+  }, [laserScanMessage, lidarTopic, robotPose, tfRevision]);
 
   const depthProjection = useMemo<SensorProjection>(() => {
     if (!depthTopic || !ROS_POINT_CLOUD_SCHEMA_NAMES.has(depthTopic.type)) {
@@ -593,20 +857,23 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
       if (point.z < 0.03 || point.z > 0.45) {
         return false;
       }
-      if (!currentPose) {
+      if (!filterPose) {
         return true;
       }
-      return Math.hypot(point.x - currentPose.x, point.y - currentPose.y) <= MAX_DEPTH_DISTANCE_M;
+      return Math.hypot(point.x - filterPose.x, point.y - filterPose.y) <= MAX_DEPTH_DISTANCE_M;
     });
 
     return {
       points: filteredPoints,
       status: "live",
     };
-  }, [currentPose, depthCloudMessage, depthTopic, tfRevision]);
+  }, [depthCloudMessage, depthTopic, filterPose, tfRevision]);
 
   return {
+    lidarTopic,
     depthTopic,
+    robotPose,
+    projectPointToMap: projectSinglePointToMap,
     lidarPoints: lidarProjection.points,
     depthObstaclePoints: depthProjection.points,
     overlayStatus: {
