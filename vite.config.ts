@@ -35,6 +35,9 @@ const shebangPlugin = () => ({
 });
 
 export default defineConfig({
+  resolve: {
+    preserveSymlinks: true
+  },
   // Build-time constants - these are replaced at compile time
   // Usage: if (__DEV__) { ... } - dead code eliminated in prod builds
   define: {

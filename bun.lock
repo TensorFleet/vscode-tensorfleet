@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "tensorfleet-drone",
@@ -27,6 +26,7 @@
         "jpeg-js": "^0.4.4",
         "protobufjs": "^7.5.4",
         "tensorfleet-auth": "workspace:*",
+        "zod": "^4.1.13",
       },
       "devDependencies": {
         "@types/node": "^18.17.0",

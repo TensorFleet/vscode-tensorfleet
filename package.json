@@ -302,12 +302,12 @@
   },
   "scripts": {
     "vscode:prepublish": "bun run compile",
-    "sync:panels-deps": "bun install --cwd panels-standalone --frozen-lockfile",
+    "sync:panels-deps": "BUN_TMPDIR=/tmp BUN_INSTALL=/tmp/bun-tensorfleet bun install --frozen-lockfile --linker hoisted && BUN_TMPDIR=/tmp BUN_INSTALL=/tmp/bun-tensorfleet bun install --cwd panels-standalone --frozen-lockfile --linker isolated",
     "prepare:telemetry": "bun scripts/write-telemetry-config.ts",
     "build:panels": "bun run --cwd panels-standalone build",
     "watch:panels": "bun run --cwd panels-standalone build --watch",
-    "build:extension": "bun run prepare:telemetry && bunx vite build",
-    "watch:extension": "bun run prepare:telemetry && bunx vite build --watch",
+    "build:extension": "bun run prepare:telemetry && vite build",
+    "watch:extension": "bun run prepare:telemetry && vite build --watch",
     "compile": "bun run build:panels && bun run build:extension",
     "compile:dev": "TENSORFLEET_BUILD=development bun run compile",
     "compile:prod": "TENSORFLEET_BUILD=production bun run compile",
@@ -344,7 +344,8 @@
     "flatbuffers": "^25.9.23",
     "flatbuffers_reflection": "^1.2.0",
     "jpeg-js": "^0.4.4",
-    "protobufjs": "^7.5.4"
+    "protobufjs": "^7.5.4",
+    "zod": "^4.1.13"
   },
   "devDependencies": {
     "@types/node": "^18.17.0",
