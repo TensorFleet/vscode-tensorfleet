@@ -61,7 +61,43 @@ change them:
 - TurtleBot4 is the first backend, not the public product contract.
 - The public boundary should be a repo-owned vacuum-facing interface, not raw
   TurtleBot4 topics.
+- Layers are built in order: sensors first, then localization + map, then
+  navigation, then the vacuum adapter contract, then coverage, then room/zone
+  semantics, and finally real hardware.
+- Current position: Layer 2 (Navigation) is near-closed; the TurtleBot4/Nav2
+  operator slice is validated through `Vacuum Control` and the first Layer 3
+  adapter slice is landed in the repo — the extension now talks to the
+  `vacuum_adapter` contract and `Vacuum Control` uses `useVacuumAdapter`
+  instead of `useNav2Runtime` directly.
+- The next major milestones are hardening Layer 3 (backend coverage,
+  contract regression harness, Valetudo backend interface stub for Layer 6)
+  and unblocking Layer 4 (coverage) above the contract.
+- Coverage (Layer 4) and room/zone semantics (Layer 5) must sit above the
+  adapter contract, not below it, so they stay backend-neutral.
+- Real hardware (Layer 6) is the last layer; it targets Valetudo-compatible
+  vacuums and reuses the same adapter contract and UI that were validated in
+  simulation.
 - The first real-hardware path should target Valetudo-compatible vacuums.
+- Valetudo should influence the capability model from the start, but it should
+  not define the public contract.
+- Valetudo-specific capability names/classes should stay inside the Valetudo
+  backend adapter.
+- Capabilities should be descriptors with support status, source, backend
+  mapping, commands, attributes, and notes, not simple booleans only.
+- Product/UI clients must branch on capability flags, not backend names.
+- Public `vacuum_adapter` contract files should own backend-neutral state and
+  command types; backend/runtime-specific imports belong inside backend mappers.
+- Setter commands should have explicit payload shapes rather than being modeled
+  as payload-free simple commands.
+- The VM should eventually run the Valetudo integration runtime so users do not
+  need to install local integration tooling.
+- The VM may host MQTT/client/discovery/adapter services, but it should not own
+  the public `vacuum_adapter` contract.
+- Docs should say "Valetudo integration runtime in the VM," not imply that
+  Valetudo itself necessarily runs in the VM.
+- First Valetudo hardware validation should prove reachability, status,
+  capabilities, normalized state, and one basic command before room/zone
+  workflows.
 - The contract should reuse standard ROS 2 and Nav2 interfaces where they
   already fit.
 - Simulation should be realistic enough to validate workflow, not just expose
@@ -69,9 +105,174 @@ change them:
 - Simulation should become the regression harness for later hardware work.
 - The system should be local-first.
 
+## Current Layer Structure
+
+The stack is built bottom-up in seven layers. Each layer is stable before the
+next one starts, and every higher layer depends on the lower ones being
+trustworthy.
+
+```text
+Layer 0 — Sensors                   (validated)
+Layer 1 — Localization + Map        (running)
+Layer 2 — Navigation                (near-closed)
+Layer 3 — Vacuum Adapter            (first TurtleBot4/Nav2 slice landed,
+                                     YOU ARE HERE)
+Layer 4 — Coverage                  (planned)
+Layer 5 — Room / Zone Semantics     (planned)
+Layer 6 — Real Hardware (Valetudo)  (planned)
+```
+
+### Layer 0: Sensors
+
+Status: validated.
+
+Meaning:
+
+- the simulated TurtleBot4 boots reliably in the VM;
+- camera, lidar, and depth point cloud streams are visible in the extension;
+- the robot exists and publishes sensor data.
+
+### Layer 1: Localization + Map
+
+Status: running.
+
+Meaning:
+
+- SLAM Toolbox runs in the VM and builds a map as the robot moves;
+- the robot knows where it is in that map;
+- the TF tree `map -> odom -> base_link` is continuously available;
+- `/map`, `/odom`, `/tf`, and `/tf_static` are observable from the extension.
+
+Layer 1 is the foundation every higher layer assumes. Coverage and room/zone
+semantics especially depend on a stable map frame and consistent pose.
+
+### Layer 2: Navigation
+
+Status: near-closed.
+
+Meaning:
+
+```text
+Nav2 is running with planner + controller + costmaps.
+NavigateToPose works end-to-end.
+The extension can send a goal, see progress, and see the terminal result.
+```
+
+Validated operator flow through `Vacuum Control`:
+
+```text
+connect -> render map -> select target -> send goal -> observe progress/result
+-> cancel/clear/retry as needed
+```
+
+Main surface:
+
+- `Vacuum Control`
+
+Backend:
+
+- TurtleBot4 simulation in VM
+- Nav2 runtime
+- Foxglove bridge
+
+Remaining before Layer 2 is fully closed:
+
+- dock-blocked starts still require clear-space validation;
+- Layer 3 adapter work is already underway, so Layer 2 hardening is expected to
+  land alongside the early adapter slice rather than as a separate milestone.
+
+### Layer 3: Vacuum Adapter
+
+Status: first TurtleBot4/Nav2 adapter slice landed; Valetudo backend still
+pending.
+
+Purpose:
+
+- normalize TurtleBot4/Nav2 runtime behavior into a `vacuum_adapter` contract
+  with `VacuumState` and `VacuumCommands` shapes;
+- make the extension talk to the contract, not raw ROS topics;
+- introduce an explicit mission state machine covering
+  `idle / navigating / cleaning / paused / returning / charging`;
+- support a TurtleBot4/Nav2 backend adapter first and a Valetudo backend
+  adapter second;
+- make clients branch on capability descriptors, not backend names;
+- keep the public contract types backend-neutral while backend adapters
+  normalize Nav2, Valetudo, or other runtime details.
+
+Layer 3 is the first layer that product clients depend on. Layers 4, 5, and 6
+all assume this contract already exists.
+
+Current truth (April 29, 2026):
+
+- the public `VacuumAdapter` surface and a `useVacuumAdapter` hook live under
+  `panels-standalone/src/vacuum-adapter/`;
+- a TurtleBot4/Nav2 backend (`useTurtleBot4Nav2Adapter`) wraps
+  `useNav2Runtime` and emits the normalized snapshot, mission state, and
+  command dispatcher;
+- `Vacuum Control` reads snapshot fields and dispatches `go_to_location` and
+  `cancel_navigation` through `adapter.sendCommand(...)` instead of calling
+  Nav2 runtime methods directly;
+- vacuum-only commands (`start_cleaning`, `pause`, `resume`, `return_to_dock`,
+  `segment_cleaning`, `zone_cleaning`, `set_fan_speed`, `set_water_usage`)
+  are advertised as unsupported by the TurtleBot4/Nav2 adapter and fail
+  explicitly through the contract;
+- the mission state machine reports `idle` or `navigating` on TurtleBot4/Nav2
+  and keeps the remaining states available for later backends;
+- a Valetudo capability-map stub remains in place for the Layer 6
+  integration to populate.
+
+### Layer 4: Coverage
+
+Status: planned.
+
+Purpose:
+
+- add a coverage path planner that produces a lawnmower pattern over a region;
+- teach the adapter about dock / undock behavior and battery awareness;
+- make "clean this area" work end-to-end in simulation through the adapter.
+
+Layer 4 should be implemented above the `vacuum_adapter` contract so the same
+coverage logic works for any backend that advertises the required capabilities.
+
+### Layer 5: Room / Zone Semantics
+
+Status: planned.
+
+Purpose:
+
+- divide the map into named zones / rooms;
+- translate "clean room 3" into one or more coverage goals;
+- make the full vacuum workflow work end-to-end in simulation;
+- keep zone naming and segmentation in product-facing state, not in backend
+  topics.
+
+Layer 5 depends on Layer 4 (coverage) and Layer 3 (adapter contract). It is
+where simulation reaches product-complete behavior.
+
+### Layer 6: Real Hardware (Valetudo)
+
+Status: planned.
+
+Purpose:
+
+- ship a Valetudo backend that implements the same `vacuum_adapter` contract
+  the TurtleBot4/Nav2 backend uses;
+- swap the TurtleBot4 simulation for a real Valetudo-compatible vacuum with no
+  changes above the adapter;
+- keep the same extension, same UI, and same workflows — only the backend
+  changes.
+
+Layer 6 also owns the VM-managed real-vacuum runtime:
+
+- make Valetudo-backed hardware usable without local user setup;
+- host the Valetudo integration client, MQTT / client service, discovery /
+  config, backend adapter process, and health checks in the VM as needed;
+- keep `vacuum_adapter` as the product contract outside the VM runtime
+  details.
+
 ## Success Criteria
 
-### First usable vertical slice
+### First usable vertical slice (Layers 0–2)
 
 - one simulated robot appears in our system;
 - the robot boots reliably in the VM;
@@ -80,13 +281,36 @@ change them:
 - the system uses standard ROS 2 / Nav2 interfaces where they fit;
 - the path toward a later vacuum-specific abstraction stays clean.
 
-### Full platform success
+### Adapter slice (Layer 3)
+
+- the extension operates the robot through `vacuum_adapter` rather than raw
+  ROS topics;
+- a TurtleBot4/Nav2 backend normalizes into `VacuumState` and `VacuumCommands`;
+- unsupported vacuum capabilities are advertised as unsupported rather than
+  hidden;
+- the mission state machine carries `idle / navigating / cleaning / paused /
+  returning / charging` explicitly.
+
+### Simulation-complete slice (Layers 4–5)
+
+- coverage (lawnmower) cleaning of a selected area works end-to-end in
+  simulation through the adapter;
+- dock / undock and battery-aware behavior are visible through the adapter
+  state;
+- the map is divided into named zones and "clean room 3" translates into
+  coverage goals;
+- the full vacuum workflow is demonstrated in simulation without leaking
+  backend-specific details to the UI.
+
+### Full platform success (Layer 6)
 
 - the same client-facing vacuum contract works against TurtleBot4 simulation
   and a real vacuum backend;
+- a Valetudo backend implements the same contract and the extension / UI run
+  unchanged against real hardware;
 - backend differences are expressed through capability flags and explicit
   unsupported operations, not product forks;
-- docking, mission lifecycle, battery state, and room/zone workflows fit the
+- docking, mission lifecycle, battery state, and room / zone workflows fit the
   same contract;
 - simulation acts as the regression harness for real hardware work.
 
@@ -135,9 +359,13 @@ Current positioning:
 - OpenClaw may become useful later, but should sit above a stable
   vacuum-facing contract rather than directly on TurtleBot4 internals.
 
-Current extension truth for the closed Layer 2 slice:
+Current extension truth for the near-closed Layer 2 slice:
 
-- the Layer 2 TurtleBot4/Nav2 operator slice is closed as of April 29, 2026
+- Layers 0 and 1 (sensors, SLAM map + TF) are validated through the extension
+  as the foundation every higher layer assumes
+- the Layer 2 TurtleBot4/Nav2 operator slice is near-closed as of April 29,
+  2026 — the operator flow is validated and Layer 3 adapter scaffolding has
+  started in the repo
 - `Vacuum Control` is the validated operator surface for this slice
 - the panel is map-first and driven by the extracted shared Nav2 runtime seam
 - the dedicated `MapCanvas` surface now renders live occupancy-grid data from
@@ -169,8 +397,12 @@ Practical implication:
 
 - the TurtleBot4/Nav2 operator flow is proven through the current extension
   panel and supporting runtime surfaces;
-- adapter, mission, docking, room/zone, battery, and charging semantics remain
-  future layers above this closed Layer 2 slice.
+- Layer 3 adapter work is the active path;
+- coverage (Layer 4), room / zone semantics (Layer 5), and real hardware
+  (Layer 6) all sit above the adapter contract and should not start before
+  Layer 3 is real;
+- docking, battery, charging, scheduling, consumables, and OpenClaw
+  integration all belong to Layer 4 or later, above the adapter contract.
 
 ## Role Of The VS Code Extension
 
@@ -201,16 +433,19 @@ Current truth:
 
 - the existing TurtleBot4-facing panels are primarily debugging and validation
   surfaces;
-- they are useful for proving runtime health, TF, Nav2 traffic, and motion;
+- they are useful for proving Layer 0 (sensors) and Layer 1 (SLAM, TF, odom)
+  runtime health, plus Nav2 traffic and motion for Layer 2;
 - `Vacuum Control` now provides the validated Layer 2 navigation operator
   workflow.
 
 Near-term implication:
 
-- near-term extension work should maintain and regress-test the closed
-  TurtleBot4/Nav2 operator slice;
-- new adapter, mission, docking, room/zone, battery, and charging work should
-  be planned as later layers, not as additions to Layer 2.
+- near-term extension work should maintain and regress-test the near-closed
+  Layer 2 TurtleBot4/Nav2 operator slice;
+- Layer 3 should define the adapter contract and first backend mappings, and
+  migrate `Vacuum Control` to talk to the contract instead of raw ROS topics;
+- coverage (Layer 4), room / zone UI (Layer 5), docking UI, consumables UI,
+  scheduling, and OpenClaw work should wait until the adapter boundary exists.
 
 As the stack matures, the extension should also be a natural place for a small
 set of vacuum-specific controls and status surfaces, such as:
@@ -225,15 +460,17 @@ set of vacuum-specific controls and status surfaces, such as:
 
 ## Architecture Direction
 
-The intended stack is:
+The current target architecture is:
 
 ```text
-Operator / developer surfaces
-  -> ROS bridge / ROS-native integration
+VS Code extension / product UI
   -> vacuum_adapter contract
-  -> backend implementation
-     -> TurtleBot4 + Nav2 + simulation realism layer
-     -> later: Valetudo-compatible real vacuum
+     -> TurtleBot4/Nav2 backend adapter
+        -> VM TurtleBot4 simulation runtime
+
+     -> Valetudo backend adapter
+        -> VM-managed Valetudo integration runtime
+           -> real Valetudo-compatible vacuum on local network
 ```
 
 The important boundary is `vacuum_adapter`.
@@ -241,6 +478,32 @@ The important boundary is `vacuum_adapter`.
 That should become the stable surface that higher-level clients use.
 TurtleBot4 and later vacuum-vendor specifics should remain implementation
 details behind it.
+Contract modules should not import panel/runtime-specific backend types. Those
+imports are allowed in backend adapters, which normalize the backend shape into
+the public capability, state, and command contract.
+
+VM boundary:
+
+```text
+VM owns backend runtime/integration services.
+vacuum_adapter owns product-facing contract/capabilities/state.
+```
+
+In the VM:
+
+- TurtleBot4/Nav2 runtime
+- Foxglove/ROS bridge
+- Valetudo integration runtime
+- MQTT broker/client if needed
+- hardware discovery/config
+
+Outside VM / shared product layer:
+
+- `vacuum_adapter` contract
+- normalized state model
+- capability descriptors
+- command semantics
+- UI-facing assumptions
 
 ## Capability Model
 
@@ -250,7 +513,75 @@ Valetudo explicitly models robots as different subsets and supersets of
 capabilities, and not every robot supports the same commands, status surfaces,
 or map workflows. See
 [Capabilities overview](https://valetudo.cloud/pages/usage/capabilities-overview.html)
-and [MQTT](https://valetudo.cloud/pages/integrations/mqtt.html).
+and [MQTT implementation details](https://valetudo.cloud/pages/development/mqtt/).
+The upstream project is
+[Hypfer/Valetudo](https://github.com/Hypfer/Valetudo).
+
+Valetudo should influence the capability model, but it must not define the
+public contract. Public capability names should be backend-neutral product
+terms, not Valetudo class names.
+
+Use public names such as:
+
+- `start_cleaning`
+- `pause`
+- `resume`
+- `stop`
+- `return_to_dock`
+- `go_to_location`
+- `cancel_navigation`
+- `manual_control`
+- `navigation_status`
+- `segment_cleaning`
+- `zone_cleaning`
+- `fan_speed`
+- `water_usage`
+- `consumables`
+- `events`
+- `dock_state`
+
+Do not expose public flags such as:
+
+- `BasicControlCapability`
+- `MapSegmentationCapability`
+- `ZoneCleaningCapability`
+- `FanSpeedControlCapability`
+- `WaterUsageControlCapability`
+
+Those are backend-mapper details.
+
+Private mapping examples:
+
+- Valetudo `BasicControlCapability` -> `start_cleaning` / `pause` / `stop` /
+  `return_to_dock`
+- Valetudo `GoToLocationCapability` -> `go_to_location`
+- Valetudo `MapSegmentationCapability` -> `segment_cleaning`
+- Valetudo `ZoneCleaningCapability` -> `zone_cleaning`
+- Valetudo `FanSpeedControlCapability` -> `fan_speed`
+- Valetudo `WaterUsageControlCapability` -> `water_usage`
+- Nav2 `NavigateToPose` -> `go_to_location`
+
+Capability flags should be descriptors, not simple booleans:
+
+```ts
+type CapabilitySupport = {
+  supported: boolean;
+  source?: "turtlebot4_nav2" | "valetudo" | "mock";
+  backendCapability?: string;
+  commands?: string[];
+  attributes?: string[];
+  notes?: string;
+};
+```
+
+Reason: real backends may support the same high-level feature with different
+constraints, coordinate systems, command shapes, or partial behavior.
+
+Commands should use backend-neutral payloads. `go_to_location` should carry a
+target pose owned by the adapter contract, while setter commands such as
+`set_fan_speed` and `set_water_usage` should carry the selected value explicitly.
+Backend adapters can map those values to backend-specific presets or command
+formats.
 
 ### Core capability tiers
 
@@ -289,6 +620,8 @@ and [MQTT](https://valetudo.cloud/pages/integrations/mqtt.html).
 
 - every backend must advertise capability flags explicitly;
 - clients must branch on capability flags, not backend names;
+- clients must not ask whether the backend is TurtleBot4, Valetudo, Roborock,
+  or a specific robot model before deciding which controls to show;
 - capability presence must be validated against actual behavior;
 - reconnect or backend reconfiguration may require capability refresh;
 - vendor-specific features may exist, but they must not silently redefine the
@@ -351,3 +684,160 @@ If a backend does not support a capability:
 - the unsupported command must fail explicitly and predictably;
 - clients must not infer support from backend type;
 - higher-level workflows must branch on capability flags, not backend name.
+
+TurtleBot4/Nav2 should explicitly report unsupported vacuum capabilities rather
+than hiding them or pretending to support them.
+
+Initial TurtleBot4/Nav2 supported capabilities can include:
+
+- `map`
+- `pose`
+- `go_to_location`
+- `cancel_navigation`
+- `manual_control`
+- `navigation_status`
+
+Initial TurtleBot4/Nav2 unsupported capabilities should include:
+
+- `start_cleaning`
+- `segment_cleaning`
+- `zone_cleaning`
+- `fan_speed`
+- `water_usage`
+- `consumables`
+- real dock behavior
+
+## Layer 3 Milestone
+
+Layer 3 is the active implementation and documentation milestone.
+
+Acceptance criterion:
+
+When Layer 6 (real hardware) ships and Valetudo is integrated, existing vacuum
+UI surfaces should continue to work through the `vacuum_adapter` contract
+without backend-specific UI rewrites. UI code may branch on adapter
+capabilities and normalized state, but it must not branch on whether the
+backend is TurtleBot4/Nav2, Valetudo, or a vendor/model. Backend-specific
+behavior belongs in backend adapters.
+
+Suggested scope:
+
+1. Define the `vacuum_adapter` capability / state / command contract.
+2. Add a TurtleBot4/Nav2 adapter from the already-working simulation runtime.
+3. Migrate `Vacuum Control` to consume the contract instead of raw ROS topics.
+4. Add an explicit mission state machine covering `idle / navigating /
+   cleaning / paused / returning / charging`.
+5. Add a Valetudo adapter interface that will be populated in Layer 6.
+
+Out of Layer 3:
+
+- coverage path planning (Layer 4)
+- dock / undock and battery-aware execution beyond what the contract models
+  (Layer 4)
+- room / zone naming and segmentation UI (Layer 5)
+- VM service plan for the Valetudo integration runtime (Layer 6)
+- MQTT vs HTTP/client API decisions for Valetudo (Layer 6)
+- first real hardware validation flow (Layer 6)
+
+Do not start with:
+
+- room cleaning UI
+- zone editor
+- multi-room workflows
+- map editing
+- scheduling
+- consumables UI
+- OpenClaw integration
+
+## Layer 4 Milestone: Coverage
+
+Layer 4 adds the first cleaning behavior above the adapter contract.
+
+Scope:
+
+- a coverage path planner that produces a lawnmower pattern over a bounded
+  region;
+- dock / undock awareness in the adapter state and commands;
+- battery-aware execution, so the robot can return to dock when needed and
+  resume from where it stopped;
+- a "clean this area" flow that works end-to-end in simulation through the
+  adapter.
+
+Constraints:
+
+- the planner must consume the adapter's normalized map and pose, not raw ROS
+  topics;
+- coverage should succeed or fail through the adapter's navigation and mission
+  state surfaces;
+- UI for selecting an area belongs above the contract, not in backend-specific
+  code.
+
+## Layer 5 Milestone: Room / Zone Semantics
+
+Layer 5 turns coverage into product-complete vacuum behavior.
+
+Scope:
+
+- divide the map into named zones / rooms;
+- translate "clean room 3" into one or more coverage goals for Layer 4;
+- expose room / zone state through the adapter's normalized state;
+- complete the full vacuum workflow end-to-end in simulation.
+
+Constraints:
+
+- room / zone naming is product-facing and must not live in backend topics;
+- segmentation logic may use backend input where Valetudo provides it, but the
+  public shape must be backend-neutral;
+- Layer 5 should be demonstrable in simulation before Layer 6 begins.
+
+## Layer 6 Milestone: Real Hardware (Valetudo)
+
+Layer 6 swaps the simulated TurtleBot4 backend for a real Valetudo-compatible
+vacuum. No changes above the adapter contract should be required.
+
+Valetudo-compatible vacuums are the first real-hardware target.
+
+The VM should eventually run the Valetudo integration runtime so users do not
+need to install or operate extra integration tooling locally. Depending on the
+implementation, the VM may run:
+
+- MQTT broker, if needed
+- Valetudo client / integration service
+- Valetudo backend adapter process
+- discovery / config service
+- runtime health checks
+
+Important wording:
+
+- say "Valetudo integration runtime in the VM"
+- do not imply that the VM replaces the Valetudo instance on the robot
+
+Valetudo normally runs on or with the robot vacuum firmware. The VM-managed
+layer should sit around that robot-side Valetudo instance:
+
+```text
+real vacuum running Valetudo
+  -> VM-managed Valetudo integration client / MQTT broker / adapter service
+  -> vacuum_adapter
+  -> extension / product UI
+```
+
+The first real-hardware validation path should be basic:
+
+```text
+Valetudo robot reachable
+-> VM receives status / capabilities
+-> adapter normalizes state
+-> extension displays capability / state summary
+-> one basic command works
+```
+
+Good first commands for Layer 6:
+
+- start
+- pause
+- stop
+- return_to_dock
+
+Only after that basic reachability slice works should Layer 6 exercise Layer 4
+coverage and Layer 5 room / zone flows against real hardware.

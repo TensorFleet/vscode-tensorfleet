@@ -5,13 +5,27 @@ This file is the extension-side companion to:
 - `steps.md`
 - `VACUUM_STACK_PLAN.md`
 
-It captures what the VS Code extension needs to know to use the current
-TurtleBot4/Nav2 VM stack as an operator and debugging surface.
+It captures what the VS Code extension needs to know about the validated
+TurtleBot4/Nav2 operator slice and the next adapter-backed product direction.
 
-The important constraint is that this phase should stay extension-side. The VM
-already exposes enough TurtleBot4, SLAM, and Nav2 surfaces for panel
-validation. Do not block this work on a vacuum adapter, mission lifecycle,
-docking behavior, or a normalized backend contract.
+The old Layer 2 constraint was extension-side only: validate the VM runtime
+through `Vacuum Control` without blocking on a vacuum adapter, mission
+lifecycle, docking behavior, or normalized backend contract. That constraint is
+effectively satisfied. The next major milestone is Layer 3: a repo-owned
+`vacuum_adapter` contract and backend abstraction.
+
+The full seven-layer plan this file aligns with:
+
+```text
+Layer 0 — Sensors                   validated
+Layer 1 — Localization + Map        running
+Layer 2 — Navigation                near-closed
+Layer 3 — Vacuum Adapter            first TurtleBot4/Nav2 slice landed,
+                                    YOU ARE HERE
+Layer 4 — Coverage                  planned
+Layer 5 — Room / Zone Semantics     planned
+Layer 6 — Real Hardware (Valetudo)  planned
+```
 
 ## Current Integration Goal
 
@@ -21,17 +35,19 @@ current TurtleBot4/Nav2 VM backend.
 The extension should:
 
 1. Connect to the running VM bridge endpoints.
-2. Treat the single-panel `Vacuum Control` operator workflow as the closed
+2. Treat the single-panel `Vacuum Control` operator workflow as the near-closed
    Layer 2 TurtleBot4/Nav2 slice.
 3. Show live map, lidar, odom/TF, costmap, and navigation status data where the
    current panels support those message types.
 4. Expose enough Nav2 action visibility to drive and validate goal execution.
-5. Record panel gaps as extension follow-up tasks rather than adding a new
-   robotics-stack layer.
+5. Record panel gaps as extension follow-up tasks, not as blockers for Layer 3.
 
-## Layer 2 Freeze
+## Layer 2 Near-Close
 
-As of April 29, 2026, the Layer 2 TurtleBot4/Nav2 operator slice is closed.
+As of April 29, 2026, the Layer 2 TurtleBot4/Nav2 operator slice is
+near-closed. The operator flow is validated end-to-end and the first Layer 3
+adapter slice is landed — `Vacuum Control` consumes the `vacuum_adapter`
+contract through `useVacuumAdapter` instead of `useNav2Runtime`.
 
 Frozen truth:
 
@@ -40,9 +56,8 @@ Frozen truth:
 - The operator panel validates the normal one-panel flow: connect, render map,
   select a map target, send a Nav2 goal, observe progress, cancel when needed,
   and observe terminal state.
-- The panel uses the existing TurtleBot4/Nav2 VM surfaces directly. It does not
-  require a vacuum adapter, mission lifecycle, docking workflow, or normalized
-  backend contract.
+- The panel currently uses the TurtleBot4/Nav2 VM surfaces directly and will
+  migrate onto the `vacuum_adapter` contract as part of Layer 3.
 - Remaining dock-blocked start behavior is a runtime caveat, not a Layer 2
   blocker.
 - Clear-space validation is still required before interpreting a failed or
@@ -50,10 +65,248 @@ Frozen truth:
 
 Explicitly out of Layer 2:
 
-- `vacuum_adapter` messages, services, or backend contract
-- vacuum mission lifecycle UI
-- docking behavior or return-to-dock workflow
-- room, zone, coverage, battery, and charging semantics
+- `vacuum_adapter` messages, services, or backend contract (Layer 3)
+- vacuum mission lifecycle UI (Layer 3)
+- coverage cleaning flows and lawnmower paths (Layer 4)
+- docking / return-to-dock workflow and battery-aware execution (Layer 4)
+- room, zone, and segmentation UI (Layer 5)
+- real vacuum hardware and Valetudo integration runtime (Layer 6)
+
+## Layer 3 Direction
+
+The next milestone is Layer 3: `vacuum_adapter` contract and backend
+abstraction.
+
+Layer 3 should define the product-facing capability, state, and command
+boundary above robot backends. Extension/product clients should talk in vacuum
+concepts and capability descriptors, not raw TurtleBot4 topics, Nav2 internals,
+or Valetudo-specific class names.
+The public `vacuum_adapter` contract should own its coordinate, state, and
+command payload types; backend/runtime-specific types should be imported only by
+backend adapters.
+
+Current target architecture:
+
+```text
+VS Code extension / product UI          (Layers 4 and 5 live here)
+  -> vacuum_adapter contract            (Layer 3)
+     -> TurtleBot4/Nav2 backend adapter (Layer 3, over Layer 2 runtime)
+        -> VM TurtleBot4 simulation runtime
+
+     -> Valetudo backend adapter        (Layer 6)
+        -> VM-managed Valetudo integration runtime
+           -> real Valetudo-compatible vacuum on local network
+```
+
+Layer 3 scope for the extension:
+
+1. Consume the `vacuum_adapter` capability / state / command contract.
+2. Migrate `Vacuum Control` from raw ROS topics onto the contract so the panel
+   branches on capabilities and normalized state instead of backend specifics.
+3. Surface the mission state machine (`idle / navigating / cleaning / paused /
+   returning / charging`) from the adapter.
+4. Leave a Valetudo adapter interface stub for the Layer 6 integration to
+   populate later.
+
+Current Layer 3 status (April 29, 2026):
+
+- The `vacuum_adapter` contract now owns a public `VacuumAdapter` surface with
+  `snapshot` + `sendCommand`, and a TurtleBot4/Nav2 backend hook
+  (`useTurtleBot4Nav2Adapter`) that wraps `useNav2Runtime` behind the contract.
+- `VacuumControlPanel.tsx` consumes the adapter through `useVacuumAdapter`
+  instead of `useNav2Runtime` directly; all navigation state, readiness
+  evidence, capability gating, and plan path rendering in the panel now flow
+  through the adapter snapshot.
+- `go_to_location` and `cancel_navigation` are dispatched as
+  `adapter.sendCommand(...)` instead of raw `runtime.sendGoal` / `cancelGoal`
+  calls.
+- The adapter emits a `mission` field with the explicit mission state machine
+  (`idle / navigating / cleaning / paused / returning / charging`). The
+  TurtleBot4/Nav2 backend reports `idle` or `navigating` today and keeps the
+  remaining states as "not supported" so the UI can branch on capability
+  descriptors rather than backend identity.
+- Plan path rendering in `MapCanvas` now consumes a normalized
+  `VacuumPathPoint[]` surface (`snapshot.navigation.planPath`) instead of the
+  raw `nav_msgs/msg/Path` message shape, keeping the visualization surface
+  decoupled from backend-specific pose shapes.
+- `manual_control` (teleop) remains wired through the existing `TeleopCard`
+  publisher to `/cmd_vel_raw` and is explicitly rejected by
+  `adapter.sendCommand` with an `invalid_request` result, because routing it
+  through `sendCommand` would require a streaming teleop channel that is not
+  part of this adapter slice.
+
+Out of Layer 3 (later layers):
+
+- coverage path planning UI and "clean this area" flows (Layer 4)
+- dock / undock and battery-aware execution beyond what the contract models
+  (Layer 4)
+- room / zone naming and segmentation UI (Layer 5)
+- Valetudo VM service plan, MQTT vs HTTP choice, and real-hardware validation
+  (Layer 6)
+
+## Later Layers At A Glance
+
+These layers are out of scope for now but the extension plan should respect
+them so Layer 3 work does not box them out.
+
+- Layer 4 (Coverage): coverage path planner (lawnmower), dock / undock, and
+  battery-aware execution above the adapter contract. A future "Clean Area"
+  interaction in the extension belongs here, not in Layer 3.
+- Layer 5 (Room / Zone Semantics): named zones and a "clean room 3" flow that
+  translates into Layer 4 coverage goals. Any room / zone UI in the extension
+  belongs here.
+- Layer 6 (Real Hardware / Valetudo): the Valetudo backend adapter and the
+  VM-managed Valetudo integration runtime. When this lands, the extension and
+  UI should run unchanged against the same `vacuum_adapter` contract.
+
+Not the next milestone:
+
+- more TurtleBot4 UI polish
+- more debug panels
+- OpenClaw
+- room cleaning UI
+- docking UI
+- zone cleaning UI
+- consumables UI
+- scheduling UI
+
+## Capability Decisions
+
+The public contract should use backend-neutral product capability names:
+
+- `start_cleaning`
+- `pause`
+- `resume`
+- `stop`
+- `return_to_dock`
+- `go_to_location`
+- `cancel_navigation`
+- `manual_control`
+- `navigation_status`
+- `segment_cleaning`
+- `zone_cleaning`
+- `fan_speed`
+- `water_usage`
+- `consumables`
+- `events`
+- `dock_state`
+
+Do not expose Valetudo implementation class names as public flags, such as:
+
+- `BasicControlCapability`
+- `MapSegmentationCapability`
+- `ZoneCleaningCapability`
+- `FanSpeedControlCapability`
+- `WaterUsageControlCapability`
+
+Valetudo concepts should map privately inside the backend adapter:
+
+- Valetudo `BasicControlCapability` -> `start_cleaning` / `pause` / `stop` /
+  `return_to_dock`
+- Valetudo `GoToLocationCapability` -> `go_to_location`
+- Valetudo `MapSegmentationCapability` -> `segment_cleaning`
+- Valetudo `ZoneCleaningCapability` -> `zone_cleaning`
+- Valetudo `FanSpeedControlCapability` -> `fan_speed`
+- Valetudo `WaterUsageControlCapability` -> `water_usage`
+- Nav2 `NavigateToPose` -> `go_to_location`
+
+Capabilities should be descriptors, not booleans only:
+
+```ts
+type CapabilitySupport = {
+  supported: boolean;
+  source?: "turtlebot4_nav2" | "valetudo" | "mock";
+  backendCapability?: string;
+  commands?: string[];
+  attributes?: string[];
+  notes?: string;
+};
+```
+
+Product/UI logic should ask whether capabilities are supported. It should not
+branch on backend names such as TurtleBot4, Valetudo, Roborock, or any specific
+robot model.
+
+Layer 3 acceptance criterion:
+
+When Layer 6 (real hardware) ships and Valetudo is integrated, existing vacuum
+UI surfaces should continue to work through the `vacuum_adapter` contract
+without backend-specific UI rewrites. UI code may branch on adapter
+capabilities and normalized state, but it must not branch on whether the
+backend is TurtleBot4/Nav2, Valetudo, or a vendor/model. Backend-specific
+behavior belongs in backend adapters.
+
+Command contracts should be explicit about payloads. For example,
+`go_to_location` carries a backend-neutral target pose, and setter commands such
+as `set_fan_speed` and `set_water_usage` carry a selected value rather than
+being modeled as payload-free simple commands.
+
+## VM-Managed Valetudo Path (Layer 6)
+
+Valetudo-compatible vacuums are the first real-hardware backend target and
+belong to Layer 6. Valetudo should influence the Layer 3 capability model, but
+it should not define the public contract. Valetudo-specific naming remains
+inside the Valetudo backend adapter.
+
+Reference docs:
+
+- [Valetudo capabilities overview](https://valetudo.cloud/pages/usage/capabilities-overview.html)
+- [Valetudo MQTT implementation details](https://valetudo.cloud/pages/development/mqtt/)
+- [Valetudo project](https://github.com/Hypfer/Valetudo)
+
+The VM should eventually host the Valetudo integration runtime so users do not
+need to install local integration tooling. Depending on the backend choice, the
+VM may run:
+
+- MQTT broker, if needed
+- Valetudo client/integration service
+- Valetudo backend adapter process
+- discovery/config service
+- runtime health checks
+
+Boundary decision:
+
+```text
+VM owns backend runtime/integration services.
+vacuum_adapter owns product-facing contract/capabilities/state.
+```
+
+In the VM:
+
+- TurtleBot4/Nav2 runtime
+- Foxglove/ROS bridge
+- Valetudo integration runtime
+- MQTT broker/client if needed
+- hardware discovery/config
+
+Outside VM / shared product layer:
+
+- `vacuum_adapter` contract
+- normalized state model
+- capability descriptors
+- command semantics
+- UI-facing assumptions
+
+Docs should say "Valetudo integration runtime in the VM," not "Valetudo in the
+VM." Valetudo normally runs on the robot vacuum itself; the VM hosts the
+integration layer around that robot.
+
+First Valetudo hardware validation should stay basic:
+
+```text
+Valetudo robot reachable
+-> VM receives status/capabilities
+-> adapter normalizes state
+-> extension displays capability/state summary
+-> one basic command works
+```
+
+Good first commands:
+
+- start
+- pause
+- stop
+- return_to_dock
 
 ## Extension Repository
 
@@ -61,7 +314,7 @@ The extension repo is:
 
 - `~/vscode-tensorfleet`
 
-Important files for the closed Layer 2 slice:
+Important files for the near-closed Layer 2 slice:
 
 - `src/extension.ts`
 - `src/regions.ts`
@@ -87,7 +340,7 @@ Current notable extension state:
 - `src/extension.ts` injects `window.TENSORFLEET_VM_CONFIG_ID` into standalone
   panels when a VM config is known.
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
-  already exists as the closed Layer 2 operator shell.
+  already exists as the near-closed Layer 2 operator shell.
 - `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
   now holds the dedicated map rendering and interaction surface for that shell.
 - `MapCanvas.tsx` now accepts both plain-array and typed-array occupancy-grid
@@ -118,7 +371,7 @@ Current notable extension state:
 
 ## VM Bridge Endpoints
 
-For this closed Layer 2 slice, the extension uses the already running VM bridge
+For this near-closed Layer 2 slice, the extension uses the already running VM bridge
 endpoints:
 
 - Foxglove/Lichtblick panels: `ws://172.16.0.10:8765`
@@ -134,7 +387,7 @@ work should assume Foxglove first unless a panel explicitly needs rosbridge.
 
 ## Vacuum Control Current Truth
 
-The closed Layer 2 slice is the dedicated `Vacuum Control` panel rather than a
+The near-closed Layer 2 slice is the dedicated `Vacuum Control` panel rather than a
 broader TurtleBot4 preset effort across every existing panel.
 
 Current runtime seam:
@@ -202,7 +455,7 @@ Purpose:
 
 Current expectation:
 
-- this panel is the closed Layer 2 operator workflow
+- this panel is the near-closed Layer 2 operator workflow
 - `Header` and `StatusStrip` remain inline in `VacuumControlPanel.tsx`
 - `MapCanvas` is the dedicated internal map seam for rendering and placement
 - `MapCanvas` now renders the live occupancy grid correctly for Foxglove
@@ -242,7 +495,7 @@ File:
 
 - `~/vscode-tensorfleet/panels-standalone/src/components/SensorView3D/SensorView3DPanel.tsx`
 
-Useful closed Layer 2 topics:
+Useful near-closed Layer 2 topics:
 
 - `/scan`
 - `/odom`
@@ -270,7 +523,7 @@ File:
 
 - `~/vscode-tensorfleet/panels-standalone/src/components/RawMessages/RawMessagesPanel.tsx`
 
-Useful closed Layer 2 topics:
+Useful near-closed Layer 2 topics:
 
 - `/navigate_to_pose/_action/status` if advertised
 - `/navigate_to_pose/_action/feedback` if advertised
@@ -319,11 +572,11 @@ Useful extension-side follow-up:
 For follow-up debugging and regression checks, prefer `Vacuum Control`, the 3D
 sensor panel, and raw messages for map and costmap validation.
 
-## Features We Can Add On The VS Code Extension Side After Layer 2
+## Extension Follow-Up After Layer 2
 
-These features should work with the current VM stack and do not require a new
-vacuum adapter. They are follow-up work after the closed Layer 2 operator
-slice, not Layer 2 exit criteria.
+These features should work with the current VM stack. They are maintenance and
+debugging follow-ups after the near-closed Layer 2 operator slice, not the main
+Layer 3 path.
 
 1. Vacuum Control maintenance hardening
 
@@ -338,7 +591,7 @@ slice, not Layer 2 exit criteria.
    - progress state
    - action state
 
-   This is now maintenance and regression hardening for the closed Layer 2
+   This is now maintenance and regression hardening for the near-closed Layer 2
    slice.
 
 2. 3D debug layout
@@ -387,7 +640,7 @@ slice, not Layer 2 exit criteria.
 
    This should be a robot/SLAM map panel, not an OpenLayers GPS map.
 
-   This is now lower priority than before for the closed Layer 2 slice because
+   This is now lower priority than before for the near-closed Layer 2 slice because
    `Vacuum Control` already renders the base occupancy map and local/global
    costmaps as operator overlays.
 
@@ -428,11 +681,14 @@ slice, not Layer 2 exit criteria.
    The command should leave the current drone mission-control panel out unless
    it has been rewritten for SLAM maps.
 
-## Recommended Immediate Extension Patch
+## Recommended Immediate Work
 
-The current documentation freeze records that the immediate Layer 2 operator
-patch is complete. Future patches in `~/vscode-tensorfleet` should stay small
-and concrete:
+The initial Layer 3 slice is now landed. `Vacuum Control` consumes the
+`vacuum_adapter` contract through `useVacuumAdapter`, the TurtleBot4/Nav2
+backend hook normalizes Nav2 runtime into the contract, and the adapter emits
+an explicit mission state machine. The remaining near-term work is tightening
+the adapter's backend coverage and preparing the Valetudo stub for Layer 6,
+not a new contract rewrite.
 
 1. [x] Keep `steps.md` aligned with the actual `Vacuum Control` component state.
 2. [x] Keep `extension.md` aligned with the global Layer 2 topic map used by
@@ -444,6 +700,15 @@ and concrete:
 6. [ ] Keep `RawMessagesPanel.tsx` and `SensorView3DPanel.tsx` useful as
    supporting debug surfaces for the same runtime topics.
 7. [x] Build the extension panels and verify the panel bundle compiles.
+8. [x] Define the first `vacuum_adapter` capability/state/command contract.
+9. [x] Add a TurtleBot4/Nav2 adapter mapping the validated runtime into the
+   contract.
+10. [x] Migrate `Vacuum Control` to consume the `vacuum_adapter` contract
+    instead of raw ROS topics (Layer 3).
+11. [x] Add an explicit mission state machine covering `idle / navigating /
+    cleaning / paused / returning / charging` to the adapter (Layer 3).
+12. [ ] Expand the Valetudo adapter interface and VM integration service plan
+    (Layer 6, not before Layer 3 stabilizes).
 
 Suggested verification after patching:
 
@@ -453,7 +718,7 @@ bun run typecheck
 bun run --cwd panels-standalone build
 ```
 
-The closed Layer 2 runtime validation covers:
+The near-closed Layer 2 runtime validation covers:
 
 - Foxglove connection reaches `ws://172.16.0.10:8765`.
 - `Vacuum Control` connects and shows the live connection state.
@@ -473,19 +738,17 @@ The closed Layer 2 runtime validation covers:
 - supporting debug panels can inspect `/scan`, `/odom`, `/tf`, `/tf_static`,
   `/map`, and costmaps as needed.
 
-## Not In Scope For This Extension Step
+## Not Next
 
-Do not add these yet:
+Do not make these the next milestone:
 
-- `vacuum_adapter_msgs`
-- `vacuum_adapter_core`
-- vacuum mission lifecycle UI
 - room cleaning UI
 - zone cleaning UI
 - docking workflow UI
 - simulated battery/charging behavior
-- normalized vacuum backend API
+- consumables UI
+- scheduling UI
 - OpenClaw workflow integration
 
-Those belong after the extension can already operate against the TurtleBot4/Nav2
-navigation slice.
+Those belong after the adapter contract and first backend mappings are in
+place.
