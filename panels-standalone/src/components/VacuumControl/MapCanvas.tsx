@@ -17,6 +17,7 @@ import {
   type OverlayVisibility,
   type ProjectedMapPoint,
 } from "./mapOverlayUtils";
+import { CameraOverlay } from "./CameraOverlay";
 
 export type MapCanvasTarget = {
   x: number;
@@ -74,6 +75,7 @@ export type MapCanvasProps = {
   sentTarget: MapCanvasTarget | null;
   routeVisualState: RouteVisualState;
   isGoalActive: boolean;
+  targetDistance: number | null;
   onTargetStart: (target: MapCanvasTarget) => void;
   onTargetRotate: (yaw: number) => void;
 };
@@ -486,12 +488,20 @@ function getMapPrompt(routeVisualState: RouteVisualState, hasTarget: boolean): s
   return hasTarget ? "Drag to refine destination" : "Click to choose destination";
 }
 
-function getTargetLabel(routeVisualState: RouteVisualState): string {
+function formatDistanceShort(distance: number | null): string | null {
+  if (distance == null || !Number.isFinite(distance)) {
+    return null;
+  }
+  return distance < 10 ? `${distance.toFixed(1)} m` : `${distance.toFixed(0)} m`;
+}
+
+function getTargetLabel(routeVisualState: RouteVisualState, distance: number | null): string {
+  const distStr = formatDistanceShort(distance);
   if (routeVisualState === "completed") {
     return "Done";
   }
   if (routeVisualState === "active") {
-    return "Active";
+    return distStr ?? "Active";
   }
   if (routeVisualState === "failed") {
     return "Retry";
@@ -499,7 +509,7 @@ function getTargetLabel(routeVisualState: RouteVisualState): string {
   if (routeVisualState === "canceled") {
     return "Canceled";
   }
-  return "Selected";
+  return distStr ?? "Selected";
 }
 
 function drawPointOverlay(
@@ -827,7 +837,7 @@ export function MapCanvas(props: MapCanvasProps) {
     [bounds, routePoints],
   );
   const mapPrompt = getMapPrompt(props.routeVisualState, hasTarget);
-  const activeTargetLabel = getTargetLabel(props.routeVisualState);
+  const activeTargetLabel = getTargetLabel(props.routeVisualState, props.targetDistance);
   const overlayStatus: OverlayAvailability = {
     map: occupancyMap ? "live" : "waiting",
     globalCostmap: globalCostmap ? "live" : "waiting",
@@ -956,8 +966,8 @@ export function MapCanvas(props: MapCanvasProps) {
             className="vacuum-map-controls__button"
             onClick={() => setZoom(1)}
             disabled={zoom === 1}
-            title="Center map"
-            aria-label="Center map"
+            title="Fit map"
+            aria-label="Fit map"
           >
             <CenterIcon className="vacuum-map-controls__icon" />
           </button>
@@ -1075,10 +1085,11 @@ export function MapCanvas(props: MapCanvasProps) {
 
             {visibleLayers.plan && routePoints.length > 1 ? (
               <>
-                <polyline className="vacuum-map-path-casing" points={routePointString} />
+                <polyline className="vacuum-map-path-casing" points={routePointString} vectorEffect="non-scaling-stroke" />
                 <polyline
                   className={`vacuum-map-path vacuum-map-path--${props.routeVisualState}`}
                   points={routePointString}
+                  vectorEffect="non-scaling-stroke"
                 />
               </>
             ) : null}
@@ -1090,6 +1101,7 @@ export function MapCanvas(props: MapCanvasProps) {
                   y1={previewLine[0].top}
                   x2={previewLine[1].left}
                   y2={previewLine[1].top}
+                  vectorEffect="non-scaling-stroke"
                 />
                 <line
                   className={`vacuum-map-preview-line vacuum-map-preview-line--${props.routeVisualState}`}
@@ -1097,6 +1109,7 @@ export function MapCanvas(props: MapCanvasProps) {
                   y1={previewLine[0].top}
                   x2={previewLine[1].left}
                   y2={previewLine[1].top}
+                  vectorEffect="non-scaling-stroke"
                 />
               </>
             ) : null}
@@ -1156,6 +1169,45 @@ export function MapCanvas(props: MapCanvasProps) {
           </div>
         ) : null}
 
+        <div className="vacuum-map-north" aria-label="North indicator" title="North">
+          <svg
+            className="vacuum-map-north__svg"
+            viewBox="0 0 20 20"
+            aria-hidden="true"
+            style={occupancyMap && occupancyMap.originYaw !== 0 ? { transform: `rotate(${-occupancyMap.originYaw}deg)` } : undefined}
+          >
+            <path
+              d="M10 3 L10 17"
+              stroke="rgba(240, 237, 230, 0.3)"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+            />
+            <path
+              d="M10 3 L7 9"
+              stroke="rgba(115, 182, 242, 0.9)"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
+            <path
+              d="M10 3 L13 9"
+              stroke="rgba(115, 182, 242, 0.9)"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
+            <text
+              x="10"
+              y="19"
+              textAnchor="middle"
+              fontSize="6"
+              fontWeight="800"
+              fill="rgba(115, 182, 242, 0.82)"
+              letterSpacing="0.04em"
+            >
+              N
+            </text>
+          </svg>
+        </div>
+
         <div
           className="vacuum-map-stage__legend"
           onPointerDown={(event) => {
@@ -1177,6 +1229,8 @@ export function MapCanvas(props: MapCanvasProps) {
             Destination
           </span>
         </div>
+
+        <CameraOverlay />
       </div>
     </div>
   );

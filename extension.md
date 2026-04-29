@@ -68,10 +68,19 @@ Current notable extension state:
   for Map, Global costmap, Local costmap, Plan, Lidar, and Depth obstacles.
 - `mapOverlayUtils.ts` owns extension-local sensor overlay projection for lidar
   and depth obstacle points using `/tf`, `/tf_static`, and a local
-  `TransformTree`.
+  `TransformTree`; it now uses frame ID fallback candidate lists for robot pose
+  and lidar frames to handle naming variation across runtime configurations; laser
+  scan topic discovery now matches any `sensor_msgs/msg/LaserScan` or
+  `foxglove.LaserScan` topic, preferring `/scan`; point cloud field decoding
+  supports both plain JS arrays and typed arrays from Foxglove payloads.
 - `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts` is the
   shared runtime seam used by both the debug-facing Nav2 panel and the operator
   panel.
+- `panels-standalone/src/ros2-bridge.ts` now caches the latest message per
+  topic and replays it to each new subscriber immediately on subscribe; static
+  TF transforms are accumulated per unique edge and replayed as a synthetic
+  bundle to new `/tf_static` subscribers so panels never miss static TF data
+  on connect or reconnect.
 - `SensorView3DPanel.tsx` is already useful as a supporting debug surface
   because it can render LaserScan, TF, odometry, occupancy grid, and costmap
   style data through the Lichtblick renderer.
@@ -170,6 +179,11 @@ Current expectation:
   `TransformTree` in `mapOverlayUtils.ts`
 - sensor overlays render on dedicated canvases below robot and target markers
   so projected points do not hide primary navigation markers
+- readiness model: start is gated on `mapReady` and `preflightReady` only;
+  `poseReady` no longer blocks the start action
+- `VacuumControlPanel.tsx` derives the current pose display via `useMemo` from
+  `runtime.currentMapPose` through `getPoseCoordinates` rather than using
+  `runtime.currentMapCoordinates` directly
 - Step 2 should be completed by hardening each visible component against live
   runtime behavior rather than by adding more mock-only UI
 
@@ -367,8 +381,8 @@ vacuum adapter.
 
 The next patch in `~/vscode-tensorfleet` should be small and concrete:
 
-1. [ ] Keep `steps.md` aligned with the actual `Vacuum Control` component state.
-2. [ ] Keep `extension.md` aligned with the global Layer 2 topic map used by
+1. [x] Keep `steps.md` aligned with the actual `Vacuum Control` component state.
+2. [x] Keep `extension.md` aligned with the global Layer 2 topic map used by
    `useNav2Runtime.ts`.
 3. [ ] Continue finishing `VacuumControlPanel.tsx` component behavior as a
    runtime-testable operator surface.

@@ -3,7 +3,7 @@
 ## Scope
 
 This file records the current state of the TurtleBot4 + Nav2 validation work as
-of April 22, 2026.
+of April 28, 2026.
 
 It is a runtime handoff, not a design doc.
 
@@ -19,6 +19,13 @@ Code-only commits:
 
 - `~/vscode-tensorfleet`
   - `1472aa5` `Align TurtleBot4 panels with live Nav2 runtime`
+  - `3d9359f` `Add Vacuum Control panel and associated files`
+  - `6382b7f` `Extract shared Nav2 runtime layer`
+  - `eb84ee9` `Extract Vacuum Control map canvas and fix live occupancy rendering`
+  - `20047a3` `Add vacuum map layer overlays`
+  - `96e2e8d` `Fix vacuum sensor overlay TF projection`
+  - `b87855e` `Polish vacuum operator controls`
+  - `d664024` `Refactor VacuumControlPanel and related components`
 - `~/firecracker-vm`
   - `d251a57` `Stabilize TurtleBot4 Nav2 runtime in Firecracker`
 - `~/vm-manager`
@@ -239,22 +246,26 @@ Current visible shell components:
 - connection / status pill
 - `StatusStrip`
 - `MapCanvas`
-- `MapControls` with bounded zoom controls, reset, and zoom readout
+- `MapControls` with bounded zoom controls, fit-to-map, and zoom readout
 - `MapLegend`
 - floating `Layers` control with checklist popover
-- `CurrentStateCard` with operator state and readiness evidence
+- `CurrentStateCard` with operator state, readiness evidence grid, and
+  pending-state icons
 - `SelectedDestinationCard` with distance, facing, bearing, and map coordinates
-- `ProgressCard` with progress percentage, remaining distance, elapsed
-  navigation time, and recovery count
-- `ActionsCard` with state-aware start / stop / clear / connection actions
-- settings entrypoint
-- shell-only `History` nav item
+- `ProgressCard` with progress percentage, indeterminate animation, remaining
+  distance, elapsed navigation time, and recovery count
+- `ActionsCard` with state-aware start / stop / clear / connection actions;
+  run-again reuses the last sent destination
+- persistent settings button in header (always accessible)
+- settings button at bottom of left nav rail
 
 Current runtime seam:
 
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
 - `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `panels-standalone/src/components/VacuumControl/mapOverlayUtils.ts`
 - `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
+- `panels-standalone/src/ros2-bridge.ts`
 
 Current map-canvas truth:
 
@@ -293,6 +304,25 @@ Current right-column card truth:
 - `ProgressCard` no longer shows ETA because `estimated_time_remaining` is not
   reliable enough for the operator surface; it shows remaining distance, elapsed
   navigation time, and recovery count from Nav2 feedback
+- readiness model: start is gated only on `mapReady` and `preflightReady`;
+  `poseReady` no longer blocks the start action because map availability alone
+  is sufficient to attempt goal dispatch
+
+Current bridge and overlay truth:
+
+- `ros2-bridge.ts` now caches the latest message per topic and replays it
+  immediately to any new subscriber so panels receive current state on mount
+  rather than waiting for the next publish cycle
+- `ros2-bridge.ts` accumulates static TF transforms per unique edge and replays
+  them as a synthetic bundle when a new subscriber joins `/tf_static`
+- `mapOverlayUtils.ts` uses frame ID fallback candidate lists for robot pose
+  (`base_footprint`, `base_link`, and namespaced variants) and lidar frame
+  (`rplidar_link`, `base_scan`, `laser`, and namespaced variants) so overlay
+  projection tolerates frame naming variation across runtime configurations
+- `mapOverlayUtils.ts` laser scan topic discovery now matches any advertised
+  `sensor_msgs/msg/LaserScan` or `foxglove.LaserScan` topic, preferring `/scan`
+- point projection in `mapOverlayUtils.ts` supports both plain JS arrays and
+  typed arrays (e.g. `Float32Array`) from Foxglove-encoded point cloud fields
 
 Current Layer 2 topics and services already used by the panel/runtime:
 
@@ -335,15 +365,17 @@ The important rule here:
 Implement:
 
 - show live connection state in the header pill
+- disconnected pill is clickable and opens the connection overlay directly
 - keep the product title and section label stable
-- keep the settings entrypoint available from the header
+- persistent settings gear button in the header (always accessible)
 
 Runtime done when:
 
-- disconnected runtime shows offline header state
-- reconnecting runtime shows connecting state
+- disconnected runtime shows offline header state; clicking the pill opens
+  connection settings
+- connecting pill shows a pulse animation on the status dot
 - connected runtime shows connected state
-- header settings button opens the connection overlay
+- header settings button opens the connection overlay from any state
 
 ### 2.2 `StatusStrip`
 
@@ -512,15 +544,12 @@ Runtime done when:
 Implement:
 
 - `Navigation` stays the active item for this slice
-- `Settings` remains functional
-- `History` stays explicitly placeholder-only until a real runtime-backed
-  history surface exists
+- `Settings` button at the bottom of the rail opens the connection overlay
 
 Runtime done when:
 
 - the current screen is clearly `Navigation`
-- the settings entrypoint works from the rail
-- `History` is visibly non-functional or clearly marked as coming soon
+- the settings button works from both the rail and the header
 
 ### Step 2 Validation Checklist
 
@@ -541,8 +570,7 @@ Treat Step 2 as complete only when these runtime checks pass:
   pending
 - clear removes the target only when no active run exists
 - success and failure terminal results render correctly
-- settings button opens the connection overlay
-- history remains visibly non-functional or explicitly “coming soon”
+- settings button opens the connection overlay from both the header and the rail
 
 Suggested build verification:
 

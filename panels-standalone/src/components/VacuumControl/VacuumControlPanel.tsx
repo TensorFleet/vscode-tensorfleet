@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
 import { useNav2Runtime } from "../Nav2/runtime/useNav2Runtime";
 import { formatRosDuration, getPoseCoordinates } from "../Nav2/runtime/nav2RuntimeUtils";
 import type { GoalState, TopicHealth } from "../Nav2/runtime/nav2RuntimeTypes";
 import { MapCanvas, type MapCanvasTarget, type RouteVisualState } from "./MapCanvas";
+import { TeleopCard } from "./TeleopCard";
 import "./VacuumControlPanel.css";
 
 type DraftTarget = MapCanvasTarget;
@@ -298,10 +299,19 @@ function StatusChipIcon(props: { className?: string; kind: "connected" | "map" |
 }
 
 function StateIcon(props: { className?: string; stateKey: OperatorState["key"] }) {
-  if (props.stateKey === "ready" || props.stateKey === "waiting-map" || props.stateKey === "waiting-localization" || props.stateKey === "checking") {
+  if (props.stateKey === "ready") {
     return (
       <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
         <path d="m5 12.5 4.2 4.2L19 7" />
+      </svg>
+    );
+  }
+
+  if (props.stateKey === "waiting-map" || props.stateKey === "waiting-localization" || props.stateKey === "checking") {
+    return (
+      <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8" />
+        <path d="M12 8v4l2.5 2.5" />
       </svg>
     );
   }
@@ -421,6 +431,14 @@ function ClearIcon(props: { className?: string }) {
   );
 }
 
+function SpinnerIcon(props: { className?: string }) {
+  return (
+    <svg aria-hidden="true" className={`${props.className ?? ""} vacuum-spinner`} viewBox="0 0 20 20">
+      <circle cx="10" cy="10" r="7" strokeDasharray="22 22" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function getChipTone(isActive: boolean, tone: Exclude<StatusChipTone, "inactive">): StatusChipTone {
   return isActive ? tone : "inactive";
 }
@@ -464,6 +482,8 @@ export function VacuumControlPanel() {
   const [draftTarget, setDraftTarget] = useState<DraftTarget | null>(null);
   const [sentTarget, setSentTarget] = useState<DraftTarget | null>(null);
   const [initialRouteDistance, setInitialRouteDistance] = useState<number | null>(null);
+  const [wallClockElapsed, setWallClockElapsed] = useState<number | null>(null);
+  const goalStartTimeRef = useRef<number | null>(null);
   const currentPose = useMemo(
     () => getPoseCoordinates(runtime.currentMapPose),
     [runtime.currentMapPose],
@@ -497,26 +517,36 @@ export function VacuumControlPanel() {
     routeVisualState === "completed" ||
     routeVisualState === "failed" ||
     routeVisualState === "canceled";
+  const isIndeterminate = isGoalActive && feedbackDistanceRemaining == null;
   const routeProgress = (() => {
     if (runtime.goalState === "succeeded") {
       return 1;
     }
     const remaining = feedbackDistanceRemaining;
     if (remaining == null || initialRouteDistance == null || initialRouteDistance <= 0) {
-      return displayedTarget && isGoalActive ? 0.12 : 0;
+      return 0;
     }
     return clamp(1 - remaining / initialRouteDistance, 0, 0.98);
   })();
+  const isMapReceiving = mapStatus === "receiving";
   const systemChips = [
+    {
+      label: "Connected",
+      icon: "connected" as const,
+      state: getChipTone(runtime.connectionStatus === "connected", "success"),
+      pulsing: false,
+    },
     {
       label: "Map Live",
       icon: "map" as const,
-      state: getChipTone(mapStatus === "receiving", "success"),
+      state: getChipTone(isMapReceiving, "success"),
+      pulsing: isMapReceiving,
     },
     {
       label: "Localized",
       icon: "localized" as const,
       state: getChipTone(Boolean(currentPose), "success"),
+      pulsing: false,
     },
   ] as const;
   const taskChips = [
@@ -542,7 +572,16 @@ export function VacuumControlPanel() {
   const targetDistanceLabel = displayedTarget ? formatDistance(destinationDistance) : null;
   const targetHeadingLabel = displayedTarget ? headingLabel(displayedTarget.yaw) : null;
   const targetBearingLabel =
-    destinationBearing == null ? "n/a" : `${headingLabel(destinationBearing)} · ${Math.round(((destinationBearing % 360) + 360) % 360)} deg`;
+    destinationBearing == null ? "n/a" : `${Math.round(((destinationBearing % 360) + 360) % 360)}°`;
+  const destinationBadgeLabel = (() => {
+    if (sentTarget != null && isGoalActive) {
+      return "Sent";
+    }
+    if (routeVisualState === "completed") {
+      return "Reached";
+    }
+    return "Selected";
+  })();
   const primaryActionLabel = (() => {
     if (runtime.isSendingGoal) {
       return "Sending...";
@@ -578,7 +617,7 @@ export function VacuumControlPanel() {
     return "Running";
   })();
   const progressBarWidth = (() => {
-    if (!showProgressMetric) {
+    if (!showProgressMetric || isIndeterminate) {
       return 0;
     }
     if (routeVisualState === "completed") {
@@ -586,14 +625,42 @@ export function VacuumControlPanel() {
     }
     return Math.max(routeProgress * 100, 6);
   })();
+  const progressPctLabel = isIndeterminate ? "—" : `${Math.round(routeProgress * 100)}%`;
+  const elapsedLabel = runtime.feedbackNavigationTime != null
+    ? formatRosDuration(runtime.feedbackNavigationTime)
+    : wallClockElapsed != null
+      ? formatRosDuration(wallClockElapsed)
+      : "n/a";
+  const recoveryCount = toFiniteNumber(runtime.feedbackRecoveries);
+  const recoveryLabel = formatRecoveries(runtime.feedbackRecoveries);
+  const recoveryWarning = recoveryCount != null && recoveryCount > 0;
 
-  async function handleSend(): Promise<void> {
-    if (!draftTarget) {
+  useEffect(() => {
+    if (isGoalActive) {
+      goalStartTimeRef.current = Date.now();
+      setWallClockElapsed(0);
+      const interval = setInterval(() => {
+        if (goalStartTimeRef.current != null) {
+          setWallClockElapsed((Date.now() - goalStartTimeRef.current) / 1000);
+        }
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+    return undefined;
+  }, [isGoalActive]);
+
+  const isTerminalState =
+    routeVisualState === "completed" || routeVisualState === "failed" || routeVisualState === "canceled";
+  const runTarget = draftTarget ?? (isTerminalState ? sentTarget : null);
+
+  async function handleSend(overrideTarget?: DraftTarget): Promise<void> {
+    const target = overrideTarget ?? runTarget;
+    if (!target) {
       return;
     }
-    setSentTarget(draftTarget);
-    setInitialRouteDistance(distanceBetween(currentPose, draftTarget));
-    await runtime.sendGoal(draftTarget);
+    setSentTarget(target);
+    setInitialRouteDistance(distanceBetween(currentPose, target));
+    await runtime.sendGoal(target);
   }
 
   async function handleCancel(): Promise<void> {
@@ -632,23 +699,26 @@ export function VacuumControlPanel() {
         </div>
 
         <nav className="vacuum-rail__nav" aria-label="Panel navigation">
-          <button className="vacuum-rail__item vacuum-rail__item--active" type="button">
-            <span className="vacuum-rail__item-bar" />
+          <button
+            className="vacuum-rail__item vacuum-rail__item--active"
+            type="button"
+            title="Navigation"
+            aria-label="Navigation"
+          >
             <SidebarIcon className="vacuum-rail__icon" kind="navigation" />
-            <span>Navigation</span>
-          </button>
-          <button className="vacuum-rail__item" type="button">
-            <span className="vacuum-rail__item-bar" />
-            <SidebarIcon className="vacuum-rail__icon" kind="history" />
-            <span>History</span>
           </button>
         </nav>
 
-        <button className="vacuum-rail__item vacuum-rail__item--settings" type="button" onClick={openOverlay} title="Settings">
-          <span className="vacuum-rail__item-bar" />
-          <SidebarIcon className="vacuum-rail__icon" kind="settings" />
-          <span>Settings</span>
+        <button
+          className="vacuum-rail__item vacuum-rail__item--settings"
+          type="button"
+          title="Connection settings"
+          aria-label="Connection settings"
+          onClick={openOverlay}
+        >
+          <GearIcon className="vacuum-rail__icon" />
         </button>
+
       </aside>
 
       <main className="vacuum-main">
@@ -658,26 +728,34 @@ export function VacuumControlPanel() {
             <span className="vacuum-header__breadcrumb">Navigation</span>
           </div>
           <div className="vacuum-header__right">
-            <span className={`vacuum-pill vacuum-pill--${runtime.connectionStatus}`}>
-              <ConnectionPillIcon className="vacuum-pill__icon" />
-              <span>
-                {runtime.connectionStatus === "connected"
-                  ? "Connected"
-                  : runtime.connectionStatus === "connecting"
-                    ? "Connecting"
-                    : "Disconnected"}
+            {runtime.connectionStatus === "disconnected" ? (
+              <button
+                className="vacuum-pill vacuum-pill--disconnected vacuum-pill--clickable"
+                type="button"
+                onClick={openOverlay}
+                title="Open connection settings"
+              >
+                <ConnectionPillIcon className="vacuum-pill__icon" />
+                <span>Disconnected</span>
+              </button>
+            ) : (
+              <span className={`vacuum-pill vacuum-pill--${runtime.connectionStatus}`}>
+                <ConnectionPillIcon className="vacuum-pill__icon" />
+                <span>
+                  {runtime.connectionStatus === "connected" ? "Connected" : "Connecting"}
+                </span>
               </span>
-            </span>
-            <button className="vacuum-icon-button" type="button" onClick={openOverlay} title="Settings" aria-label="Settings">
-              <GearIcon className="vacuum-icon-button__icon" />
-            </button>
+            )}
           </div>
         </header>
 
         <section className="vacuum-status-strip" aria-label="Readiness status">
           <span className="vacuum-status-group__label">System</span>
           {systemChips.map((chip) => (
-            <div key={chip.label} className={`vacuum-status-chip vacuum-status-chip--${chip.state}`}>
+            <div
+              key={chip.label}
+              className={`vacuum-status-chip vacuum-status-chip--${chip.state}${chip.pulsing ? " vacuum-status-chip--pulsing" : ""}`}
+            >
               <StatusChipIcon className="vacuum-status-chip__icon" kind={chip.icon} />
               <span>{chip.label}</span>
             </div>
@@ -700,6 +778,7 @@ export function VacuumControlPanel() {
             sentTarget={sentTarget}
             routeVisualState={routeVisualState}
             isGoalActive={isGoalActive}
+            targetDistance={destinationDistance}
             onTargetStart={handleTargetStart}
             onTargetRotate={handleTargetRotate}
           />
@@ -720,18 +799,18 @@ export function VacuumControlPanel() {
                 </div>
                 <VacuumMark className="vacuum-state-row__disc" aria-hidden="true" />
               </div>
-              <div className="vacuum-readiness-grid" aria-label="Run readiness">
+              <div className="vacuum-readiness-grid">
                 <div className={`vacuum-readiness-item ${runtime.connectionStatus === "connected" ? "vacuum-readiness-item--ready" : ""}`}>
                   <span>Connection</span>
                   <strong>{runtime.connectionStatus === "connected" ? "Online" : runtime.connectionStatus === "connecting" ? "Connecting" : "Offline"}</strong>
                 </div>
-                <div className={`vacuum-readiness-item ${mapReady ? "vacuum-readiness-item--ready" : ""}`}>
+                <div className={`vacuum-readiness-item ${isMapReceiving ? "vacuum-readiness-item--ready" : ""}`}>
                   <span>Map</span>
-                  <strong>{mapReady ? "Live" : "Waiting"}</strong>
+                  <strong>{isMapReceiving ? "Live" : "Waiting"}</strong>
                 </div>
                 <div className={`vacuum-readiness-item ${poseReady ? "vacuum-readiness-item--ready" : ""}`}>
                   <span>Position</span>
-                  <strong>{poseReady ? "Known" : "Waiting"}</strong>
+                  <strong>{poseReady ? "Known" : "Settling"}</strong>
                 </div>
               </div>
             </section>
@@ -740,20 +819,19 @@ export function VacuumControlPanel() {
               <div className="vacuum-panel-card__head">
                 <p className="vacuum-panel-card__eyebrow">Selected Destination</p>
                 {displayedTarget ? (
-                  <span className="vacuum-destination-status">Selected</span>
+                  <span className="vacuum-destination-status">{destinationBadgeLabel}</span>
                 ) : null}
               </div>
               {displayedTarget ? (
                 <>
                   <div className="vacuum-dest-row">
                     <div className="vacuum-dest-row__icon-wrap">
-                      <DirectionIcon className="vacuum-dest-row__icon" direction={displayedTarget.yaw} />
+                      <CompassIcon className="vacuum-dest-row__icon vacuum-dest-row__icon--compass" direction={displayedTarget.yaw} />
                     </div>
                     <div className="vacuum-dest-row__text">
                       <p className="vacuum-dest-row__title">Destination selected</p>
                       <p className="vacuum-dest-row__sub">{targetDistanceLabel} from robot</p>
                     </div>
-                    <CompassIcon className="vacuum-compass vacuum-compass--sm" direction={displayedTarget.yaw} />
                   </div>
                   <div className="vacuum-destination-details">
                     <div>
@@ -765,7 +843,7 @@ export function VacuumControlPanel() {
                       <strong>{targetBearingLabel}</strong>
                     </div>
                     <div>
-                      <span>Location</span>
+                      <span>Map coords</span>
                       <strong>
                         {formatCoordinate(displayedTarget.x)}, {formatCoordinate(displayedTarget.y)}
                       </strong>
@@ -794,15 +872,15 @@ export function VacuumControlPanel() {
                   </span>
                 </div>
                 <div className="vacuum-progress-summary">
-                  <strong className={`vacuum-progress-pct vacuum-progress-pct--${routeVisualState}`}>
-                    {Math.round(routeProgress * 100)}%
+                  <strong className={`vacuum-progress-pct vacuum-progress-pct--${routeVisualState}${isIndeterminate ? " vacuum-progress-pct--indeterminate" : ""}`}>
+                    {progressPctLabel}
                   </strong>
                   <p className="vacuum-progress-label">{progressLabel}</p>
                 </div>
                 <div className="vacuum-progress">
                   <div
-                    className={`vacuum-progress__bar vacuum-progress__bar--${routeVisualState}`}
-                    style={{ width: `${displayedTarget ? progressBarWidth : 0}%` }}
+                    className={`vacuum-progress__bar vacuum-progress__bar--${routeVisualState}${isIndeterminate ? " vacuum-progress__bar--indeterminate" : ""}`}
+                    style={isIndeterminate ? undefined : { width: `${displayedTarget ? progressBarWidth : 0}%` }}
                   />
                 </div>
                 <div className="vacuum-stats vacuum-stats--progress">
@@ -812,15 +890,22 @@ export function VacuumControlPanel() {
                   </div>
                   <div>
                     <span>Elapsed</span>
-                    <strong>{formatRosDuration(runtime.feedbackNavigationTime)}</strong>
+                    <strong>{elapsedLabel}</strong>
                   </div>
                   <div>
                     <span>Recoveries</span>
-                    <strong>{formatRecoveries(runtime.feedbackRecoveries)}</strong>
+                    <strong style={recoveryWarning ? { color: "var(--vacuum-warning)" } : undefined}>
+                      {recoveryLabel}
+                    </strong>
                   </div>
                 </div>
               </section>
-            ) : null}
+            ) : (
+              <section className="vacuum-panel-card vacuum-panel-card--progress-idle">
+                <p className="vacuum-panel-card__eyebrow">Progress</p>
+                <p className="vacuum-progress-idle-hint">Start a run to see progress.</p>
+              </section>
+            )}
 
             <section className="vacuum-panel-card vacuum-panel-card--actions">
               <div className="vacuum-panel-card__head">
@@ -852,9 +937,13 @@ export function VacuumControlPanel() {
                     className="vacuum-action vacuum-action--primary"
                     type="button"
                     onClick={() => void handleSend()}
-                    disabled={!draftTarget || readinessIssue != null || runtime.isSendingGoal}
+                    disabled={!runTarget || readinessIssue != null || runtime.isSendingGoal}
                   >
-                    <SendIcon className="vacuum-action__icon" />
+                    {runtime.isSendingGoal ? (
+                      <SpinnerIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                    ) : (
+                      <SendIcon className="vacuum-action__icon" />
+                    )}
                     {primaryActionLabel}
                   </button>
                 )}
@@ -869,6 +958,8 @@ export function VacuumControlPanel() {
                 </button>
               </div>
             </section>
+
+            <TeleopCard />
 
           </div>
         </section>

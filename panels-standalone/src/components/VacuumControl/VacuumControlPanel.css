@@ -36,10 +36,11 @@ body {
 
 .vacuum-rail {
   margin: 18px 0 18px 18px;
-  padding: 18px 10px;
+  padding: 14px 8px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  align-items: center;
+  gap: 8px;
   border-right: 1px solid rgba(232, 226, 214, 0.08);
   background: transparent;
   box-shadow: none;
@@ -48,77 +49,66 @@ body {
 .vacuum-rail__brand {
   display: grid;
   justify-items: center;
-  padding-top: 6px;
-  padding-bottom: 6px;
+  padding: 4px 0 8px;
 }
 
 .vacuum-rail__mark {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
 }
 
 .vacuum-rail__nav {
   flex: 1;
-  display: grid;
-  align-content: start;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
 }
 
 .vacuum-rail__item,
 .vacuum-rail__item--settings {
-  width: 100%;
-  padding: 12px 10px;
-  border-radius: 16px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--vacuum-text-soft);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.vacuum-rail__item {
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-  position: relative;
+  color: var(--vacuum-text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
 .vacuum-rail__item--active {
-  color: var(--vacuum-text);
-  background: rgba(255, 255, 255, 0.035);
-}
-
-.vacuum-rail__item-bar {
-  position: absolute;
-  left: -10px;
-  top: 12px;
-  bottom: 12px;
-  width: 3px;
-  border-radius: 999px;
-  background: transparent;
-}
-
-.vacuum-rail__item--active .vacuum-rail__item-bar {
-  background: linear-gradient(180deg, #58d38d, #2d8df0);
-}
-
-.vacuum-rail__icon {
-  width: 18px;
-  height: 18px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  color: var(--vacuum-accent);
+  background: rgba(56, 200, 176, 0.12);
+  border-color: rgba(56, 200, 176, 0.2);
 }
 
 .vacuum-rail__item--settings {
   margin-top: auto;
 }
 
-.vacuum-rail__item:hover {
+.vacuum-rail__item:hover,
+.vacuum-rail__item--settings:hover {
   color: var(--vacuum-text);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.vacuum-rail__item--active:hover {
+  background: rgba(56, 200, 176, 0.18);
+}
+
+.vacuum-rail__icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .vacuum-main {
@@ -260,6 +250,22 @@ body {
   color: var(--vacuum-danger);
 }
 
+.vacuum-pill--clickable {
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.vacuum-pill--clickable:hover {
+  border-color: rgba(255, 116, 97, 0.32);
+  background: rgba(255, 116, 97, 0.22);
+}
+
+.vacuum-pill--connecting .vacuum-pill__icon {
+  animation: vacuumDotPulse 1.2s ease-in-out infinite;
+}
+
+
 .vacuum-status-strip {
   padding: 8px 14px;
   border-radius: 18px;
@@ -326,6 +332,10 @@ body {
   color: var(--vacuum-text-muted);
   background: rgba(255, 255, 255, 0.02);
   border-color: rgba(232, 226, 214, 0.05);
+}
+
+.vacuum-status-chip--pulsing .vacuum-status-chip__icon {
+  animation: vacuumChipPulse 2s ease-in-out infinite;
 }
 
 .vacuum-layout {
@@ -435,7 +445,7 @@ body {
   border-top: 1px solid rgba(232, 226, 214, 0.1);
   border-bottom: 1px solid rgba(232, 226, 214, 0.1);
   color: rgba(240, 237, 230, 0.82);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-align: center;
@@ -583,6 +593,7 @@ body {
   background: rgba(23, 22, 20, 0.96);
   box-shadow: 0 22px 44px rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(18px);
+  animation: vacuumPopoverFadeIn 120ms ease;
 }
 
 .vacuum-map-layer-picker__popover-head {
@@ -840,9 +851,13 @@ body {
   filter: drop-shadow(0 0 5px rgba(88, 211, 141, 0.18));
 }
 
-.vacuum-map-path--failed,
+.vacuum-map-path--failed {
+  stroke: rgba(255, 179, 92, 0.82);
+}
+
 .vacuum-map-path--canceled {
   stroke: rgba(255, 179, 92, 0.82);
+  opacity: 0.45;
 }
 
 .vacuum-map-path--staged {
@@ -1048,6 +1063,27 @@ body {
   border-color: rgba(255, 179, 92, 0.28);
 }
 
+.vacuum-map-north {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 8;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(232, 226, 214, 0.1);
+  background: rgba(26, 25, 23, 0.82);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.vacuum-map-north__svg {
+  width: 20px;
+  height: 20px;
+}
+
 .vacuum-map-stage__legend {
   position: absolute;
   left: 16px;
@@ -1249,7 +1285,7 @@ body {
 .vacuum-state-row__disc {
   width: 44px;
   height: 44px;
-  opacity: 0.28;
+  opacity: 0.42;
   flex-shrink: 0;
 }
 
@@ -1324,6 +1360,15 @@ body {
   height: 18px;
   fill: var(--vacuum-info);
   filter: drop-shadow(0 0 4px rgba(115, 182, 242, 0.3));
+}
+
+.vacuum-dest-row__icon--compass {
+  width: 22px;
+  height: 22px;
+  fill: rgba(115, 182, 242, 0.06);
+  stroke: var(--vacuum-info);
+  stroke-width: 1.6;
+  filter: drop-shadow(0 0 6px rgba(115, 182, 242, 0.22));
 }
 
 .vacuum-dest-row__icon--empty {
@@ -1685,6 +1730,18 @@ body {
   animation: vacuumShimmer 1.8s linear infinite;
 }
 
+.vacuum-progress__bar--indeterminate {
+  width: 100% !important;
+  background: linear-gradient(90deg, rgba(115, 182, 242, 0.12), rgba(115, 182, 242, 0.28), rgba(115, 182, 242, 0.12));
+  background-size: 200% 100%;
+  animation: vacuumIndeterminate 1.6s ease-in-out infinite;
+}
+
+.vacuum-progress-pct--indeterminate {
+  color: var(--vacuum-text-muted) !important;
+  font-size: 22px;
+}
+
 .vacuum-progress__bar--completed {
   background: linear-gradient(90deg, var(--vacuum-success), #a2f4bf);
 }
@@ -1697,6 +1754,27 @@ body {
 .vacuum-actions {
   display: grid;
   gap: 8px;
+}
+
+.vacuum-panel-card--progress-idle {
+  border-color: rgba(232, 226, 214, 0.06);
+  gap: 8px;
+}
+
+.vacuum-progress-idle-hint {
+  margin: 0;
+  color: var(--vacuum-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.vacuum-spinner {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  animation: vacuumSpin 0.9s linear infinite;
 }
 
 .vacuum-action-hint {
@@ -1804,6 +1882,58 @@ body {
   }
 }
 
+@keyframes vacuumIndeterminate {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes vacuumSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes vacuumDotPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
+}
+
+@keyframes vacuumChipPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.65;
+    transform: scale(0.88);
+  }
+}
+
+@keyframes vacuumPopoverFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 1180px) {
   .vacuum-layout {
     grid-template-columns: 1fr;
@@ -1895,4 +2025,354 @@ body {
   .vacuum-map-stage__legend {
     border-radius: 18px;
   }
+}
+
+/* ─── TeleopCard ─────────────────────────────────────────────────── */
+
+.vacuum-panel-card--teleop {
+  padding: 0;
+  overflow: hidden;
+}
+
+.vacuum-teleop-head {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 14px;
+  cursor: pointer;
+  gap: 8px;
+  border-bottom: 1px solid transparent;
+  transition: background 120ms ease;
+}
+
+.vacuum-teleop-head:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.vacuum-panel-card--teleop .vacuum-panel-card__eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vacuum-text-soft);
+}
+
+.vacuum-teleop-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.vacuum-teleop-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+}
+
+.vacuum-teleop-badge--off {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--vacuum-text-muted);
+}
+
+.vacuum-teleop-badge--ready {
+  background: rgba(56, 200, 176, 0.12);
+  color: var(--vacuum-accent);
+}
+
+.vacuum-teleop-badge--active {
+  background: rgba(87, 169, 242, 0.18);
+  color: var(--vacuum-info);
+  animation: vacuumPulse 1.2s ease-in-out infinite;
+}
+
+.vacuum-teleop-chevron {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--vacuum-text-muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 140ms ease;
+  flex-shrink: 0;
+}
+
+.vacuum-teleop-body {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--vacuum-panel-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.vacuum-teleop-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--vacuum-text-muted);
+  text-align: center;
+  padding: 6px 0;
+}
+
+.vacuum-teleop-pad-wrap {
+  width: 130px;
+  height: 130px;
+  flex-shrink: 0;
+}
+
+.vacuum-teleop-pad-wrap .directional-pad-container {
+  width: 100%;
+  height: 100%;
+}
+
+.vacuum-teleop-pad-wrap .directional-pad-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.vacuum-teleop-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+
+.vacuum-teleop-kbd {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--vacuum-text-muted);
+  border: 1px solid var(--vacuum-panel-border);
+  transition: background 120ms, color 120ms, border-color 120ms;
+  letter-spacing: 0.03em;
+}
+
+.vacuum-teleop-kbd svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
+.vacuum-teleop-kbd:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--vacuum-text-soft);
+}
+
+.vacuum-teleop-kbd--active {
+  background: rgba(56, 200, 176, 0.12);
+  color: var(--vacuum-accent);
+  border-color: rgba(56, 200, 176, 0.28);
+}
+
+.vacuum-teleop-kbd--active:hover {
+  background: rgba(56, 200, 176, 0.18);
+}
+
+.vacuum-teleop-readout {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--vacuum-info);
+  letter-spacing: 0.04em;
+  margin-left: auto;
+}
+
+/* ─── CameraOverlay ──────────────────────────────────────────────── */
+
+.vacuum-camera-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 240px;
+  z-index: 30;
+  border-radius: 10px;
+  background: rgba(18, 18, 18, 0.94);
+  border: 1px solid rgba(232, 226, 214, 0.12);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  user-select: none;
+}
+
+.vacuum-camera-overlay--dragging {
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.64), 0 0 0 1px rgba(56, 200, 176, 0.28);
+  cursor: grabbing;
+}
+
+.vacuum-camera-overlay--minimized {
+  width: 200px;
+}
+
+.vacuum-camera-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 10px;
+  cursor: grab;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(232, 226, 214, 0.08);
+  gap: 6px;
+}
+
+.vacuum-camera-overlay--dragging .vacuum-camera-titlebar {
+  cursor: grabbing;
+}
+
+.vacuum-camera-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vacuum-text-soft);
+  letter-spacing: 0.04em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-camera-title svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--vacuum-accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  flex-shrink: 0;
+}
+
+.vacuum-camera-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.vacuum-camera-btn {
+  all: unset;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--vacuum-text-muted);
+  transition: background 100ms, color 100ms;
+}
+
+.vacuum-camera-btn svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.vacuum-camera-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--vacuum-text);
+}
+
+.vacuum-camera-btn--close:hover {
+  background: rgba(255, 116, 97, 0.18);
+  color: var(--vacuum-danger);
+}
+
+.vacuum-camera-frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #0a0a0a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vacuum-camera-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.vacuum-camera-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--vacuum-text-muted);
+}
+
+.vacuum-camera-placeholder svg {
+  width: 36px;
+  height: 36px;
+  fill: none;
+  stroke: var(--vacuum-text-muted);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  opacity: 0.5;
+}
+
+.vacuum-camera-placeholder span {
+  font-size: 11px;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.vacuum-camera-restore {
+  all: unset;
+  box-sizing: border-box;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  border-radius: 8px;
+  background: rgba(18, 18, 18, 0.9);
+  border: 1px solid rgba(232, 226, 214, 0.12);
+  color: var(--vacuum-text-soft);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: background 120ms, border-color 120ms;
+}
+
+.vacuum-camera-restore svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--vacuum-accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.vacuum-camera-restore:hover {
+  background: rgba(26, 26, 26, 0.96);
+  border-color: rgba(56, 200, 176, 0.3);
 }
