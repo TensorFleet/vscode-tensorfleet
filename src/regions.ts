@@ -10,99 +10,23 @@
 
 import * as vscode from 'vscode';
 import { isFeatureEnabled } from './env';
+import {
+  getAvailableRegions as getConfiguredAvailableRegions,
+  getRegionOrDefault,
+  type RegionConfig,
+} from '../panels-standalone/packages/tensorfleet-util/src/config/server-config';
+import { DEFAULT_REGION } from '../panels-standalone/packages/tensorfleet-util/src/config/server-config';
 
-export interface RegionConfig {
-  /** Display name for the region */
-  name: string;
-  /** Short code/id for the region */
-  id: string;
-  /** Backend API URL (auth, data) */
-  backendUrl: string;
-  /** VM Manager API URL */
-  vmManagerUrl: string;
-  /** Foxglove WebSocket URL (derived from VM IP at runtime) */
-  foxglovePort: number;
-  /** ROS2 WebSocket URL (derived from VM IP at runtime) */
-  ros2Port: number;
-  /** Geographic description */
-  description: string;
-  /** Icon for display */
-  icon: string;
-  /** If true, this region is only shown when running in dev mode (F5 debugging) */
-  devOnly?: boolean;
-}
-
-/**
- * Available regions and their configurations
- */
-
-/*
-  'us-west': {
-    id: 'us-west',
-    name: 'US West',
-    backendUrl: 'https://app.tensorfleet.net',
-    vmManagerUrl: 'https://vm.tensorfleet.net',
-    foxglovePort: 8765,
-    ros2Port: 9091,
-    description: 'United States - West Coast',
-    icon: '🇺🇸'
-  },
-
-*/
-
-export const REGIONS: Record<string, RegionConfig> = {
-  'eu': {
-    id: 'eu',
-    name: 'EU Central',
-    backendUrl: 'https://app.tensorfleet.net',
-    vmManagerUrl: 'https://eu.vm.tensorfleet.net',
-    foxglovePort: 8765,
-    ros2Port: 9091,
-    description: 'Europe - Central',
-    icon: '🇪🇺'
-  },
-  'asia': {
-    id: 'asia',
-    name: 'Asia',
-    backendUrl: 'https://app.tensorfleet.net',
-    vmManagerUrl: 'http://vm-manager-asia-1.tail4f6a7.ts.net',
-    foxglovePort: 8765,
-    ros2Port: 9091,
-    description: 'Asia - Southeast (beta/staging)',
-    icon: '🇹🇭',
-    devOnly: true  // Only visible when running in dev mode (F5 debugging)
-  },
-  'local': {
-    id: 'local',
-    name: 'Local Development',
-    backendUrl: 'https://app.tensorfleet.net',
-    vmManagerUrl: 'http://localhost:8080',
-    foxglovePort: 8765,
-    ros2Port: 9091,
-    description: 'Local development server',
-    icon: '💻',
-    devOnly: true  // Only visible when running in dev mode (F5 debugging)
-  }
-};
+export type { RegionConfig };
+export { DEFAULT_REGION, REGIONS } from '../panels-standalone/packages/tensorfleet-util/src/config/server-config';
 
 /**
  * Get regions available for the current runtime mode
  * Filters out dev-only regions when running in production mode
  */
 export function getAvailableRegions(): Record<string, RegionConfig> {
-  if (isFeatureEnabled('localRegion')) {
-    return REGIONS;
-  }
-  // Filter out dev-only regions at runtime (code still exists in prod builds)
-  return Object.fromEntries(
-    Object.entries(REGIONS).filter(([_, config]) => !config.devOnly)
-  );
+  return getConfiguredAvailableRegions(isFeatureEnabled('localRegion'));
 }
-
-/**
- * Default region if none is configured
- */
-export const DEFAULT_REGION = 'eu';
 
 /**
  * Get the currently selected region ID from configuration
@@ -128,8 +52,7 @@ export function getSelectedRegionId(): string {
  */
 export function getSelectedRegion(): RegionConfig {
   const regionId = getSelectedRegionId();
-  const availableRegions = getAvailableRegions();
-  return availableRegions[regionId] || REGIONS[DEFAULT_REGION];
+  return getRegionOrDefault(regionId, isFeatureEnabled('localRegion'));
 }
 
 /**
@@ -216,4 +139,3 @@ export function onRegionChange(callback: (newRegion: RegionConfig) => void): vsc
     }
   });
 }
-

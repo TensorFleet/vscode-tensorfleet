@@ -3,7 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPBridge } from './mcp-bridge';
-import { VMManagerIntegration, VMConfig } from './vm-manager';
+import { VMManagerIntegration } from './vm-manager';
+import {
+  VM_CONFIGS,
+  type VMConfig,
+} from '../panels-standalone/packages/tensorfleet-util/src/config/vm-config';
 import * as auth from './auth';
 import * as help from './help';
 import { UnifiedStatusCoordinator } from './unified-status';
@@ -254,7 +258,7 @@ async function serverSettingsMessageHandler(message: any, api: {
           return;
         }
 
-        const vmConfigs = Object.values(VMManagerIntegration.VM_CONFIGS);
+        const vmConfigs = Object.values(VM_CONFIGS);
         const currentConfig = vmManagerIntegration.getLastUsedConfig();
 
         webview.postMessage({
@@ -4194,7 +4198,7 @@ async function chooseVMConfiguration(context: vscode.ExtensionContext) {
   const telemetry = getTelemetry();
   telemetry?.trackEvent('vm.config.choose', { phase: 'start' });
 
-  const configs = Object.values(VMManagerIntegration.VM_CONFIGS);
+  const configs = Object.values(VM_CONFIGS);
   const currentConfig = vmManagerIntegration.getLastUsedConfig();
 
   const items: (vscode.QuickPickItem & { config: VMConfig })[] = configs.map(config => ({
