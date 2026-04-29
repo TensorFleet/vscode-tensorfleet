@@ -80,7 +80,11 @@ const LIDAR_TOPIC_PREFERENCE = "/scan";
 const DEPTH_TOPIC_PREFERENCE = "/oakd/rgb/preview/depth/points";
 const MAX_LIDAR_POINTS = 900;
 const MAX_DEPTH_POINTS = 1_500;
-const MAX_DEPTH_DISTANCE_M = 6;
+const MAX_DEPTH_DISTANCE_M = 4.5;
+const MIN_DEPTH_OBSTACLE_HEIGHT_M = 0.08;
+const MAX_DEPTH_OBSTACLE_HEIGHT_M = 0.55;
+const DEPTH_SPATIAL_BIN_M = 0.1;
+const MAX_RENDERED_DEPTH_OBSTACLE_POINTS = 650;
 const ROBOT_POSE_FRAME_CANDIDATES = [
   "base_footprint",
   "base_link",
@@ -649,6 +653,72 @@ function parsePointCloud2(message: Record<string, unknown> | null): ParsedPointC
   };
 }
 
+function rewriteTurtlebot4DepthPointCloudFrameId(
+  topicName: string,
+  message: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (topicName !== DEPTH_TOPIC_PREFERENCE || !message) {
+    return message;
+  }
+
+  const frameId = getMessageFrameId(message);
+  if (frameId !== "oakd_rgb_camera_optical_frame") {
+    return message;
+  }
+
+  const header = getRecordEntry(message, "header");
+  const headerRecord =
+    header && typeof header === "object" ? (header as Record<string, unknown>) : {};
+
+  // Live TurtleBot4 depth samples are advertised in the optical frame, but the
+  // XYZ values behave like camera-frame coordinates. Reusing the optical frame
+  // here rotates the points a second time and makes the 2D projection meaningless.
+  return {
+    ...message,
+    header: {
+      ...headerRecord,
+      frame_id: "oakd_rgb_camera_frame",
+    },
+  };
+}
+
+function compactDepthObstaclePoints(
+  points: ProjectedMapPoint[],
+  robotPose: PoseCoordinates | null,
+): ProjectedMapPoint[] {
+  const bins = new Map<string, ProjectedMapPoint>();
+
+  for (const point of points) {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) {
+      continue;
+    }
+    if (point.z < MIN_DEPTH_OBSTACLE_HEIGHT_M || point.z > MAX_DEPTH_OBSTACLE_HEIGHT_M) {
+      continue;
+    }
+    if (robotPose && Math.hypot(point.x - robotPose.x, point.y - robotPose.y) > MAX_DEPTH_DISTANCE_M) {
+      continue;
+    }
+
+    const key = `${Math.round(point.x / DEPTH_SPATIAL_BIN_M)}:${Math.round(point.y / DEPTH_SPATIAL_BIN_M)}`;
+    const existing = bins.get(key);
+    if (!existing || point.z > existing.z) {
+      bins.set(key, point);
+    }
+  }
+
+  const compacted = Array.from(bins.values());
+  compacted.sort((leftPoint, rightPoint) => {
+    if (!robotPose) {
+      return rightPoint.z - leftPoint.z;
+    }
+    const leftDistance = Math.hypot(leftPoint.x - robotPose.x, leftPoint.y - robotPose.y);
+    const rightDistance = Math.hypot(rightPoint.x - robotPose.x, rightPoint.y - robotPose.y);
+    return leftDistance - rightDistance;
+  });
+
+  return compacted.slice(0, MAX_RENDERED_DEPTH_OBSTACLE_POINTS);
+}
+
 function getCompactTopicLabel(topic: string): string {
   if (topic.length <= 18) {
     return topic;
@@ -834,7 +904,9 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
       return { points: [], status: "waiting" };
     }
 
-    const parsedCloud = parsePointCloud2(depthCloudMessage);
+    const parsedCloud = parsePointCloud2(
+      rewriteTurtlebot4DepthPointCloudFrameId(depthTopic.topic, depthCloudMessage),
+    );
     if (!parsedCloud) {
       return { points: [], status: "waiting" };
     }
@@ -850,21 +922,8 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
       return projected;
     }
 
-    const filteredPoints = projected.points.filter((point) => {
-      if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) {
-        return false;
-      }
-      if (point.z < 0.03 || point.z > 0.45) {
-        return false;
-      }
-      if (!filterPose) {
-        return true;
-      }
-      return Math.hypot(point.x - filterPose.x, point.y - filterPose.y) <= MAX_DEPTH_DISTANCE_M;
-    });
-
     return {
-      points: filteredPoints,
+      points: compactDepthObstaclePoints(projected.points, filterPose),
       status: "live",
     };
   }, [depthCloudMessage, depthTopic, filterPose, tfRevision]);

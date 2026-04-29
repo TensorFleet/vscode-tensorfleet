@@ -568,8 +568,8 @@ function drawPointOverlay(
   }
 }
 
-const DEPTH_Z_LOW = 0.03;
-const DEPTH_Z_HIGH = 0.45;
+const DEPTH_Z_LOW = 0.08;
+const DEPTH_Z_HIGH = 0.55;
 
 function drawDepthPointOverlay(
   canvas: HTMLCanvasElement,
@@ -594,10 +594,8 @@ function drawDepthPointOverlay(
     return;
   }
 
-  // Additive blending: dense clusters of overlapping halos accumulate naturally
-  context.globalCompositeOperation = "lighter";
-
-  const HALO_R = 8;
+  const HALO_R = 4.5;
+  const CORE_R = 1.45;
 
   for (const point of points) {
     const normalizedLeft = (point.x - bounds.minX) / bounds.width;
@@ -612,25 +610,27 @@ function drawDepthPointOverlay(
       continue;
     }
 
-    // Map z-height to color: low (floor-level) → warm amber, high (obstacle) → vivid red-orange
+    // Map obstacle height to color while keeping the overlay subordinate to the map and route.
     const zNorm = Math.min(1, Math.max(0, (point.z - DEPTH_Z_LOW) / (DEPTH_Z_HIGH - DEPTH_Z_LOW)));
-    const r = 255;
-    const g = Math.round(158 - zNorm * 108); // 158 (amber) → 50 (red-orange)
-    const b = Math.round(36 - zNorm * 26);   // 36 → 10
-    const coreAlpha = 0.20 + zNorm * 0.22;   // 0.20 → 0.42 — modest per-point so clusters pop naturally
-    const haloAlpha = 0.048 + zNorm * 0.06;  // 0.048 → 0.11
+    const r = 245;
+    const g = Math.round(166 - zNorm * 92);
+    const b = Math.round(54 - zNorm * 28);
+    const coreAlpha = 0.42 + zNorm * 0.18;
+    const haloAlpha = 0.08 + zNorm * 0.05;
 
     const gradient = context.createRadialGradient(x, y, 0, x, y, HALO_R);
-    gradient.addColorStop(0, `rgba(${r},${g},${b},${coreAlpha.toFixed(3)})`);
-    gradient.addColorStop(0.3, `rgba(${r},${g},${b},${haloAlpha.toFixed(3)})`);
+    gradient.addColorStop(0, `rgba(${r},${g},${b},${haloAlpha.toFixed(3)})`);
     gradient.addColorStop(1, `rgba(${r},${g},${b},0)`);
     context.fillStyle = gradient;
     context.beginPath();
     context.arc(x, y, HALO_R, 0, Math.PI * 2);
     context.fill();
-  }
 
-  context.globalCompositeOperation = "source-over";
+    context.fillStyle = `rgba(${r},${g},${b},${coreAlpha.toFixed(3)})`;
+    context.beginPath();
+    context.arc(x, y, CORE_R, 0, Math.PI * 2);
+    context.fill();
+  }
 }
 
 function ZoomInIcon(props: { className?: string }) {

@@ -816,7 +816,7 @@ body {
 }
 
 .vacuum-map-stage__overlay-canvas--depth {
-  z-index: 6;
+  z-index: 5;
 }
 
 .vacuum-map-path,
