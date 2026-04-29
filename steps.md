@@ -3,7 +3,7 @@
 ## Scope
 
 This file records the current state of the TurtleBot4 + Nav2 validation work as
-of April 28, 2026.
+of April 29, 2026.
 
 It is a runtime handoff, not a design doc.
 
@@ -122,7 +122,8 @@ Practical consequence:
 
 ## Current Truth
 
-The main earlier blockers are resolved.
+The main earlier blockers are resolved, and the Layer 2 TurtleBot4/Nav2
+operator slice is now closed.
 
 What is now true:
 
@@ -132,23 +133,44 @@ What is now true:
 - duplicate odom/scan/TF bridges are removed
 - TurtleBot4 VMs now get enough CPU to avoid the earlier 1-vCPU collapse mode
 - short `NavigateToPose` runs succeed end-to-end
-- the extension now has a reusable Nav2 runtime seam for the future operator UI
+- the extension now has a reusable Nav2 runtime seam shared by the debug Nav2
+  panel and the `Vacuum Control` operator panel
+- `Vacuum Control` works against the live VM runtime as the current Layer 2
+  operator surface
 
-The main missing Layer 2 deliverable is no longer raw Nav2 transport validation.
-It is a usable operator surface in the extension.
+Validated `Vacuum Control` operator flows:
 
-Current panels are now sufficient for debugging and runtime validation, but they
-are not yet the intended near-final Layer 2 operator experience.
+- connect to the live VM Foxglove endpoint
+- render the live occupancy map in the operator map canvas
+- select a navigation target from the rendered map
+- send a `NavigateToPose` goal through the live Nav2 action API
+- observe live progress from Nav2 feedback/status
+- cancel an active goal and observe the stopped/canceled state
+- observe terminal navigation state after a run completes, fails, or is canceled
+
+This closes the Layer 2 operator slice. The current panels remain useful for
+debugging and runtime validation, but the normal Layer 2 path is now the
+single-panel `Vacuum Control` workflow.
 
 The dock issue remains important, but it should now be treated as a runtime
 caveat:
 
 - navigation validation must still start from a clear, undocked pose
 - starting on or against dock geometry can still make a healthy run look broken
+- clear-space validation is still required before treating a failed or stalled
+  navigation run as a software failure
+
+Explicitly out of Layer 2:
+
+- `vacuum_adapter` contract work
+- mission lifecycle semantics
+- docking workflow behavior
+- battery or charging simulation
+- room, zone, or coverage-cleaning workflows
 
 ## Layer 2 Status
 
-Layer 2 is close, but the exit condition should stay strict.
+Layer 2 is closed for the TurtleBot4/Nav2 operator slice.
 
 What is proven:
 
@@ -159,16 +181,12 @@ What is proven:
 - robot motion exists in simulation
 - short end-to-end navigation success is observed
 - the shared Nav2 runtime layer exists and `Nav2Panel` already runs on it
+- `Vacuum Control` connects to the live VM runtime
+- `Vacuum Control` renders the live map
+- map target selection drives the Nav2 goal-send path
+- progress, cancel, and terminal states are visible in the operator panel
 
-What is still missing for Layer 2:
-
-- completion of the dedicated user-facing operator panel in the extension
-- runtime-hardening of the occupancy-map-based navigation UI
-- explicit runtime validation of visual goal placement from the map
-- operator-facing progress and terminal result presentation that is verified
-  against the live runtime
-- a one-panel workflow that does not require opening debug tools in the normal
-  path
+What remains after Layer 2 is follow-up work, not Layer 2 exit work.
 
 What remains a runtime caveat:
 
@@ -177,28 +195,32 @@ What remains a runtime caveat:
 
 ## Recommended Next Step
 
-The next solid step is to finish the first real Layer 2 operator UI in the
-extension: the dedicated `Vacuum Control` panel that already exists in the repo
-as the first version of the future vacuum operator shell.
+The next solid step is to move beyond the closed Layer 2 operator slice without
+expanding its scope retroactively.
 
-The focus is no longer creating the shell from scratch. The focus is completing
-each visible component as a runtime-testable Layer 2 slice.
+Recommended follow-up work should be tracked separately and can include:
 
-## Execution Order
+- supporting debug surface polish for Raw Messages and 3D Sensor View
+- clear-space / undocked-start validation improvements
+- later adapter, mission, and docking layers after the Nav2 operator flow stays
+  stable
 
-Build this in ordered steps inside the same Layer 2 implementation slice:
+## Completed Execution Order
+
+This was the completed order for the Layer 2 implementation slice:
 
 1. lock the current shell and document what already exists
 2. complete each visible component against live runtime behavior
 3. validate the full one-panel operator flow end-to-end
-4. defer non-critical follow-up surfaces until after Step 2 is runtime-solid
+4. defer non-critical follow-up surfaces until after the operator slice is
+   runtime-solid
 
 ## Step 1: Operator Shell UI
 
-Build the panel first as a polished UI shell, even before topic wiring is
-complete.
+This shell stage is complete. It built the panel first as a polished UI shell
+before full topic wiring.
 
-The shell should be:
+The shell is:
 
 - a new standalone panel: `Vacuum Control`
 - map-first and user-oriented rather than debug-oriented
@@ -209,7 +231,7 @@ The shell should be:
   - progress
   - actions
 
-The first shell should include:
+The first shell included:
 
 - a left navigation rail
 - a header / top bar
@@ -228,17 +250,16 @@ Visible shell components should be:
 - `ActionsCard`
 - `LeftNavRail`
 
-At this step, the panel can use local mock state and placeholder map content if
-needed. The goal is to lock the product-facing structure and visual language
-before runtime wiring.
+The product-facing structure and visual language are now locked for the closed
+Layer 2 operator slice.
 
-`WarningCard` is deferred. It is not part of the current Layer 2 exit
-criterion.
+`WarningCard` remains deferred. It is not part of the closed Layer 2 operator
+slice.
 
 ## Current UI Truth
 
-The `Vacuum Control` shell now exists in the repo and should be treated as the
-current Step 2 baseline rather than as a future mockup target.
+The `Vacuum Control` shell now exists in the repo and is the validated Layer 2
+operator surface rather than a future mockup target.
 
 Current visible shell components:
 
@@ -331,7 +352,7 @@ Current bridge and overlay truth:
 - point projection in `mapOverlayUtils.ts` supports both plain JS arrays and
   typed arrays (e.g. `Float32Array`) from Foxglove-encoded point cloud fields
 
-Current Layer 2 topics and services already used by the panel/runtime:
+Closed Layer 2 topics and services already used by the panel/runtime:
 
 - `/map`
 - `/scan`
@@ -357,214 +378,9 @@ Current Layer 2 topics and services already used by the panel/runtime:
 - `/navigate_to_pose/_action/status`
 - `/navigate_to_pose/_action/feedback`
 
-## Step 2: Operator Interaction Model
+## Layer 2 Closure Checklist
 
-This step is no longer “build the mockup.” The shell already exists.
-
-Step 2 should now be treated as ordered component-completion work where each
-item is runtime-testable on its own.
-
-The important rule here:
-
-- keep operator-facing copy product-oriented
-- do not let raw ROS terminology leak into the visible operator copy
-- treat each item as done only when it works against real runtime conditions,
-  not just local mock state
-
-### 2.1 `Header`
-
-Implement:
-
-- show live connection state in the header pill
-- disconnected pill is clickable and opens the connection overlay directly
-- keep the product title and section label stable
-- persistent settings gear button in the header (always accessible)
-
-Runtime done when:
-
-- disconnected runtime shows offline header state; clicking the pill opens
-  connection settings
-- connecting pill shows a pulse animation on the status dot
-- connected runtime shows connected state
-- header settings button opens the connection overlay from any state
-
-### 2.2 `StatusStrip`
-
-Implement:
-
-- map, localization, readiness, and target-selection chips
-- chip state derived from live runtime state rather than hard-coded shell values
-
-Runtime done when:
-
-- no live `/map` keeps map readiness inactive
-- live `/map` activates the map chip
-- live `/pose` or equivalent active localization activates the localization chip
-- readiness becomes active only when the panel is actually preflight-ready
-- selecting a target activates the target chip
-
-### 2.3 `MapCanvas`
-
-Implement:
-
-- render the real occupancy grid from `/map`
-- render global and local costmaps as optional overlays
-- expose a floating layers checklist for Map, Global costmap, Local costmap,
-  Plan, Lidar, and Depth obstacles
-- let the operator toggle the active plan overlay
-- project lidar and depth obstacle points into map coordinates before drawing
-- use placeholder content only when a live map is not available
-- keep map-first interaction as the center of the panel
-
-Runtime done when:
-
-- live `/map` renders occupancy content rather than the placeholder map
-- live `/global_costmap/costmap` and `/local_costmap/costmap` can be toggled
-  without disrupting target placement
-- the Plan layer can be hidden and restored while preserving current route
-  state
-- lidar and depth obstacle layers show `No TF` or `Waiting` instead of drawing
-  incorrect points when projection inputs are unavailable
-- lack of `/map` falls back to placeholder content instead of a broken canvas
-- the map remains usable as the main target-selection surface
-
-### 2.4 `MapControls`
-
-Implement:
-
-- zoom in
-- zoom out
-- reset / center zoom
-- zoom percentage readout
-- disabled states at zoom bounds
-- controls that do not interfere with pointer-based target selection
-
-Runtime done when:
-
-- zoom controls visually change the map viewport
-- reset returns the map to the default zoom
-- using the controls does not unintentionally place or rotate a target
-- zoom controls clearly report and bound the current viewport scale
-
-### 2.5 `Robot Marker + Route Overlay`
-
-Implement:
-
-- robot marker from the live localized pose
-- route overlay from the active plan
-- target marker aligned with the selected or sent target
-- staged preview line before send
-- keep sensor overlays visually below robot and target markers
-- route and marker styling remains readable over light and dark occupancy cells
-
-Runtime done when:
-
-- live pose places the robot marker correctly on the map
-- selecting a target shows a destination marker in the expected location
-- active route data renders a visible route overlay
-- route visibility follows the Plan layer toggle
-- lidar/depth overlay points do not cover the robot or destination markers
-- route and markers remain aligned while the map view is zoomed
-- robot and target labels remain legible over the rendered map
-
-### 2.6 `CurrentStateCard`
-
-Implement:
-
-- operator-facing state mapping for:
-  - disconnected
-  - waiting for map
-  - waiting for localization
-  - ready
-  - active
-  - completed
-  - failed
-  - canceled
-
-Runtime done when:
-
-- disconnected bridge shows the offline card state
-- connected runtime without `/map` shows waiting-for-map
-- live map with incomplete localization shows a positioning / waiting state
-- ready runtime without an active goal shows ready
-- active goal shows in-progress copy
-- terminal success, failure, and canceled outcomes map to the correct card
-- card shows readiness evidence for connection, map, and robot position
-- card does not duplicate the status-strip state badge
-
-### 2.7 `SelectedDestinationCard`
-
-Implement:
-
-- empty state when no target is selected
-- selected state with distance and heading derived from current pose and target
-- displayed sent target during active / terminal runs
-- target facing, bearing from robot, and map coordinates
-
-Runtime done when:
-
-- no target shows the empty card state
-- clicking the map updates the card to a selected state
-- displayed distance, facing, bearing, and coordinates update to match the
-  chosen target
-- sending a goal keeps the sent destination visible while the run is active
-
-### 2.8 `ActionsCard`
-
-Implement:
-
-- open connection settings while disconnected
-- start run when destination and readiness checks are available
-- retry / run again labels for terminal states
-- stop run during an active goal
-- clear destination only when no run is active
-- action hint copy that explains the current allowed operation
-
-Runtime done when:
-
-- disconnected state offers connection settings instead of a dead start action
-- no target disables start and explains that the map must be used
-- blocked readiness disables start and explains the missing prerequisite
-- sending a goal shows the sending state and starts the run
-- active runs swap the primary action to `Stop run`
-- stop shows a pending state while cancellation is in progress
-- terminal run allows retry / run again and clear destination
-
-### 2.9 `ProgressCard`
-
-Implement:
-
-- show progress only once a run has started or reached a terminal state
-- show active / completed / failed / canceled progress status
-- show progress label, percent, and distance remaining
-- show elapsed navigation time and recovery count from Nav2 feedback
-- omit ETA until it is proven reliable in runtime feedback
-
-Runtime done when:
-
-- idle state hides the progress card
-- sending or active run shows progress
-- live feedback updates distance remaining, elapsed navigation time, and
-  recovery count when available
-- success, failure, and canceled runs keep a correct terminal progress state
-- missing elapsed time or recovery feedback degrades to `n/a` / `0` without
-  breaking layout
-
-### 2.10 `LeftNavRail`
-
-Implement:
-
-- `Navigation` stays the active item for this slice
-- `Settings` button at the bottom of the rail opens the connection overlay
-
-Runtime done when:
-
-- the current screen is clearly `Navigation`
-- the settings button works from both the rail and the header
-
-### Step 2 Validation Checklist
-
-Treat Step 2 as complete only when these runtime checks pass:
+The following runtime checks define the closed Layer 2 operator slice:
 
 - disconnected bridge shows offline header and state card
 - connected bridge without `/map` shows waiting-for-map
@@ -592,18 +408,9 @@ bun run --cwd panels-standalone build
 
 ### Suggested Components After Step 2
 
-These are useful follow-up components, but not part of the current Step 2 exit
-criteria:
+These are useful follow-up components, but not part of the closed Layer 2
+operator slice:
 
 - `RunHistoryPanel`
 - `GoalDetailsInspector`
 - `RuntimeHealthDrawer`
-
-## Step 3: Runtime Wiring
-
-Once the shell and interactions are correct, wire the panel to the extracted
-shared Nav2 runtime layer.
-
-This runtime step should consume the existing shared seam:
-
-- `useNav2Runtime.ts`

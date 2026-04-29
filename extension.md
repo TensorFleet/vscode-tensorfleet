@@ -21,12 +21,39 @@ current TurtleBot4/Nav2 VM backend.
 The extension should:
 
 1. Connect to the running VM bridge endpoints.
-2. Focus Layer 2 work on the single-panel `Vacuum Control` operator workflow.
+2. Treat the single-panel `Vacuum Control` operator workflow as the closed
+   Layer 2 TurtleBot4/Nav2 slice.
 3. Show live map, lidar, odom/TF, costmap, and navigation status data where the
    current panels support those message types.
 4. Expose enough Nav2 action visibility to drive and validate goal execution.
 5. Record panel gaps as extension follow-up tasks rather than adding a new
    robotics-stack layer.
+
+## Layer 2 Freeze
+
+As of April 29, 2026, the Layer 2 TurtleBot4/Nav2 operator slice is closed.
+
+Frozen truth:
+
+- `Vacuum Control` works against the live VM runtime through the current
+  Foxglove bridge path.
+- The operator panel validates the normal one-panel flow: connect, render map,
+  select a map target, send a Nav2 goal, observe progress, cancel when needed,
+  and observe terminal state.
+- The panel uses the existing TurtleBot4/Nav2 VM surfaces directly. It does not
+  require a vacuum adapter, mission lifecycle, docking workflow, or normalized
+  backend contract.
+- Remaining dock-blocked start behavior is a runtime caveat, not a Layer 2
+  blocker.
+- Clear-space validation is still required before interpreting a failed or
+  stalled run as a software failure.
+
+Explicitly out of Layer 2:
+
+- `vacuum_adapter` messages, services, or backend contract
+- vacuum mission lifecycle UI
+- docking behavior or return-to-dock workflow
+- room, zone, coverage, battery, and charging semantics
 
 ## Extension Repository
 
@@ -34,7 +61,7 @@ The extension repo is:
 
 - `~/vscode-tensorfleet`
 
-Important files for the current Layer 2 slice:
+Important files for the closed Layer 2 slice:
 
 - `src/extension.ts`
 - `src/regions.ts`
@@ -60,7 +87,7 @@ Current notable extension state:
 - `src/extension.ts` injects `window.TENSORFLEET_VM_CONFIG_ID` into standalone
   panels when a VM config is known.
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
-  already exists as the current Layer 2 operator shell.
+  already exists as the closed Layer 2 operator shell.
 - `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
   now holds the dedicated map rendering and interaction surface for that shell.
 - `MapCanvas.tsx` now accepts both plain-array and typed-array occupancy-grid
@@ -91,7 +118,7 @@ Current notable extension state:
 
 ## VM Bridge Endpoints
 
-For this phase, the extension should use the already running VM bridge
+For this closed Layer 2 slice, the extension uses the already running VM bridge
 endpoints:
 
 - Foxglove/Lichtblick panels: `ws://172.16.0.10:8765`
@@ -107,7 +134,7 @@ work should assume Foxglove first unless a panel explicitly needs rosbridge.
 
 ## Vacuum Control Current Truth
 
-The current Layer 2 focus is the dedicated `Vacuum Control` panel rather than a
+The closed Layer 2 slice is the dedicated `Vacuum Control` panel rather than a
 broader TurtleBot4 preset effort across every existing panel.
 
 Current runtime seam:
@@ -150,8 +177,8 @@ Important correction:
   an outdated assumption for this slice
 - the current operator panel and shared Nav2 runtime are built around the
   global topics and action paths listed above
-- do not re-scope current Step 2 work around namespaced topic defaults unless
-  the runtime changes again
+- do not re-scope this closed operator slice around namespaced topic defaults
+  unless the runtime changes again
 
 ## Supporting Panel Mapping
 
@@ -168,14 +195,14 @@ Files:
 
 Purpose:
 
-- the primary Layer 2 operator surface
+- the validated Layer 2 operator surface
 - map-first goal selection
 - operator-facing state, progress, and actions
 - `NavigateToPose` send/cancel workflow using the shared runtime seam
 
 Current expectation:
 
-- this panel is the center of the current Layer 2 extension work
+- this panel is the closed Layer 2 operator workflow
 - `Header` and `StatusStrip` remain inline in `VacuumControlPanel.tsx`
 - `MapCanvas` is the dedicated internal map seam for rendering and placement
 - `MapCanvas` now renders the live occupancy grid correctly for Foxglove
@@ -206,8 +233,8 @@ Current expectation:
 - `VacuumControlPanel.tsx` derives the current pose display via `useMemo` from
   `runtime.currentMapPose` through `getPoseCoordinates` rather than using
   `runtime.currentMapCoordinates` directly
-- Step 2 should be completed by hardening each visible component against live
-  runtime behavior rather than by adding more mock-only UI
+- future changes should maintain this live-runtime behavior rather than adding
+  mock-only UI
 
 ### 3D Sensor View
 
@@ -215,7 +242,7 @@ File:
 
 - `~/vscode-tensorfleet/panels-standalone/src/components/SensorView3D/SensorView3DPanel.tsx`
 
-Useful current Layer 2 topics:
+Useful closed Layer 2 topics:
 
 - `/scan`
 - `/odom`
@@ -243,7 +270,7 @@ File:
 
 - `~/vscode-tensorfleet/panels-standalone/src/components/RawMessages/RawMessagesPanel.tsx`
 
-Useful current Layer 2 topics:
+Useful closed Layer 2 topics:
 
 - `/navigate_to_pose/_action/status` if advertised
 - `/navigate_to_pose/_action/feedback` if advertised
@@ -289,17 +316,18 @@ Useful extension-side follow-up:
    - `/local_costmap/costmap`
    - `/global_costmap/costmap`
 
-For the current step, prefer `Vacuum Control`, the 3D sensor panel, and raw
-messages for map and costmap validation.
+For follow-up debugging and regression checks, prefer `Vacuum Control`, the 3D
+sensor panel, and raw messages for map and costmap validation.
 
-## Features We Can Add On The VS Code Extension Side Right Now
+## Features We Can Add On The VS Code Extension Side After Layer 2
 
 These features should work with the current VM stack and do not require a new
-vacuum adapter.
+vacuum adapter. They are follow-up work after the closed Layer 2 operator
+slice, not Layer 2 exit criteria.
 
-1. Vacuum Control component hardening
+1. Vacuum Control maintenance hardening
 
-   Continue finishing the single-panel operator flow:
+   Keep the validated single-panel operator flow stable:
 
    - map rendering
    - layer visibility controls
@@ -310,7 +338,8 @@ vacuum adapter.
    - progress state
    - action state
 
-   This is the highest-value current Layer 2 extension work.
+   This is now maintenance and regression hardening for the closed Layer 2
+   slice.
 
 2. 3D debug layout
 
@@ -358,7 +387,7 @@ vacuum adapter.
 
    This should be a robot/SLAM map panel, not an OpenLayers GPS map.
 
-   This is now lower priority than before for the current Layer 2 slice because
+   This is now lower priority than before for the closed Layer 2 slice because
    `Vacuum Control` already renders the base occupancy map and local/global
    costmaps as operator overlays.
 
@@ -401,12 +430,14 @@ vacuum adapter.
 
 ## Recommended Immediate Extension Patch
 
-The next patch in `~/vscode-tensorfleet` should be small and concrete:
+The current documentation freeze records that the immediate Layer 2 operator
+patch is complete. Future patches in `~/vscode-tensorfleet` should stay small
+and concrete:
 
 1. [x] Keep `steps.md` aligned with the actual `Vacuum Control` component state.
 2. [x] Keep `extension.md` aligned with the global Layer 2 topic map used by
    `useNav2Runtime.ts`.
-3. [x] Continue finishing `VacuumControlPanel.tsx` component behavior as a
+3. [x] Validate `VacuumControlPanel.tsx` against the live VM as the
    runtime-testable operator surface.
 4. [x] Add `TeleopCard` for manual robot control via `/cmd_vel_raw`.
 5. [x] Add `CameraOverlay` for live camera feed from the OAK-D sensor.
@@ -422,7 +453,7 @@ bun run typecheck
 bun run --cwd panels-standalone build
 ```
 
-Then run the extension against the VM and validate:
+The closed Layer 2 runtime validation covers:
 
 - Foxglove connection reaches `ws://172.16.0.10:8765`.
 - `Vacuum Control` connects and shows the live connection state.
@@ -438,6 +469,7 @@ Then run the extension against the VM and validate:
 - `Vacuum Control` can send a goal through `/navigate_to_pose/_action/send_goal`.
 - `Vacuum Control` shows live progress from advertised Nav2 feedback when
   available.
+- `Vacuum Control` can cancel an active run and show canceled / terminal state.
 - supporting debug panels can inspect `/scan`, `/odom`, `/tf`, `/tf_static`,
   `/map`, and costmaps as needed.
 

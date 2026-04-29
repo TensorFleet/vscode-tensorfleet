@@ -135,9 +135,10 @@ Current positioning:
 - OpenClaw may become useful later, but should sit above a stable
   vacuum-facing contract rather than directly on TurtleBot4 internals.
 
-Current extension truth for the active Layer 2 slice:
+Current extension truth for the closed Layer 2 slice:
 
-- `Vacuum Control` is the main operator surface now being hardened
+- the Layer 2 TurtleBot4/Nav2 operator slice is closed as of April 29, 2026
+- `Vacuum Control` is the validated operator surface for this slice
 - the panel is map-first and driven by the extracted shared Nav2 runtime seam
 - the dedicated `MapCanvas` surface now renders live occupancy-grid data from
   `/map` and tolerates Foxglove typed-array payload shapes
@@ -154,11 +155,22 @@ Current extension truth for the active Layer 2 slice:
   it discovers image topics from the bridge and prefers the OAK-D RGB preview
   stream (`/oakd/rgb/preview/image_raw`); camera access validates one of the
   first usable vertical slice success criteria (pose, map, and camera visible)
+- live VM validation covers connect, map render, target select, send goal,
+  progress visibility, cancel, and terminal state
+
+Remaining caveats for this slice:
+
+- dock-blocked starts can still make a healthy Nav2 stack look stalled or
+  failed
+- clear-space validation is still required before treating navigation failure
+  as a software defect
 
 Practical implication:
 
-- first prove the stack through plain ROS clients and the current panels;
-- only then add higher-level agent or workflow integration on top.
+- the TurtleBot4/Nav2 operator flow is proven through the current extension
+  panel and supporting runtime surfaces;
+- adapter, mission, docking, room/zone, battery, and charging semantics remain
+  future layers above this closed Layer 2 slice.
 
 ## Role Of The VS Code Extension
 
@@ -190,14 +202,15 @@ Current truth:
 - the existing TurtleBot4-facing panels are primarily debugging and validation
   surfaces;
 - they are useful for proving runtime health, TF, Nav2 traffic, and motion;
-- they do not yet provide the intended Layer 2 navigation operator workflow.
+- `Vacuum Control` now provides the validated Layer 2 navigation operator
+  workflow.
 
 Near-term implication:
 
-- the next extension-side Layer 2 slice should be a dedicated TurtleBot4
-  navigation operator panel;
-- that panel should be map-first, goal-oriented, and separate from the current
-  debug surfaces.
+- near-term extension work should maintain and regress-test the closed
+  TurtleBot4/Nav2 operator slice;
+- new adapter, mission, docking, room/zone, battery, and charging work should
+  be planned as later layers, not as additions to Layer 2.
 
 As the stack matures, the extension should also be a natural place for a small
 set of vacuum-specific controls and status surfaces, such as:
