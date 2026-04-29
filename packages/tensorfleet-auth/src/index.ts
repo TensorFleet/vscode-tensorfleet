@@ -9,4 +9,5 @@
  */
 
 export * from './oauth-core.js';
+export * from './regions.js';
 export * from './types.js';

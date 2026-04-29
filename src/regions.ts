@@ -12,20 +12,38 @@ import * as vscode from 'vscode';
 import { isFeatureEnabled } from './env';
 import {
   getAvailableRegions as getConfiguredAvailableRegions,
+  getRegionBackendUrl,
+  getRegionFoxgloveUrl,
+  getRegionIdFromPickLabel,
   getRegionOrDefault,
+  getRegionPickItems,
+  getRegionRos2WebsocketUrl,
+  getRegionVmManagerUrl,
+  resolveRegionId,
+  assertRegionAvailable,
+  DEFAULT_REGION,
+  REGIONS,
+  type RegionPickItem,
   type RegionConfig,
-} from '../panels-standalone/packages/tensorfleet-util/src/config/server-config';
-import { DEFAULT_REGION } from '../panels-standalone/packages/tensorfleet-util/src/config/server-config';
+} from 'tensorfleet-auth';
 
-export type { RegionConfig };
-export { DEFAULT_REGION, REGIONS } from '../panels-standalone/packages/tensorfleet-util/src/config/server-config';
+export type { RegionConfig, RegionPickItem };
+export { DEFAULT_REGION, REGIONS };
+
+function includeDevRegions(): boolean {
+  return isFeatureEnabled('localRegion');
+}
+
+function getConfiguredRegionId(): string | undefined {
+  return vscode.workspace.getConfiguration('tensorfleet').get<string>('region');
+}
 
 /**
  * Get regions available for the current runtime mode
  * Filters out dev-only regions when running in production mode
  */
 export function getAvailableRegions(): Record<string, RegionConfig> {
-  return getConfiguredAvailableRegions(isFeatureEnabled('localRegion'));
+  return getConfiguredAvailableRegions(includeDevRegions());
 }
 
 /**
@@ -33,56 +51,42 @@ export function getAvailableRegions(): Record<string, RegionConfig> {
  * Falls back to default if the configured region is not available (e.g., local in production)
  */
 export function getSelectedRegionId(): string {
-  const config = vscode.workspace.getConfiguration('tensorfleet');
-  const configuredRegion = config.get<string>('region') || DEFAULT_REGION;
-
-  // If the configured region is available, use it
-  const availableRegions = getAvailableRegions();
-  if (availableRegions[configuredRegion]) {
-    return configuredRegion;
-  }
-
-  // Fall back to default if configured region is not available
-  // (e.g., "local" was configured but we're in production mode)
-  return DEFAULT_REGION;
+  return resolveRegionId(getConfiguredRegionId(), includeDevRegions());
 }
 
 /**
  * Get the configuration for the currently selected region
  */
 export function getSelectedRegion(): RegionConfig {
-  const regionId = getSelectedRegionId();
-  return getRegionOrDefault(regionId, isFeatureEnabled('localRegion'));
+  return getRegionOrDefault(getConfiguredRegionId(), includeDevRegions());
 }
 
 /**
  * Get the backend URL for the current region
  */
 export function getBackendUrl(): string {
-  return getSelectedRegion().backendUrl;
+  return getRegionBackendUrl(getConfiguredRegionId(), includeDevRegions());
 }
 
 /**
  * Get the VM Manager URL for the current region
  */
 export function getVmManagerUrl(): string {
-  return getSelectedRegion().vmManagerUrl;
+  return getRegionVmManagerUrl(getConfiguredRegionId(), includeDevRegions());
 }
 
 /**
  * Get the Foxglove WebSocket URL for a given IP
  */
 export function getFoxgloveUrl(ipAddress: string): string {
-  const region = getSelectedRegion();
-  return `ws://${ipAddress}:${region.foxglovePort}`;
+  return getRegionFoxgloveUrl(ipAddress, getConfiguredRegionId(), includeDevRegions());
 }
 
 /**
  * Get the ROS2 WebSocket URL for a given IP
  */
 export function getRos2WebsocketUrl(ipAddress: string): string {
-  const region = getSelectedRegion();
-  return `ws://${ipAddress}:${region.ros2Port}`;
+  return getRegionRos2WebsocketUrl(ipAddress, getConfiguredRegionId(), includeDevRegions());
 }
 
 /**
@@ -90,10 +94,7 @@ export function getRos2WebsocketUrl(ipAddress: string): string {
  * Only allows setting regions that are available in the current build mode
  */
 export async function setSelectedRegion(regionId: string): Promise<void> {
-  const availableRegions = getAvailableRegions();
-  if (!availableRegions[regionId]) {
-    throw new Error(`Region not available: ${regionId}`);
-  }
+  assertRegionAvailable(regionId, includeDevRegions());
   const config = vscode.workspace.getConfiguration('tensorfleet');
   await config.update('region', regionId, vscode.ConfigurationTarget.Global);
 }
@@ -103,16 +104,7 @@ export async function setSelectedRegion(regionId: string): Promise<void> {
  * Only shows regions available in the current build mode
  */
 export function getRegionQuickPickItems(): vscode.QuickPickItem[] {
-  const currentRegionId = getSelectedRegionId();
-  const availableRegions = getAvailableRegions();
-
-  return Object.values(availableRegions).map(region => ({
-    label: `${region.icon} ${region.name}`,
-    description: region.id === currentRegionId ? '$(check) Current' : '',
-    detail: region.description,
-    // Store region ID for selection
-    picked: region.id === currentRegionId
-  }));
+  return getRegionPickItems(getConfiguredRegionId(), includeDevRegions());
 }
 
 /**
@@ -120,13 +112,7 @@ export function getRegionQuickPickItems(): vscode.QuickPickItem[] {
  * Only matches regions available in the current build mode
  */
 export function getRegionIdFromQuickPick(label: string): string | undefined {
-  const availableRegions = getAvailableRegions();
-  for (const [id, region] of Object.entries(availableRegions)) {
-    if (label.includes(region.name)) {
-      return id;
-    }
-  }
-  return undefined;
+  return getRegionIdFromPickLabel(label, includeDevRegions());
 }
 
 /**
