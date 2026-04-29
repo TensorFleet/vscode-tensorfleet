@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
-import { useNav2Runtime } from "../Nav2/runtime/useNav2Runtime";
-import { formatRosDuration, getPoseCoordinates } from "../Nav2/runtime/nav2RuntimeUtils";
-import type { GoalState, TopicHealth } from "../Nav2/runtime/nav2RuntimeTypes";
+import { formatRosDuration } from "../Nav2/runtime/nav2RuntimeUtils";
+import {
+  useVacuumAdapter,
+  type VacuumMissionState,
+  type VacuumNavigationState,
+} from "../../vacuum-adapter";
 import { MapCanvas, type MapCanvasTarget, type RouteVisualState } from "./MapCanvas";
 import { TeleopCard } from "./TeleopCard";
 import "./VacuumControlPanel.css";
@@ -12,24 +15,24 @@ type DraftTarget = MapCanvasTarget;
 type OperatorTone = "ready" | "warning" | "success" | "danger" | "info";
 type StatusChipTone = "success" | "active" | "inactive";
 
+type OperatorStateKey =
+  | "disconnected"
+  | "waiting-map"
+  | "waiting-localization"
+  | "checking"
+  | "ready"
+  | "navigating"
+  | "completed"
+  | "failed"
+  | "canceled";
+
 type OperatorState = {
-  key:
-    | "disconnected"
-    | "waiting-map"
-    | "waiting-localization"
-    | "checking"
-    | "ready"
-    | "navigating"
-    | "completed"
-    | "failed"
-    | "canceled";
+  key: OperatorStateKey;
   title: string;
   detail: string;
   badge: string;
   tone: OperatorTone;
 };
-
-const ACTIVE_GOAL_STATES = new Set<GoalState>(["sending", "accepted", "executing", "canceling"]);
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -51,9 +54,8 @@ function formatCoordinate(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "n/a";
 }
 
-function formatRecoveries(value: unknown): string {
-  const numeric = toFiniteNumber(value);
-  return numeric == null ? "0" : String(Math.max(0, Math.round(numeric)));
+function formatRecoveries(value: number | null): string {
+  return value == null ? "0" : String(Math.max(0, Math.round(value)));
 }
 
 function distanceBetween(
@@ -82,29 +84,27 @@ function headingLabel(yaw: number): string {
   return headings[Math.round(normalized / 45) % headings.length]!;
 }
 
-function getTopicState(topicHealth: TopicHealth[], topic: string): TopicHealth["status"] | null {
-  return topicHealth.find((entry) => entry.topic === topic)?.status ?? null;
-}
-
 function getOperatorState(args: {
-  connectionStatus: "connected" | "connecting" | "disconnected";
-  mapStatus: TopicHealth["status"] | null;
+  availability: "online" | "connecting" | "offline";
+  mapReady: boolean;
   poseAvailable: boolean;
   preflightReady: boolean;
-  goalState: GoalState;
+  navigationState: VacuumNavigationState;
+  missionState: VacuumMissionState;
+  isCanceling: boolean;
   targetSelected: boolean;
 }): OperatorState {
-  if (args.connectionStatus !== "connected") {
+  if (args.availability !== "online") {
     return {
       key: "disconnected",
-      title: args.connectionStatus === "connecting" ? "Connecting" : "Disconnected",
+      title: args.availability === "connecting" ? "Connecting" : "Disconnected",
       detail: "Connection needed.",
-      badge: args.connectionStatus === "connecting" ? "Connecting" : "Offline",
+      badge: args.availability === "connecting" ? "Connecting" : "Offline",
       tone: "warning",
     };
   }
 
-  if (args.mapStatus !== "receiving") {
+  if (!args.mapReady) {
     return {
       key: "waiting-map",
       title: "Waiting for map",
@@ -134,17 +134,18 @@ function getOperatorState(args: {
     };
   }
 
-  if (ACTIVE_GOAL_STATES.has(args.goalState)) {
+  if (args.missionState === "navigating") {
+    const stopping = args.isCanceling || args.navigationState === "canceling";
     return {
       key: "navigating",
-      title: args.goalState === "canceling" ? "Stopping" : "On the way",
-      detail: args.goalState === "canceling" ? "Stopping this run." : "Moving to the selected destination.",
-      badge: args.goalState === "canceling" ? "Stopping" : "Active",
+      title: stopping ? "Stopping" : "On the way",
+      detail: stopping ? "Stopping this run." : "Moving to the selected destination.",
+      badge: stopping ? "Stopping" : "Active",
       tone: "info",
     };
   }
 
-  if (args.goalState === "succeeded") {
+  if (args.navigationState === "completed") {
     return {
       key: "completed",
       title: "Completed",
@@ -154,7 +155,7 @@ function getOperatorState(args: {
     };
   }
 
-  if (args.goalState === "canceled") {
+  if (args.navigationState === "canceled") {
     return {
       key: "canceled",
       title: "Canceled",
@@ -164,7 +165,7 @@ function getOperatorState(args: {
     };
   }
 
-  if (args.goalState === "aborted" || args.goalState === "rejected" || args.goalState === "unknown") {
+  if (args.navigationState === "failed" || args.navigationState === "unknown") {
     return {
       key: "failed",
       title: "Needs attention",
@@ -183,17 +184,21 @@ function getOperatorState(args: {
   };
 }
 
-function getRouteVisualState(goalState: GoalState, hasTarget: boolean): RouteVisualState {
-  if (goalState === "succeeded") {
+function getRouteVisualState(
+  navigationState: VacuumNavigationState,
+  active: boolean,
+  hasTarget: boolean,
+): RouteVisualState {
+  if (navigationState === "completed") {
     return "completed";
   }
-  if (goalState === "canceled") {
+  if (navigationState === "canceled") {
     return "canceled";
   }
-  if (goalState === "aborted" || goalState === "rejected" || goalState === "unknown") {
+  if (navigationState === "failed" || navigationState === "unknown") {
     return "failed";
   }
-  if (ACTIVE_GOAL_STATES.has(goalState)) {
+  if (active) {
     return "active";
   }
   return hasTarget ? "staged" : "idle";
@@ -298,7 +303,7 @@ function StatusChipIcon(props: { className?: string; kind: "connected" | "map" |
   );
 }
 
-function StateIcon(props: { className?: string; stateKey: OperatorState["key"] }) {
+function StateIcon(props: { className?: string; stateKey: OperatorStateKey }) {
   if (props.stateKey === "ready") {
     return (
       <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
@@ -358,19 +363,6 @@ function StateIcon(props: { className?: string; stateKey: OperatorState["key"] }
       <circle cx="12" cy="12" r="8" />
       <path d="M12 8v5" />
       <circle cx="12" cy="16.5" r="0.8" />
-    </svg>
-  );
-}
-
-function DirectionIcon(props: { className?: string; direction?: number }) {
-  return (
-    <svg
-      aria-hidden="true"
-      className={props.className}
-      viewBox="0 0 24 24"
-      style={props.direction == null ? undefined : { transform: `rotate(${props.direction}deg)` }}
-    >
-      <path d="M12 4 17.5 18l-5.5-2.8L6.5 18z" />
     </svg>
   );
 }
@@ -459,55 +451,52 @@ function getProgressLabel(routeVisualState: RouteVisualState): string {
   return "Awaiting run start";
 }
 
-function getReadinessIssue(args: {
-  connectionStatus: "connected" | "connecting" | "disconnected";
-  mapReady: boolean;
-  preflightReady: boolean;
-}): string | null {
-  if (args.connectionStatus !== "connected") {
-    return "Connect to the robot before starting a run.";
-  }
-  if (!args.mapReady) {
-    return "Waiting for a live map before starting.";
-  }
-  if (!args.preflightReady) {
-    return "Final navigation checks are still running.";
-  }
-  return null;
-}
-
 export function VacuumControlPanel() {
-  const runtime = useNav2Runtime();
+  const adapter = useVacuumAdapter();
+  const snapshot = adapter.snapshot;
   const { openOverlay } = useConnectionSettings();
   const [draftTarget, setDraftTarget] = useState<DraftTarget | null>(null);
   const [sentTarget, setSentTarget] = useState<DraftTarget | null>(null);
-  const [initialRouteDistance, setInitialRouteDistance] = useState<number | null>(null);
   const [wallClockElapsed, setWallClockElapsed] = useState<number | null>(null);
   const goalStartTimeRef = useRef<number | null>(null);
-  const currentPose = useMemo(
-    () => getPoseCoordinates(runtime.currentMapPose),
-    [runtime.currentMapPose],
+
+  const currentPose = snapshot.pose.coordinates;
+  const availability = snapshot.availability.status;
+  const mapReady = snapshot.map.readiness === "ready";
+  const isMapReceiving = snapshot.map.receiving;
+  const poseReady = snapshot.pose.available;
+  const readinessReady = snapshot.readiness.ready;
+  const preflightBlocking = snapshot.readiness.blockingReasons.some(
+    (reason) => reason === "Nav2 preflight checks are not ready.",
   );
-  const mapStatus = getTopicState(runtime.topicHealth, "/map");
-  const isGoalActive = ACTIVE_GOAL_STATES.has(runtime.goalState);
+  const preflightReady = !preflightBlocking;
+  const navigationState = snapshot.navigation.state;
+  const missionState = snapshot.mission.state;
+  const isGoalActive = snapshot.navigation.active;
+  const isSendingGoal = snapshot.navigation.isSending;
+  const isCancelingGoal = snapshot.navigation.isCanceling;
+  const goToLocationSupported = snapshot.capabilities.go_to_location.supported;
+  const cancelNavigationSupported = snapshot.capabilities.cancel_navigation.supported;
+
   const displayedTarget = sentTarget ?? draftTarget;
   const hasTarget = displayedTarget != null;
-  const mapReady = mapStatus === "receiving";
-  const poseReady = currentPose != null;
-  const preflightReady = runtime.preflightStatus.state === "ready";
-  const routeVisualState = getRouteVisualState(runtime.goalState, hasTarget);
+  const routeVisualState = getRouteVisualState(navigationState, isGoalActive, hasTarget);
+
   const operatorState = getOperatorState({
-    connectionStatus: runtime.connectionStatus,
-    mapStatus,
+    availability,
+    mapReady,
     poseAvailable: poseReady,
     preflightReady,
-    goalState: runtime.goalState,
+    navigationState,
+    missionState,
+    isCanceling: isCancelingGoal,
     targetSelected: hasTarget,
   });
 
   const destinationDistance = distanceBetween(currentPose, displayedTarget);
   const destinationBearing = bearingBetween(currentPose, displayedTarget);
-  const feedbackDistanceRemaining = toFiniteNumber(runtime.feedbackDistanceRemaining);
+  const feedbackDistanceRemaining = snapshot.navigation.progress.distanceRemaining;
+  const initialRouteDistance = snapshot.navigation.progress.initialDistance;
   const routeDistanceRemaining =
     routeVisualState === "completed"
       ? 0
@@ -519,7 +508,7 @@ export function VacuumControlPanel() {
     routeVisualState === "canceled";
   const isIndeterminate = isGoalActive && feedbackDistanceRemaining == null;
   const routeProgress = (() => {
-    if (runtime.goalState === "succeeded") {
+    if (navigationState === "completed") {
       return 1;
     }
     const remaining = feedbackDistanceRemaining;
@@ -528,12 +517,11 @@ export function VacuumControlPanel() {
     }
     return clamp(1 - remaining / initialRouteDistance, 0, 0.98);
   })();
-  const isMapReceiving = mapStatus === "receiving";
   const systemChips = [
     {
       label: "Connected",
       icon: "connected" as const,
-      state: getChipTone(runtime.connectionStatus === "connected", "success"),
+      state: getChipTone(availability === "online", "success"),
       pulsing: false,
     },
     {
@@ -545,7 +533,7 @@ export function VacuumControlPanel() {
     {
       label: "Localized",
       icon: "localized" as const,
-      state: getChipTone(Boolean(currentPose), "success"),
+      state: getChipTone(poseReady, "success"),
       pulsing: false,
     },
   ] as const;
@@ -553,10 +541,7 @@ export function VacuumControlPanel() {
     {
       label: "Ready",
       icon: "ready" as const,
-      state: getChipTone(
-        preflightReady && poseReady && mapReady,
-        "success",
-      ),
+      state: getChipTone(readinessReady && poseReady, "success"),
     },
     {
       label: "Target Selected",
@@ -564,11 +549,7 @@ export function VacuumControlPanel() {
       state: getChipTone(hasTarget, "active"),
     },
   ] as const;
-  const readinessIssue = getReadinessIssue({
-    connectionStatus: runtime.connectionStatus,
-    mapReady,
-    preflightReady,
-  });
+  const readinessIssue = snapshot.readiness.blockingReasons[0] ?? null;
   const targetDistanceLabel = displayedTarget ? formatDistance(destinationDistance) : null;
   const targetHeadingLabel = displayedTarget ? headingLabel(displayedTarget.yaw) : null;
   const targetBearingLabel =
@@ -583,7 +564,7 @@ export function VacuumControlPanel() {
     return "Selected";
   })();
   const primaryActionLabel = (() => {
-    if (runtime.isSendingGoal) {
+    if (isSendingGoal) {
       return "Sending...";
     }
     if (routeVisualState === "failed") {
@@ -596,7 +577,9 @@ export function VacuumControlPanel() {
   })();
   const actionHint = (() => {
     if (isGoalActive) {
-      return runtime.isCancelingGoal ? "Stop request sent. Waiting for the robot to confirm." : "Robot is moving. Stop the run before changing destination.";
+      return isCancelingGoal
+        ? "Stop request sent. Waiting for the robot to confirm."
+        : "Robot is moving. Stop the run before changing destination.";
     }
     if (!hasTarget) {
       return "Click the map to choose a destination.";
@@ -626,13 +609,13 @@ export function VacuumControlPanel() {
     return Math.max(routeProgress * 100, 6);
   })();
   const progressPctLabel = isIndeterminate ? "—" : `${Math.round(routeProgress * 100)}%`;
-  const elapsedLabel = runtime.feedbackNavigationTime != null
-    ? formatRosDuration(runtime.feedbackNavigationTime)
+  const elapsedLabel = snapshot.navigation.progress.navigationTime != null
+    ? formatRosDuration(snapshot.navigation.progress.navigationTime)
     : wallClockElapsed != null
       ? formatRosDuration(wallClockElapsed)
       : "n/a";
-  const recoveryCount = toFiniteNumber(runtime.feedbackRecoveries);
-  const recoveryLabel = formatRecoveries(runtime.feedbackRecoveries);
+  const recoveryCount = toFiniteNumber(snapshot.navigation.progress.recoveries);
+  const recoveryLabel = formatRecoveries(recoveryCount);
   const recoveryWarning = recoveryCount != null && recoveryCount > 0;
 
   useEffect(() => {
@@ -652,6 +635,9 @@ export function VacuumControlPanel() {
   const isTerminalState =
     routeVisualState === "completed" || routeVisualState === "failed" || routeVisualState === "canceled";
   const runTarget = draftTarget ?? (isTerminalState ? sentTarget : null);
+  const canSendRun =
+    Boolean(runTarget) && goToLocationSupported && readinessReady && !isSendingGoal;
+  const canCancelRun = cancelNavigationSupported && !isCancelingGoal;
 
   async function handleSend(overrideTarget?: DraftTarget): Promise<void> {
     const target = overrideTarget ?? runTarget;
@@ -659,12 +645,11 @@ export function VacuumControlPanel() {
       return;
     }
     setSentTarget(target);
-    setInitialRouteDistance(distanceBetween(currentPose, target));
-    await runtime.sendGoal(target);
+    await adapter.sendCommand({ command: "go_to_location", target });
   }
 
   async function handleCancel(): Promise<void> {
-    await runtime.cancelGoal();
+    await adapter.sendCommand({ command: "cancel_navigation" });
   }
 
   function handleClear(): void {
@@ -673,12 +658,10 @@ export function VacuumControlPanel() {
     }
     setDraftTarget(null);
     setSentTarget(null);
-    setInitialRouteDistance(null);
   }
 
   function handleTargetStart(target: DraftTarget): void {
     setSentTarget(null);
-    setInitialRouteDistance(null);
     setDraftTarget(target);
   }
 
@@ -728,7 +711,7 @@ export function VacuumControlPanel() {
             <span className="vacuum-header__breadcrumb">Navigation</span>
           </div>
           <div className="vacuum-header__right">
-            {runtime.connectionStatus === "disconnected" ? (
+            {availability === "offline" ? (
               <button
                 className="vacuum-pill vacuum-pill--disconnected vacuum-pill--clickable"
                 type="button"
@@ -739,11 +722,9 @@ export function VacuumControlPanel() {
                 <span>Disconnected</span>
               </button>
             ) : (
-              <span className={`vacuum-pill vacuum-pill--${runtime.connectionStatus}`}>
+              <span className={`vacuum-pill vacuum-pill--${availability === "online" ? "connected" : "connecting"}`}>
                 <ConnectionPillIcon className="vacuum-pill__icon" />
-                <span>
-                  {runtime.connectionStatus === "connected" ? "Connected" : "Connecting"}
-                </span>
+                <span>{availability === "online" ? "Connected" : "Connecting"}</span>
               </span>
             )}
           </div>
@@ -773,7 +754,7 @@ export function VacuumControlPanel() {
         <section className="vacuum-layout">
           <MapCanvas
             currentPose={currentPose}
-            planMessage={runtime.planMessage}
+            planPoints={snapshot.navigation.planPath}
             draftTarget={draftTarget}
             sentTarget={sentTarget}
             routeVisualState={routeVisualState}
@@ -800,9 +781,9 @@ export function VacuumControlPanel() {
                 <VacuumMark className="vacuum-state-row__disc" aria-hidden="true" />
               </div>
               <div className="vacuum-readiness-grid">
-                <div className={`vacuum-readiness-item ${runtime.connectionStatus === "connected" ? "vacuum-readiness-item--ready" : ""}`}>
+                <div className={`vacuum-readiness-item ${availability === "online" ? "vacuum-readiness-item--ready" : ""}`}>
                   <span>Connection</span>
-                  <strong>{runtime.connectionStatus === "connected" ? "Online" : runtime.connectionStatus === "connecting" ? "Connecting" : "Offline"}</strong>
+                  <strong>{availability === "online" ? "Online" : availability === "connecting" ? "Connecting" : "Offline"}</strong>
                 </div>
                 <div className={`vacuum-readiness-item ${isMapReceiving ? "vacuum-readiness-item--ready" : ""}`}>
                   <span>Map</span>
@@ -913,7 +894,7 @@ export function VacuumControlPanel() {
               </div>
               <p className="vacuum-action-hint">{actionHint}</p>
               <div className="vacuum-actions">
-                {runtime.connectionStatus !== "connected" ? (
+                {availability !== "online" ? (
                   <button
                     className="vacuum-action vacuum-action--primary"
                     type="button"
@@ -927,19 +908,19 @@ export function VacuumControlPanel() {
                     className="vacuum-action vacuum-action--danger"
                     type="button"
                     onClick={() => void handleCancel()}
-                    disabled={runtime.isCancelingGoal}
+                    disabled={!canCancelRun}
                   >
                     <StopIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
-                    {runtime.isCancelingGoal ? "Stopping..." : "Stop run"}
+                    {isCancelingGoal ? "Stopping..." : "Stop run"}
                   </button>
                 ) : (
                   <button
                     className="vacuum-action vacuum-action--primary"
                     type="button"
                     onClick={() => void handleSend()}
-                    disabled={!runTarget || readinessIssue != null || runtime.isSendingGoal}
+                    disabled={!canSendRun}
                   >
-                    {runtime.isSendingGoal ? (
+                    {isSendingGoal ? (
                       <SpinnerIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
                     ) : (
                       <SendIcon className="vacuum-action__icon" />

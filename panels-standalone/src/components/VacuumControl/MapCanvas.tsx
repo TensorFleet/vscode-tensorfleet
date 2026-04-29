@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ros2Bridge } from "../../ros2-bridge";
 import {
-  extractStampedPose,
   getRecordEntry,
   normalizeRosMessage,
 } from "../Nav2/runtime/nav2RuntimeUtils";
@@ -70,7 +69,7 @@ type PointOverlayStyle = {
 
 export type MapCanvasProps = {
   currentPose: PoseCoordinates | null;
-  planMessage: Record<string, unknown> | null;
+  planPoints: MapPoint[] | null;
   draftTarget: MapCanvasTarget | null;
   sentTarget: MapCanvasTarget | null;
   routeVisualState: RouteVisualState;
@@ -336,32 +335,6 @@ function drawOccupancyMap(
   }
 
   context.putImageData(image, 0, 0);
-}
-
-function extractPathPoints(message: Record<string, unknown> | null): MapPoint[] {
-  const poses = getRecordEntry(message ?? {}, "poses");
-  if (!Array.isArray(poses)) {
-    return [];
-  }
-
-  return poses
-    .map((poseEntry) => {
-      if (!poseEntry || typeof poseEntry !== "object") {
-        return null;
-      }
-      const pose = extractStampedPose(poseEntry as Record<string, unknown>);
-      if (!pose) {
-        return null;
-      }
-      const position = getRecordEntry(pose, "position");
-      if (!position || typeof position !== "object") {
-        return null;
-      }
-      const x = toFiniteNumber(getRecordEntry(position as Record<string, unknown>, "x"));
-      const y = toFiniteNumber(getRecordEntry(position as Record<string, unknown>, "y"));
-      return x == null || y == null ? null : { x, y };
-    })
-    .filter((point): point is MapPoint => point != null);
 }
 
 function deriveBounds(map: OccupancyMap | null, pose: PoseCoordinates | null): MapBounds {
@@ -717,7 +690,13 @@ export function MapCanvas(props: MapCanvasProps) {
   const occupancyMap = useMemo(() => parseOccupancyMap(mapMessage), [mapMessage]);
   const globalCostmap = useMemo(() => parseOccupancyMap(globalCostmapMessage), [globalCostmapMessage]);
   const localCostmap = useMemo(() => parseOccupancyMap(localCostmapMessage), [localCostmapMessage]);
-  const routePoints = useMemo(() => extractPathPoints(props.planMessage), [props.planMessage]);
+  const routePoints = useMemo<MapPoint[]>(
+    () =>
+      (props.planPoints ?? []).filter(
+        (point): point is MapPoint => Number.isFinite(point.x) && Number.isFinite(point.y),
+      ),
+    [props.planPoints],
+  );
   const primaryRasterMap = useMemo(
     () => choosePrimaryRasterMap(occupancyMap, globalCostmap, localCostmap),
     [occupancyMap, globalCostmap, localCostmap],
