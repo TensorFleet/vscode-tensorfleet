@@ -146,6 +146,14 @@ Current extension truth for the active Layer 2 slice:
 - lidar and depth obstacle overlays are extension-side visualization aids: they
   are projected into the map frame from TF and rendered below robot / target
   markers, not introduced as new product-contract surfaces
+- `TeleopCard` provides compact manual robot control inside the panel sidebar;
+  it publishes `geometry_msgs/msg/Twist` to `/cmd_vel_raw` — a deliberate
+  choice because the VM's `twist_deadman.py` accepts both `Twist` and
+  `TwistStamped` on that topic and it keeps teleop off the Nav2 command path
+- `CameraOverlay` provides a floating PiP camera window inside the map canvas;
+  it discovers image topics from the bridge and prefers the OAK-D RGB preview
+  stream (`/oakd/rgb/preview/image_raw`); camera access validates one of the
+  first usable vertical slice success criteria (pose, map, and camera visible)
 
 Practical implication:
 

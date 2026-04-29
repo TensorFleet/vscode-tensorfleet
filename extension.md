@@ -42,6 +42,8 @@ Important files for the current Layer 2 slice:
 - `panels-standalone/src/ros2-bridge.ts`
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
 - `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `panels-standalone/src/components/VacuumControl/TeleopCard.tsx`
+- `panels-standalone/src/components/VacuumControl/CameraOverlay.tsx`
 - `panels-standalone/src/components/VacuumControl/mapOverlayUtils.ts`
 - `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
 - `panels-standalone/src/components/Nav2/runtime/nav2RuntimeConstants.ts`
@@ -112,6 +114,8 @@ Current runtime seam:
 
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
 - `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `panels-standalone/src/components/VacuumControl/TeleopCard.tsx`
+- `panels-standalone/src/components/VacuumControl/CameraOverlay.tsx`
 - `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
 
 Current runtime topic and service map for this slice:
@@ -120,6 +124,9 @@ Current runtime topic and service map for this slice:
 - `/scan`
 - depth point cloud topic discovered from advertised `sensor_msgs/msg/PointCloud2`
   topics, preferring `/oakd/rgb/preview/depth/points`
+- camera image topic discovered from advertised `sensor_msgs/msg/Image` and
+  `sensor_msgs/msg/CompressedImage` topics, preferring
+  `/oakd/rgb/preview/image_raw` (`CameraOverlay`)
 - `/odom`
 - `/pose`
 - `/tf`
@@ -127,6 +134,7 @@ Current runtime topic and service map for this slice:
 - `/plan`
 - `/transformed_global_plan`
 - `/cmd_vel_nav`
+- `/cmd_vel_raw` (publish — `TeleopCard` manual control at 10 Hz)
 - `/local_costmap/costmap`
 - `/global_costmap/costmap`
 - `/stop_status`
@@ -153,6 +161,8 @@ Files:
 
 - `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
 - `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/TeleopCard.tsx`
+- `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/CameraOverlay.tsx`
 - `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/mapOverlayUtils.ts`
 - `~/vscode-tensorfleet/panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
 
@@ -174,11 +184,23 @@ Current expectation:
   dedicated raster canvases
 - `MapCanvas` now exposes a floating `Layers` button and checklist popover for
   Map, Global costmap, Local costmap, Plan, Lidar, and Depth obstacles
+- `MapCanvas` hosts `CameraOverlay` as an absolutely-positioned floating window
+  inside the map stage; pointer events on the overlay are stopped so the map's
+  goal-placement handler is never triggered by camera window interaction
 - Plan visibility is operator-toggleable from the layers popover
 - lidar and depth obstacles are projected into `map` frame with the local
   `TransformTree` in `mapOverlayUtils.ts`
 - sensor overlays render on dedicated canvases below robot and target markers
   so projected points do not hide primary navigation markers
+- `TeleopCard.tsx` is the collapsible manual control card at the bottom of the
+  sidebar; it publishes `geometry_msgs/msg/Twist` to `/cmd_vel_raw` at 10 Hz;
+  keyboard WASD / arrow control is opt-in via a toggle so it does not conflict
+  with map interactions; the card shows a live velocity readout while moving
+- `CameraOverlay.tsx` auto-discovers image topics via `ros2Bridge.getAvailableImageTopics()`,
+  requiring `{ topic, type }` in the `subscribe()` call to correctly wire the
+  Foxglove channel; it prefers `/oakd/rgb/preview/image_raw` for TurtleBot4 and
+  falls back to other discovered image topics; frames arrive as data URIs from
+  the bridge's existing image conversion pipeline and are rendered in an `<img>`
 - readiness model: start is gated on `mapReady` and `preflightReady` only;
   `poseReady` no longer blocks the start action
 - `VacuumControlPanel.tsx` derives the current pose display via `useMemo` from
@@ -384,11 +406,13 @@ The next patch in `~/vscode-tensorfleet` should be small and concrete:
 1. [x] Keep `steps.md` aligned with the actual `Vacuum Control` component state.
 2. [x] Keep `extension.md` aligned with the global Layer 2 topic map used by
    `useNav2Runtime.ts`.
-3. [ ] Continue finishing `VacuumControlPanel.tsx` component behavior as a
+3. [x] Continue finishing `VacuumControlPanel.tsx` component behavior as a
    runtime-testable operator surface.
-4. [ ] Keep `RawMessagesPanel.tsx` and `SensorView3DPanel.tsx` useful as
+4. [x] Add `TeleopCard` for manual robot control via `/cmd_vel_raw`.
+5. [x] Add `CameraOverlay` for live camera feed from the OAK-D sensor.
+6. [ ] Keep `RawMessagesPanel.tsx` and `SensorView3DPanel.tsx` useful as
    supporting debug surfaces for the same runtime topics.
-5. [x] Build the extension panels and verify the panel bundle compiles.
+7. [x] Build the extension panels and verify the panel bundle compiles.
 
 Suggested verification after patching:
 

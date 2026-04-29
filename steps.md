@@ -26,6 +26,7 @@ Code-only commits:
   - `96e2e8d` `Fix vacuum sensor overlay TF projection`
   - `b87855e` `Polish vacuum operator controls`
   - `d664024` `Refactor VacuumControlPanel and related components`
+  - `cc48301` `Add TeleopCard and CameraOverlay to Vacuum Control panel`
 - `~/firecracker-vm`
   - `d251a57` `Stabilize TurtleBot4 Nav2 runtime in Firecracker`
 - `~/vm-manager`
@@ -249,6 +250,8 @@ Current visible shell components:
 - `MapControls` with bounded zoom controls, fit-to-map, and zoom readout
 - `MapLegend`
 - floating `Layers` control with checklist popover
+- `CameraOverlay` floating PiP window inside the map canvas; auto-discovers
+  image topics; draggable, minimizable, and hideable
 - `CurrentStateCard` with operator state, readiness evidence grid, and
   pending-state icons
 - `SelectedDestinationCard` with distance, facing, bearing, and map coordinates
@@ -256,6 +259,8 @@ Current visible shell components:
   distance, elapsed navigation time, and recovery count
 - `ActionsCard` with state-aware start / stop / clear / connection actions;
   run-again reuses the last sent destination
+- `TeleopCard` collapsible manual control card; directional D-pad; publishes
+  to `/cmd_vel_raw`; optional WASD / arrow key toggle
 - persistent settings button in header (always accessible)
 - settings button at bottom of left nav rail
 
@@ -263,6 +268,8 @@ Current runtime seam:
 
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
 - `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `panels-standalone/src/components/VacuumControl/TeleopCard.tsx`
+- `panels-standalone/src/components/VacuumControl/CameraOverlay.tsx`
 - `panels-standalone/src/components/VacuumControl/mapOverlayUtils.ts`
 - `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
 - `panels-standalone/src/ros2-bridge.ts`
@@ -330,6 +337,9 @@ Current Layer 2 topics and services already used by the panel/runtime:
 - `/scan`
 - depth `sensor_msgs/msg/PointCloud2` topic discovered from advertised topics,
   preferring `/oakd/rgb/preview/depth/points`
+- camera image topic discovered from advertised `sensor_msgs/msg/Image` and
+  `sensor_msgs/msg/CompressedImage` topics, preferring
+  `/oakd/rgb/preview/image_raw` (`CameraOverlay`)
 - `/odom`
 - `/pose`
 - `/tf`
@@ -337,6 +347,7 @@ Current Layer 2 topics and services already used by the panel/runtime:
 - `/plan`
 - `/transformed_global_plan`
 - `/cmd_vel_nav`
+- `/cmd_vel_raw` (publish — `TeleopCard` manual control)
 - `/local_costmap/costmap`
 - `/global_costmap/costmap`
 - `/stop_status`
