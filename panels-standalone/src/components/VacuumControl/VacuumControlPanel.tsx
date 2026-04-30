@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
 import { formatRosDuration } from "../Nav2/runtime/nav2RuntimeUtils";
+import { ros2Bridge } from "../../ros2-bridge";
 import {
   useVacuumAdapter,
   type VacuumMissionState,
   type VacuumNavigationState,
 } from "../../vacuum-adapter";
-import { MapCanvas, type MapCanvasTarget, type RouteVisualState } from "./MapCanvas";
+import {
+  MapCanvas,
+  type MapCanvasMetadata,
+  type MapCanvasTarget,
+  type MappingSessionState,
+  type RouteVisualState,
+} from "./MapCanvas";
 import { TeleopCard } from "./TeleopCard";
 import "./VacuumControlPanel.css";
 
@@ -14,6 +21,12 @@ type DraftTarget = MapCanvasTarget;
 
 type OperatorTone = "ready" | "warning" | "success" | "danger" | "info";
 type StatusChipTone = "success" | "active" | "inactive";
+type SavedMapSummary = {
+  name: string;
+  createdAt: number;
+  metadata: MapCanvasMetadata;
+  notes: string;
+};
 
 type OperatorStateKey =
   | "disconnected"
@@ -52,6 +65,32 @@ function formatDistance(distance: number | null): string {
 
 function formatCoordinate(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "n/a";
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(clamp(value, 0, 1) * 100)}%`;
+}
+
+function formatArea(value: number): string {
+  return Number.isFinite(value) ? `${value.toFixed(1)} m²` : "n/a";
+}
+
+function formatResolution(value: number): string {
+  return value > 0 ? `${value.toFixed(3)} m/cell` : "n/a";
+}
+
+function formatMapAge(lastUpdateAt: number | null, now: number): string {
+  if (lastUpdateAt == null) {
+    return "n/a";
+  }
+  const seconds = Math.max(0, Math.round((now - lastUpdateAt) / 1000));
+  if (seconds < 2) {
+    return "just now";
+  }
+  if (seconds < 60) {
+    return `${seconds}s ago`;
+  }
+  return `${Math.round(seconds / 60)}m ago`;
 }
 
 function formatRecoveries(value: number | null): string {
@@ -455,6 +494,179 @@ function getProgressLabel(routeVisualState: RouteVisualState): string {
   return "Awaiting run start";
 }
 
+function MappingCard(props: {
+  mappingState: MappingSessionState;
+  metadata: MapCanvasMetadata | null;
+  savedMap: SavedMapSummary | null;
+  mapName: string;
+  now: number;
+  onMapNameChange: (value: string) => void;
+  onStart: () => void;
+  onPause: () => void;
+  onContinue: () => void;
+  onFinish: () => void;
+  onDiscard: () => void;
+  onUseMap: () => void;
+  onRemap: () => void;
+}): JSX.Element {
+  const metadata = props.metadata;
+  const hasMap = metadata?.hasMap ?? false;
+  const stateCopy: Record<MappingSessionState, { title: string; detail: string; badge: string }> = {
+    not_started: {
+      title: "Mapping",
+      detail: "No mapping session active. Start mapping and drive the robot around to build the map.",
+      badge: "Idle",
+    },
+    mapping: {
+      title: "Mapping",
+      detail: "Mapping in progress. Drive slowly around the space and use Fit Map to see the full known map.",
+      badge: "Active",
+    },
+    paused: {
+      title: "Mapping",
+      detail: "Mapping paused. Resume driving or finish the map.",
+      badge: "Paused",
+    },
+    review: {
+      title: "Review Map",
+      detail: "Check that the known map looks complete enough before using it.",
+      badge: "Review",
+    },
+    saved: {
+      title: "Current Map",
+      detail: "Map accepted for navigation and future coverage planning.",
+      badge: "Ready",
+    },
+    discarded: {
+      title: "Mapping",
+      detail: "Mapping run discarded. Start a new mapping run when ready.",
+      badge: "Discarded",
+    },
+    error: {
+      title: "Mapping",
+      detail: "Mapping error. No valid /map data is available yet.",
+      badge: "Issue",
+    },
+  };
+  const copy = stateCopy[props.mappingState];
+  const savedLabel = props.savedMap?.name || "Current map";
+
+  return (
+    <section className={`vacuum-panel-card vacuum-panel-card--mapping vacuum-panel-card--mapping-${props.mappingState}`}>
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">{copy.title}</p>
+        <span className="vacuum-mapping-badge">{copy.badge}</span>
+      </div>
+      <p className="vacuum-mapping-copy">{copy.detail}</p>
+
+      {props.mappingState === "saved" ? (
+        <div className="vacuum-current-map">
+          <strong>{savedLabel}</strong>
+          <span>Use this map is a UI acceptance marker; backend persistence is not wired yet.</span>
+        </div>
+      ) : null}
+
+      <div className="vacuum-map-metadata-grid">
+        <div>
+          <span>Map</span>
+          <strong>{hasMap && metadata ? `${metadata.width} × ${metadata.height}` : "Waiting"}</strong>
+        </div>
+        <div>
+          <span>Resolution</span>
+          <strong>{metadata ? formatResolution(metadata.resolution) : "n/a"}</strong>
+        </div>
+        <div>
+          <span>Known</span>
+          <strong>{metadata ? formatPercent(metadata.knownRatio) : "0%"}</strong>
+        </div>
+        <div>
+          <span>Unknown</span>
+          <strong>{metadata ? formatPercent(metadata.unknownRatio) : "0%"}</strong>
+        </div>
+        <div>
+          <span>Known area</span>
+          <strong>{metadata ? formatArea(metadata.knownAreaSqM) : "n/a"}</strong>
+        </div>
+        <div>
+          <span>Last update</span>
+          <strong>{metadata ? formatMapAge(metadata.lastUpdateAt, props.now) : "n/a"}</strong>
+        </div>
+        <div>
+          <span>Pose</span>
+          <strong>{metadata?.poseAvailable ? "Available" : "Missing"}</strong>
+        </div>
+        <div>
+          <span>Readiness</span>
+          <strong>{metadata?.readiness ?? "No map"}</strong>
+        </div>
+      </div>
+
+      {props.mappingState === "review" ? (
+        <label className="vacuum-map-name-field">
+          <span>Map name</span>
+          <input
+            value={props.mapName}
+            onChange={(event) => props.onMapNameChange(event.target.value)}
+            placeholder="Lab Mapping Run 1"
+          />
+        </label>
+      ) : null}
+
+      <div className="vacuum-mapping-actions">
+        {props.mappingState === "not_started" || props.mappingState === "discarded" || props.mappingState === "error" ? (
+          <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onStart}>
+            Start Mapping
+          </button>
+        ) : null}
+        {props.mappingState === "mapping" ? (
+          <>
+            <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onFinish}>
+              Finish Mapping
+            </button>
+            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onPause}>
+              Pause Mapping
+            </button>
+            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
+              Discard Session
+            </button>
+          </>
+        ) : null}
+        {props.mappingState === "paused" ? (
+          <>
+            <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onContinue}>
+              Resume Driving
+            </button>
+            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onFinish}>
+              Finish Mapping
+            </button>
+            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
+              Discard Session
+            </button>
+          </>
+        ) : null}
+        {props.mappingState === "review" ? (
+          <>
+            <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onUseMap} disabled={!hasMap}>
+              Use This Map
+            </button>
+            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onContinue}>
+              Continue Mapping
+            </button>
+            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
+              Discard Session
+            </button>
+          </>
+        ) : null}
+        {props.mappingState === "saved" ? (
+          <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onRemap}>
+            Remap
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 export function VacuumControlPanel() {
   const adapter = useVacuumAdapter();
   const snapshot = adapter.snapshot;
@@ -462,6 +674,11 @@ export function VacuumControlPanel() {
   const [draftTarget, setDraftTarget] = useState<DraftTarget | null>(null);
   const [sentTarget, setSentTarget] = useState<DraftTarget | null>(null);
   const [wallClockElapsed, setWallClockElapsed] = useState<number | null>(null);
+  const [metadataClock, setMetadataClock] = useState(() => Date.now());
+  const [mapMetadata, setMapMetadata] = useState<MapCanvasMetadata | null>(null);
+  const [mappingState, setMappingState] = useState<MappingSessionState>("not_started");
+  const [mapName, setMapName] = useState("Lab Mapping Run 1");
+  const [savedMap, setSavedMap] = useState<SavedMapSummary | null>(null);
   const goalStartTimeRef = useRef<number | null>(null);
 
   const currentPose = snapshot.pose.coordinates;
@@ -625,6 +842,8 @@ export function VacuumControlPanel() {
   const recoveryCount = toFiniteNumber(snapshot.navigation.progress.recoveries);
   const recoveryLabel = formatRecoveries(recoveryCount);
   const recoveryWarning = recoveryCount != null && recoveryCount > 0;
+  const isMappingWorkflowActive =
+    mappingState === "mapping" || mappingState === "paused" || mappingState === "review";
 
   useEffect(() => {
     if (isGoalActive) {
@@ -639,6 +858,11 @@ export function VacuumControlPanel() {
     }
     return undefined;
   }, [isGoalActive]);
+
+  useEffect(() => {
+    const interval = setInterval(() => setMetadataClock(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const isTerminalState =
     routeVisualState === "completed" || routeVisualState === "failed" || routeVisualState === "canceled";
@@ -669,17 +893,79 @@ export function VacuumControlPanel() {
   }
 
   function handleTargetStart(target: DraftTarget): void {
+    if (isMappingWorkflowActive) {
+      return;
+    }
     setSentTarget(null);
     setDraftTarget(target);
   }
 
   function handleTargetRotate(yaw: number): void {
+    if (isMappingWorkflowActive) {
+      return;
+    }
     setDraftTarget((current) => {
       if (!current) {
         return current;
       }
       return { ...current, yaw };
     });
+  }
+
+  function stopManualMotion(): void {
+    if (ros2Bridge.isConnected()) {
+      ros2Bridge.publish("/cmd_vel_raw", "geometry_msgs/msg/Twist", {
+        linear: { x: 0, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 0 },
+      });
+    }
+  }
+
+  function handleStartMapping(): void {
+    setMappingState("mapping");
+    setDraftTarget(null);
+    setSentTarget(null);
+  }
+
+  function handlePauseMapping(): void {
+    stopManualMotion();
+    setMappingState("paused");
+  }
+
+  function handleContinueMapping(): void {
+    setMappingState("mapping");
+  }
+
+  function handleFinishMapping(): void {
+    stopManualMotion();
+    setMappingState(mapMetadata?.hasMap ? "review" : "error");
+  }
+
+  function handleDiscardMapping(): void {
+    stopManualMotion();
+    setMappingState("discarded");
+    setDraftTarget(null);
+    setSentTarget(null);
+  }
+
+  function handleUseMap(): void {
+    if (!mapMetadata?.hasMap) {
+      setMappingState("error");
+      return;
+    }
+    setSavedMap({
+      name: mapName.trim() || "Current map",
+      createdAt: Date.now(),
+      metadata: mapMetadata,
+      notes: "Accepted in UI for navigation and future coverage planning.",
+    });
+    setMappingState("saved");
+  }
+
+  function handleRemap(): void {
+    setMappingState("mapping");
+    setDraftTarget(null);
+    setSentTarget(null);
   }
 
   return (
@@ -767,9 +1053,12 @@ export function VacuumControlPanel() {
             sentTarget={sentTarget}
             routeVisualState={routeVisualState}
             isGoalActive={isGoalActive}
+            mappingState={mappingState}
+            disableTargetSelection={isMappingWorkflowActive}
             targetDistance={destinationDistance}
             onTargetStart={handleTargetStart}
             onTargetRotate={handleTargetRotate}
+            onMapMetadataChange={setMapMetadata}
           />
 
           <div className="vacuum-sidebar">
@@ -803,6 +1092,22 @@ export function VacuumControlPanel() {
                 </div>
               </div>
             </section>
+
+            <MappingCard
+              mappingState={mappingState}
+              metadata={mapMetadata}
+              savedMap={savedMap}
+              mapName={mapName}
+              now={metadataClock}
+              onMapNameChange={setMapName}
+              onStart={handleStartMapping}
+              onPause={handlePauseMapping}
+              onContinue={handleContinueMapping}
+              onFinish={handleFinishMapping}
+              onDiscard={handleDiscardMapping}
+              onUseMap={handleUseMap}
+              onRemap={handleRemap}
+            />
 
             <section className={`vacuum-panel-card vacuum-panel-card--destination ${displayedTarget ? "vacuum-panel-card--destination-selected" : ""}`}>
               <div className="vacuum-panel-card__head">
@@ -846,7 +1151,9 @@ export function VacuumControlPanel() {
                   </div>
                   <div className="vacuum-dest-row__text">
                     <p className="vacuum-dest-row__title vacuum-dest-row__title--muted">No destination</p>
-                    <p className="vacuum-dest-row__sub">Click the map to pick one</p>
+                    <p className="vacuum-dest-row__sub">
+                      {isMappingWorkflowActive ? "Disabled during mapping" : "Click the map to pick one"}
+                    </p>
                   </div>
                 </div>
               )}

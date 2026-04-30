@@ -411,6 +411,12 @@ body {
   color: #ffffff;
 }
 
+.vacuum-map-controls__button--active {
+  border-color: rgba(56, 200, 176, 0.32);
+  background: rgba(56, 200, 176, 0.16);
+  color: #eafffb;
+}
+
 .vacuum-map-controls__button:focus-visible {
   outline: none;
   background: rgba(115, 182, 242, 0.16);
@@ -439,6 +445,26 @@ body {
   stroke-linejoin: round;
 }
 
+.vacuum-map-controls__follow-dot {
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  position: relative;
+}
+
+.vacuum-map-controls__follow-dot::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: translate(-50%, -50%);
+}
+
 .vacuum-map-controls__readout {
   min-width: 36px;
   padding: 4px 0;
@@ -464,6 +490,14 @@ body {
 }
 
 .vacuum-map-stage--interactive {
+  cursor: grab;
+}
+
+.vacuum-map-stage--interactive:active {
+  cursor: grabbing;
+}
+
+.vacuum-map-stage--interactive:not(.vacuum-map-stage--mapping) {
   cursor: crosshair;
 }
 
@@ -532,6 +566,63 @@ body {
   font-weight: 700;
   letter-spacing: 0.04em;
   backdrop-filter: blur(8px);
+}
+
+.vacuum-map-stage__labels {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vacuum-map-stage__view-label {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(115, 182, 242, 0.16);
+  background: rgba(16, 28, 38, 0.78);
+  color: #cbeaff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  backdrop-filter: blur(8px);
+}
+
+.vacuum-map-stage__mapping-banner {
+  position: absolute;
+  left: 50%;
+  top: 58px;
+  z-index: 8;
+  max-width: min(520px, calc(100% - 184px));
+  padding: 8px 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 200, 176, 0.2);
+  background: rgba(13, 38, 35, 0.86);
+  color: #dffefa;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-align: center;
+  transform: translateX(-50%);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.vacuum-map-stage__mapping-banner--review {
+  border-color: rgba(115, 182, 242, 0.22);
+  background: rgba(14, 30, 45, 0.86);
+  color: #ddecff;
+}
+
+.vacuum-map-stage__mapping-banner--paused {
+  border-color: rgba(255, 179, 92, 0.22);
+  background: rgba(45, 31, 14, 0.86);
+  color: #ffe7c4;
+}
+
+.vacuum-map-stage__mapping-banner--saved {
+  border-color: rgba(88, 211, 141, 0.24);
+  background: rgba(13, 38, 24, 0.86);
+  color: #dfffe9;
 }
 
 .vacuum-map-layer-picker {
@@ -744,12 +835,16 @@ body {
 .vacuum-map-stage__viewport {
   position: absolute;
   inset: 0;
-  transform-origin: center;
-  transition: transform 160ms ease;
+  overflow: hidden;
 }
 
 .vacuum-map-stage__canvas,
 .vacuum-map-stage__grid,
+.vacuum-map-stage__map-boundary {
+  position: absolute;
+  transform-origin: top left;
+}
+
 .vacuum-map-stage__overlay {
   position: absolute;
   inset: 0;
@@ -791,6 +886,16 @@ body {
   mix-blend-mode: multiply;
   opacity: 0.42;
   z-index: 3;
+  pointer-events: none;
+}
+
+.vacuum-map-stage__map-boundary {
+  z-index: 4;
+  border: 1px solid rgba(240, 237, 230, 0.18);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.18),
+    0 0 0 1px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
 }
 
 .vacuum-map-stage__overlay {
@@ -800,7 +905,7 @@ body {
 }
 
 .vacuum-map-stage__overlay--plan {
-  z-index: 4;
+  z-index: 5;
 }
 
 .vacuum-map-stage__overlay-canvas {
@@ -812,11 +917,11 @@ body {
 }
 
 .vacuum-map-stage__overlay-canvas--lidar {
-  z-index: 5;
+  z-index: 6;
 }
 
 .vacuum-map-stage__overlay-canvas--depth {
-  z-index: 5;
+  z-index: 6;
 }
 
 .vacuum-map-path,
@@ -1189,6 +1294,133 @@ body {
   inset: 0 auto 0 0;
   width: 3px;
   background: rgba(232, 226, 214, 0.12);
+}
+
+.vacuum-panel-card--mapping {
+  gap: 13px;
+}
+
+.vacuum-panel-card--mapping-mapping {
+  border-color: rgba(56, 200, 176, 0.2);
+}
+
+.vacuum-panel-card--mapping-review {
+  border-color: rgba(115, 182, 242, 0.2);
+}
+
+.vacuum-panel-card--mapping-saved {
+  border-color: rgba(88, 211, 141, 0.2);
+}
+
+.vacuum-panel-card--mapping-error {
+  border-color: rgba(255, 116, 97, 0.22);
+}
+
+.vacuum-mapping-badge {
+  padding: 5px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(232, 226, 214, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--vacuum-text-soft);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vacuum-mapping-copy {
+  margin: 0;
+  color: var(--vacuum-text-soft);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.vacuum-current-map {
+  display: grid;
+  gap: 4px;
+  padding: 10px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(88, 211, 141, 0.14);
+  background: rgba(88, 211, 141, 0.055);
+}
+
+.vacuum-current-map strong {
+  color: var(--vacuum-text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.vacuum-current-map span {
+  color: var(--vacuum-text-soft);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.vacuum-map-metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.vacuum-map-metadata-grid div {
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(232, 226, 214, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.vacuum-map-metadata-grid span,
+.vacuum-map-name-field span {
+  display: block;
+  color: var(--vacuum-text-muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.vacuum-map-metadata-grid strong {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--vacuum-text);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-map-name-field {
+  display: grid;
+  gap: 7px;
+}
+
+.vacuum-map-name-field input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(232, 226, 214, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--vacuum-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vacuum-map-name-field input:focus {
+  outline: none;
+  border-color: rgba(115, 182, 242, 0.42);
+  box-shadow: 0 0 0 3px rgba(115, 182, 242, 0.12);
+}
+
+.vacuum-mapping-actions {
+  display: grid;
+  gap: 8px;
 }
 
 .vacuum-panel-card--ready::before,

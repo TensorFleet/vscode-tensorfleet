@@ -12,7 +12,8 @@ The old Layer 2 constraint was extension-side only: validate the VM runtime
 through `Vacuum Control` without blocking on a vacuum adapter, mission
 lifecycle, docking behavior, or normalized backend contract. That constraint is
 closed, and Layer 3 is now wrapped for the TurtleBot4/Nav2 simulation path. The
-next major milestone is Layer 4 coverage above the `vacuum_adapter` contract.
+next milestone before coverage is `Layer 4 prerequisite: Mapping + Whole Map
+View`; Layer 4 coverage starts after the map foundation is reliable.
 
 The full seven-layer plan this file aligns with:
 
@@ -22,7 +23,9 @@ Layer 1 — Localization + Map        running
 Layer 2 — Navigation                closed for TurtleBot4/Nav2 simulation
 Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
                                     Valetudo stub reserved for Layer 6
-Layer 4 — Coverage                  planned, YOU ARE HERE
+Layer 4 prerequisite: Mapping + Whole Map View
+                                    in progress, YOU ARE HERE
+Layer 4 — Coverage                  planned after map foundation
 Layer 5 — Room / Zone Semantics     planned
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
@@ -73,6 +76,42 @@ Explicitly out of the closed Layer 2/Layer 3 simulation slice:
 - docking / return-to-dock workflow and battery-aware execution (Layer 4)
 - room, zone, and segmentation UI (Layer 5)
 - real vacuum hardware and Valetudo integration runtime (Layer 6)
+
+## Mapping + Whole Map View
+
+`Vacuum Control` now has a map foundation milestone before Layer 4 coverage.
+This is still a UI/product workflow foundation, not full persistent map
+management.
+
+Implemented extension behavior:
+
+- first valid `/map` fits the full known occupancy-grid bounds by default;
+- Fit Map uses `map.info.width`, `map.info.height`, resolution, canvas size,
+  and padding, not robot pose, route geometry, selected target, or costmaps;
+- `MapCanvas` has explicit `fit`, `manual`, and `follow_robot` viewport modes;
+- Zoom In, Zoom Out, Fit Map, Follow Robot, zoom readout, and view labels are
+  visible in the map controls;
+- pan/zoom, fit, follow, panel resize, base map, costmaps, plan path,
+  lidar/depth overlays, robot marker, and target marker share one
+  world-to-screen transform;
+- unknown cells render as muted map space and the map boundary is outlined so a
+  partial map is not confused with panel background;
+- `MappingCard` adds Start Mapping, Pause Mapping, Finish Mapping, Continue
+  Mapping, Discard Session, and Use This Map states;
+- mapping/review mode disables navigation target staging by default so manual
+  teleop remains the primary mapping action;
+- map metadata is shown: dimensions, resolution, known/free/occupied/unknown
+  ratios, known area, last update age, pose availability, and readiness;
+- Use This Map marks the current map as accepted in UI state only and does not
+  imply permanent ROS map saving or backend deletion.
+
+Boundary note:
+
+- `MapCanvas` can still render live `/map` and overlay topics directly for the
+  operator visualization surface.
+- Product workflows should move toward adapter-level map/session state.
+- Future coverage planning should consume normalized map and pose data above
+  the `vacuum_adapter` boundary rather than raw ROS topics.
 
 ## Layer 3 Result
 
@@ -703,14 +742,14 @@ main Layer 4 coverage path.
 
 ## Recommended Immediate Work
 
-The Layer 3 contract hardening pass is now wrapped. `Vacuum Control` consumes
-the `vacuum_adapter` contract through `useVacuumAdapter`, the TurtleBot4/Nav2
+The Layer 3 contract hardening pass is wrapped, and the map foundation
+milestone now comes before Layer 4 coverage. `Vacuum Control` consumes the
+`vacuum_adapter` contract through `useVacuumAdapter`, the TurtleBot4/Nav2
 backend hook normalizes Nav2 runtime into the contract, command dispatch is
 covered by a focused regression harness, and the Valetudo backend has
-non-hardware mapper/interface stubs for Layer 6. Live VM validation through the
-VS Code webview is complete. The remaining near-term work is Layer 4 coverage
-planning and keeping supporting debug panels aligned, not a new contract
-rewrite.
+non-hardware mapper/interface stubs for Layer 6. Near-term work is to validate
+Mapping + Whole Map View against the live VM, then move to Clean Area MVP
+coverage above the adapter boundary.
 
 1. [x] Keep `steps.md` aligned with the actual `Vacuum Control` component state.
 2. [x] Keep `extension.md` aligned with the global Layer 2 topic map used by
@@ -734,7 +773,9 @@ rewrite.
 13. [x] Expand the Valetudo adapter interface stub with capability, state,
     command, and runtime-boundary mapper shapes.
 14. [x] Validate the hardened adapter contract against the live VM.
-15. [ ] Keep the VM integration service plan for Valetudo in Layer 6.
+15. [x] Add Mapping + Whole Map View UI state, controls, metadata, and
+    Use This Map placeholder before coverage.
+16. [ ] Keep the VM integration service plan for Valetudo in Layer 6.
 
 Suggested verification after patching:
 

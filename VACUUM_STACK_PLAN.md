@@ -68,8 +68,9 @@ change them:
   simulation path; the operator slice is validated through `Vacuum Control`,
   the extension talks to the `vacuum_adapter` contract, and
   `bun run test:vacuum-adapter` covers the adapter boundary.
-- The next major milestone is Layer 4 coverage above the closed adapter
-  contract.
+- The next major milestone is the Layer 4 prerequisite: Mapping + Whole Map
+  View. Coverage starts after the user can reliably view, build, review, and
+  accept the current known `/map`.
 - Coverage (Layer 4) and room/zone semantics (Layer 5) must sit above the
   adapter contract, not below it, so they stay backend-neutral.
 - Real hardware (Layer 6) is the last layer; it targets Valetudo-compatible
@@ -115,7 +116,9 @@ Layer 1 — Localization + Map        (running)
 Layer 2 — Navigation                (closed for TurtleBot4/Nav2 simulation)
 Layer 3 — Vacuum Adapter            (closed for TurtleBot4/Nav2 simulation,
                                      Valetudo stub reserved for Layer 6)
-Layer 4 — Coverage                  (planned, YOU ARE HERE)
+Layer 4 prerequisite: Mapping + Whole Map View
+                                     (in progress, YOU ARE HERE)
+Layer 4 — Coverage                  (planned after map foundation)
 Layer 5 — Room / Zone Semantics     (planned)
 Layer 6 — Real Hardware (Valetudo)  (planned)
 ```
@@ -229,9 +232,74 @@ Current truth (April 30, 2026):
 - fresh target selection after cancel resets marker state and clears stale
   canceled plan geometry.
 
+### Layer 4 Prerequisite: Mapping + Whole Map View
+
+Status: implemented as a UI foundation milestone in `Vacuum Control`; backend
+map persistence remains future work.
+
+Purpose:
+
+- make the first valid `/map` display as the full known occupancy-grid bounds;
+- provide an explicit map viewport model with `fit`, `manual`, and
+  `follow_robot` modes;
+- keep the base map, costmaps, plan path, lidar/depth overlays, robot marker,
+  and target marker aligned through one world-to-screen transform;
+- give the operator a manual teleop mapping workflow before coverage cleaning;
+- show whether the current map is missing, active, mostly unknown, in review,
+  or accepted for later navigation/coverage.
+
+Current implementation:
+
+- `MapCanvas` still subscribes to and renders live `/map`,
+  `/global_costmap/costmap`, `/local_costmap/costmap`, lidar, depth obstacles,
+  route overlays, markers, and camera overlay.
+- Fit Map uses the full occupancy-grid dimensions and panel size with padding;
+  it does not fit to robot pose, route geometry, target position, costmaps, or
+  known/free cells only.
+- First valid `/map` enters Full known map view. If map dimensions or panel
+  size change while still in fit mode, the canvas refits. Manual pan/zoom keeps
+  the user's viewport. Follow Robot recenters around the robot pose until the
+  user pans, zooms, or fits.
+- Map controls expose Zoom In, Zoom Out, Fit Map, Follow Robot, zoom readout,
+  and a view-state label such as Full known map, Manual view, Following robot,
+  Waiting for map, or Map mostly unexplored.
+- `VacuumControlPanel` owns UI-only mapping session state:
+  `not_started / mapping / paused / review / saved / discarded / error`.
+- `MappingCard` shows Start Mapping, Pause Mapping, Finish Mapping, Continue
+  Mapping, Discard Session, and Use This Map flows with map metadata.
+- Map metadata includes dimensions, resolution, known/free/occupied/unknown
+  ratios, approximate known area, last update age, pose availability, and a
+  simple readiness label.
+- During mapping/review states, map clicks do not stage navigation targets by
+  default; teleop remains the primary mapping interaction.
+- Use This Map marks the current map as accepted in UI state only. It does not
+  claim persistent ROS map saving, disk persistence, robot map deletion, or a
+  full map library yet.
+
+Boundary rule:
+
+- UI rendering can consume live `/map` today because `MapCanvas` is the operator
+  visualization surface.
+- Product workflows above raw rendering should move toward adapter-level
+  map/session state.
+- Future coverage planning must consume normalized map and pose data above the
+  adapter boundary, not become coupled to raw ROS topics.
+
+Still out of scope for this prerequisite:
+
+- coverage path planning;
+- lawnmower paths;
+- autonomous exploration;
+- room segmentation;
+- zone/no-go editors;
+- dock UI;
+- battery-aware return/resume;
+- Valetudo hardware integration;
+- scheduling and consumables.
+
 ### Layer 4: Coverage
 
-Status: planned.
+Status: planned after the map foundation.
 
 Purpose:
 

@@ -24,6 +24,37 @@ export type MapCanvasTarget = {
   yaw: number;
 };
 
+export type MapViewMode = "fit" | "manual" | "follow_robot";
+
+export type MappingSessionState =
+  | "not_started"
+  | "mapping"
+  | "paused"
+  | "review"
+  | "saved"
+  | "discarded"
+  | "error";
+
+export type MapCanvasMetadata = {
+  hasMap: boolean;
+  width: number;
+  height: number;
+  resolution: number;
+  freeCells: number;
+  occupiedCells: number;
+  unknownCells: number;
+  knownCells: number;
+  totalCells: number;
+  freeRatio: number;
+  occupiedRatio: number;
+  unknownRatio: number;
+  knownRatio: number;
+  knownAreaSqM: number;
+  lastUpdateAt: number | null;
+  poseAvailable: boolean;
+  readiness: "No map" | "Map active" | "Map mostly unknown" | "Map review ready" | "Map saved";
+};
+
 type MapPoint = {
   x: number;
   y: number;
@@ -50,6 +81,27 @@ type MapBounds = {
   hasLiveMap: boolean;
 };
 
+type CanvasSize = {
+  width: number;
+  height: number;
+};
+
+type MapViewport = {
+  viewMode: MapViewMode;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+};
+
+type PointerDragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  lastX: number;
+  lastY: number;
+  isPanning: boolean;
+};
+
 export type RouteVisualState = "idle" | "staged" | "active" | "completed" | "failed" | "canceled";
 
 type RasterLayerKey = "map" | "globalCostmap" | "localCostmap";
@@ -74,15 +126,22 @@ export type MapCanvasProps = {
   sentTarget: MapCanvasTarget | null;
   routeVisualState: RouteVisualState;
   isGoalActive: boolean;
+  mappingState: MappingSessionState;
+  disableTargetSelection?: boolean;
   targetDistance: number | null;
   onTargetStart: (target: MapCanvasTarget) => void;
   onTargetRotate: (yaw: number) => void;
+  onMapMetadataChange?: (metadata: MapCanvasMetadata) => void;
 };
 
 const MAP_FREE_COLOR = { r: 232, g: 230, b: 224 };
 const MAP_OCCUPIED_COLOR = { r: 58, g: 58, b: 58 };
 const MAP_UNKNOWN_COLOR = { r: 200, g: 196, b: 188 };
 const COSTMAP_LOW_THRESHOLD = 5;
+const FIT_PADDING_PX = 42;
+const MIN_ZOOM_RATIO = 0.5;
+const MAX_ZOOM_RATIO = 8;
+const POINTER_PAN_THRESHOLD_PX = 5;
 const RASTER_LAYER_CONFIGS: RasterLayerConfig[] = [
   {
     key: "map",
@@ -364,6 +423,77 @@ function deriveBounds(map: OccupancyMap | null, pose: PoseCoordinates | null): M
   };
 }
 
+function getMapSignature(map: OccupancyMap | null): string | null {
+  if (!map) {
+    return null;
+  }
+  return [
+    map.width,
+    map.height,
+    map.resolution,
+    map.originX,
+    map.originY,
+    map.originYaw,
+  ].join(":");
+}
+
+function getFitScale(bounds: MapBounds, canvasSize: CanvasSize): number {
+  const availableWidth = Math.max(1, canvasSize.width - FIT_PADDING_PX * 2);
+  const availableHeight = Math.max(1, canvasSize.height - FIT_PADDING_PX * 2);
+  if (bounds.width <= 0 || bounds.height <= 0) {
+    return 1;
+  }
+  return Math.max(0.001, Math.min(availableWidth / bounds.width, availableHeight / bounds.height));
+}
+
+function makeFitViewport(bounds: MapBounds, canvasSize: CanvasSize, viewMode: MapViewMode = "fit"): MapViewport {
+  const scale = getFitScale(bounds, canvasSize);
+  return {
+    viewMode,
+    scale,
+    offsetX: (canvasSize.width - bounds.width * scale) / 2,
+    offsetY: (canvasSize.height - bounds.height * scale) / 2,
+  };
+}
+
+function centerViewportOnPoint(
+  point: MapPoint,
+  bounds: MapBounds,
+  canvasSize: CanvasSize,
+  scale: number,
+  viewMode: MapViewMode,
+): MapViewport {
+  return {
+    viewMode,
+    scale,
+    offsetX: canvasSize.width / 2 - (point.x - bounds.minX) * scale,
+    offsetY: canvasSize.height / 2 - (bounds.maxY - point.y) * scale,
+  };
+}
+
+function worldToScreen(point: MapPoint, bounds: MapBounds, viewport: MapViewport): MapPoint {
+  return {
+    x: viewport.offsetX + (point.x - bounds.minX) * viewport.scale,
+    y: viewport.offsetY + (bounds.maxY - point.y) * viewport.scale,
+  };
+}
+
+function screenToWorld(point: MapPoint, bounds: MapBounds, viewport: MapViewport): MapPoint {
+  return {
+    x: bounds.minX + (point.x - viewport.offsetX) / viewport.scale,
+    y: bounds.maxY - (point.y - viewport.offsetY) / viewport.scale,
+  };
+}
+
+function getMapLayerStyle(bounds: MapBounds, viewport: MapViewport): React.CSSProperties {
+  return {
+    left: `${viewport.offsetX}px`,
+    top: `${viewport.offsetY}px`,
+    width: `${bounds.width * viewport.scale}px`,
+    height: `${bounds.height * viewport.scale}px`,
+  };
+}
+
 function choosePrimaryRasterMap(
   map: OccupancyMap | null,
   globalCostmap: OccupancyMap | null,
@@ -372,23 +502,10 @@ function choosePrimaryRasterMap(
   return map ?? globalCostmap ?? localCostmap;
 }
 
-function worldToPercent(
-  point: MapPoint,
-  bounds: MapBounds,
-  options?: { clampToViewport?: boolean },
-): { left: number; top: number } {
-  const clampToViewport = options?.clampToViewport ?? true;
-  const left = ((point.x - bounds.minX) / bounds.width) * 100;
-  const top = (1 - (point.y - bounds.minY) / bounds.height) * 100;
-  return {
-    left: clampToViewport ? clamp(left, -30, 130) : left,
-    top: clampToViewport ? clamp(top, -30, 130) : top,
-  };
-}
-
 function getRasterLayerStyle(
   map: OccupancyMap | null,
   bounds: MapBounds,
+  viewport: MapViewport,
   mode: RasterLayerMode,
   projectPointToMap?: (point: ProjectedMapPoint, sourceFrameId: string | null) => ProjectedMapPoint | null,
 ): React.CSSProperties | undefined {
@@ -422,30 +539,32 @@ function getRasterLayerStyle(
     return { display: "none" };
   }
 
-  const cornerPercents = (projectedCorners as ProjectedMapPoint[]).map((corner) =>
-    worldToPercent(corner, bounds, { clampToViewport: false }),
+  const cornerScreens = (projectedCorners as ProjectedMapPoint[]).map((corner) =>
+    worldToScreen(corner, bounds, viewport),
   );
-  const left = Math.min(...cornerPercents.map((corner) => corner.left));
-  const right = Math.max(...cornerPercents.map((corner) => corner.left));
-  const top = Math.min(...cornerPercents.map((corner) => corner.top));
-  const bottom = Math.max(...cornerPercents.map((corner) => corner.top));
+  const left = Math.min(...cornerScreens.map((corner) => corner.x));
+  const right = Math.max(...cornerScreens.map((corner) => corner.x));
+  const top = Math.min(...cornerScreens.map((corner) => corner.y));
+  const bottom = Math.max(...cornerScreens.map((corner) => corner.y));
 
   return {
-    left: `${left}%`,
-    top: `${top}%`,
-    width: `${right - left}%`,
-    height: `${bottom - top}%`,
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${right - left}px`,
+    height: `${bottom - top}px`,
   };
 }
 
-function percentToWorld(leftPercent: number, topPercent: number, bounds: MapBounds): MapPoint {
-  return {
-    x: bounds.minX + bounds.width * leftPercent,
-    y: bounds.minY + bounds.height * (1 - topPercent),
-  };
-}
-
-function getMapPrompt(routeVisualState: RouteVisualState, hasTarget: boolean): string {
+function getMapPrompt(routeVisualState: RouteVisualState, hasTarget: boolean, mappingState: MappingSessionState): string {
+  if (mappingState === "mapping") {
+    return "Mapping in progress";
+  }
+  if (mappingState === "review") {
+    return "Review map";
+  }
+  if (mappingState === "paused") {
+    return "Mapping paused";
+  }
   if (routeVisualState === "completed") {
     return "Destination reached";
   }
@@ -458,7 +577,7 @@ function getMapPrompt(routeVisualState: RouteVisualState, hasTarget: boolean): s
   if (routeVisualState === "canceled") {
     return "Run canceled";
   }
-  return hasTarget ? "Drag to refine destination" : "Click to choose destination";
+  return hasTarget ? "Destination selected" : "Click to choose destination";
 }
 
 function formatDistanceShort(distance: number | null): string | null {
@@ -485,10 +604,87 @@ function getTargetLabel(routeVisualState: RouteVisualState, distance: number | n
   return distStr ?? "Selected";
 }
 
+function buildMapMetadata(args: {
+  map: OccupancyMap | null;
+  lastUpdateAt: number | null;
+  poseAvailable: boolean;
+  mappingState: MappingSessionState;
+}): MapCanvasMetadata {
+  const { map, lastUpdateAt, poseAvailable, mappingState } = args;
+  if (!map || map.width <= 0 || map.height <= 0) {
+    return {
+      hasMap: false,
+      width: 0,
+      height: 0,
+      resolution: 0,
+      freeCells: 0,
+      occupiedCells: 0,
+      unknownCells: 0,
+      knownCells: 0,
+      totalCells: 0,
+      freeRatio: 0,
+      occupiedRatio: 0,
+      unknownRatio: 1,
+      knownRatio: 0,
+      knownAreaSqM: 0,
+      lastUpdateAt,
+      poseAvailable,
+      readiness: "No map",
+    };
+  }
+
+  let freeCells = 0;
+  let occupiedCells = 0;
+  let unknownCells = 0;
+  for (const cell of map.data) {
+    if (cell < 0) {
+      unknownCells += 1;
+    } else if (cell <= 15) {
+      freeCells += 1;
+    } else {
+      occupiedCells += 1;
+    }
+  }
+
+  const totalCells = Math.max(1, map.width * map.height);
+  const knownCells = freeCells + occupiedCells;
+  const knownRatio = knownCells / totalCells;
+  const unknownRatio = unknownCells / totalCells;
+  const readiness: MapCanvasMetadata["readiness"] =
+    mappingState === "saved"
+      ? "Map saved"
+      : mappingState === "review"
+        ? "Map review ready"
+        : knownRatio < 0.18
+          ? "Map mostly unknown"
+          : "Map active";
+
+  return {
+    hasMap: true,
+    width: map.width,
+    height: map.height,
+    resolution: map.resolution,
+    freeCells,
+    occupiedCells,
+    unknownCells,
+    knownCells,
+    totalCells,
+    freeRatio: freeCells / totalCells,
+    occupiedRatio: occupiedCells / totalCells,
+    unknownRatio,
+    knownRatio,
+    knownAreaSqM: knownCells * map.resolution * map.resolution,
+    lastUpdateAt,
+    poseAvailable,
+    readiness,
+  };
+}
+
 function drawPointOverlay(
   canvas: HTMLCanvasElement,
   points: ProjectedMapPoint[],
   bounds: MapBounds,
+  viewport: MapViewport,
   style: PointOverlayStyle,
 ): void {
   const context = canvas.getContext("2d");
@@ -512,14 +708,13 @@ function drawPointOverlay(
   const glowRadius = style.radius * 5;
 
   for (const point of points) {
-    const normalizedLeft = (point.x - bounds.minX) / bounds.width;
-    const normalizedTop = 1 - (point.y - bounds.minY) / bounds.height;
-    if (!Number.isFinite(normalizedLeft) || !Number.isFinite(normalizedTop)) {
+    const screen = worldToScreen(point, bounds, viewport);
+    if (!Number.isFinite(screen.x) || !Number.isFinite(screen.y)) {
       continue;
     }
 
-    const x = normalizedLeft * width;
-    const y = normalizedTop * height;
+    const x = screen.x;
+    const y = screen.y;
     if (x < -glowRadius - 4 || y < -glowRadius - 4 || x > width + glowRadius + 4 || y > height + glowRadius + 4) {
       continue;
     }
@@ -548,6 +743,7 @@ function drawDepthPointOverlay(
   canvas: HTMLCanvasElement,
   points: ProjectedMapPoint[],
   bounds: MapBounds,
+  viewport: MapViewport,
 ): void {
   const context = canvas.getContext("2d");
   if (!context) {
@@ -571,14 +767,13 @@ function drawDepthPointOverlay(
   const CORE_R = 1.45;
 
   for (const point of points) {
-    const normalizedLeft = (point.x - bounds.minX) / bounds.width;
-    const normalizedTop = 1 - (point.y - bounds.minY) / bounds.height;
-    if (!Number.isFinite(normalizedLeft) || !Number.isFinite(normalizedTop)) {
+    const screen = worldToScreen(point, bounds, viewport);
+    if (!Number.isFinite(screen.x) || !Number.isFinite(screen.y)) {
       continue;
     }
 
-    const x = normalizedLeft * width;
-    const y = normalizedTop * height;
+    const x = screen.x;
+    const y = screen.y;
     if (x < -HALO_R - 2 || y < -HALO_R - 2 || x > width + HALO_R + 2 || y > height + HALO_R + 2) {
       continue;
     }
@@ -659,9 +854,18 @@ export function MapCanvas(props: MapCanvasProps) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const layerButtonRef = useRef<HTMLButtonElement | null>(null);
   const layerPopoverRef = useRef<HTMLDivElement | null>(null);
-  const dragPointerIdRef = useRef<number | null>(null);
-  const [zoom, setZoom] = useState(1);
+  const dragStateRef = useRef<PointerDragState | null>(null);
+  const hasFitInitialMapRef = useRef(false);
+  const previousMappingStateRef = useRef<MappingSessionState>(props.mappingState);
+  const [stageSize, setStageSize] = useState<CanvasSize>({ width: 1, height: 1 });
+  const [viewport, setViewport] = useState<MapViewport>({
+    viewMode: "fit",
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+  });
   const [mapMessage, setMapMessage] = useState<Record<string, unknown> | null>(null);
+  const [mapLastUpdateAt, setMapLastUpdateAt] = useState<number | null>(null);
   const [globalCostmapMessage, setGlobalCostmapMessage] = useState<Record<string, unknown> | null>(null);
   const [localCostmapMessage, setLocalCostmapMessage] = useState<Record<string, unknown> | null>(null);
   const [visibleLayers, setVisibleLayers] = useState<OverlayVisibility>(() => ({
@@ -675,6 +879,7 @@ export function MapCanvas(props: MapCanvasProps) {
         const normalizedMessage = normalizeRosMessage(message);
         if (layer.key === "map") {
           setMapMessage(normalizedMessage);
+          setMapLastUpdateAt(Date.now());
         } else if (layer.key === "globalCostmap") {
           setGlobalCostmapMessage(normalizedMessage);
         } else {
@@ -707,6 +912,87 @@ export function MapCanvas(props: MapCanvasProps) {
     () => deriveBounds(primaryRasterMap, displayedRobotPose),
     [primaryRasterMap, displayedRobotPose],
   );
+  const mapSignature = useMemo(() => getMapSignature(occupancyMap), [occupancyMap]);
+  const fitScale = useMemo(() => getFitScale(bounds, stageSize), [bounds, stageSize]);
+  const zoomRatio = fitScale > 0 ? viewport.scale / fitScale : 1;
+  const mapLayerStyle = useMemo(() => getMapLayerStyle(bounds, viewport), [bounds, viewport]);
+  const mapMetadata = useMemo(
+    () =>
+      buildMapMetadata({
+        map: occupancyMap,
+        lastUpdateAt: mapLastUpdateAt,
+        poseAvailable: props.currentPose != null,
+        mappingState: props.mappingState,
+      }),
+    [occupancyMap, mapLastUpdateAt, props.currentPose, props.mappingState],
+  );
+
+  useEffect(() => {
+    props.onMapMetadataChange?.(mapMetadata);
+  }, [mapMetadata, props.onMapMetadataChange]);
+
+  useEffect(() => {
+    if (!stageRef.current) {
+      return undefined;
+    }
+    const element = stageRef.current;
+    const updateSize = () => {
+      const rect = element.getBoundingClientRect();
+      setStageSize({
+        width: Math.max(1, Math.round(rect.width)),
+        height: Math.max(1, Math.round(rect.height)),
+      });
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    setViewport((current) => {
+      if (current.viewMode !== "fit" && hasFitInitialMapRef.current) {
+        return current;
+      }
+      if (!bounds.hasLiveMap && hasFitInitialMapRef.current) {
+        return current;
+      }
+      if (bounds.hasLiveMap) {
+        hasFitInitialMapRef.current = true;
+      }
+      return makeFitViewport(bounds, stageSize, "fit");
+    });
+  }, [bounds, mapSignature, stageSize]);
+
+  useEffect(() => {
+    if (viewport.viewMode !== "follow_robot" || !displayedRobotPose) {
+      return;
+    }
+    setViewport((current) =>
+      centerViewportOnPoint(displayedRobotPose, bounds, stageSize, current.scale, "follow_robot"),
+    );
+  }, [bounds, displayedRobotPose, stageSize, viewport.viewMode]);
+
+  useEffect(() => {
+    const previous = previousMappingStateRef.current;
+    previousMappingStateRef.current = props.mappingState;
+    if (previous === props.mappingState) {
+      return;
+    }
+
+    if (props.mappingState === "mapping") {
+      setViewport((current) =>
+        displayedRobotPose
+          ? centerViewportOnPoint(displayedRobotPose, bounds, stageSize, current.scale, "follow_robot")
+          : makeFitViewport(bounds, stageSize, "fit"),
+      );
+      return;
+    }
+
+    if (props.mappingState === "review") {
+      setViewport(makeFitViewport(bounds, stageSize, "fit"));
+    }
+  }, [bounds, displayedRobotPose, props.mappingState, stageSize]);
 
   useEffect(() => {
     if (!mapCanvasRef.current) {
@@ -739,6 +1025,7 @@ export function MapCanvas(props: MapCanvasProps) {
         ? projectedSensorOverlays.lidarPoints
         : [],
       bounds,
+      viewport,
       { fill: "rgba(96, 224, 255, 0.92)", haloFill: "rgba(88, 217, 255, 0.18)", radius: 1.5 },
     );
   }, [
@@ -746,6 +1033,7 @@ export function MapCanvas(props: MapCanvasProps) {
     projectedSensorOverlays.lidarPoints,
     projectedSensorOverlays.overlayStatus.lidar,
     visibleLayers.lidar,
+    viewport,
   ]);
 
   useEffect(() => {
@@ -758,12 +1046,14 @@ export function MapCanvas(props: MapCanvasProps) {
         ? projectedSensorOverlays.depthObstaclePoints
         : [],
       bounds,
+      viewport,
     );
   }, [
     bounds,
     projectedSensorOverlays.depthObstaclePoints,
     projectedSensorOverlays.overlayStatus.depthObstacles,
     visibleLayers.depthObstacles,
+    viewport,
   ]);
 
   useEffect(() => {
@@ -798,24 +1088,25 @@ export function MapCanvas(props: MapCanvasProps) {
 
   const hasTarget = props.draftTarget != null;
   const displayedTarget = props.sentTarget ?? props.draftTarget;
+  const targetSelectionDisabled = props.disableTargetSelection || props.mappingState === "mapping" || props.mappingState === "paused" || props.mappingState === "review";
   const previewLine =
     props.routeVisualState === "staged" && displayedRobotPose && props.draftTarget
       ? [
-          worldToPercent(displayedRobotPose, bounds),
-          worldToPercent(props.draftTarget, bounds),
+          worldToScreen(displayedRobotPose, bounds, viewport),
+          worldToScreen(props.draftTarget, bounds, viewport),
         ]
       : null;
   const routePointString = useMemo(
     () =>
       routePoints
         .map((point) => {
-          const position = worldToPercent(point, bounds);
-          return `${position.left},${position.top}`;
+          const position = worldToScreen(point, bounds, viewport);
+          return `${position.x},${position.y}`;
         })
         .join(" "),
-    [bounds, routePoints],
+    [bounds, routePoints, viewport],
   );
-  const mapPrompt = getMapPrompt(props.routeVisualState, hasTarget);
+  const mapPrompt = getMapPrompt(props.routeVisualState, hasTarget, props.mappingState);
   const activeTargetLabel = getTargetLabel(props.routeVisualState, props.targetDistance);
   const overlayStatus: OverlayAvailability = {
     map: occupancyMap ? "live" : "waiting",
@@ -826,13 +1117,43 @@ export function MapCanvas(props: MapCanvasProps) {
     depthObstacles: projectedSensorOverlays.overlayStatus.depthObstacles,
   };
   const globalCostmapStyle = useMemo(
-    () => getRasterLayerStyle(globalCostmap, bounds, "global-costmap", projectedSensorOverlays.projectPointToMap),
-    [bounds, globalCostmap, projectedSensorOverlays.projectPointToMap],
+    () => getRasterLayerStyle(globalCostmap, bounds, viewport, "global-costmap", projectedSensorOverlays.projectPointToMap),
+    [bounds, globalCostmap, projectedSensorOverlays.projectPointToMap, viewport],
   );
   const localCostmapStyle = useMemo(
-    () => getRasterLayerStyle(localCostmap, bounds, "local-costmap", projectedSensorOverlays.projectPointToMap),
-    [bounds, localCostmap, projectedSensorOverlays.projectPointToMap],
+    () => getRasterLayerStyle(localCostmap, bounds, viewport, "local-costmap", projectedSensorOverlays.projectPointToMap),
+    [bounds, localCostmap, projectedSensorOverlays.projectPointToMap, viewport],
   );
+  const viewLabel = (() => {
+    if (!occupancyMap) {
+      return "Waiting for map";
+    }
+    if (mapMetadata.readiness === "Map mostly unknown") {
+      return "Map mostly unexplored";
+    }
+    if (viewport.viewMode === "follow_robot") {
+      return `Following robot · ${Math.round(zoomRatio * 100)}%`;
+    }
+    if (viewport.viewMode === "manual") {
+      return `Manual view · ${Math.round(zoomRatio * 100)}%`;
+    }
+    return "Full known map";
+  })();
+  const mappingBanner = (() => {
+    if (props.mappingState === "mapping") {
+      return `Mapping in progress · ${Math.round(mapMetadata.knownRatio * 100)}% known`;
+    }
+    if (props.mappingState === "review") {
+      return `Review map · ${Math.round(mapMetadata.knownRatio * 100)}% known`;
+    }
+    if (props.mappingState === "saved") {
+      return "Current map · ready for navigation";
+    }
+    if (props.mappingState === "paused") {
+      return "Mapping paused";
+    }
+    return null;
+  })();
 
   function toggleLayer(layerKey: MapOverlayKey): void {
     setVisibleLayers((current) => ({
@@ -841,58 +1162,104 @@ export function MapCanvas(props: MapCanvasProps) {
     }));
   }
 
-  function updateTargetFromPointer(clientX: number, clientY: number, mode: "start" | "rotate"): void {
+  function zoomBy(factor: number): void {
+    setViewport((current) => {
+      const minScale = fitScale * MIN_ZOOM_RATIO;
+      const maxScale = fitScale * MAX_ZOOM_RATIO;
+      const nextScale = clamp(current.scale * factor, minScale, maxScale);
+      const anchor = { x: stageSize.width / 2, y: stageSize.height / 2 };
+      const anchorWorld = screenToWorld(anchor, bounds, current);
+      return {
+        viewMode: "manual",
+        scale: nextScale,
+        offsetX: anchor.x - (anchorWorld.x - bounds.minX) * nextScale,
+        offsetY: anchor.y - (bounds.maxY - anchorWorld.y) * nextScale,
+      };
+    });
+  }
+
+  function fitMap(): void {
+    setViewport(makeFitViewport(bounds, stageSize, "fit"));
+  }
+
+  function followRobot(): void {
+    if (!displayedRobotPose) {
+      return;
+    }
+    setViewport((current) =>
+      centerViewportOnPoint(displayedRobotPose, bounds, stageSize, current.scale, "follow_robot"),
+    );
+  }
+
+  function stageTargetFromPointer(clientX: number, clientY: number): void {
     if (!stageRef.current) {
       return;
     }
     const rect = stageRef.current.getBoundingClientRect();
-    const rawLeft = (clientX - rect.left) / rect.width;
-    const rawTop = (clientY - rect.top) / rect.height;
-    const left = clamp(0.5 + (rawLeft - 0.5) / zoom, 0, 1);
-    const top = clamp(0.5 + (rawTop - 0.5) / zoom, 0, 1);
-    const worldPoint = percentToWorld(left, top, bounds);
-
-    if (mode === "start") {
-      props.onTargetStart({
-        x: worldPoint.x,
-        y: worldPoint.y,
-        yaw: displayedRobotPose?.yaw ?? 0,
-      });
-      return;
-    }
-
-    if (!props.draftTarget) {
-      return;
-    }
-
-    const yaw =
-      (Math.atan2(worldPoint.y - props.draftTarget.y, worldPoint.x - props.draftTarget.x) * 180) / Math.PI;
-    props.onTargetRotate(yaw);
+    const worldPoint = screenToWorld(
+      {
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+      },
+      bounds,
+      viewport,
+    );
+    props.onTargetStart({
+      x: worldPoint.x,
+      y: worldPoint.y,
+      yaw: displayedRobotPose?.yaw ?? 0,
+    });
   }
 
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
     if (props.isGoalActive) {
       return;
     }
-    dragPointerIdRef.current = event.pointerId;
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      isPanning: false,
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
-    updateTargetFromPointer(event.clientX, event.clientY, "start");
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>): void {
-    if (dragPointerIdRef.current !== event.pointerId || props.isGoalActive) {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId || props.isGoalActive) {
       return;
     }
-    updateTargetFromPointer(event.clientX, event.clientY, "rotate");
+    const totalDistance = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY);
+    if (!dragState.isPanning && totalDistance < POINTER_PAN_THRESHOLD_PX) {
+      return;
+    }
+
+    const deltaX = event.clientX - dragState.lastX;
+    const deltaY = event.clientY - dragState.lastY;
+    dragState.isPanning = true;
+    dragState.lastX = event.clientX;
+    dragState.lastY = event.clientY;
+    setViewport((current) => ({
+      ...current,
+      viewMode: "manual",
+      offsetX: current.offsetX + deltaX,
+      offsetY: current.offsetY + deltaY,
+    }));
   }
 
   function onPointerEnd(event: React.PointerEvent<HTMLDivElement>): void {
-    if (dragPointerIdRef.current !== event.pointerId) {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
       return;
     }
-    dragPointerIdRef.current = null;
+    dragStateRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (!dragState.isPanning && !props.isGoalActive && !targetSelectionDisabled) {
+      stageTargetFromPointer(event.clientX, event.clientY);
     }
   }
 
@@ -900,7 +1267,7 @@ export function MapCanvas(props: MapCanvasProps) {
     <div className="vacuum-map-card">
       <div
         ref={stageRef}
-        className={`vacuum-map-stage vacuum-map-stage--${props.routeVisualState} ${!props.isGoalActive ? "vacuum-map-stage--interactive" : ""}`}
+        className={`vacuum-map-stage vacuum-map-stage--${props.routeVisualState} ${!props.isGoalActive ? "vacuum-map-stage--interactive" : ""} ${targetSelectionDisabled ? "vacuum-map-stage--mapping" : ""}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerEnd}
@@ -920,8 +1287,8 @@ export function MapCanvas(props: MapCanvasProps) {
           <button
             type="button"
             className="vacuum-map-controls__button"
-            onClick={() => setZoom((current) => clamp(current + 0.15, 0.8, 2.4))}
-            disabled={zoom >= 2.4}
+            onClick={() => zoomBy(1.2)}
+            disabled={zoomRatio >= MAX_ZOOM_RATIO}
             title="Zoom in"
             aria-label="Zoom in"
           >
@@ -930,25 +1297,36 @@ export function MapCanvas(props: MapCanvasProps) {
           <button
             type="button"
             className="vacuum-map-controls__button"
-            onClick={() => setZoom((current) => clamp(current - 0.15, 0.8, 2.4))}
-            disabled={zoom <= 0.8}
+            onClick={() => zoomBy(1 / 1.2)}
+            disabled={zoomRatio <= MIN_ZOOM_RATIO}
             title="Zoom out"
             aria-label="Zoom out"
           >
             <ZoomOutIcon className="vacuum-map-controls__icon" />
           </button>
           <span className="vacuum-map-controls__readout" aria-live="polite">
-            {Math.round(zoom * 100)}%
+            {Math.round(zoomRatio * 100)}%
           </span>
           <button
             type="button"
             className="vacuum-map-controls__button"
-            onClick={() => setZoom(1)}
-            disabled={zoom === 1}
-            title="Fit map"
-            aria-label="Fit map"
+            onClick={fitMap}
+            disabled={viewport.viewMode === "fit" && Math.abs(zoomRatio - 1) < 0.01}
+            title="Fit Map"
+            aria-label="Fit Map"
           >
             <CenterIcon className="vacuum-map-controls__icon" />
+          </button>
+          <button
+            type="button"
+            className={`vacuum-map-controls__button ${viewport.viewMode === "follow_robot" ? "vacuum-map-controls__button--active" : ""}`}
+            onClick={followRobot}
+            disabled={!displayedRobotPose}
+            title="Follow Robot"
+            aria-label="Follow Robot"
+            aria-pressed={viewport.viewMode === "follow_robot"}
+          >
+            <span className="vacuum-map-controls__follow-dot" />
           </button>
         </div>
 
@@ -958,7 +1336,10 @@ export function MapCanvas(props: MapCanvasProps) {
             event.stopPropagation();
           }}
         >
-          <span className="vacuum-map-stage__prompt-text">{mapPrompt}</span>
+          <div className="vacuum-map-stage__labels">
+            <span className="vacuum-map-stage__prompt-text">{mapPrompt}</span>
+            <span className="vacuum-map-stage__view-label">{viewLabel}</span>
+          </div>
           <div className="vacuum-map-layer-picker">
             <button
               ref={layerButtonRef}
@@ -1034,10 +1415,22 @@ export function MapCanvas(props: MapCanvasProps) {
           </div>
         </div>
 
-        <div className="vacuum-map-stage__viewport" style={{ transform: `scale(${zoom})` }}>
+        {mappingBanner ? (
+          <div
+            className={`vacuum-map-stage__mapping-banner vacuum-map-stage__mapping-banner--${props.mappingState}`}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            {mappingBanner}
+          </div>
+        ) : null}
+
+        <div className="vacuum-map-stage__viewport">
           <canvas
             ref={mapCanvasRef}
             className={`vacuum-map-stage__canvas vacuum-map-stage__canvas--map ${visibleLayers.map ? "vacuum-map-stage__canvas--visible" : "vacuum-map-stage__canvas--hidden"}`}
+            style={mapLayerStyle}
           />
           <canvas
             ref={globalCostmapCanvasRef}
@@ -1049,8 +1442,13 @@ export function MapCanvas(props: MapCanvasProps) {
             className={`vacuum-map-stage__canvas vacuum-map-stage__canvas--local-costmap ${visibleLayers.localCostmap ? "vacuum-map-stage__canvas--visible" : "vacuum-map-stage__canvas--hidden"}`}
             style={localCostmapStyle}
           />
-          <div className="vacuum-map-stage__grid" />
-          <svg className="vacuum-map-stage__overlay vacuum-map-stage__overlay--plan" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <div className="vacuum-map-stage__grid" style={mapLayerStyle} />
+          <div className="vacuum-map-stage__map-boundary" style={mapLayerStyle} />
+          <svg
+            className="vacuum-map-stage__overlay vacuum-map-stage__overlay--plan"
+            viewBox={`0 0 ${stageSize.width} ${stageSize.height}`}
+            preserveAspectRatio="none"
+          >
             <defs>
               <linearGradient id="vacuum-route-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor="#63b7df" />
@@ -1076,18 +1474,18 @@ export function MapCanvas(props: MapCanvasProps) {
               <>
                 <line
                   className="vacuum-map-preview-line-casing"
-                  x1={previewLine[0].left}
-                  y1={previewLine[0].top}
-                  x2={previewLine[1].left}
-                  y2={previewLine[1].top}
+                  x1={previewLine[0].x}
+                  y1={previewLine[0].y}
+                  x2={previewLine[1].x}
+                  y2={previewLine[1].y}
                   vectorEffect="non-scaling-stroke"
                 />
                 <line
                   className={`vacuum-map-preview-line vacuum-map-preview-line--${props.routeVisualState}`}
-                  x1={previewLine[0].left}
-                  y1={previewLine[0].top}
-                  x2={previewLine[1].left}
-                  y2={previewLine[1].top}
+                  x1={previewLine[0].x}
+                  y1={previewLine[0].y}
+                  x2={previewLine[1].x}
+                  y2={previewLine[1].y}
                   vectorEffect="non-scaling-stroke"
                 />
               </>
@@ -1103,11 +1501,11 @@ export function MapCanvas(props: MapCanvasProps) {
           />
 
           {displayedRobotPose ? (() => {
-            const position = worldToPercent(displayedRobotPose, bounds);
+            const position = worldToScreen(displayedRobotPose, bounds, viewport);
             return (
               <div
                 className="vacuum-marker vacuum-marker--robot"
-                style={{ left: `${position.left}%`, top: `${position.top}%` }}
+                style={{ left: `${position.x}px`, top: `${position.y}px` }}
               >
                 <span className="vacuum-marker__robot-halo" />
                 <span
@@ -1126,11 +1524,11 @@ export function MapCanvas(props: MapCanvasProps) {
           })() : null}
 
           {displayedTarget ? (() => {
-            const position = worldToPercent(displayedTarget, bounds);
+            const position = worldToScreen(displayedTarget, bounds, viewport);
             return (
               <div
                 className={`vacuum-marker vacuum-marker--target vacuum-marker--target-${props.routeVisualState}`}
-                style={{ left: `${position.left}%`, top: `${position.top}%` }}
+                style={{ left: `${position.x}px`, top: `${position.y}px` }}
               >
                 <span className="vacuum-marker__target-ring" />
                 <span className="vacuum-marker__target-pin" />
@@ -1141,10 +1539,10 @@ export function MapCanvas(props: MapCanvasProps) {
           })() : null}
         </div>
 
-        {!props.draftTarget && !props.isGoalActive ? (
+        {!props.draftTarget && !props.isGoalActive && !targetSelectionDisabled ? (
           <div className="vacuum-map-stage__center-prompt">
             <strong>Choose destination</strong>
-            <span>{bounds.hasLiveMap ? "Click anywhere on the surface" : "Live map unavailable, placeholder ready"}</span>
+            <span>{bounds.hasLiveMap ? "Click the map to stage a run" : "Live map unavailable, placeholder ready"}</span>
           </div>
         ) : null}
 

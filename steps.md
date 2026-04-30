@@ -134,7 +134,9 @@ Layer 1 — Localization + Map        running
 Layer 2 — Navigation                closed for TurtleBot4/Nav2 simulation
 Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
                                     Valetudo stub reserved for Layer 6
-Layer 4 — Coverage                  planned, YOU ARE HERE
+Layer 4 prerequisite: Mapping + Whole Map View
+                                    implemented as UI foundation, YOU ARE HERE
+Layer 4 — Coverage                  planned after map foundation
 Layer 5 — Room / Zone Semantics     planned
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
@@ -175,6 +177,10 @@ What is now true:
   against the live VM through `Vacuum Control`
 - fresh target selection after cancel resets the map marker back to staged
   state and no longer keeps stale canceled plan geometry
+- `Vacuum Control` now has the Layer 4 prerequisite map foundation: full known
+  `/map` fit by default, explicit fit/manual/follow viewport modes, map
+  metadata/readiness labels, manual-teleop mapping state, review, discard, and
+  Use This Map UI acceptance without claiming backend persistence
 
 Validated `Vacuum Control` operator flows:
 
@@ -240,8 +246,54 @@ What remains a runtime caveat:
 
 ## Recommended Next Step
 
-The next step is Layer 4 coverage planning and implementation above the closed
-Layer 3 `vacuum_adapter` contract.
+Before Layer 4 coverage, validate and harden the prerequisite map foundation
+milestone against the live VM:
+
+```text
+Layer 4 prerequisite: Mapping + Whole Map View
+```
+
+This milestone makes `Vacuum Control` feel like a robot-vacuum product before
+it offers coverage cleaning:
+
+- first valid `/map` opens in a full known map view
+- Fit Map returns to the full `/map` occupancy-grid bounds, not the robot,
+  selected target, route, or known/free cells only
+- the map viewport has explicit `fit`, `manual`, and `follow_robot` modes
+- pan, zoom, Fit Map, Follow Robot, and resize behavior keep all overlays aligned
+- the UI clearly labels Full known map, Manual view, Following robot, Waiting
+  for map, and mostly unexplored states
+- mapping mode can be started, paused/resumed conceptually, finished, reviewed,
+  accepted for later navigation/coverage, or discarded without claiming backend
+  map deletion
+- the mapping workflow stays manual-teleop-first; no autonomous exploration,
+  coverage planning, lawnmower paths, room segmentation, zone editing, dock UI,
+  scheduling, consumables, or Valetudo hardware behavior belongs in this
+  milestone
+- map readiness metadata is visible: dimensions, resolution,
+  free/occupied/unknown/known ratios, approximate known area, last update age,
+  and pose availability
+
+Acceptance criteria for this prerequisite:
+
+- First valid `/map` displays the full known occupancy grid by default.
+- Fit Map always returns to the full known `/map` bounds.
+- User zoom and pan do not break map, plan, costmap, lidar, depth, robot, or
+  target overlays.
+- Follow Robot can be enabled explicitly and manual pan/zoom disables it.
+- Mapping Mode starts from `Vacuum Control`, keeps Teleop available, disables
+  target staging by default, and shows map growth metadata.
+- Finish Mapping switches to review state and fits the full known map.
+- Use This Map marks the current map as accepted/current without implying
+  persistent disk save.
+- Discard Mapping Session removes only the UI session state unless a real
+  backend reset exists.
+- Normal point navigation still works outside Mapping Mode.
+
+After this prerequisite is done, the next Layer 4 coverage milestone should be
+Clean Area MVP: select a bounded region, generate a lawnmower preview, execute
+waypoints through `vacuum_adapter`, and expose progress/cancel/failure above the
+adapter contract.
 
 Layer 3 now has a working and live-validated TurtleBot4/Nav2 adapter, a mission
 state machine, `Vacuum Control` consumption through `useVacuumAdapter`, focused
@@ -360,7 +412,9 @@ Layer 1 — Localization + Map        running
 Layer 2 — Navigation                closed for TurtleBot4/Nav2 simulation
 Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
                                     Valetudo stub reserved for Layer 6
-Layer 4 — Coverage                  planned, YOU ARE HERE
+Layer 4 prerequisite: Mapping + Whole Map View
+                                    in progress, YOU ARE HERE
+Layer 4 — Coverage                  planned after map foundation
 Layer 5 — Room / Zone Semantics     planned
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
