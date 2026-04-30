@@ -187,8 +187,12 @@ function getOperatorState(args: {
 function getRouteVisualState(
   navigationState: VacuumNavigationState,
   active: boolean,
+  hasDraftTarget: boolean,
   hasTarget: boolean,
 ): RouteVisualState {
+  if (!active && hasDraftTarget) {
+    return "staged";
+  }
   if (navigationState === "completed") {
     return "completed";
   }
@@ -480,7 +484,11 @@ export function VacuumControlPanel() {
 
   const displayedTarget = sentTarget ?? draftTarget;
   const hasTarget = displayedTarget != null;
-  const routeVisualState = getRouteVisualState(navigationState, isGoalActive, hasTarget);
+  const routeVisualState = getRouteVisualState(navigationState, isGoalActive, draftTarget != null, hasTarget);
+  const displayedPlanPoints =
+    sentTarget != null && routeVisualState !== "staged" && routeVisualState !== "canceled"
+      ? snapshot.navigation.planPath
+      : null;
 
   const operatorState = getOperatorState({
     availability,
@@ -754,7 +762,7 @@ export function VacuumControlPanel() {
         <section className="vacuum-layout">
           <MapCanvas
             currentPose={currentPose}
-            planPoints={snapshot.navigation.planPath}
+            planPoints={displayedPlanPoints}
             draftTarget={draftTarget}
             sentTarget={sentTarget}
             routeVisualState={routeVisualState}
