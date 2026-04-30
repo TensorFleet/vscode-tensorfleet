@@ -321,6 +321,7 @@
     "compile:dev": "TENSORFLEET_BUILD=development bun run compile",
     "compile:prod": "TENSORFLEET_BUILD=production bun run compile",
     "watch": "bun run sync:panels-deps && (TENSORFLEET_BUILD=development bun run watch:panels & TENSORFLEET_BUILD=development bun run watch:extension & wait)",
+    "test:vacuum-adapter": "bun scripts/vacuum-adapter-regression.ts",
     "typecheck": "bunx tsc -p ./ --noEmit",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
