@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
 import { formatRosDuration } from "../Nav2/runtime/nav2RuntimeUtils";
 import { ros2Bridge } from "../../ros2-bridge";
 import {
   useVacuumAdapter,
+  type VacuumMappingStatus,
   type VacuumMissionState,
   type VacuumNavigationState,
 } from "../../vacuum-adapter";
@@ -28,12 +29,35 @@ type SavedMapSummary = {
   notes: string;
 };
 
+function mapAdapterMappingState(state: VacuumMappingStatus["state"]): MappingSessionState {
+  if (state === "auto_mapping" || state === "manual_mapping") {
+    return "mapping";
+  }
+  if (state === "paused" || state === "needs_assistance") {
+    return "paused";
+  }
+  if (state === "review") {
+    return "review";
+  }
+  if (state === "accepted") {
+    return "saved";
+  }
+  if (state === "discarded") {
+    return "discarded";
+  }
+  if (state === "error") {
+    return "error";
+  }
+  return "not_started";
+}
+
 type OperatorStateKey =
   | "disconnected"
   | "waiting-map"
   | "waiting-localization"
   | "checking"
   | "ready"
+  | "mapping"
   | "navigating"
   | "completed"
   | "failed"
@@ -180,6 +204,16 @@ function getOperatorState(args: {
       title: stopping ? "Stopping" : "On the way",
       detail: stopping ? "Stopping this run." : "Moving to the selected destination.",
       badge: stopping ? "Stopping" : "Active",
+      tone: "info",
+    };
+  }
+
+  if (args.missionState === "mapping") {
+    return {
+      key: "mapping",
+      title: "Mapping",
+      detail: "Mapping workflow active.",
+      badge: "Mapping",
       tone: "info",
     };
   }
@@ -496,12 +530,16 @@ function getProgressLabel(routeVisualState: RouteVisualState): string {
 
 function MappingCard(props: {
   mappingState: MappingSessionState;
+  mappingStatus: VacuumMappingStatus;
   metadata: MapCanvasMetadata | null;
   savedMap: SavedMapSummary | null;
   mapName: string;
   now: number;
   onMapNameChange: (value: string) => void;
-  onStart: () => void;
+  autoSupported: boolean;
+  manualSupported: boolean;
+  onStartAuto: () => void;
+  onStartManual: () => void;
   onPause: () => void;
   onContinue: () => void;
   onFinish: () => void;
@@ -514,18 +552,24 @@ function MappingCard(props: {
   const stateCopy: Record<MappingSessionState, { title: string; detail: string; badge: string }> = {
     not_started: {
       title: "Mapping",
-      detail: "No mapping session active. Start mapping and drive the robot around to build the map.",
+      detail: "No mapping session active. Start auto mapping to let the robot explore.",
       badge: "Idle",
     },
     mapping: {
       title: "Mapping",
-      detail: "Mapping in progress. Drive slowly around the space and use Fit Map to see the full known map.",
-      badge: "Active",
+      detail:
+        props.mappingStatus.mode === "auto"
+          ? "Auto mapping in progress. Pause if the robot needs manual help."
+          : "Manual mapping in progress. Drive slowly around the space.",
+      badge: props.mappingStatus.mode === "auto" ? "Auto" : "Manual",
     },
     paused: {
       title: "Mapping",
-      detail: "Mapping paused. Resume driving or finish the map.",
-      badge: "Paused",
+      detail:
+        props.mappingStatus.state === "needs_assistance"
+          ? props.mappingStatus.stateReason
+          : "Mapping paused. Use manual control if needed, then resume or finish.",
+      badge: props.mappingStatus.state === "needs_assistance" ? "Assist" : "Paused",
     },
     review: {
       title: "Review Map",
@@ -562,7 +606,13 @@ function MappingCard(props: {
       {props.mappingState === "saved" ? (
         <div className="vacuum-current-map">
           <strong>{savedLabel}</strong>
-          <span>Use this map is a UI acceptance marker; backend persistence is not wired yet.</span>
+          <span>
+            {props.mappingStatus.savedMapPath
+              ? `Saved at ${props.mappingStatus.savedMapPath}`
+              : props.mappingStatus.saveError
+                ? `Accepted for this session. Save failed: ${props.mappingStatus.saveError}`
+                : "Accepted for this session."}
+          </span>
         </div>
       ) : null}
 
@@ -577,11 +627,11 @@ function MappingCard(props: {
         </div>
         <div>
           <span>Known</span>
-          <strong>{metadata ? formatPercent(metadata.knownRatio) : "0%"}</strong>
+          <strong>{formatPercent(props.mappingStatus.knownRatio || metadata?.knownRatio || 0)}</strong>
         </div>
         <div>
           <span>Unknown</span>
-          <strong>{metadata ? formatPercent(metadata.unknownRatio) : "0%"}</strong>
+          <strong>{formatPercent(props.mappingStatus.unknownRatio || metadata?.unknownRatio || 0)}</strong>
         </div>
         <div>
           <span>Known area</span>
@@ -596,8 +646,12 @@ function MappingCard(props: {
           <strong>{metadata?.poseAvailable ? "Available" : "Missing"}</strong>
         </div>
         <div>
-          <span>Readiness</span>
-          <strong>{metadata?.readiness ?? "No map"}</strong>
+          <span>Frontiers</span>
+          <strong>{props.mappingStatus.frontierCount}</strong>
+        </div>
+        <div>
+          <span>Goals</span>
+          <strong>{props.mappingStatus.visitedGoalCount} / {props.mappingStatus.failedGoalCount}</strong>
         </div>
       </div>
 
@@ -614,17 +668,32 @@ function MappingCard(props: {
 
       <div className="vacuum-mapping-actions">
         {props.mappingState === "not_started" || props.mappingState === "discarded" || props.mappingState === "error" ? (
-          <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onStart}>
-            Start Mapping
-          </button>
+          <>
+            <button
+              className="vacuum-action vacuum-action--primary"
+              type="button"
+              onClick={props.onStartAuto}
+              disabled={!props.autoSupported}
+            >
+              Start auto mapping
+            </button>
+            <button
+              className="vacuum-action vacuum-action--ghost"
+              type="button"
+              onClick={props.onStartManual}
+              disabled={!props.manualSupported}
+            >
+              Manual mapping
+            </button>
+          </>
         ) : null}
         {props.mappingState === "mapping" ? (
           <>
             <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onFinish}>
-              Finish Mapping
+              Finish & review
             </button>
             <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onPause}>
-              Pause Mapping
+              Pause
             </button>
             <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
               Discard Session
@@ -634,10 +703,10 @@ function MappingCard(props: {
         {props.mappingState === "paused" ? (
           <>
             <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onContinue}>
-              Resume Driving
+              Resume auto mapping
             </button>
             <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onFinish}>
-              Finish Mapping
+              Finish & review
             </button>
             <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
               Discard Session
@@ -676,7 +745,6 @@ export function VacuumControlPanel() {
   const [wallClockElapsed, setWallClockElapsed] = useState<number | null>(null);
   const [metadataClock, setMetadataClock] = useState(() => Date.now());
   const [mapMetadata, setMapMetadata] = useState<MapCanvasMetadata | null>(null);
-  const [mappingState, setMappingState] = useState<MappingSessionState>("not_started");
   const [mapName, setMapName] = useState("Lab Mapping Run 1");
   const [savedMap, setSavedMap] = useState<SavedMapSummary | null>(null);
   const goalStartTimeRef = useRef<number | null>(null);
@@ -698,6 +766,10 @@ export function VacuumControlPanel() {
   const isCancelingGoal = snapshot.navigation.isCanceling;
   const goToLocationSupported = snapshot.capabilities.go_to_location.supported;
   const cancelNavigationSupported = snapshot.capabilities.cancel_navigation.supported;
+  const mappingStatus = snapshot.mapping;
+  const mappingState = mapAdapterMappingState(mappingStatus.state);
+  const autoMappingSupported = snapshot.capabilities.auto_mapping.supported;
+  const mappingSessionSupported = snapshot.capabilities.mapping_session.supported;
 
   const displayedTarget = sentTarget ?? draftTarget;
   const hasTarget = displayedTarget != null;
@@ -921,49 +993,54 @@ export function VacuumControlPanel() {
     }
   }
 
-  function handleStartMapping(): void {
-    setMappingState("mapping");
+  async function handleStartAutoMapping(): Promise<void> {
+    await adapter.sendCommand({ command: "start_mapping", mode: "auto", name: mapName });
     setDraftTarget(null);
     setSentTarget(null);
   }
 
-  function handlePauseMapping(): void {
-    stopManualMotion();
-    setMappingState("paused");
-  }
-
-  function handleContinueMapping(): void {
-    setMappingState("mapping");
-  }
-
-  function handleFinishMapping(): void {
-    stopManualMotion();
-    setMappingState(mapMetadata?.hasMap ? "review" : "error");
-  }
-
-  function handleDiscardMapping(): void {
-    stopManualMotion();
-    setMappingState("discarded");
+  async function handleStartManualMapping(): Promise<void> {
+    await adapter.sendCommand({ command: "start_mapping", mode: "manual", name: mapName });
     setDraftTarget(null);
     setSentTarget(null);
   }
 
-  function handleUseMap(): void {
+  async function handlePauseMapping(): Promise<void> {
+    stopManualMotion();
+    await adapter.sendCommand({ command: "pause_mapping" });
+  }
+
+  async function handleContinueMapping(): Promise<void> {
+    await adapter.sendCommand({ command: "resume_mapping" });
+  }
+
+  async function handleFinishMapping(): Promise<void> {
+    stopManualMotion();
+    await adapter.sendCommand({ command: "finish_mapping" });
+  }
+
+  async function handleDiscardMapping(): Promise<void> {
+    stopManualMotion();
+    await adapter.sendCommand({ command: "discard_mapping" });
+    setDraftTarget(null);
+    setSentTarget(null);
+  }
+
+  async function handleUseMap(): Promise<void> {
     if (!mapMetadata?.hasMap) {
-      setMappingState("error");
       return;
     }
+    await adapter.sendCommand({ command: "accept_map" });
     setSavedMap({
       name: mapName.trim() || "Current map",
       createdAt: Date.now(),
       metadata: mapMetadata,
       notes: "Accepted in UI for navigation and future coverage planning.",
     });
-    setMappingState("saved");
   }
 
-  function handleRemap(): void {
-    setMappingState("mapping");
+  async function handleRemap(): Promise<void> {
+    await adapter.sendCommand({ command: "start_mapping", mode: autoMappingSupported ? "auto" : "manual", name: mapName });
     setDraftTarget(null);
     setSentTarget(null);
   }
@@ -1056,6 +1133,8 @@ export function VacuumControlPanel() {
             mappingState={mappingState}
             disableTargetSelection={isMappingWorkflowActive}
             targetDistance={destinationDistance}
+            adapterMapGrid={snapshot.map.grid}
+            adapterMapMetadata={snapshot.map.metadata}
             onTargetStart={handleTargetStart}
             onTargetRotate={handleTargetRotate}
             onMapMetadataChange={setMapMetadata}
@@ -1095,18 +1174,22 @@ export function VacuumControlPanel() {
 
             <MappingCard
               mappingState={mappingState}
+              mappingStatus={mappingStatus}
               metadata={mapMetadata}
               savedMap={savedMap}
               mapName={mapName}
               now={metadataClock}
               onMapNameChange={setMapName}
-              onStart={handleStartMapping}
-              onPause={handlePauseMapping}
-              onContinue={handleContinueMapping}
-              onFinish={handleFinishMapping}
-              onDiscard={handleDiscardMapping}
-              onUseMap={handleUseMap}
-              onRemap={handleRemap}
+              autoSupported={autoMappingSupported}
+              manualSupported={mappingSessionSupported}
+              onStartAuto={() => void handleStartAutoMapping()}
+              onStartManual={() => void handleStartManualMapping()}
+              onPause={() => void handlePauseMapping()}
+              onContinue={() => void handleContinueMapping()}
+              onFinish={() => void handleFinishMapping()}
+              onDiscard={() => void handleDiscardMapping()}
+              onUseMap={() => void handleUseMap()}
+              onRemap={() => void handleRemap()}
             />
 
             <section className={`vacuum-panel-card vacuum-panel-card--destination ${displayedTarget ? "vacuum-panel-card--destination-selected" : ""}`}>
@@ -1255,7 +1338,10 @@ export function VacuumControlPanel() {
               </div>
             </section>
 
-            <TeleopCard />
+            <TeleopCard
+              disabled={mappingStatus.state === "auto_mapping"}
+              disabledReason="Pause auto mapping before using manual control."
+            />
 
           </div>
         </section>

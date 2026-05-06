@@ -1,4 +1,5 @@
 import type { VacuumAdapterSnapshot, VacuumNavigationStatus } from "../../state";
+import { buildVacuumMapMetadata } from "../../mapGrid";
 import { mapValetudoCapabilities } from "./capabilityMapper";
 import type { ValetudoRuntimeBoundary } from "./types";
 
@@ -45,6 +46,8 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
       readiness: state?.mapAvailable ? "ready" : connected ? "waiting" : "unavailable",
       receiving: state?.mapAvailable ?? false,
       detail: state?.mapAvailable ? "Map is available." : "Waiting for Valetudo map state.",
+      grid: null,
+      metadata: buildVacuumMapMetadata(null, null),
     },
     pose: {
       readiness: state?.pose ? "ready" : connected ? "waiting" : "unavailable",
@@ -58,6 +61,24 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
       state: state?.missionState ?? "idle",
       detail: state ? `Valetudo mission state: ${state.missionState}.` : "Waiting for Valetudo mission state.",
       lastTerminalNavigation: null,
+    },
+    mapping: {
+      state: "idle",
+      mode: null,
+      stateReason: "Auto mapping is not implemented for this backend.",
+      knownRatio: 0,
+      unknownRatio: 1,
+      frontierCount: 0,
+      visitedGoalCount: 0,
+      failedGoalCount: 0,
+      activeGoal: null,
+      lastError: null,
+      updatedAt: null,
+      persistence: "unsupported",
+      acceptedSessionLevel: false,
+      savedMapPath: null,
+      lastSavedAt: null,
+      saveError: null,
     },
     readiness: {
       ready: connected && state != null,

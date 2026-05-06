@@ -19,6 +19,7 @@ export type VacuumNavigationTerminalState = "completed" | "canceled" | "failed";
 export type VacuumMissionState =
   | "idle"
   | "navigating"
+  | "mapping"
   | "cleaning"
   | "paused"
   | "returning"
@@ -48,6 +49,35 @@ export type VacuumBackendIdentity = {
   model?: string;
 };
 
+export type VacuumMapGrid = {
+  width: number;
+  height: number;
+  resolution: number;
+  originX: number;
+  originY: number;
+  originYaw: number;
+  frameId: string | null;
+  data: number[];
+};
+
+export type VacuumMapMetadata = {
+  hasMap: boolean;
+  width: number;
+  height: number;
+  resolution: number;
+  freeCells: number;
+  occupiedCells: number;
+  unknownCells: number;
+  knownCells: number;
+  totalCells: number;
+  freeRatio: number;
+  occupiedRatio: number;
+  unknownRatio: number;
+  knownRatio: number;
+  knownAreaSqM: number;
+  lastUpdateAt: number | null;
+};
+
 export type VacuumAvailability = {
   status: VacuumAvailabilityStatus;
   connected: boolean;
@@ -59,6 +89,8 @@ export type VacuumMapState = {
   topic?: string;
   receiving: boolean;
   detail?: string;
+  grid: VacuumMapGrid | null;
+  metadata: VacuumMapMetadata;
 };
 
 export type VacuumPoseState = {
@@ -96,6 +128,38 @@ export type VacuumMissionStatus = {
   lastTerminalNavigation?: VacuumNavigationTerminalState | null;
 };
 
+export type VacuumMappingState =
+  | "idle"
+  | "manual_mapping"
+  | "auto_mapping"
+  | "paused"
+  | "needs_assistance"
+  | "review"
+  | "accepted"
+  | "discarded"
+  | "error";
+
+export type VacuumMappingMode = "auto" | "manual";
+
+export type VacuumMappingStatus = {
+  state: VacuumMappingState;
+  mode: VacuumMappingMode | null;
+  stateReason: string;
+  knownRatio: number;
+  unknownRatio: number;
+  frontierCount: number;
+  visitedGoalCount: number;
+  failedGoalCount: number;
+  activeGoal: VacuumGoalCoordinates | null;
+  lastError: string | null;
+  updatedAt: number | null;
+  persistence: "session" | "persistent" | "unsupported";
+  acceptedSessionLevel: boolean;
+  savedMapPath: string | null;
+  lastSavedAt: number | null;
+  saveError: string | null;
+};
+
 export type VacuumReadinessSummary = {
   ready: boolean;
   blockingReasons: string[];
@@ -122,6 +186,7 @@ export type VacuumAdapterSnapshot = {
   pose: VacuumPoseState;
   navigation: VacuumNavigationStatus;
   mission: VacuumMissionStatus;
+  mapping: VacuumMappingStatus;
   readiness: VacuumReadinessSummary;
   fault: VacuumFaultState;
   battery: VacuumBatteryState;

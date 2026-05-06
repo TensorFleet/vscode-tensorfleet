@@ -93,6 +93,12 @@ export function mapValetudoCapabilities(
   capabilities.manual_control = unsupportedCapability(
     "Streaming manual teleop is not part of the Valetudo backend interface.",
   );
+  capabilities.mapping_session = unsupportedCapability(
+    "Backend mapping sessions must be implemented explicitly before use.",
+  );
+  capabilities.auto_mapping = unsupportedCapability(
+    "Auto mapping is not implemented for the Valetudo backend stub.",
+  );
   capabilities.navigation_status = capabilities.go_to_location.supported
     ? supportedCapability("GoToLocationCapability", {
         attributes: ["normalized_mission_state"],

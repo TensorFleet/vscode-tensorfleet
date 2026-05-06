@@ -39,14 +39,14 @@ function padActionToDir(action: DirectionalPadAction): ActiveDir {
   }
 }
 
-export function TeleopCard(): React.JSX.Element {
+export function TeleopCard(props: { disabled?: boolean; disabledReason?: string } = {}): React.JSX.Element {
   const [isConnected, setIsConnected] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
   const [kbdEnabled, setKbdEnabled] = useState(false);
   const [padAction, setPadAction] = useState<DirectionalPadAction | undefined>();
   const [lastTwist, setLastTwist] = useState<TwistMsg | null>(null);
 
-  const kbdDirsRef = useRef<Set<ActiveDir>>(new Set());
+  const kbdDirsRef = useRef<Set<ActiveDir>>(new Set<ActiveDir>());
   const padDirRef = useRef<ActiveDir | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -58,12 +58,15 @@ export function TeleopCard(): React.JSX.Element {
   }, []);
 
   const getActiveDirs = useCallback((): Set<ActiveDir> => {
-    const dirs = new Set<ActiveDir>(kbdDirsRef.current);
+    const dirs = new Set<ActiveDir>(kbdDirsRef.current ?? []);
     if (padDirRef.current) dirs.add(padDirRef.current);
     return dirs;
   }, []);
 
   const publishNow = useCallback((): boolean => {
+    if (props.disabled) {
+      return false;
+    }
     const dirs = getActiveDirs();
     if (dirs.size === 0 || !ros2Bridge.isConnected()) {
       return false;
@@ -72,7 +75,7 @@ export function TeleopCard(): React.JSX.Element {
     ros2Bridge.publish(TELEOP_TOPIC, TELEOP_MSG_TYPE, msg);
     setLastTwist(msg);
     return true;
-  }, [getActiveDirs]);
+  }, [getActiveDirs, props.disabled]);
 
   const ensureInterval = useCallback(() => {
     if (intervalRef.current) return;
@@ -114,7 +117,7 @@ export function TeleopCard(): React.JSX.Element {
   );
 
   useEffect(() => {
-    if (!kbdEnabled || !isConnected) return;
+    if (!kbdEnabled || !isConnected || props.disabled) return;
 
     const KEY_MAP: Record<string, ActiveDir> = {
       w: "fwd",
@@ -136,8 +139,8 @@ export function TeleopCard(): React.JSX.Element {
       const dir = KEY_MAP[e.key.toLowerCase()];
       if (!dir) return;
       e.preventDefault();
-      if (kbdDirsRef.current.has(dir)) return;
-      kbdDirsRef.current.add(dir);
+      if (kbdDirsRef.current?.has(dir)) return;
+      kbdDirsRef.current?.add(dir);
       publishNow();
       ensureInterval();
     };
@@ -145,12 +148,12 @@ export function TeleopCard(): React.JSX.Element {
     const onKeyUp = (e: KeyboardEvent) => {
       const dir = KEY_MAP[e.key.toLowerCase()];
       if (!dir) return;
-      kbdDirsRef.current.delete(dir);
+      kbdDirsRef.current?.delete(dir);
       if (getActiveDirs().size === 0) stopAndZero();
     };
 
     const onBlur = () => {
-      kbdDirsRef.current.clear();
+      kbdDirsRef.current?.clear();
       if (getActiveDirs().size === 0) stopAndZero();
     };
 
@@ -159,17 +162,17 @@ export function TeleopCard(): React.JSX.Element {
     window.addEventListener("blur", onBlur);
 
     return () => {
-      kbdDirsRef.current.clear();
+      kbdDirsRef.current?.clear();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
       stopAndZero();
     };
-  }, [kbdEnabled, isConnected, getActiveDirs, publishNow, ensureInterval, stopAndZero]);
+  }, [kbdEnabled, isConnected, props.disabled, getActiveDirs, publishNow, ensureInterval, stopAndZero]);
 
   useEffect(() => {
-    if (!isConnected) stopAndZero();
-  }, [isConnected, stopAndZero]);
+    if (!isConnected || props.disabled) stopAndZero();
+  }, [isConnected, props.disabled, stopAndZero]);
 
   const isMoving = !!(lastTwist && (lastTwist.linear.x !== 0 || lastTwist.angular.z !== 0));
 
@@ -202,14 +205,16 @@ export function TeleopCard(): React.JSX.Element {
 
       {isExpanded && (
         <div className="vacuum-teleop-body">
-          {!isConnected ? (
-            <p className="vacuum-teleop-hint">Connect to the robot to enable manual control.</p>
+          {!isConnected || props.disabled ? (
+            <p className="vacuum-teleop-hint">
+              {props.disabled ? props.disabledReason ?? "Manual control is disabled." : "Connect to the robot to enable manual control."}
+            </p>
           ) : (
             <>
               <div className="vacuum-teleop-pad-wrap">
                 <DirectionalPad
                   onAction={handlePadAction}
-                  disabled={!isConnected}
+                  disabled={!isConnected || props.disabled}
                   activeAction={padAction}
                 />
               </div>
@@ -224,7 +229,7 @@ export function TeleopCard(): React.JSX.Element {
                   }
                   onClick={() => {
                     if (kbdEnabled) {
-                      kbdDirsRef.current.clear();
+                      kbdDirsRef.current?.clear();
                       stopAndZero();
                     }
                     setKbdEnabled((v) => !v);

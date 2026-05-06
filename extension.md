@@ -12,8 +12,9 @@ The old Layer 2 constraint was extension-side only: validate the VM runtime
 through `Vacuum Control` without blocking on a vacuum adapter, mission
 lifecycle, docking behavior, or normalized backend contract. That constraint is
 closed, and Layer 3 is now wrapped for the TurtleBot4/Nav2 simulation path. The
-next milestone before coverage is `Layer 4 prerequisite: Mapping + Whole Map
-View`; Layer 4 coverage starts after the map foundation is reliable.
+Layer 4 prerequisite, Mapping + Whole Map View, is implemented with VM-owned
+auto mapping; Layer 4 coverage starts after the rebuilt VM validates that
+runtime behavior.
 
 The full seven-layer plan this file aligns with:
 
@@ -24,8 +25,9 @@ Layer 2 — Navigation                closed for TurtleBot4/Nav2 simulation
 Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
                                     Valetudo stub reserved for Layer 6
 Layer 4 prerequisite: Mapping + Whole Map View
-                                    in progress, YOU ARE HERE
-Layer 4 — Coverage                  planned after map foundation
+                                    implemented for TurtleBot4/Nav2
+                                    simulation; live validation pending
+Layer 4 — Coverage                  planned after mapping validation
 Layer 5 — Room / Zone Semantics     planned
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
@@ -79,13 +81,17 @@ Explicitly out of the closed Layer 2/Layer 3 simulation slice:
 
 ## Mapping + Whole Map View
 
-`Vacuum Control` now has a map foundation milestone before Layer 4 coverage.
-This is still a UI/product workflow foundation, not full persistent map
-management.
+`Vacuum Control` now has the map foundation milestone needed before Layer 4
+coverage. The autonomous loop is not a React/webview concern: it runs in the VM
+runtime and the extension only sends adapter commands, subscribes to mapping
+status, and renders the workflow.
 
 Implemented extension behavior:
 
 - first valid `/map` fits the full known occupancy-grid bounds by default;
+- `MapCanvas` renders the product base map from adapter-normalized
+  `snapshot.map.grid` when available and keeps direct `/map` rendering as a
+  fallback/diagnostic path;
 - Fit Map uses `map.info.width`, `map.info.height`, resolution, canvas size,
   and padding, not robot pose, route geometry, selected target, or costmaps;
 - `MapCanvas` has explicit `fit`, `manual`, and `follow_robot` viewport modes;
@@ -96,22 +102,38 @@ Implemented extension behavior:
   world-to-screen transform;
 - unknown cells render as muted map space and the map boundary is outlined so a
   partial map is not confused with panel background;
-- `MappingCard` adds Start Mapping, Pause Mapping, Finish Mapping, Continue
-  Mapping, Discard Session, and Use This Map states;
-- mapping/review mode disables navigation target staging by default so manual
-  teleop remains the primary mapping action;
+- `MappingCard` adds Start auto mapping, Manual mapping, Pause, Resume auto
+  mapping, Finish & review, Discard, and Accept map states;
+- mapping/review mode disables navigation target staging by default;
+- active auto mapping disables competing teleop until paused, while manual
+  mapping, paused mapping, and `needs_assistance` keep teleop available;
 - map metadata is shown: dimensions, resolution, known/free/occupied/unknown
   ratios, known area, last update age, pose availability, and readiness;
-- Use This Map marks the current map as accepted in UI state only and does not
-  imply permanent ROS map saving or backend deletion.
+- mapping status shows known/unknown ratio, frontier count, visited and failed
+  goal counts, active goal, state reason, last error, update time, and
+  persistence result;
+- Accept map marks the reviewed map current and reports whether the backend
+  saved it persistently or only accepted it for the session.
 
 Boundary note:
 
-- `MapCanvas` can still render live `/map` and overlay topics directly for the
-  operator visualization surface.
-- Product workflows should move toward adapter-level map/session state.
+- `MapCanvas` can still render live `/map` and overlay topics directly for
+  diagnostics and fallback visualization.
+- Product workflows should consume adapter-level map/session state.
 - Future coverage planning should consume normalized map and pose data above
   the `vacuum_adapter` boundary rather than raw ROS topics.
+
+VM runtime behavior surfaced through the extension:
+
+- `/vacuum_mapping/status` publishes the mapping snapshot.
+- `/vacuum_mapping/start_auto`, `/start_manual`, `/pause`, `/resume`,
+  `/finish`, `/discard`, `/accept`, and `/save_map` are adapter-command
+  targets.
+- The TurtleBot4/Nav2 VM runtime saves accepted maps under
+  `/opt/tensorfleet/maps/current_map.*` by default.
+- After an accepted map is saved, later `/map` growth from normal destination
+  or vacuum runs is autosaved after the map settles, as long as SLAM remains
+  active.
 
 ## Layer 3 Result
 
@@ -240,6 +262,8 @@ The public contract should use backend-neutral product capability names:
 - `cancel_navigation`
 - `manual_control`
 - `navigation_status`
+- `mapping_session`
+- `auto_mapping`
 - `segment_cleaning`
 - `zone_cleaning`
 - `fan_speed`
@@ -266,6 +290,8 @@ Valetudo concepts should map privately inside the backend adapter:
 - Valetudo `FanSpeedControlCapability` -> `fan_speed`
 - Valetudo `WaterUsageControlCapability` -> `water_usage`
 - Nav2 `NavigateToPose` -> `go_to_location`
+- VM `/vacuum_mapping/*` services and `/vacuum_mapping/status` ->
+  `mapping_session` / `auto_mapping`
 
 Capabilities should be descriptors, not booleans only:
 
@@ -477,6 +503,15 @@ Current runtime topic and service map for this slice:
 - `/local_costmap/costmap`
 - `/global_costmap/costmap`
 - `/stop_status`
+- `/vacuum_mapping/status`
+- `/vacuum_mapping/start_auto`
+- `/vacuum_mapping/start_manual`
+- `/vacuum_mapping/pause`
+- `/vacuum_mapping/resume`
+- `/vacuum_mapping/finish`
+- `/vacuum_mapping/discard`
+- `/vacuum_mapping/accept`
+- `/vacuum_mapping/save_map`
 - `/navigate_to_pose/_action/send_goal`
 - `/navigate_to_pose/_action/get_result`
 - `/navigate_to_pose/_action/cancel_goal`
@@ -742,14 +777,13 @@ main Layer 4 coverage path.
 
 ## Recommended Immediate Work
 
-The Layer 3 contract hardening pass is wrapped, and the map foundation
-milestone now comes before Layer 4 coverage. `Vacuum Control` consumes the
-`vacuum_adapter` contract through `useVacuumAdapter`, the TurtleBot4/Nav2
-backend hook normalizes Nav2 runtime into the contract, command dispatch is
-covered by a focused regression harness, and the Valetudo backend has
-non-hardware mapper/interface stubs for Layer 6. Near-term work is to validate
-Mapping + Whole Map View against the live VM, then move to Clean Area MVP
-coverage above the adapter boundary.
+The Layer 3 contract hardening pass is wrapped, and the Mapping + Whole Map
+View prerequisite is implemented for TurtleBot4/Nav2 simulation. `Vacuum
+Control` consumes the `vacuum_adapter` contract through `useVacuumAdapter`, the
+TurtleBot4/Nav2 backend maps mapping commands/status to VM ROS services/topics,
+and the Valetudo backend explicitly reports auto mapping unsupported.
+Near-term work is to rebuild the VM, validate runtime auto mapping and map
+persistence, then move to Clean Area MVP coverage above the adapter boundary.
 
 1. [x] Keep `steps.md` aligned with the actual `Vacuum Control` component state.
 2. [x] Keep `extension.md` aligned with the global Layer 2 topic map used by
@@ -773,9 +807,13 @@ coverage above the adapter boundary.
 13. [x] Expand the Valetudo adapter interface stub with capability, state,
     command, and runtime-boundary mapper shapes.
 14. [x] Validate the hardened adapter contract against the live VM.
-15. [x] Add Mapping + Whole Map View UI state, controls, metadata, and
-    Use This Map placeholder before coverage.
-16. [ ] Keep the VM integration service plan for Valetudo in Layer 6.
+15. [x] Add Mapping + Whole Map View adapter state, controls, metadata, and
+    review/accept flow before coverage.
+16. [x] Add TurtleBot4/Nav2 auto mapping command/status mapping to the VS Code
+    adapter.
+17. [ ] Rebuild the VM and live-validate auto mapping, persistence, reconnect,
+    and `needs_assistance` behavior.
+18. [ ] Keep the VM integration service plan for Valetudo in Layer 6.
 
 Suggested verification after patching:
 

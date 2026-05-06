@@ -14,6 +14,18 @@ import { unsupportedCommand } from "../../errors";
 
 const SOURCE = "turtlebot4_nav2" as const;
 
+export const MAPPING_STATUS_TOPIC = "/vacuum_mapping/status";
+export const MAPPING_SERVICE_NAMES = {
+  startAuto: "/vacuum_mapping/start_auto",
+  startManual: "/vacuum_mapping/start_manual",
+  pause: "/vacuum_mapping/pause",
+  resume: "/vacuum_mapping/resume",
+  finish: "/vacuum_mapping/finish",
+  discard: "/vacuum_mapping/discard",
+  accept: "/vacuum_mapping/accept",
+  saveMap: "/vacuum_mapping/save_map",
+} as const;
+
 const UNSUPPORTED_VACUUM_FEATURES: VacuumCapabilityName[] = [
   "start_cleaning",
   "pause",
@@ -90,6 +102,25 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
     backendCapability: "/map",
     attributes: ["nav_msgs/msg/OccupancyGrid"],
   });
+  const mappingServices = Object.values(MAPPING_SERVICE_NAMES);
+  const hasMappingServices = mappingServices.every((serviceName) => runtime.availableServices.includes(serviceName));
+  const hasMappingStatus = runtime.availableTopics.some((topic) => topic.topic === MAPPING_STATUS_TOPIC);
+  capabilities.mapping_session = hasMappingServices
+    ? supportedCapability({
+        backendCapability: "vacuum_frontier_explorer services",
+        commands: ["start_mapping", "pause_mapping", "resume_mapping", "finish_mapping", "discard_mapping", "accept_map"],
+        attributes: ["mapping_state", "session_acceptance", "persistent_map_save"],
+        notes: "Backed by the VM-owned mapping runtime.",
+      })
+    : unsupportedCapability("VM mapping services are not advertised.");
+  capabilities.auto_mapping = hasMappingServices && hasMappingStatus
+    ? supportedCapability({
+        backendCapability: "vacuum_frontier_explorer",
+        commands: ["start_mapping", "pause_mapping", "resume_mapping", "finish_mapping", "discard_mapping"],
+        attributes: ["frontier_count", "visited_goal_count", "failed_goal_count"],
+        notes: "The autonomous frontier loop runs inside the VM runtime.",
+      })
+    : unsupportedCapability("VM frontier exploration runtime is not advertised.");
   capabilities.pose = supportedCapability({
     backendCapability: "/pose",
     attributes: ["geometry_msgs/msg/PoseWithCovarianceStamped", "nav_msgs/msg/Odometry fallback"],

@@ -3,12 +3,14 @@ import type { VacuumAdapterSnapshot } from "../../state";
 import type { VacuumCommand, VacuumCommandResult } from "../../commands";
 import { unsupportedCommand } from "../../errors";
 import type { VacuumGoalCoordinates } from "../../state";
-import { TURTLEBOT4_NAV2_UNSUPPORTED_COMMANDS } from "./capabilityMapper";
+import { MAPPING_SERVICE_NAMES, TURTLEBOT4_NAV2_UNSUPPORTED_COMMANDS } from "./capabilityMapper";
 
 export type TurtleBot4Nav2CommandRuntime = Pick<
   Nav2RuntimeState,
   "currentMapCoordinates" | "sendGoal" | "cancelGoal"
->;
+> & {
+  callService?: (name: string, request: Record<string, unknown>, opts?: { timeoutMs?: number }) => Promise<Record<string, unknown> | null>;
+};
 
 export type TurtleBot4Nav2CommandDispatchContext = {
   runtime: TurtleBot4Nav2CommandRuntime;
@@ -37,6 +39,49 @@ export async function dispatchTurtleBot4Nav2Command(
   context: TurtleBot4Nav2CommandDispatchContext,
 ): Promise<VacuumCommandResult> {
   const { runtime, snapshot } = context;
+
+  async function callMappingService(
+    serviceName: string,
+    commandName: VacuumCommand["command"],
+  ): Promise<VacuumCommandResult> {
+    if (!runtime.callService) {
+      return {
+        ok: false,
+        command: commandName,
+        error: unsupportedCommand(commandName, "Mapping service calls are not available in this runtime."),
+      };
+    }
+    try {
+      const response = await runtime.callService(serviceName, {}, { timeoutMs: 10_000 });
+      const success = response == null || response.success !== false;
+      if (!success) {
+        return {
+          ok: false,
+          command: commandName,
+          error: {
+            code: "backend_error",
+            command: commandName,
+            message: typeof response?.message === "string" ? response.message : `${serviceName} returned failure.`,
+          },
+        };
+      }
+      return {
+        ok: true,
+        command: commandName,
+        message: typeof response?.message === "string" ? response.message : `Dispatched ${commandName}.`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        command: commandName,
+        error: {
+          code: "backend_error",
+          command: commandName,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
 
   if (command.command === "go_to_location") {
     if (!snapshot.capabilities.go_to_location.supported) {
@@ -124,6 +169,51 @@ export async function dispatchTurtleBot4Nav2Command(
           "manual_control is exposed through the TeleopCard publisher for /cmd_vel_raw and is not routed through sendCommand in the current adapter slice.",
       },
     };
+  }
+
+  if (command.command === "start_mapping") {
+    if (command.mode === "auto" && !snapshot.capabilities.auto_mapping.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "auto_mapping is not supported by the current backend."),
+      };
+    }
+    if (command.mode === "manual" && !snapshot.capabilities.mapping_session.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "mapping_session is not supported by the current backend."),
+      };
+    }
+    return await callMappingService(
+      command.mode === "auto" ? MAPPING_SERVICE_NAMES.startAuto : MAPPING_SERVICE_NAMES.startManual,
+      command.command,
+    );
+  }
+
+  if (
+    command.command === "pause_mapping" ||
+    command.command === "resume_mapping" ||
+    command.command === "finish_mapping" ||
+    command.command === "discard_mapping" ||
+    command.command === "accept_map"
+  ) {
+    if (!snapshot.capabilities.mapping_session.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "mapping_session is not supported by the current backend."),
+      };
+    }
+    const serviceByCommand = {
+      pause_mapping: MAPPING_SERVICE_NAMES.pause,
+      resume_mapping: MAPPING_SERVICE_NAMES.resume,
+      finish_mapping: MAPPING_SERVICE_NAMES.finish,
+      discard_mapping: MAPPING_SERVICE_NAMES.discard,
+      accept_map: MAPPING_SERVICE_NAMES.accept,
+    } as const;
+    return await callMappingService(serviceByCommand[command.command], command.command);
   }
 
   if (TURTLEBOT4_NAV2_UNSUPPORTED_COMMANDS.includes(command.command)) {

@@ -56,5 +56,15 @@ export function mapVacuumCommandToValetudoRequest(
   if (command.command === "zone_cleaning") {
     return unsupported(command.command, "zone_cleaning requires explicit zone geometry in a later command payload.");
   }
+  if (
+    command.command === "start_mapping" ||
+    command.command === "pause_mapping" ||
+    command.command === "resume_mapping" ||
+    command.command === "finish_mapping" ||
+    command.command === "discard_mapping" ||
+    command.command === "accept_map"
+  ) {
+    return unsupported(command.command, "Mapping sessions are not implemented for the Valetudo backend stub.");
+  }
   return unsupported(command.command, `Command ${command.command} is not mapped for the Valetudo backend stub.`);
 }

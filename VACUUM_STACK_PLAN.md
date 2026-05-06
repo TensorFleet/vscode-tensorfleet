@@ -64,13 +64,11 @@ change them:
 - Layers are built in order: sensors first, then localization + map, then
   navigation, then the vacuum adapter contract, then coverage, then room/zone
   semantics, and finally real hardware.
-- Current position: Layer 3 (Vacuum Adapter) is closed for the TurtleBot4/Nav2
-  simulation path; the operator slice is validated through `Vacuum Control`,
-  the extension talks to the `vacuum_adapter` contract, and
-  `bun run test:vacuum-adapter` covers the adapter boundary.
-- The next major milestone is the Layer 4 prerequisite: Mapping + Whole Map
-  View. Coverage starts after the user can reliably view, build, review, and
-  accept the current known `/map`.
+- Current position: Layer 4 prerequisite (Mapping + Whole Map View) is
+  implemented for TurtleBot4/Nav2 simulation with VM-owned auto mapping;
+  rebuild and live runtime validation are pending.
+- Coverage starts after the user can reliably view, build, review, persist, and
+  reuse the current known map.
 - Coverage (Layer 4) and room/zone semantics (Layer 5) must sit above the
   adapter contract, not below it, so they stay backend-neutral.
 - Real hardware (Layer 6) is the last layer; it targets Valetudo-compatible
@@ -88,6 +86,14 @@ change them:
   command types; backend/runtime-specific imports belong inside backend mappers.
 - Setter commands should have explicit payload shapes rather than being modeled
   as payload-free simple commands.
+- Long-running robot behavior belongs in the VM runtime or backend process, not
+  React/webview hooks. UI and adapter code issue commands and render state.
+- Auto mapping is exposed through backend-neutral capabilities and commands:
+  `mapping_session`, `auto_mapping`, `start_mapping`, `pause_mapping`,
+  `resume_mapping`, `finish_mapping`, `discard_mapping`, and `accept_map`.
+- `finish_mapping` stops exploration and enters review. `accept_map` marks the
+  reviewed map current and reports whether persistence succeeded or remains
+  session-level.
 - The VM should eventually run the Valetudo integration runtime so users do not
   need to install local integration tooling.
 - The VM may host MQTT/client/discovery/adapter services, but it should not own
@@ -117,8 +123,9 @@ Layer 2 — Navigation                (closed for TurtleBot4/Nav2 simulation)
 Layer 3 — Vacuum Adapter            (closed for TurtleBot4/Nav2 simulation,
                                      Valetudo stub reserved for Layer 6)
 Layer 4 prerequisite: Mapping + Whole Map View
-                                     (in progress, YOU ARE HERE)
-Layer 4 — Coverage                  (planned after map foundation)
+                                     (implemented for TurtleBot4/Nav2
+                                      simulation; live validation pending)
+Layer 4 — Coverage                  (planned after mapping validation)
 Layer 5 — Room / Zone Semantics     (planned)
 Layer 6 — Real Hardware (Valetudo)  (planned)
 ```
@@ -234,8 +241,8 @@ Current truth (April 30, 2026):
 
 ### Layer 4 Prerequisite: Mapping + Whole Map View
 
-Status: implemented as a UI foundation milestone in `Vacuum Control`; backend
-map persistence remains future work.
+Status: implemented for the TurtleBot4/Nav2 simulation path; live VM rebuild
+and runtime validation are pending.
 
 Purpose:
 
@@ -244,15 +251,22 @@ Purpose:
   `follow_robot` modes;
 - keep the base map, costmaps, plan path, lidar/depth overlays, robot marker,
   and target marker aligned through one world-to-screen transform;
-- give the operator a manual teleop mapping workflow before coverage cleaning;
+- give the operator auto and manual mapping workflows before coverage cleaning;
 - show whether the current map is missing, active, mostly unknown, in review,
   or accepted for later navigation/coverage.
+- keep autonomous exploration in the VM runtime so it survives panel reloads,
+  UI closure, websocket reconnects, and extension hiccups.
 
 Current implementation:
 
-- `MapCanvas` still subscribes to and renders live `/map`,
-  `/global_costmap/costmap`, `/local_costmap/costmap`, lidar, depth obstacles,
-  route overlays, markers, and camera overlay.
+- `vacuum_adapter` exposes `snapshot.map.grid`, `snapshot.map.metadata`, and
+  `snapshot.mapping` without ROS/Nav2/TurtleBot4/Valetudo imports in the public
+  contract.
+- `MapCanvas` renders the product base map from the adapter-normalized grid
+  when available and keeps live `/map` as a fallback/diagnostic path.
+- `MapCanvas` still renders `/global_costmap/costmap`,
+  `/local_costmap/costmap`, lidar, depth obstacles, route overlays, markers,
+  and camera overlay.
 - Fit Map uses the full occupancy-grid dimensions and panel size with padding;
   it does not fit to robot pose, route geometry, target position, costmaps, or
   known/free cells only.
@@ -263,25 +277,33 @@ Current implementation:
 - Map controls expose Zoom In, Zoom Out, Fit Map, Follow Robot, zoom readout,
   and a view-state label such as Full known map, Manual view, Following robot,
   Waiting for map, or Map mostly unexplored.
-- `VacuumControlPanel` owns UI-only mapping session state:
-  `not_started / mapping / paused / review / saved / discarded / error`.
-- `MappingCard` shows Start Mapping, Pause Mapping, Finish Mapping, Continue
-  Mapping, Discard Session, and Use This Map flows with map metadata.
+- `snapshot.mapping.state` reports `idle`, `manual_mapping`, `auto_mapping`,
+  `paused`, `needs_assistance`, `review`, `accepted`, `discarded`, or `error`.
+- Mapping status reports known/unknown ratios, frontier count, visited and
+  failed goal counts, active goal, state reason, timestamps, and persistence
+  outcome instead of a fake whole-home progress percentage.
+- `MappingCard` shows Start auto mapping, Manual mapping, Pause, Resume auto
+  mapping, Finish & review, Discard, and Accept map flows with map metadata.
 - Map metadata includes dimensions, resolution, known/free/occupied/unknown
   ratios, approximate known area, last update age, pose availability, and a
   simple readiness label.
 - During mapping/review states, map clicks do not stage navigation targets by
-  default; teleop remains the primary mapping interaction.
-- Use This Map marks the current map as accepted in UI state only. It does not
-  claim persistent ROS map saving, disk persistence, robot map deletion, or a
-  full map library yet.
+  default.
+- Teleop is available during manual mapping, paused auto mapping, and
+  `needs_assistance`; active auto mapping blocks competing teleop until paused.
+- Accept map asks the backend to mark the reviewed map current. The
+  TurtleBot4/Nav2 VM runtime attempts to persist it through
+  `nav2_map_server map_saver_cli` under `/opt/tensorfleet/maps/current_map.*`
+  by default and reports save path/error state through `snapshot.mapping`.
+- After an accepted map is saved, later `/map` growth from normal destination
+  or vacuum runs is autosaved after a quiet interval, as long as SLAM remains
+  active.
 
 Boundary rule:
 
-- UI rendering can consume live `/map` today because `MapCanvas` is the operator
-  visualization surface.
-- Product workflows above raw rendering should move toward adapter-level
-  map/session state.
+- UI rendering may keep direct diagnostic subscriptions for overlays and
+  fallback visualization.
+- Product workflows should consume adapter-level map/session state.
 - Future coverage planning must consume normalized map and pose data above the
   adapter boundary, not become coupled to raw ROS topics.
 
@@ -289,7 +311,6 @@ Still out of scope for this prerequisite:
 
 - coverage path planning;
 - lawnmower paths;
-- autonomous exploration;
 - room segmentation;
 - zone/no-go editors;
 - dock UI;
@@ -299,7 +320,7 @@ Still out of scope for this prerequisite:
 
 ### Layer 4: Coverage
 
-Status: planned after the map foundation.
+Status: planned after mapping runtime validation.
 
 Purpose:
 

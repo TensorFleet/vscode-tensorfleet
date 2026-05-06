@@ -12,9 +12,15 @@ import {
 } from "../panels-standalone/src/vacuum-adapter/capabilities";
 import type { VacuumCommand, VacuumCommandName } from "../panels-standalone/src/vacuum-adapter/commands";
 import {
+  buildVacuumMapMetadata,
+  parseVacuumMapGrid,
+} from "../panels-standalone/src/vacuum-adapter/mapGrid";
+import {
   dispatchTurtleBot4Nav2Command,
 } from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/commandDispatcher";
 import {
+  MAPPING_SERVICE_NAMES,
+  MAPPING_STATUS_TOPIC,
   mapTurtleBot4Nav2Capabilities,
 } from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/capabilityMapper";
 import {
@@ -34,7 +40,7 @@ function createRuntime(overrides: Partial<Nav2RuntimeState> = {}): Nav2RuntimeSt
     connectionStatus: "connected",
     connectedAt: 1,
     availableTopics: [],
-    availableServices: [SEND_GOAL_SERVICE, CANCEL_GOAL_SERVICE],
+    availableServices: [SEND_GOAL_SERVICE, CANCEL_GOAL_SERVICE, ...Object.values(MAPPING_SERVICE_NAMES)],
     messageTimestamps: {},
     odomMessage: null,
     poseMessage: null,
@@ -146,6 +152,48 @@ async function testTurtleBot4Commands(): Promise<void> {
   assert.equal(cancelCount, 1);
 }
 
+async function testTurtleBot4MappingCommands(): Promise<void> {
+  const serviceCalls: string[] = [];
+  const runtime = createRuntime({
+    availableTopics: [{ topic: MAPPING_STATUS_TOPIC, type: "std_msgs/msg/String" }],
+  });
+  const snapshot = mapTurtleBot4Nav2State({ runtime, currentTarget: null, initialDistance: null });
+
+  for (const command of [
+    { command: "start_mapping", mode: "auto" },
+    { command: "start_mapping", mode: "manual" },
+    { command: "pause_mapping" },
+    { command: "resume_mapping" },
+    { command: "finish_mapping" },
+    { command: "discard_mapping" },
+    { command: "accept_map" },
+  ] satisfies VacuumCommand[]) {
+    const result = await dispatchTurtleBot4Nav2Command(command, {
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return { success: true, message: name };
+        },
+      },
+      snapshot,
+      setCurrentTarget: () => undefined,
+      setInitialDistance: () => undefined,
+    });
+    assert.equal(result.ok, true, `${command.command} should dispatch`);
+  }
+
+  assert.deepEqual(serviceCalls, [
+    MAPPING_SERVICE_NAMES.startAuto,
+    MAPPING_SERVICE_NAMES.startManual,
+    MAPPING_SERVICE_NAMES.pause,
+    MAPPING_SERVICE_NAMES.resume,
+    MAPPING_SERVICE_NAMES.finish,
+    MAPPING_SERVICE_NAMES.discard,
+    MAPPING_SERVICE_NAMES.accept,
+  ]);
+}
+
 async function testTurtleBot4UnsupportedCommands(): Promise<void> {
   const runtime = createRuntime();
   const snapshot = mapTurtleBot4Nav2State({ runtime, currentTarget: null, initialDistance: null });
@@ -183,10 +231,18 @@ function testCapabilityCoverage(): void {
   assert.equal(supportedNav2.go_to_location.supported, true);
   assert.equal(supportedNav2.cancel_navigation.supported, true);
   assert.equal(supportedNav2.go_to_location.backendCapability, "nav2_msgs/action/NavigateToPose");
+  assert.equal(supportedNav2.mapping_session.supported, true);
+  assert.equal(supportedNav2.auto_mapping.supported, false);
+
+  const mappingNav2 = mapTurtleBot4Nav2Capabilities(
+    createRuntime({ availableTopics: [{ topic: MAPPING_STATUS_TOPIC, type: "std_msgs/msg/String" }] }),
+  );
+  assert.equal(mappingNav2.auto_mapping.supported, true);
 
   const blockedNav2 = mapTurtleBot4Nav2Capabilities(createRuntime({ availableServices: [] }));
   assert.equal(blockedNav2.go_to_location.supported, false);
   assert.equal(blockedNav2.cancel_navigation.supported, false);
+  assert.equal(blockedNav2.mapping_session.supported, false);
 
   const valetudo = mapValetudoCapabilities([
     "BasicControlCapability",
@@ -199,6 +255,7 @@ function testCapabilityCoverage(): void {
   assert.equal(valetudo.fan_speed.supported, true);
   assert.equal(valetudo.zone_cleaning.supported, false);
   assert.equal(valetudo.resume.supported, false);
+  assert.equal(valetudo.auto_mapping.supported, false);
 }
 
 function testStateMapping(): void {
@@ -219,6 +276,53 @@ function testStateMapping(): void {
   assert.equal(navigating.navigation.active, true);
   assert.deepEqual(navigating.navigation.currentTarget, { x: 3, y: 4, yaw: 0 });
   assert.equal(navigating.navigation.progress.initialDistance, 5);
+
+  const mapping = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mapping: {
+      state: "auto_mapping",
+      mode: "auto",
+      stateReason: "Exploring.",
+      knownRatio: 0.25,
+      unknownRatio: 0.75,
+      frontierCount: 3,
+      visitedGoalCount: 1,
+      failedGoalCount: 0,
+      activeGoal: { x: 1, y: 2, yaw: 0 },
+      lastError: null,
+      updatedAt: 10,
+      persistence: "session",
+      acceptedSessionLevel: false,
+      savedMapPath: null,
+      lastSavedAt: null,
+      saveError: null,
+    },
+  });
+  assert.equal(mapping.mission.state, "mapping");
+  assert.equal(mapping.mapping.frontierCount, 3);
+}
+
+function testMapMetadata(): void {
+  const grid = parseVacuumMapGrid({
+    info: {
+      width: 3,
+      height: 2,
+      resolution: 0.5,
+      origin: { position: { x: -1, y: -2 }, orientation: { w: 1 } },
+    },
+    header: { frame_id: "map" },
+    data: Int8Array.from([-1, 0, 10, 80, 100, -1]),
+  });
+  assert.ok(grid);
+  assert.equal(grid.width, 3);
+  assert.equal(grid.originX, -1);
+  const metadata = buildVacuumMapMetadata(grid, 123);
+  assert.equal(metadata.totalCells, 6);
+  assert.equal(metadata.freeCells, 2);
+  assert.equal(metadata.occupiedCells, 2);
+  assert.equal(metadata.unknownCells, 2);
+  assert.equal(metadata.knownRatio, 4 / 6);
+  assert.equal(metadata.lastUpdateAt, 123);
 }
 
 function testValetudoCommandStub(): void {
@@ -248,10 +352,12 @@ function testValetudoCommandStub(): void {
   });
   const zoneResult = mapVacuumCommandToValetudoRequest({ command: "zone_cleaning" }, capabilities);
   assert.equal(zoneResult.ok, false);
+  const mappingResult = mapVacuumCommandToValetudoRequest({ command: "start_mapping", mode: "auto" }, capabilities);
+  assert.equal(mappingResult.ok, false);
 }
 
 function testPublicContractAndUiBoundary(): void {
-  const publicFiles = ["adapter.ts", "capabilities.ts", "commands.ts", "errors.ts", "state.ts"];
+  const publicFiles = ["adapter.ts", "capabilities.ts", "commands.ts", "errors.ts", "mapGrid.ts", "state.ts"];
   for (const file of publicFiles) {
     const contents = readFileSync(resolve(repoRoot, "panels-standalone/src/vacuum-adapter", file), "utf8");
     assert.equal(/components\/Nav2|nav2Runtime|nav_msgs\/msg|geometry_msgs\/msg/.test(contents), false, file);
@@ -272,6 +378,12 @@ function assertCommandNamesHandled(): void {
     "go_to_location",
     "cancel_navigation",
     "manual_control",
+    "start_mapping",
+    "pause_mapping",
+    "resume_mapping",
+    "finish_mapping",
+    "discard_mapping",
+    "accept_map",
     "start_cleaning",
     "pause",
     "resume",
@@ -289,9 +401,11 @@ async function main(): Promise<void> {
   assertCommandNamesHandled();
   testCapabilityCoverage();
   testStateMapping();
+  testMapMetadata();
   testValetudoCommandStub();
   testPublicContractAndUiBoundary();
   await testTurtleBot4Commands();
+  await testTurtleBot4MappingCommands();
   await testTurtleBot4UnsupportedCommands();
   console.log("vacuum_adapter regression harness passed");
 }

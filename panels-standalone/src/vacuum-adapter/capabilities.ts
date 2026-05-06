@@ -5,6 +5,8 @@ export const VACUUM_CAPABILITY_NAMES = [
   "cancel_navigation",
   "manual_control",
   "map",
+  "mapping_session",
+  "auto_mapping",
   "pose",
   "navigation_status",
   "start_cleaning",
@@ -46,4 +48,3 @@ export function createUnsupportedCapabilities(): VacuumCapabilities {
     VACUUM_CAPABILITY_NAMES.map((name) => [name, { ...UNSUPPORTED_CAPABILITY }]),
   ) as VacuumCapabilities;
 }
-

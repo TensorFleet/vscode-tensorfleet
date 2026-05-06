@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ros2Bridge } from "../../ros2-bridge";
+import type { VacuumMapGrid, VacuumMapMetadata } from "../../vacuum-adapter";
 import {
   getRecordEntry,
   normalizeRosMessage,
@@ -129,6 +130,8 @@ export type MapCanvasProps = {
   mappingState: MappingSessionState;
   disableTargetSelection?: boolean;
   targetDistance: number | null;
+  adapterMapGrid?: VacuumMapGrid | null;
+  adapterMapMetadata?: VacuumMapMetadata | null;
   onTargetStart: (target: MapCanvasTarget) => void;
   onTargetRotate: (yaw: number) => void;
   onMapMetadataChange?: (metadata: MapCanvasMetadata) => void;
@@ -892,7 +895,8 @@ export function MapCanvas(props: MapCanvasProps) {
     };
   }, []);
 
-  const occupancyMap = useMemo(() => parseOccupancyMap(mapMessage), [mapMessage]);
+  const fallbackOccupancyMap = useMemo(() => parseOccupancyMap(mapMessage), [mapMessage]);
+  const occupancyMap = props.adapterMapGrid ?? fallbackOccupancyMap;
   const globalCostmap = useMemo(() => parseOccupancyMap(globalCostmapMessage), [globalCostmapMessage]);
   const localCostmap = useMemo(() => parseOccupancyMap(localCostmapMessage), [localCostmapMessage]);
   const routePoints = useMemo<MapPoint[]>(
@@ -920,11 +924,11 @@ export function MapCanvas(props: MapCanvasProps) {
     () =>
       buildMapMetadata({
         map: occupancyMap,
-        lastUpdateAt: mapLastUpdateAt,
+        lastUpdateAt: props.adapterMapMetadata?.lastUpdateAt ?? mapLastUpdateAt,
         poseAvailable: props.currentPose != null,
         mappingState: props.mappingState,
       }),
-    [occupancyMap, mapLastUpdateAt, props.currentPose, props.mappingState],
+    [occupancyMap, mapLastUpdateAt, props.adapterMapMetadata, props.currentPose, props.mappingState],
   );
 
   useEffect(() => {
