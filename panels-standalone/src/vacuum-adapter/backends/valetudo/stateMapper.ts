@@ -77,8 +77,12 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
       persistence: "unsupported",
       acceptedSessionLevel: false,
       savedMapPath: null,
+      loadedMapPath: null,
       lastSavedAt: null,
       saveError: null,
+      loadError: null,
+      activeMapName: null,
+      savedMaps: [],
     },
     readiness: {
       ready: connected && state != null,

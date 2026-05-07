@@ -62,7 +62,8 @@ export function mapVacuumCommandToValetudoRequest(
     command.command === "resume_mapping" ||
     command.command === "finish_mapping" ||
     command.command === "discard_mapping" ||
-    command.command === "accept_map"
+    command.command === "accept_map" ||
+    command.command === "load_map"
   ) {
     return unsupported(command.command, "Mapping sessions are not implemented for the Valetudo backend stub.");
   }

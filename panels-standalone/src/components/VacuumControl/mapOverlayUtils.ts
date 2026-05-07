@@ -4,8 +4,8 @@ import { ros2Bridge, type Subscription } from "../../ros2-bridge";
 import {
   getRecordEntry,
   normalizeRosMessage,
-} from "../Nav2/runtime/nav2RuntimeUtils";
-import type { PoseCoordinates } from "../Nav2/runtime/nav2RuntimeTypes";
+  type VacuumPoseCoordinates,
+} from "../../vacuum-adapter";
 import {
   DEFAULT_MAX_CAPACITY_PER_FRAME,
   Transform,
@@ -88,12 +88,9 @@ const MAX_RENDERED_DEPTH_OBSTACLE_POINTS = 650;
 const ROBOT_POSE_FRAME_CANDIDATES = [
   "base_footprint",
   "base_link",
-  "turtlebot4/base_footprint",
-  "turtlebot4/base_link",
 ];
 const LIDAR_FRAME_FALLBACKS = [
   "rplidar_link",
-  "turtlebot4/rplidar_link",
   "base_scan",
   "laser",
 ];
@@ -415,7 +412,7 @@ function projectFramePoseToMap(
   tree: TransformTree,
   sourceFrameIds: string[],
   latestTransformTimestampNs: Time | null,
-): PoseCoordinates | null {
+): VacuumPoseCoordinates | null {
   if (!tree.hasFrame(MAP_FRAME_ID)) {
     return null;
   }
@@ -452,7 +449,7 @@ function projectFramePoseToMap(
 
 function projectPointsFromRobotPose(
   points: ProjectedMapPoint[],
-  robotPose: PoseCoordinates | null,
+  robotPose: VacuumPoseCoordinates | null,
 ): SensorProjection {
   if (points.length === 0) {
     return { points: [], status: "waiting" };
@@ -653,7 +650,7 @@ function parsePointCloud2(message: Record<string, unknown> | null): ParsedPointC
   };
 }
 
-function rewriteTurtlebot4DepthPointCloudFrameId(
+function rewriteCameraDepthPointCloudFrameId(
   topicName: string,
   message: Record<string, unknown> | null,
 ): Record<string, unknown> | null {
@@ -670,7 +667,7 @@ function rewriteTurtlebot4DepthPointCloudFrameId(
   const headerRecord =
     header && typeof header === "object" ? (header as Record<string, unknown>) : {};
 
-  // Live TurtleBot4 depth samples are advertised in the optical frame, but the
+  // Some camera drivers advertise depth samples in the optical frame while the
   // XYZ values behave like camera-frame coordinates. Reusing the optical frame
   // here rotates the points a second time and makes the 2D projection meaningless.
   return {
@@ -684,7 +681,7 @@ function rewriteTurtlebot4DepthPointCloudFrameId(
 
 function compactDepthObstaclePoints(
   points: ProjectedMapPoint[],
-  robotPose: PoseCoordinates | null,
+  robotPose: VacuumPoseCoordinates | null,
 ): ProjectedMapPoint[] {
   const bins = new Map<string, ProjectedMapPoint>();
 
@@ -777,10 +774,10 @@ export function selectDepthPointCloudTopic(topics: Subscription[]): Subscription
   );
 }
 
-export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null): {
+export function useProjectedSensorOverlays(currentPose: VacuumPoseCoordinates | null): {
   lidarTopic: Subscription | null;
   depthTopic: Subscription | null;
-  robotPose: PoseCoordinates | null;
+  robotPose: VacuumPoseCoordinates | null;
   projectPointToMap: (point: ProjectedMapPoint, sourceFrameId: string | null) => ProjectedMapPoint | null;
   lidarPoints: ProjectedMapPoint[];
   depthObstaclePoints: ProjectedMapPoint[];
@@ -857,7 +854,7 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
     return unsubscribe;
   }, [depthTopic]);
 
-  const robotPose = useMemo<PoseCoordinates | null>(() => {
+  const robotPose = useMemo<VacuumPoseCoordinates | null>(() => {
     const scanFrameId = getMessageFrameId(laserScanMessage);
     const sourceFrames = scanFrameId
       ? [...ROBOT_POSE_FRAME_CANDIDATES, scanFrameId]
@@ -905,7 +902,7 @@ export function useProjectedSensorOverlays(currentPose: PoseCoordinates | null):
     }
 
     const parsedCloud = parsePointCloud2(
-      rewriteTurtlebot4DepthPointCloudFrameId(depthTopic.topic, depthCloudMessage),
+      rewriteCameraDepthPointCloudFrameId(depthTopic.topic, depthCloudMessage),
     );
     if (!parsedCloud) {
       return { points: [], status: "waiting" };

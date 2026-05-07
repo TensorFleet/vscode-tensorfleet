@@ -83,6 +83,64 @@ export async function dispatchTurtleBot4Nav2Command(
     }
   }
 
+  async function setMapBasename(name: string | undefined): Promise<VacuumCommandResult | null> {
+    const trimmed = name?.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (!runtime.callService) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "Map naming requires parameter service calls in this runtime."),
+      };
+    }
+    try {
+      const response = await runtime.callService(
+        "/vacuum_frontier_explorer/set_parameters",
+        {
+          parameters: [
+            {
+              name: "map_basename",
+              value: {
+                type: 4,
+                string_value: trimmed,
+              },
+            },
+          ],
+        },
+        { timeoutMs: 5_000 },
+      );
+      const results = Array.isArray(response?.results) ? response.results : [];
+      const failed = results.find((entry) => entry && typeof entry === "object" && (entry as { successful?: boolean }).successful === false);
+      if (failed) {
+        return {
+          ok: false,
+          command: command.command,
+          error: {
+            code: "backend_error",
+            command: command.command,
+            message:
+              typeof (failed as { reason?: unknown }).reason === "string"
+                ? (failed as { reason: string }).reason
+                : "Map name parameter update failed.",
+          },
+        };
+      }
+      return null;
+    } catch (error) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "backend_error",
+          command: command.command,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
   if (command.command === "go_to_location") {
     if (!snapshot.capabilities.go_to_location.supported) {
       return {
@@ -172,6 +230,10 @@ export async function dispatchTurtleBot4Nav2Command(
   }
 
   if (command.command === "start_mapping") {
+    const setNameError = await setMapBasename(command.name);
+    if (setNameError) {
+      return setNameError;
+    }
     if (command.mode === "auto" && !snapshot.capabilities.auto_mapping.supported) {
       return {
         ok: false,
@@ -197,7 +259,8 @@ export async function dispatchTurtleBot4Nav2Command(
     command.command === "resume_mapping" ||
     command.command === "finish_mapping" ||
     command.command === "discard_mapping" ||
-    command.command === "accept_map"
+    command.command === "accept_map" ||
+    command.command === "load_map"
   ) {
     if (!snapshot.capabilities.mapping_session.supported) {
       return {
@@ -206,12 +269,25 @@ export async function dispatchTurtleBot4Nav2Command(
         error: unsupportedCommand(command.command, "mapping_session is not supported by the current backend."),
       };
     }
+    if (command.command === "accept_map") {
+      const setNameError = await setMapBasename(command.name);
+      if (setNameError) {
+        return setNameError;
+      }
+    }
+    if (command.command === "load_map") {
+      const setNameError = await setMapBasename(command.name);
+      if (setNameError) {
+        return setNameError;
+      }
+    }
     const serviceByCommand = {
       pause_mapping: MAPPING_SERVICE_NAMES.pause,
       resume_mapping: MAPPING_SERVICE_NAMES.resume,
       finish_mapping: MAPPING_SERVICE_NAMES.finish,
       discard_mapping: MAPPING_SERVICE_NAMES.discard,
       accept_map: MAPPING_SERVICE_NAMES.accept,
+      load_map: MAPPING_SERVICE_NAMES.loadMap,
     } as const;
     return await callMappingService(serviceByCommand[command.command], command.command);
   }

@@ -156,8 +156,22 @@ export type VacuumMappingStatus = {
   persistence: "session" | "persistent" | "unsupported";
   acceptedSessionLevel: boolean;
   savedMapPath: string | null;
+  loadedMapPath: string | null;
   lastSavedAt: number | null;
   saveError: string | null;
+  loadError: string | null;
+  activeMapName: string | null;
+  savedMaps: VacuumSavedMapSummary[];
+};
+
+export type VacuumSavedMapSummary = {
+  id: string;
+  name: string;
+  yamlPath: string;
+  imagePath: string | null;
+  modifiedAt: number | null;
+  sizeBytes: number;
+  active: boolean;
 };
 
 export type VacuumReadinessSummary = {

@@ -24,6 +24,8 @@ export const MAPPING_SERVICE_NAMES = {
   discard: "/vacuum_mapping/discard",
   accept: "/vacuum_mapping/accept",
   saveMap: "/vacuum_mapping/save_map",
+  loadMap: "/vacuum_mapping/load_map",
+  listMaps: "/vacuum_mapping/list_maps",
 } as const;
 
 const UNSUPPORTED_VACUUM_FEATURES: VacuumCapabilityName[] = [
@@ -108,8 +110,8 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
   capabilities.mapping_session = hasMappingServices
     ? supportedCapability({
         backendCapability: "vacuum_frontier_explorer services",
-        commands: ["start_mapping", "pause_mapping", "resume_mapping", "finish_mapping", "discard_mapping", "accept_map"],
-        attributes: ["mapping_state", "session_acceptance", "persistent_map_save"],
+        commands: ["start_mapping", "pause_mapping", "resume_mapping", "finish_mapping", "discard_mapping", "accept_map", "load_map"],
+        attributes: ["mapping_state", "session_acceptance", "persistent_map_save", "saved_map_inventory"],
         notes: "Backed by the VM-owned mapping runtime.",
       })
     : unsupportedCapability("VM mapping services are not advertised.");

@@ -1336,6 +1336,17 @@ body {
   line-height: 1.45;
 }
 
+.vacuum-mapping-error {
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 116, 97, 0.22);
+  background: rgba(255, 116, 97, 0.08);
+  color: #ffc2b8;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .vacuum-current-map {
   display: grid;
   gap: 4px;
@@ -1355,6 +1366,106 @@ body {
   color: var(--vacuum-text-soft);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.vacuum-saved-map-list {
+  display: grid;
+  gap: 7px;
+}
+
+.vacuum-saved-map-list__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--vacuum-text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vacuum-saved-map-list__head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vacuum-text-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-saved-map {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(232, 226, 214, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--vacuum-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.vacuum-saved-map:hover {
+  border-color: rgba(20, 199, 184, 0.28);
+  background: rgba(20, 199, 184, 0.08);
+}
+
+.vacuum-saved-map--active {
+  border-color: rgba(20, 199, 184, 0.36);
+  background: rgba(20, 199, 184, 0.12);
+}
+
+.vacuum-saved-map__main,
+.vacuum-saved-map__action {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.vacuum-saved-map__main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.vacuum-saved-map__action {
+  padding: 5px 7px;
+  border-radius: 6px;
+  color: var(--vacuum-text-soft);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.vacuum-saved-map__action:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--vacuum-text);
+}
+
+.vacuum-saved-map__main span,
+.vacuum-saved-map__main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-saved-map__main span {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.vacuum-saved-map__main small {
+  color: var(--vacuum-text-muted);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .vacuum-map-metadata-grid {

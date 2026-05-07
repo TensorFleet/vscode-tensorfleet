@@ -101,8 +101,12 @@ function defaultMappingStatus(mapMetadata: VacuumMapMetadata): VacuumMappingStat
     persistence: "unsupported",
     acceptedSessionLevel: false,
     savedMapPath: null,
+    loadedMapPath: null,
     lastSavedAt: null,
     saveError: null,
+    loadError: null,
+    activeMapName: null,
+    savedMaps: [],
   };
 }
 
@@ -179,7 +183,7 @@ function getReadinessBlockers(runtime: Nav2RuntimeState, mapReady: boolean): str
     blockers.push("Live map is not ready.");
   }
   if (runtime.preflightStatus.state !== "ready") {
-    blockers.push("Nav2 preflight checks are not ready.");
+    blockers.push("Navigation checks are not ready.");
   }
   return blockers;
 }

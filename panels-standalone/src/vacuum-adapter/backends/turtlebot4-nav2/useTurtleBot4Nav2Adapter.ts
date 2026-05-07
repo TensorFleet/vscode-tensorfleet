@@ -5,7 +5,7 @@ import { useNav2Runtime } from "../../../components/Nav2/runtime/useNav2Runtime"
 import type { VacuumAdapter } from "../../adapter";
 import type { VacuumCommand, VacuumCommandResult } from "../../commands";
 import { buildVacuumMapMetadata, parseVacuumMapGrid } from "../../mapGrid";
-import type { VacuumGoalCoordinates, VacuumMapGrid, VacuumMappingStatus } from "../../state";
+import type { VacuumGoalCoordinates, VacuumMapGrid, VacuumMappingStatus, VacuumSavedMapSummary } from "../../state";
 import { MAPPING_STATUS_TOPIC } from "./capabilityMapper";
 import { dispatchTurtleBot4Nav2Command } from "./commandDispatcher";
 import { mapTurtleBot4Nav2State } from "./stateMapper";
@@ -34,6 +34,29 @@ function parseMappingStatus(message: Record<string, unknown> | null): VacuumMapp
         : null;
     const state = typeof parsed.state === "string" ? parsed.state : "idle";
     const mode = parsed.mode === "auto" || parsed.mode === "manual" ? parsed.mode : null;
+    const savedMaps = Array.isArray(parsed.savedMaps)
+      ? parsed.savedMaps.flatMap((entry): VacuumSavedMapSummary[] => {
+          if (!entry || typeof entry !== "object") {
+            return [];
+          }
+          const record = entry as Record<string, unknown>;
+          const id = typeof record.id === "string" ? record.id : typeof record.name === "string" ? record.name : null;
+          if (!id) {
+            return [];
+          }
+          return [
+            {
+              id,
+              name: typeof record.name === "string" ? record.name : id,
+              yamlPath: typeof record.yamlPath === "string" ? record.yamlPath : "",
+              imagePath: typeof record.imagePath === "string" ? record.imagePath : null,
+              modifiedAt: toFiniteNumber(record.modifiedAt),
+              sizeBytes: toFiniteNumber(record.sizeBytes) ?? 0,
+              active: Boolean(record.active),
+            },
+          ];
+        })
+      : [];
     return {
       state: [
         "idle",
@@ -64,8 +87,12 @@ function parseMappingStatus(message: Record<string, unknown> | null): VacuumMapp
           : "session",
       acceptedSessionLevel: Boolean(parsed.acceptedSessionLevel),
       savedMapPath: typeof parsed.savedMapPath === "string" ? parsed.savedMapPath : null,
+      loadedMapPath: typeof parsed.loadedMapPath === "string" ? parsed.loadedMapPath : null,
       lastSavedAt: toFiniteNumber(parsed.lastSavedAt),
       saveError: typeof parsed.saveError === "string" ? parsed.saveError : null,
+      loadError: typeof parsed.loadError === "string" ? parsed.loadError : null,
+      activeMapName: typeof parsed.activeMapName === "string" ? parsed.activeMapName : null,
+      savedMaps,
     };
   } catch {
     return {
@@ -83,8 +110,12 @@ function parseMappingStatus(message: Record<string, unknown> | null): VacuumMapp
       persistence: "unsupported",
       acceptedSessionLevel: false,
       savedMapPath: null,
+      loadedMapPath: null,
       lastSavedAt: null,
       saveError: null,
+      loadError: null,
+      activeMapName: null,
+      savedMaps: [],
     };
   }
 }

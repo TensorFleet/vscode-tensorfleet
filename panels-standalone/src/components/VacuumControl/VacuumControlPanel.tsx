@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
-import { formatRosDuration } from "../Nav2/runtime/nav2RuntimeUtils";
 import { ros2Bridge } from "../../ros2-bridge";
 import {
+  formatDuration,
   useVacuumAdapter,
+  type VacuumCommandResult,
   type VacuumMappingStatus,
   type VacuumMissionState,
   type VacuumNavigationState,
+  type VacuumSavedMapSummary,
 } from "../../vacuum-adapter";
 import {
   MapCanvas,
@@ -115,6 +117,13 @@ function formatMapAge(lastUpdateAt: number | null, now: number): string {
     return `${seconds}s ago`;
   }
   return `${Math.round(seconds / 60)}m ago`;
+}
+
+function formatSavedMapTime(timestamp: number | null): string {
+  if (timestamp == null) {
+    return "unknown";
+  }
+  return new Date(timestamp).toLocaleString();
 }
 
 function formatRecoveries(value: number | null): string {
@@ -533,6 +542,8 @@ function MappingCard(props: {
   mappingStatus: VacuumMappingStatus;
   metadata: MapCanvasMetadata | null;
   savedMap: SavedMapSummary | null;
+  savedMaps: VacuumSavedMapSummary[];
+  commandError: string | null;
   mapName: string;
   now: number;
   onMapNameChange: (value: string) => void;
@@ -545,6 +556,8 @@ function MappingCard(props: {
   onFinish: () => void;
   onDiscard: () => void;
   onUseMap: () => void;
+  onLoadMap: (name: string) => void;
+  onImproveMap: (name: string) => void;
   onRemap: () => void;
 }): JSX.Element {
   const metadata = props.metadata;
@@ -603,16 +616,52 @@ function MappingCard(props: {
       </div>
       <p className="vacuum-mapping-copy">{copy.detail}</p>
 
+      {props.commandError ? (
+        <div className="vacuum-mapping-error" role="status">
+          {props.commandError}
+        </div>
+      ) : null}
+
       {props.mappingState === "saved" ? (
         <div className="vacuum-current-map">
           <strong>{savedLabel}</strong>
           <span>
-            {props.mappingStatus.savedMapPath
-              ? `Saved at ${props.mappingStatus.savedMapPath}`
+            {props.mappingStatus.loadedMapPath
+              ? `Loaded from ${props.mappingStatus.loadedMapPath}`
+              : props.mappingStatus.savedMapPath
+                ? `Saved at ${props.mappingStatus.savedMapPath}`
               : props.mappingStatus.saveError
                 ? `Accepted for this session. Save failed: ${props.mappingStatus.saveError}`
-                : "Accepted for this session."}
+                : props.mappingStatus.loadError
+                  ? `Load failed: ${props.mappingStatus.loadError}`
+                  : "Accepted for this session."}
           </span>
+        </div>
+      ) : null}
+
+      {props.savedMaps.length > 0 ? (
+        <div className="vacuum-saved-map-list">
+          <div className="vacuum-saved-map-list__head">
+            <span>Saved maps</span>
+            {props.mappingStatus.activeMapName ? <strong>{props.mappingStatus.activeMapName}</strong> : null}
+          </div>
+          {props.savedMaps.map((savedMap) => (
+            <div
+              key={savedMap.id}
+              className={`vacuum-saved-map${savedMap.active ? " vacuum-saved-map--active" : ""}`}
+            >
+              <button className="vacuum-saved-map__main" type="button" onClick={() => props.onLoadMap(savedMap.name)}>
+                <span>{savedMap.name}</span>
+                <small>{formatSavedMapTime(savedMap.modifiedAt)}</small>
+              </button>
+              <button className="vacuum-saved-map__action" type="button" onClick={() => props.onLoadMap(savedMap.name)}>
+                Use
+              </button>
+              <button className="vacuum-saved-map__action" type="button" onClick={() => props.onImproveMap(savedMap.name)}>
+                Improve
+              </button>
+            </div>
+          ))}
         </div>
       ) : null}
 
@@ -716,7 +765,7 @@ function MappingCard(props: {
         {props.mappingState === "review" ? (
           <>
             <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onUseMap} disabled={!hasMap}>
-              Use This Map
+              Save Map
             </button>
             <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onContinue}>
               Continue Mapping
@@ -728,7 +777,7 @@ function MappingCard(props: {
         ) : null}
         {props.mappingState === "saved" ? (
           <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onRemap}>
-            Remap
+            Improve Current Map
           </button>
         ) : null}
       </div>
@@ -747,6 +796,7 @@ export function VacuumControlPanel() {
   const [mapMetadata, setMapMetadata] = useState<MapCanvasMetadata | null>(null);
   const [mapName, setMapName] = useState("Lab Mapping Run 1");
   const [savedMap, setSavedMap] = useState<SavedMapSummary | null>(null);
+  const [mappingCommandError, setMappingCommandError] = useState<string | null>(null);
   const goalStartTimeRef = useRef<number | null>(null);
 
   const currentPose = snapshot.pose.coordinates;
@@ -756,7 +806,7 @@ export function VacuumControlPanel() {
   const poseReady = snapshot.pose.available;
   const readinessReady = snapshot.readiness.ready;
   const preflightBlocking = snapshot.readiness.blockingReasons.some(
-    (reason) => reason === "Nav2 preflight checks are not ready.",
+    (reason) => reason === "Navigation checks are not ready.",
   );
   const preflightReady = !preflightBlocking;
   const navigationState = snapshot.navigation.state;
@@ -907,9 +957,9 @@ export function VacuumControlPanel() {
   })();
   const progressPctLabel = isIndeterminate ? "—" : `${Math.round(routeProgress * 100)}%`;
   const elapsedLabel = snapshot.navigation.progress.navigationTime != null
-    ? formatRosDuration(snapshot.navigation.progress.navigationTime)
+    ? formatDuration(snapshot.navigation.progress.navigationTime)
     : wallClockElapsed != null
-      ? formatRosDuration(wallClockElapsed)
+      ? formatDuration(wallClockElapsed)
       : "n/a";
   const recoveryCount = toFiniteNumber(snapshot.navigation.progress.recoveries);
   const recoveryLabel = formatRecoveries(recoveryCount);
@@ -994,43 +1044,64 @@ export function VacuumControlPanel() {
   }
 
   async function handleStartAutoMapping(): Promise<void> {
-    await adapter.sendCommand({ command: "start_mapping", mode: "auto", name: mapName });
+    setMappingCommandError(null);
+    const result = await adapter.sendCommand({ command: "start_mapping", mode: "auto", name: mapName });
+    handleMappingCommandResult(result);
     setDraftTarget(null);
     setSentTarget(null);
   }
 
   async function handleStartManualMapping(): Promise<void> {
-    await adapter.sendCommand({ command: "start_mapping", mode: "manual", name: mapName });
+    setMappingCommandError(null);
+    const result = await adapter.sendCommand({ command: "start_mapping", mode: "manual", name: mapName });
+    handleMappingCommandResult(result);
     setDraftTarget(null);
     setSentTarget(null);
   }
 
   async function handlePauseMapping(): Promise<void> {
     stopManualMotion();
-    await adapter.sendCommand({ command: "pause_mapping" });
+    setMappingCommandError(null);
+    handleMappingCommandResult(await adapter.sendCommand({ command: "pause_mapping" }));
   }
 
   async function handleContinueMapping(): Promise<void> {
-    await adapter.sendCommand({ command: "resume_mapping" });
+    setMappingCommandError(null);
+    handleMappingCommandResult(await adapter.sendCommand({ command: "resume_mapping" }));
   }
 
   async function handleFinishMapping(): Promise<void> {
     stopManualMotion();
-    await adapter.sendCommand({ command: "finish_mapping" });
+    setMappingCommandError(null);
+    handleMappingCommandResult(await adapter.sendCommand({ command: "finish_mapping" }));
   }
 
   async function handleDiscardMapping(): Promise<void> {
     stopManualMotion();
-    await adapter.sendCommand({ command: "discard_mapping" });
+    setMappingCommandError(null);
+    handleMappingCommandResult(await adapter.sendCommand({ command: "discard_mapping" }));
     setDraftTarget(null);
     setSentTarget(null);
+  }
+
+  function handleMappingCommandResult(result: VacuumCommandResult): boolean {
+    if (result.ok) {
+      setMappingCommandError(null);
+      return true;
+    }
+    setMappingCommandError(result.error.message);
+    return false;
   }
 
   async function handleUseMap(): Promise<void> {
     if (!mapMetadata?.hasMap) {
       return;
     }
-    await adapter.sendCommand({ command: "accept_map" });
+    setMappingCommandError(null);
+    const result = await adapter.sendCommand({ command: "accept_map", name: mapName });
+    if (!handleMappingCommandResult(result)) {
+      return;
+    }
     setSavedMap({
       name: mapName.trim() || "Current map",
       createdAt: Date.now(),
@@ -1040,7 +1111,64 @@ export function VacuumControlPanel() {
   }
 
   async function handleRemap(): Promise<void> {
-    await adapter.sendCommand({ command: "start_mapping", mode: autoMappingSupported ? "auto" : "manual", name: mapName });
+    setMappingCommandError(null);
+    const result = await adapter.sendCommand({ command: "start_mapping", mode: autoMappingSupported ? "auto" : "manual", name: mapName });
+    handleMappingCommandResult(result);
+    setDraftTarget(null);
+    setSentTarget(null);
+  }
+
+  async function handleLoadMap(name: string): Promise<void> {
+    setMappingCommandError(null);
+    const result = await adapter.sendCommand({ command: "load_map", name });
+    if (!handleMappingCommandResult(result)) {
+      return;
+    }
+    setMapName(name);
+    setSavedMap({
+      name,
+      createdAt: Date.now(),
+      metadata: mapMetadata ?? {
+        hasMap: false,
+        width: 0,
+        height: 0,
+        resolution: 0,
+        freeCells: 0,
+        occupiedCells: 0,
+        unknownCells: 0,
+        knownCells: 0,
+        totalCells: 0,
+        freeRatio: 0,
+        occupiedRatio: 0,
+        knownRatio: 0,
+        unknownRatio: 1,
+        knownAreaSqM: 0,
+        lastUpdateAt: null,
+        poseAvailable: false,
+        readiness: "No map",
+      },
+      notes: "Loaded saved map for navigation and future coverage planning.",
+    });
+    setDraftTarget(null);
+    setSentTarget(null);
+  }
+
+  async function handleImproveMap(name: string): Promise<void> {
+    setMappingCommandError(null);
+    const loadResult = await adapter.sendCommand({ command: "load_map", name });
+    if (!handleMappingCommandResult(loadResult)) {
+      return;
+    }
+    const startResult = await adapter.sendCommand({
+      command: "start_mapping",
+      mode: autoMappingSupported ? "auto" : "manual",
+      name,
+    });
+    if (!handleMappingCommandResult(startResult)) {
+      return;
+    }
+    setMapName(name);
+    setSavedMap(null);
     setDraftTarget(null);
     setSentTarget(null);
   }
@@ -1177,6 +1305,8 @@ export function VacuumControlPanel() {
               mappingStatus={mappingStatus}
               metadata={mapMetadata}
               savedMap={savedMap}
+              savedMaps={mappingStatus.savedMaps}
+              commandError={mappingCommandError}
               mapName={mapName}
               now={metadataClock}
               onMapNameChange={setMapName}
@@ -1189,6 +1319,8 @@ export function VacuumControlPanel() {
               onFinish={() => void handleFinishMapping()}
               onDiscard={() => void handleDiscardMapping()}
               onUseMap={() => void handleUseMap()}
+              onLoadMap={(name) => void handleLoadMap(name)}
+              onImproveMap={(name) => void handleImproveMap(name)}
               onRemap={() => void handleRemap()}
             />
 

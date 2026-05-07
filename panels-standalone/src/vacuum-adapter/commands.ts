@@ -11,6 +11,7 @@ export type VacuumCommandName =
   | "finish_mapping"
   | "discard_mapping"
   | "accept_map"
+  | "load_map"
   | "start_cleaning"
   | "pause"
   | "resume"
@@ -36,6 +37,16 @@ export type VacuumStartMappingCommand = {
   name?: string;
 };
 
+export type VacuumAcceptMapCommand = {
+  command: "accept_map";
+  name?: string;
+};
+
+export type VacuumLoadMapCommand = {
+  command: "load_map";
+  name: string;
+};
+
 export type VacuumSetFanSpeedCommand = {
   command: "set_fan_speed";
   value: string;
@@ -49,7 +60,7 @@ export type VacuumSetWaterUsageCommand = {
 export type VacuumSimpleCommand = {
   command: Exclude<
     VacuumCommandName,
-    "go_to_location" | "cancel_navigation" | "start_mapping" | "set_fan_speed" | "set_water_usage"
+    "go_to_location" | "cancel_navigation" | "start_mapping" | "accept_map" | "load_map" | "set_fan_speed" | "set_water_usage"
   >;
 };
 
@@ -57,6 +68,8 @@ export type VacuumCommand =
   | VacuumGoToLocationCommand
   | VacuumCancelNavigationCommand
   | VacuumStartMappingCommand
+  | VacuumAcceptMapCommand
+  | VacuumLoadMapCommand
   | VacuumSetFanSpeedCommand
   | VacuumSetWaterUsageCommand
   | VacuumSimpleCommand;

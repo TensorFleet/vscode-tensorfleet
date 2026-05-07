@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ros2Bridge } from "../../ros2-bridge";
-import type { VacuumMapGrid, VacuumMapMetadata } from "../../vacuum-adapter";
 import {
   getRecordEntry,
   normalizeRosMessage,
-} from "../Nav2/runtime/nav2RuntimeUtils";
-import type { PoseCoordinates } from "../Nav2/runtime/nav2RuntimeTypes";
+  type VacuumMapGrid,
+  type VacuumMapMetadata,
+  type VacuumPoseCoordinates,
+} from "../../vacuum-adapter";
 import {
   DEFAULT_OVERLAY_VISIBILITY,
   MAP_OVERLAY_DEFINITIONS,
@@ -121,7 +122,7 @@ type PointOverlayStyle = {
 };
 
 export type MapCanvasProps = {
-  currentPose: PoseCoordinates | null;
+  currentPose: VacuumPoseCoordinates | null;
   planPoints: MapPoint[] | null;
   draftTarget: MapCanvasTarget | null;
   sentTarget: MapCanvasTarget | null;
@@ -399,7 +400,7 @@ function drawOccupancyMap(
   context.putImageData(image, 0, 0);
 }
 
-function deriveBounds(map: OccupancyMap | null, pose: PoseCoordinates | null): MapBounds {
+function deriveBounds(map: OccupancyMap | null, pose: VacuumPoseCoordinates | null): MapBounds {
   if (map) {
     return {
       minX: map.originX,
