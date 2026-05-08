@@ -1466,7 +1466,8 @@ body {
   min-height: 0;
   display: grid;
   gap: 12px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   align-content: start;
 }
 
