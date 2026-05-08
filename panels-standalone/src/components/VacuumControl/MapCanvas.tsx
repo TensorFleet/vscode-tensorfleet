@@ -1932,16 +1932,6 @@ export function MapCanvas(props: MapCanvasProps) {
               onPointerDown={(event) => startCleanAreaInteraction(event, "move", null)}
             >
               <div className="vacuum-clean-area__fill" />
-              <div className="vacuum-clean-area__label">
-                <strong>Clean Area</strong>
-                <span>
-                  {(props.cleanAreaRect.maxX - props.cleanAreaRect.minX).toFixed(1)} m ×{" "}
-                  {(props.cleanAreaRect.maxY - props.cleanAreaRect.minY).toFixed(1)} m
-                </span>
-                <span>
-                  {((props.cleanAreaRect.maxX - props.cleanAreaRect.minX) * (props.cleanAreaRect.maxY - props.cleanAreaRect.minY)).toFixed(1)} m²
-                </span>
-              </div>
               {props.cleanAreaToolActive
                 ? CLEAN_AREA_HANDLES.map((handle) => (
                     <button

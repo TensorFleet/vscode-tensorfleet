@@ -1057,136 +1057,104 @@ body {
   z-index: 6;
   min-width: 8px;
   min-height: 8px;
-  border: 1.5px solid rgba(67, 224, 197, 0.88);
+  --clean-area-accent: 67, 224, 197;
+  --clean-area-shadow: 6, 14, 14;
+  border: 1px solid rgba(var(--clean-area-accent), 0.96);
+  border-radius: 2px;
   box-shadow:
-    0 0 0 1px rgba(6, 14, 14, 0.55),
-    0 0 18px rgba(56, 200, 176, 0.14);
+    0 0 0 1px rgba(var(--clean-area-shadow), 0.68),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0 16px rgba(var(--clean-area-accent), 0.16);
+  cursor: move;
   pointer-events: auto;
 }
 
 .vacuum-clean-area--invalid {
-  border-color: rgba(255, 179, 92, 0.9);
-  box-shadow:
-    0 0 0 1px rgba(35, 18, 4, 0.6),
-    0 0 18px rgba(255, 179, 92, 0.12);
+  --clean-area-accent: 255, 179, 92;
+  --clean-area-shadow: 35, 18, 4;
 }
 
 .vacuum-clean-area--running {
-  border-color: rgba(115, 182, 242, 0.9);
+  --clean-area-accent: 115, 182, 242;
 }
 
 .vacuum-clean-area--completed {
-  border-color: rgba(88, 211, 141, 0.9);
+  --clean-area-accent: 88, 211, 141;
 }
 
 .vacuum-clean-area__fill {
   position: absolute;
   inset: 0;
   background:
+    linear-gradient(rgba(var(--clean-area-accent), 0.1), rgba(var(--clean-area-accent), 0.1)),
+    linear-gradient(90deg, rgba(var(--clean-area-accent), 0.18) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(var(--clean-area-accent), 0.18) 1px, transparent 1px),
     repeating-linear-gradient(
-      90deg,
-      rgba(67, 224, 197, 0.13) 0,
-      rgba(67, 224, 197, 0.13) 6px,
-      rgba(67, 224, 197, 0.04) 6px,
-      rgba(67, 224, 197, 0.04) 12px
-    ),
-    rgba(56, 200, 176, 0.12);
+      45deg,
+      rgba(var(--clean-area-accent), 0.1) 0,
+      rgba(var(--clean-area-accent), 0.1) 1px,
+      transparent 1px,
+      transparent 9px
+    );
+  background-size: auto, 16px 16px, 16px 16px, auto;
+  opacity: 0.82;
   pointer-events: none;
 }
 
 .vacuum-clean-area--invalid .vacuum-clean-area__fill {
-  background:
-    repeating-linear-gradient(
-      90deg,
-      rgba(255, 179, 92, 0.13) 0,
-      rgba(255, 179, 92, 0.13) 6px,
-      rgba(255, 179, 92, 0.04) 6px,
-      rgba(255, 179, 92, 0.04) 12px
-    ),
-    rgba(255, 179, 92, 0.09);
-}
-
-.vacuum-clean-area__label {
-  position: absolute;
-  left: 10px;
-  top: 10px;
-  display: grid;
-  gap: 2px;
-  max-width: min(170px, calc(100% - 20px));
-  padding: 7px 9px;
-  border-radius: 8px;
-  border: 1px solid rgba(232, 226, 214, 0.1);
-  background: rgba(9, 22, 21, 0.84);
-  color: #eafffb;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(8px);
-  pointer-events: none;
-}
-
-.vacuum-clean-area--invalid .vacuum-clean-area__label {
-  background: rgba(39, 26, 9, 0.86);
-  color: #ffe7c4;
-}
-
-.vacuum-clean-area__label strong,
-.vacuum-clean-area__label span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.vacuum-clean-area__label strong {
-  font-size: 11px;
-  font-weight: 850;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.vacuum-clean-area__label span {
-  font-size: 10px;
-  font-weight: 750;
-  color: currentColor;
-  opacity: 0.86;
+  opacity: 0.68;
 }
 
 .vacuum-clean-area__handle {
   position: absolute;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   padding: 0;
-  border-radius: 4px;
-  border: 1.5px solid rgba(5, 16, 16, 0.8);
-  background: #eafffb;
-  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.3);
+  border-radius: 999px;
+  border: 1px solid rgba(5, 16, 16, 0.76);
+  background: rgb(231, 255, 251);
+  box-shadow:
+    0 0 0 1px rgba(var(--clean-area-accent), 0.76),
+    0 2px 8px rgba(0, 0, 0, 0.32);
+}
+
+.vacuum-clean-area__handle--n,
+.vacuum-clean-area__handle--s,
+.vacuum-clean-area__handle--e,
+.vacuum-clean-area__handle--w {
+  background: rgba(var(--clean-area-accent), 0.96);
+  border-color: rgba(4, 14, 14, 0.7);
 }
 
 .vacuum-clean-area__handle--nw,
 .vacuum-clean-area__handle--w,
 .vacuum-clean-area__handle--sw {
-  left: -6px;
+  left: -5px;
 }
 
 .vacuum-clean-area__handle--ne,
 .vacuum-clean-area__handle--e,
 .vacuum-clean-area__handle--se {
-  right: -6px;
+  right: -5px;
 }
 
 .vacuum-clean-area__handle--n,
 .vacuum-clean-area__handle--nw,
 .vacuum-clean-area__handle--ne {
-  top: -6px;
+  top: -5px;
 }
 
 .vacuum-clean-area__handle--s,
 .vacuum-clean-area__handle--sw,
 .vacuum-clean-area__handle--se {
-  bottom: -6px;
+  bottom: -5px;
 }
 
 .vacuum-clean-area__handle--n,
 .vacuum-clean-area__handle--s {
   left: 50%;
+  width: 26px;
+  height: 6px;
   transform: translateX(-50%);
   cursor: ns-resize;
 }
@@ -1194,6 +1162,8 @@ body {
 .vacuum-clean-area__handle--e,
 .vacuum-clean-area__handle--w {
   top: 50%;
+  width: 6px;
+  height: 26px;
   transform: translateY(-50%);
   cursor: ew-resize;
 }
