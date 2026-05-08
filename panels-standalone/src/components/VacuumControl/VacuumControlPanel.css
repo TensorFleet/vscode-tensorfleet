@@ -1265,6 +1265,128 @@ body {
   gap: 12px;
 }
 
+.vacuum-card-group {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(232, 226, 214, 0.09);
+  border-radius: 18px;
+  background: rgba(18, 18, 18, 0.54);
+  box-shadow: var(--vacuum-shadow);
+}
+
+.vacuum-card-group__head {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--vacuum-text-soft);
+  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid rgba(232, 226, 214, 0.07);
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.vacuum-card-group__head:hover {
+  color: var(--vacuum-text);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.vacuum-card-group__head--static {
+  cursor: default;
+}
+
+.vacuum-card-group__head--static:hover {
+  color: var(--vacuum-text-soft);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.vacuum-card-group__title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-card-group__right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.vacuum-card-group__status {
+  max-width: 118px;
+  overflow: hidden;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--vacuum-text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.vacuum-card-group__chevron,
+.vacuum-collapsible-card-chevron {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+.vacuum-card-group__body {
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.vacuum-card-group__body > .vacuum-panel-card {
+  box-shadow: none;
+}
+
+.vacuum-collapsible-card-head {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  color: inherit;
+}
+
+.vacuum-collapsible-card-head:hover .vacuum-panel-card__eyebrow {
+  color: var(--vacuum-text-soft);
+}
+
+.vacuum-collapsible-card-head__right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.vacuum-collapsible-card-chevron {
+  color: var(--vacuum-text-muted);
+}
+
 .vacuum-panel-card--ready,
 .vacuum-panel-card--success {
   border-color: rgba(88, 211, 141, 0.18);

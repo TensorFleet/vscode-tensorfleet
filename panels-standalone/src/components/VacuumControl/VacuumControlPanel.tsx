@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
 import { ros2Bridge } from "../../ros2-bridge";
 import {
@@ -517,6 +517,61 @@ function SpinnerIcon(props: { className?: string }) {
   );
 }
 
+function ChevronIcon(props: { expanded: boolean; className?: string }) {
+  return (
+    <svg className={props.className} viewBox="0 0 16 16" aria-hidden="true">
+      <path d={props.expanded ? "M4 10l4-4 4 4" : "M4 6l4 4 4-4"} />
+    </svg>
+  );
+}
+
+function CollapsibleGroup(props: {
+  title: string;
+  status?: string;
+  defaultExpanded?: boolean;
+  children: ReactNode;
+}): JSX.Element {
+  const [isExpanded, setIsExpanded] = useState(props.defaultExpanded ?? true);
+
+  return (
+    <section className="vacuum-card-group">
+      <button
+        className="vacuum-card-group__head"
+        type="button"
+        onClick={() => { setIsExpanded((value) => !value); }}
+        aria-expanded={isExpanded}
+      >
+        <span className="vacuum-card-group__title">{props.title}</span>
+        <span className="vacuum-card-group__right">
+          {props.status ? <span className="vacuum-card-group__status">{props.status}</span> : null}
+          <ChevronIcon className="vacuum-card-group__chevron" expanded={isExpanded} />
+        </span>
+      </button>
+      {isExpanded ? <div className="vacuum-card-group__body">{props.children}</div> : null}
+    </section>
+  );
+}
+
+function CardGroup(props: {
+  title: string;
+  status?: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <section className="vacuum-card-group">
+      <div className="vacuum-card-group__head vacuum-card-group__head--static">
+        <span className="vacuum-card-group__title">{props.title}</span>
+        {props.status ? (
+          <span className="vacuum-card-group__right">
+            <span className="vacuum-card-group__status">{props.status}</span>
+          </span>
+        ) : null}
+      </div>
+      <div className="vacuum-card-group__body">{props.children}</div>
+    </section>
+  );
+}
+
 function getChipTone(isActive: boolean, tone: Exclude<StatusChipTone, "inactive">): StatusChipTone {
   return isActive ? tone : "inactive";
 }
@@ -560,6 +615,7 @@ function MappingCard(props: {
   onImproveMap: (name: string) => void;
   onRemap: () => void;
 }): JSX.Element {
+  const [isExpanded, setIsExpanded] = useState(true);
   const metadata = props.metadata;
   const hasMap = metadata?.hasMap ?? false;
   const stateCopy: Record<MappingSessionState, { title: string; detail: string; badge: string }> = {
@@ -610,177 +666,190 @@ function MappingCard(props: {
 
   return (
     <section className={`vacuum-panel-card vacuum-panel-card--mapping vacuum-panel-card--mapping-${props.mappingState}`}>
-      <div className="vacuum-panel-card__head">
+      <button
+        className="vacuum-panel-card__head vacuum-collapsible-card-head"
+        type="button"
+        onClick={() => { setIsExpanded((value) => !value); }}
+        aria-expanded={isExpanded}
+      >
         <p className="vacuum-panel-card__eyebrow">{copy.title}</p>
-        <span className="vacuum-mapping-badge">{copy.badge}</span>
-      </div>
-      <p className="vacuum-mapping-copy">{copy.detail}</p>
-
-      {props.commandError ? (
-        <div className="vacuum-mapping-error" role="status">
-          {props.commandError}
+        <div className="vacuum-collapsible-card-head__right">
+          <span className="vacuum-mapping-badge">{copy.badge}</span>
+          <ChevronIcon className="vacuum-collapsible-card-chevron" expanded={isExpanded} />
         </div>
-      ) : null}
+      </button>
 
-      {props.mappingState === "saved" ? (
-        <div className="vacuum-current-map">
-          <strong>{savedLabel}</strong>
-          <span>
-            {props.mappingStatus.loadedMapPath
-              ? `Loaded from ${props.mappingStatus.loadedMapPath}`
-              : props.mappingStatus.savedMapPath
-                ? `Saved at ${props.mappingStatus.savedMapPath}`
-              : props.mappingStatus.saveError
-                ? `Accepted for this session. Save failed: ${props.mappingStatus.saveError}`
-                : props.mappingStatus.loadError
-                  ? `Load failed: ${props.mappingStatus.loadError}`
-                  : "Accepted for this session."}
-          </span>
-        </div>
-      ) : null}
+      {isExpanded ? (
+        <>
+          <p className="vacuum-mapping-copy">{copy.detail}</p>
 
-      {props.savedMaps.length > 0 ? (
-        <div className="vacuum-saved-map-list">
-          <div className="vacuum-saved-map-list__head">
-            <span>Saved maps</span>
-            {props.mappingStatus.activeMapName ? <strong>{props.mappingStatus.activeMapName}</strong> : null}
-          </div>
-          {props.savedMaps.map((savedMap) => (
-            <div
-              key={savedMap.id}
-              className={`vacuum-saved-map${savedMap.active ? " vacuum-saved-map--active" : ""}`}
-            >
-              <button className="vacuum-saved-map__main" type="button" onClick={() => props.onLoadMap(savedMap.name)}>
-                <span>{savedMap.name}</span>
-                <small>{formatSavedMapTime(savedMap.modifiedAt)}</small>
-              </button>
-              <button className="vacuum-saved-map__action" type="button" onClick={() => props.onLoadMap(savedMap.name)}>
-                Use
-              </button>
-              <button className="vacuum-saved-map__action" type="button" onClick={() => props.onImproveMap(savedMap.name)}>
-                Improve
-              </button>
+          {props.commandError ? (
+            <div className="vacuum-mapping-error" role="status">
+              {props.commandError}
             </div>
-          ))}
-        </div>
+          ) : null}
+
+          {props.mappingState === "saved" ? (
+            <div className="vacuum-current-map">
+              <strong>{savedLabel}</strong>
+              <span>
+                {props.mappingStatus.loadedMapPath
+                  ? `Loaded from ${props.mappingStatus.loadedMapPath}`
+                  : props.mappingStatus.savedMapPath
+                    ? `Saved at ${props.mappingStatus.savedMapPath}`
+                  : props.mappingStatus.saveError
+                    ? `Accepted for this session. Save failed: ${props.mappingStatus.saveError}`
+                    : props.mappingStatus.loadError
+                      ? `Load failed: ${props.mappingStatus.loadError}`
+                      : "Accepted for this session."}
+              </span>
+            </div>
+          ) : null}
+
+          {props.savedMaps.length > 0 ? (
+            <div className="vacuum-saved-map-list">
+              <div className="vacuum-saved-map-list__head">
+                <span>Saved maps</span>
+                {props.mappingStatus.activeMapName ? <strong>{props.mappingStatus.activeMapName}</strong> : null}
+              </div>
+              {props.savedMaps.map((savedMap) => (
+                <div
+                  key={savedMap.id}
+                  className={`vacuum-saved-map${savedMap.active ? " vacuum-saved-map--active" : ""}`}
+                >
+                  <button className="vacuum-saved-map__main" type="button" onClick={() => props.onLoadMap(savedMap.name)}>
+                    <span>{savedMap.name}</span>
+                    <small>{formatSavedMapTime(savedMap.modifiedAt)}</small>
+                  </button>
+                  <button className="vacuum-saved-map__action" type="button" onClick={() => props.onLoadMap(savedMap.name)}>
+                    Use
+                  </button>
+                  <button className="vacuum-saved-map__action" type="button" onClick={() => props.onImproveMap(savedMap.name)}>
+                    Improve
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="vacuum-map-metadata-grid">
+            <div>
+              <span>Map</span>
+              <strong>{hasMap && metadata ? `${metadata.width} × ${metadata.height}` : "Waiting"}</strong>
+            </div>
+            <div>
+              <span>Resolution</span>
+              <strong>{metadata ? formatResolution(metadata.resolution) : "n/a"}</strong>
+            </div>
+            <div>
+              <span>Known</span>
+              <strong>{formatPercent(props.mappingStatus.knownRatio || metadata?.knownRatio || 0)}</strong>
+            </div>
+            <div>
+              <span>Unknown</span>
+              <strong>{formatPercent(props.mappingStatus.unknownRatio || metadata?.unknownRatio || 0)}</strong>
+            </div>
+            <div>
+              <span>Known area</span>
+              <strong>{metadata ? formatArea(metadata.knownAreaSqM) : "n/a"}</strong>
+            </div>
+            <div>
+              <span>Last update</span>
+              <strong>{metadata ? formatMapAge(metadata.lastUpdateAt, props.now) : "n/a"}</strong>
+            </div>
+            <div>
+              <span>Pose</span>
+              <strong>{metadata?.poseAvailable ? "Available" : "Missing"}</strong>
+            </div>
+            <div>
+              <span>Frontiers</span>
+              <strong>{props.mappingStatus.frontierCount}</strong>
+            </div>
+            <div>
+              <span>Goals</span>
+              <strong>{props.mappingStatus.visitedGoalCount} / {props.mappingStatus.failedGoalCount}</strong>
+            </div>
+          </div>
+
+          {props.mappingState === "review" ? (
+            <label className="vacuum-map-name-field">
+              <span>Map name</span>
+              <input
+                value={props.mapName}
+                onChange={(event) => props.onMapNameChange(event.target.value)}
+                placeholder="Lab Mapping Run 1"
+              />
+            </label>
+          ) : null}
+
+          <div className="vacuum-mapping-actions">
+            {props.mappingState === "not_started" || props.mappingState === "discarded" || props.mappingState === "error" ? (
+              <>
+                <button
+                  className="vacuum-action vacuum-action--primary"
+                  type="button"
+                  onClick={props.onStartAuto}
+                  disabled={!props.autoSupported}
+                >
+                  Start auto mapping
+                </button>
+                <button
+                  className="vacuum-action vacuum-action--ghost"
+                  type="button"
+                  onClick={props.onStartManual}
+                  disabled={!props.manualSupported}
+                >
+                  Manual mapping
+                </button>
+              </>
+            ) : null}
+            {props.mappingState === "mapping" ? (
+              <>
+                <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onFinish}>
+                  Finish & review
+                </button>
+                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onPause}>
+                  Pause
+                </button>
+                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
+                  Discard Session
+                </button>
+              </>
+            ) : null}
+            {props.mappingState === "paused" ? (
+              <>
+                <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onContinue}>
+                  Resume auto mapping
+                </button>
+                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onFinish}>
+                  Finish & review
+                </button>
+                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
+                  Discard Session
+                </button>
+              </>
+            ) : null}
+            {props.mappingState === "review" ? (
+              <>
+                <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onUseMap} disabled={!hasMap}>
+                  Save Map
+                </button>
+                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onContinue}>
+                  Continue Mapping
+                </button>
+                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
+                  Discard Session
+                </button>
+              </>
+            ) : null}
+            {props.mappingState === "saved" ? (
+              <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onRemap}>
+                Improve Current Map
+              </button>
+            ) : null}
+          </div>
+        </>
       ) : null}
-
-      <div className="vacuum-map-metadata-grid">
-        <div>
-          <span>Map</span>
-          <strong>{hasMap && metadata ? `${metadata.width} × ${metadata.height}` : "Waiting"}</strong>
-        </div>
-        <div>
-          <span>Resolution</span>
-          <strong>{metadata ? formatResolution(metadata.resolution) : "n/a"}</strong>
-        </div>
-        <div>
-          <span>Known</span>
-          <strong>{formatPercent(props.mappingStatus.knownRatio || metadata?.knownRatio || 0)}</strong>
-        </div>
-        <div>
-          <span>Unknown</span>
-          <strong>{formatPercent(props.mappingStatus.unknownRatio || metadata?.unknownRatio || 0)}</strong>
-        </div>
-        <div>
-          <span>Known area</span>
-          <strong>{metadata ? formatArea(metadata.knownAreaSqM) : "n/a"}</strong>
-        </div>
-        <div>
-          <span>Last update</span>
-          <strong>{metadata ? formatMapAge(metadata.lastUpdateAt, props.now) : "n/a"}</strong>
-        </div>
-        <div>
-          <span>Pose</span>
-          <strong>{metadata?.poseAvailable ? "Available" : "Missing"}</strong>
-        </div>
-        <div>
-          <span>Frontiers</span>
-          <strong>{props.mappingStatus.frontierCount}</strong>
-        </div>
-        <div>
-          <span>Goals</span>
-          <strong>{props.mappingStatus.visitedGoalCount} / {props.mappingStatus.failedGoalCount}</strong>
-        </div>
-      </div>
-
-      {props.mappingState === "review" ? (
-        <label className="vacuum-map-name-field">
-          <span>Map name</span>
-          <input
-            value={props.mapName}
-            onChange={(event) => props.onMapNameChange(event.target.value)}
-            placeholder="Lab Mapping Run 1"
-          />
-        </label>
-      ) : null}
-
-      <div className="vacuum-mapping-actions">
-        {props.mappingState === "not_started" || props.mappingState === "discarded" || props.mappingState === "error" ? (
-          <>
-            <button
-              className="vacuum-action vacuum-action--primary"
-              type="button"
-              onClick={props.onStartAuto}
-              disabled={!props.autoSupported}
-            >
-              Start auto mapping
-            </button>
-            <button
-              className="vacuum-action vacuum-action--ghost"
-              type="button"
-              onClick={props.onStartManual}
-              disabled={!props.manualSupported}
-            >
-              Manual mapping
-            </button>
-          </>
-        ) : null}
-        {props.mappingState === "mapping" ? (
-          <>
-            <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onFinish}>
-              Finish & review
-            </button>
-            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onPause}>
-              Pause
-            </button>
-            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
-              Discard Session
-            </button>
-          </>
-        ) : null}
-        {props.mappingState === "paused" ? (
-          <>
-            <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onContinue}>
-              Resume auto mapping
-            </button>
-            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onFinish}>
-              Finish & review
-            </button>
-            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
-              Discard Session
-            </button>
-          </>
-        ) : null}
-        {props.mappingState === "review" ? (
-          <>
-            <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onUseMap} disabled={!hasMap}>
-              Save Map
-            </button>
-            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onContinue}>
-              Continue Mapping
-            </button>
-            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDiscard}>
-              Discard Session
-            </button>
-          </>
-        ) : null}
-        {props.mappingState === "saved" ? (
-          <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onRemap}>
-            Improve Current Map
-          </button>
-        ) : null}
-      </div>
     </section>
   );
 }
@@ -1300,180 +1369,184 @@ export function VacuumControlPanel() {
               </div>
             </section>
 
-            <MappingCard
-              mappingState={mappingState}
-              mappingStatus={mappingStatus}
-              metadata={mapMetadata}
-              savedMap={savedMap}
-              savedMaps={mappingStatus.savedMaps}
-              commandError={mappingCommandError}
-              mapName={mapName}
-              now={metadataClock}
-              onMapNameChange={setMapName}
-              autoSupported={autoMappingSupported}
-              manualSupported={mappingSessionSupported}
-              onStartAuto={() => void handleStartAutoMapping()}
-              onStartManual={() => void handleStartManualMapping()}
-              onPause={() => void handlePauseMapping()}
-              onContinue={() => void handleContinueMapping()}
-              onFinish={() => void handleFinishMapping()}
-              onDiscard={() => void handleDiscardMapping()}
-              onUseMap={() => void handleUseMap()}
-              onLoadMap={(name) => void handleLoadMap(name)}
-              onImproveMap={(name) => void handleImproveMap(name)}
-              onRemap={() => void handleRemap()}
-            />
+            <CardGroup title="Mapping & Manual Control" status={mappingStatus.state === "auto_mapping" ? "Auto mapping" : "Ready"}>
+              <MappingCard
+                mappingState={mappingState}
+                mappingStatus={mappingStatus}
+                metadata={mapMetadata}
+                savedMap={savedMap}
+                savedMaps={mappingStatus.savedMaps}
+                commandError={mappingCommandError}
+                mapName={mapName}
+                now={metadataClock}
+                onMapNameChange={setMapName}
+                autoSupported={autoMappingSupported}
+                manualSupported={mappingSessionSupported}
+                onStartAuto={() => void handleStartAutoMapping()}
+                onStartManual={() => void handleStartManualMapping()}
+                onPause={() => void handlePauseMapping()}
+                onContinue={() => void handleContinueMapping()}
+                onFinish={() => void handleFinishMapping()}
+                onDiscard={() => void handleDiscardMapping()}
+                onUseMap={() => void handleUseMap()}
+                onLoadMap={(name) => void handleLoadMap(name)}
+                onImproveMap={(name) => void handleImproveMap(name)}
+                onRemap={() => void handleRemap()}
+              />
 
-            <section className={`vacuum-panel-card vacuum-panel-card--destination ${displayedTarget ? "vacuum-panel-card--destination-selected" : ""}`}>
-              <div className="vacuum-panel-card__head">
-                <p className="vacuum-panel-card__eyebrow">Selected Destination</p>
+              <TeleopCard
+                disabled={mappingStatus.state === "auto_mapping"}
+                disabledReason="Pause auto mapping before using manual control."
+              />
+            </CardGroup>
+
+            <CollapsibleGroup title="Destination Run" status={hasTarget ? destinationBadgeLabel : "No target"}>
+              <section className={`vacuum-panel-card vacuum-panel-card--destination ${displayedTarget ? "vacuum-panel-card--destination-selected" : ""}`}>
+                <div className="vacuum-panel-card__head">
+                  <p className="vacuum-panel-card__eyebrow">Selected Destination</p>
+                  {displayedTarget ? (
+                    <span className="vacuum-destination-status">{destinationBadgeLabel}</span>
+                  ) : null}
+                </div>
                 {displayedTarget ? (
-                  <span className="vacuum-destination-status">{destinationBadgeLabel}</span>
-                ) : null}
-              </div>
-              {displayedTarget ? (
-                <>
-                  <div className="vacuum-dest-row">
-                    <div className="vacuum-dest-row__icon-wrap">
-                      <CompassIcon className="vacuum-dest-row__icon vacuum-dest-row__icon--compass" direction={displayedTarget.yaw} />
+                  <>
+                    <div className="vacuum-dest-row">
+                      <div className="vacuum-dest-row__icon-wrap">
+                        <CompassIcon className="vacuum-dest-row__icon vacuum-dest-row__icon--compass" direction={displayedTarget.yaw} />
+                      </div>
+                      <div className="vacuum-dest-row__text">
+                        <p className="vacuum-dest-row__title">Destination selected</p>
+                        <p className="vacuum-dest-row__sub">{targetDistanceLabel} from robot</p>
+                      </div>
+                    </div>
+                    <div className="vacuum-destination-details">
+                      <div>
+                        <span>Facing</span>
+                        <strong>{targetHeadingLabel}</strong>
+                      </div>
+                      <div>
+                        <span>Bearing</span>
+                        <strong>{targetBearingLabel}</strong>
+                      </div>
+                      <div>
+                        <span>Map coords</span>
+                        <strong>
+                          {formatCoordinate(displayedTarget.x)}, {formatCoordinate(displayedTarget.y)}
+                        </strong>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="vacuum-dest-row vacuum-dest-row--empty">
+                    <div className="vacuum-dest-row__icon-wrap vacuum-dest-row__icon-wrap--muted">
+                      <DestinationEmptyIcon className="vacuum-dest-row__icon vacuum-dest-row__icon--empty" />
                     </div>
                     <div className="vacuum-dest-row__text">
-                      <p className="vacuum-dest-row__title">Destination selected</p>
-                      <p className="vacuum-dest-row__sub">{targetDistanceLabel} from robot</p>
+                      <p className="vacuum-dest-row__title vacuum-dest-row__title--muted">No destination</p>
+                      <p className="vacuum-dest-row__sub">
+                        {isMappingWorkflowActive ? "Disabled during mapping" : "Click the map to pick one"}
+                      </p>
                     </div>
                   </div>
-                  <div className="vacuum-destination-details">
+                )}
+              </section>
+
+              {showProgressMetric ? (
+                <section className={`vacuum-panel-card vacuum-panel-card--progress vacuum-panel-card--progress-${routeVisualState}`}>
+                  <div className="vacuum-panel-card__head">
+                    <p className="vacuum-panel-card__eyebrow">Progress</p>
+                    <span className={`vacuum-progress-status vacuum-progress-status--${routeVisualState}`}>
+                      {progressStatusLabel}
+                    </span>
+                  </div>
+                  <div className="vacuum-progress-summary">
+                    <strong className={`vacuum-progress-pct vacuum-progress-pct--${routeVisualState}${isIndeterminate ? " vacuum-progress-pct--indeterminate" : ""}`}>
+                      {progressPctLabel}
+                    </strong>
+                    <p className="vacuum-progress-label">{progressLabel}</p>
+                  </div>
+                  <div className="vacuum-progress">
+                    <div
+                      className={`vacuum-progress__bar vacuum-progress__bar--${routeVisualState}${isIndeterminate ? " vacuum-progress__bar--indeterminate" : ""}`}
+                      style={isIndeterminate ? undefined : { width: `${displayedTarget ? progressBarWidth : 0}%` }}
+                    />
+                  </div>
+                  <div className="vacuum-stats vacuum-stats--progress">
                     <div>
-                      <span>Facing</span>
-                      <strong>{targetHeadingLabel}</strong>
+                      <span>Remaining</span>
+                      <strong>{formatDistance(routeDistanceRemaining)}</strong>
                     </div>
                     <div>
-                      <span>Bearing</span>
-                      <strong>{targetBearingLabel}</strong>
+                      <span>Elapsed</span>
+                      <strong>{elapsedLabel}</strong>
                     </div>
                     <div>
-                      <span>Map coords</span>
-                      <strong>
-                        {formatCoordinate(displayedTarget.x)}, {formatCoordinate(displayedTarget.y)}
+                      <span>Recoveries</span>
+                      <strong style={recoveryWarning ? { color: "var(--vacuum-warning)" } : undefined}>
+                        {recoveryLabel}
                       </strong>
                     </div>
                   </div>
-                </>
+                </section>
               ) : (
-                <div className="vacuum-dest-row vacuum-dest-row--empty">
-                  <div className="vacuum-dest-row__icon-wrap vacuum-dest-row__icon-wrap--muted">
-                    <DestinationEmptyIcon className="vacuum-dest-row__icon vacuum-dest-row__icon--empty" />
-                  </div>
-                  <div className="vacuum-dest-row__text">
-                    <p className="vacuum-dest-row__title vacuum-dest-row__title--muted">No destination</p>
-                    <p className="vacuum-dest-row__sub">
-                      {isMappingWorkflowActive ? "Disabled during mapping" : "Click the map to pick one"}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            {showProgressMetric ? (
-              <section className={`vacuum-panel-card vacuum-panel-card--progress vacuum-panel-card--progress-${routeVisualState}`}>
-                <div className="vacuum-panel-card__head">
+                <section className="vacuum-panel-card vacuum-panel-card--progress-idle">
                   <p className="vacuum-panel-card__eyebrow">Progress</p>
-                  <span className={`vacuum-progress-status vacuum-progress-status--${routeVisualState}`}>
-                    {progressStatusLabel}
-                  </span>
+                  <p className="vacuum-progress-idle-hint">Start a run to see progress.</p>
+                </section>
+              )}
+
+              <section className="vacuum-panel-card vacuum-panel-card--actions">
+                <div className="vacuum-panel-card__head">
+                  <p className="vacuum-panel-card__eyebrow">Actions</p>
                 </div>
-                <div className="vacuum-progress-summary">
-                  <strong className={`vacuum-progress-pct vacuum-progress-pct--${routeVisualState}${isIndeterminate ? " vacuum-progress-pct--indeterminate" : ""}`}>
-                    {progressPctLabel}
-                  </strong>
-                  <p className="vacuum-progress-label">{progressLabel}</p>
-                </div>
-                <div className="vacuum-progress">
-                  <div
-                    className={`vacuum-progress__bar vacuum-progress__bar--${routeVisualState}${isIndeterminate ? " vacuum-progress__bar--indeterminate" : ""}`}
-                    style={isIndeterminate ? undefined : { width: `${displayedTarget ? progressBarWidth : 0}%` }}
-                  />
-                </div>
-                <div className="vacuum-stats vacuum-stats--progress">
-                  <div>
-                    <span>Remaining</span>
-                    <strong>{formatDistance(routeDistanceRemaining)}</strong>
-                  </div>
-                  <div>
-                    <span>Elapsed</span>
-                    <strong>{elapsedLabel}</strong>
-                  </div>
-                  <div>
-                    <span>Recoveries</span>
-                    <strong style={recoveryWarning ? { color: "var(--vacuum-warning)" } : undefined}>
-                      {recoveryLabel}
-                    </strong>
-                  </div>
+                <p className="vacuum-action-hint">{actionHint}</p>
+                <div className="vacuum-actions">
+                  {availability !== "online" ? (
+                    <button
+                      className="vacuum-action vacuum-action--primary"
+                      type="button"
+                      onClick={openOverlay}
+                    >
+                      <GearIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                      Connection settings
+                    </button>
+                  ) : isGoalActive ? (
+                    <button
+                      className="vacuum-action vacuum-action--danger"
+                      type="button"
+                      onClick={() => void handleCancel()}
+                      disabled={!canCancelRun}
+                    >
+                      <StopIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                      {isCancelingGoal ? "Stopping..." : "Stop run"}
+                    </button>
+                  ) : (
+                    <button
+                      className="vacuum-action vacuum-action--primary"
+                      type="button"
+                      onClick={() => void handleSend()}
+                      disabled={!canSendRun}
+                    >
+                      {isSendingGoal ? (
+                        <SpinnerIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                      ) : (
+                        <SendIcon className="vacuum-action__icon" />
+                      )}
+                      {primaryActionLabel}
+                    </button>
+                  )}
+                  <button
+                    className="vacuum-action vacuum-action--ghost"
+                    type="button"
+                    onClick={handleClear}
+                    disabled={!hasTarget || isGoalActive}
+                  >
+                    <ClearIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                    Clear destination
+                  </button>
                 </div>
               </section>
-            ) : (
-              <section className="vacuum-panel-card vacuum-panel-card--progress-idle">
-                <p className="vacuum-panel-card__eyebrow">Progress</p>
-                <p className="vacuum-progress-idle-hint">Start a run to see progress.</p>
-              </section>
-            )}
-
-            <section className="vacuum-panel-card vacuum-panel-card--actions">
-              <div className="vacuum-panel-card__head">
-                <p className="vacuum-panel-card__eyebrow">Actions</p>
-              </div>
-              <p className="vacuum-action-hint">{actionHint}</p>
-              <div className="vacuum-actions">
-                {availability !== "online" ? (
-                  <button
-                    className="vacuum-action vacuum-action--primary"
-                    type="button"
-                    onClick={openOverlay}
-                  >
-                    <GearIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
-                    Connection settings
-                  </button>
-                ) : isGoalActive ? (
-                  <button
-                    className="vacuum-action vacuum-action--danger"
-                    type="button"
-                    onClick={() => void handleCancel()}
-                    disabled={!canCancelRun}
-                  >
-                    <StopIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
-                    {isCancelingGoal ? "Stopping..." : "Stop run"}
-                  </button>
-                ) : (
-                  <button
-                    className="vacuum-action vacuum-action--primary"
-                    type="button"
-                    onClick={() => void handleSend()}
-                    disabled={!canSendRun}
-                  >
-                    {isSendingGoal ? (
-                      <SpinnerIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
-                    ) : (
-                      <SendIcon className="vacuum-action__icon" />
-                    )}
-                    {primaryActionLabel}
-                  </button>
-                )}
-                <button
-                  className="vacuum-action vacuum-action--ghost"
-                  type="button"
-                  onClick={handleClear}
-                  disabled={!hasTarget || isGoalActive}
-                >
-                  <ClearIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
-                  Clear destination
-                </button>
-              </div>
-            </section>
-
-            <TeleopCard
-              disabled={mappingStatus.state === "auto_mapping"}
-              disabledReason="Pause auto mapping before using manual control."
-            />
+            </CollapsibleGroup>
 
           </div>
         </section>
