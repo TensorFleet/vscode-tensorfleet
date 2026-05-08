@@ -341,14 +341,17 @@ body {
 }
 
 .vacuum-layout {
+  height: 100%;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1.72fr) 332px;
   grid-template-rows: minmax(0, 1fr);
   gap: 14px;
+  overflow: hidden;
 }
 
 .vacuum-map-card {
+  min-width: 0;
   min-height: 0;
   border-radius: 22px;
   overflow: hidden;
@@ -1463,15 +1466,24 @@ body {
 }
 
 .vacuum-sidebar {
+  min-width: 0;
+  height: 100%;
+  max-height: 100%;
   min-height: 0;
+  align-self: stretch;
   display: grid;
+  grid-auto-rows: max-content;
   gap: 12px;
   overflow-y: auto;
   overflow-x: hidden;
   align-content: start;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
 }
 
 .vacuum-panel-card {
+  min-width: 0;
   border: 1px solid var(--vacuum-panel-border);
   background: var(--vacuum-panel);
   backdrop-filter: blur(18px);
@@ -1483,9 +1495,11 @@ body {
 }
 
 .vacuum-card-group {
+  min-width: 0;
+  min-height: max-content;
   display: grid;
   gap: 0;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid rgba(232, 226, 214, 0.09);
   border-radius: 18px;
   background: rgba(18, 18, 18, 0.54);
@@ -1569,8 +1583,11 @@ body {
 }
 
 .vacuum-card-group__body {
+  min-width: 0;
+  min-height: max-content;
   padding: 10px;
   display: grid;
+  grid-auto-rows: max-content;
   gap: 10px;
 }
 
@@ -2745,11 +2762,19 @@ body {
 @media (max-width: 1180px) {
   .vacuum-layout {
     grid-template-columns: 1fr;
-    grid-template-rows: none;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
   }
 
   .vacuum-sidebar {
     grid-template-columns: 1fr;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .vacuum-map-card {
+    min-height: 0;
+    overflow: hidden;
   }
 
   .vacuum-status-strip {
@@ -2787,6 +2812,8 @@ body {
 
   .vacuum-sidebar {
     grid-template-columns: 1fr;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 }
 
