@@ -26,6 +26,33 @@ export type MapCanvasTarget = {
   yaw: number;
 };
 
+export type CleanAreaRect = {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+};
+
+export type CleanAreaValidation = {
+  ok: boolean;
+  message: string;
+  freeRatio: number;
+  occupiedRatio: number;
+  unknownRatio: number;
+};
+
+export type CleanAreaVisualState =
+  | "idle"
+  | "editing"
+  | "confirmed"
+  | "preparing"
+  | "running"
+  | "paused"
+  | "canceling"
+  | "completed"
+  | "failed"
+  | "canceled";
+
 export type MapViewMode = "fit" | "manual" | "follow_robot";
 
 export type MappingSessionState =
@@ -104,6 +131,16 @@ type PointerDragState = {
   isPanning: boolean;
 };
 
+type CleanAreaHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+type CleanAreaInteractionState = {
+  pointerId: number;
+  mode: "draw" | "move" | "resize";
+  handle: CleanAreaHandle | null;
+  startWorld: MapPoint;
+  startRect: CleanAreaRect | null;
+};
+
 export type RouteVisualState = "idle" | "staged" | "active" | "completed" | "failed" | "canceled";
 
 type RasterLayerKey = "map" | "globalCostmap" | "localCostmap";
@@ -126,6 +163,11 @@ export type MapCanvasProps = {
   planPoints: MapPoint[] | null;
   draftTarget: MapCanvasTarget | null;
   sentTarget: MapCanvasTarget | null;
+  cleanAreaRect?: CleanAreaRect | null;
+  cleanAreaPreviewPoints?: MapPoint[] | null;
+  cleanAreaCurrentIndex?: number;
+  cleanAreaToolActive?: boolean;
+  cleanAreaVisualState?: CleanAreaVisualState;
   routeVisualState: RouteVisualState;
   isGoalActive: boolean;
   mappingState: MappingSessionState;
@@ -135,6 +177,7 @@ export type MapCanvasProps = {
   adapterMapMetadata?: VacuumMapMetadata | null;
   onTargetStart: (target: MapCanvasTarget) => void;
   onTargetRotate: (yaw: number) => void;
+  onCleanAreaChange?: (rect: CleanAreaRect, validation: CleanAreaValidation) => void;
   onMapMetadataChange?: (metadata: MapCanvasMetadata) => void;
 };
 
@@ -146,6 +189,11 @@ const FIT_PADDING_PX = 42;
 const MIN_ZOOM_RATIO = 0.5;
 const MAX_ZOOM_RATIO = 8;
 const POINTER_PAN_THRESHOLD_PX = 5;
+const CLEAN_AREA_MIN_SIZE_M = 0.2;
+const CLEAN_AREA_MAX_UNKNOWN_RATIO = 0.25;
+const CLEAN_AREA_MAX_OCCUPIED_RATIO = 0.1;
+const CLEAN_AREA_MIN_FREE_RATIO = 0.55;
+const CLEAN_AREA_HANDLES: CleanAreaHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const RASTER_LAYER_CONFIGS: RasterLayerConfig[] = [
   {
     key: "map",
@@ -166,6 +214,13 @@ const RASTER_LAYER_CONFIGS: RasterLayerConfig[] = [
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function pointsToSvgString(points: MapPoint[], bounds: MapBounds, viewport: MapViewport): string {
+  return points.map((point) => {
+    const projected = worldToScreen(point, bounds, viewport);
+    return `${projected.x.toFixed(1)},${projected.y.toFixed(1)}`;
+  }).join(" ");
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -489,6 +544,161 @@ function screenToWorld(point: MapPoint, bounds: MapBounds, viewport: MapViewport
   };
 }
 
+function normalizeCleanAreaRect(a: MapPoint, b: MapPoint): CleanAreaRect {
+  return {
+    minX: Math.min(a.x, b.x),
+    minY: Math.min(a.y, b.y),
+    maxX: Math.max(a.x, b.x),
+    maxY: Math.max(a.y, b.y),
+  };
+}
+
+function clampPointToBounds(point: MapPoint, bounds: MapBounds): MapPoint {
+  return {
+    x: clamp(point.x, bounds.minX, bounds.maxX),
+    y: clamp(point.y, bounds.minY, bounds.maxY),
+  };
+}
+
+function clampCleanAreaRect(rect: CleanAreaRect, bounds: MapBounds): CleanAreaRect {
+  return {
+    minX: clamp(rect.minX, bounds.minX, bounds.maxX),
+    minY: clamp(rect.minY, bounds.minY, bounds.maxY),
+    maxX: clamp(rect.maxX, bounds.minX, bounds.maxX),
+    maxY: clamp(rect.maxY, bounds.minY, bounds.maxY),
+  };
+}
+
+function moveCleanAreaRect(rect: CleanAreaRect, delta: MapPoint, bounds: MapBounds): CleanAreaRect {
+  const width = rect.maxX - rect.minX;
+  const height = rect.maxY - rect.minY;
+  const minX = clamp(rect.minX + delta.x, bounds.minX, bounds.maxX - width);
+  const minY = clamp(rect.minY + delta.y, bounds.minY, bounds.maxY - height);
+  return {
+    minX,
+    minY,
+    maxX: minX + width,
+    maxY: minY + height,
+  };
+}
+
+function resizeCleanAreaRect(
+  rect: CleanAreaRect,
+  handle: CleanAreaHandle,
+  point: MapPoint,
+  bounds: MapBounds,
+): CleanAreaRect {
+  const next = { ...rect };
+  if (handle.includes("w")) {
+    next.minX = point.x;
+  }
+  if (handle.includes("e")) {
+    next.maxX = point.x;
+  }
+  if (handle.includes("s")) {
+    next.minY = point.y;
+  }
+  if (handle.includes("n")) {
+    next.maxY = point.y;
+  }
+  return clampCleanAreaRect(
+    normalizeCleanAreaRect({ x: next.minX, y: next.minY }, { x: next.maxX, y: next.maxY }),
+    bounds,
+  );
+}
+
+function getCleanAreaValidation(rect: CleanAreaRect, map: OccupancyMap | null, bounds: MapBounds): CleanAreaValidation {
+  const width = rect.maxX - rect.minX;
+  const height = rect.maxY - rect.minY;
+  if (!map || !bounds.hasLiveMap) {
+    return {
+      ok: false,
+      message: "Live map required.",
+      freeRatio: 0,
+      occupiedRatio: 0,
+      unknownRatio: 1,
+    };
+  }
+  if (width < CLEAN_AREA_MIN_SIZE_M || height < CLEAN_AREA_MIN_SIZE_M) {
+    return {
+      ok: false,
+      message: "Area is too small.",
+      freeRatio: 0,
+      occupiedRatio: 0,
+      unknownRatio: 0,
+    };
+  }
+  if (
+    rect.minX < bounds.minX ||
+    rect.maxX > bounds.maxX ||
+    rect.minY < bounds.minY ||
+    rect.maxY > bounds.maxY
+  ) {
+    return {
+      ok: false,
+      message: "Area must stay inside the map.",
+      freeRatio: 0,
+      occupiedRatio: 0,
+      unknownRatio: 1,
+    };
+  }
+
+  const minCellX = clamp(Math.floor((rect.minX - map.originX) / map.resolution), 0, map.width - 1);
+  const maxCellX = clamp(Math.floor((rect.maxX - map.originX) / map.resolution), 0, map.width - 1);
+  const minCellY = clamp(Math.floor((rect.minY - map.originY) / map.resolution), 0, map.height - 1);
+  const maxCellY = clamp(Math.floor((rect.maxY - map.originY) / map.resolution), 0, map.height - 1);
+  let freeCells = 0;
+  let occupiedCells = 0;
+  let unknownCells = 0;
+
+  for (let y = minCellY; y <= maxCellY; y += 1) {
+    for (let x = minCellX; x <= maxCellX; x += 1) {
+      const cell = Number(map.data[x + y * map.width] ?? -1);
+      if (cell < 0) {
+        unknownCells += 1;
+      } else if (cell <= 15) {
+        freeCells += 1;
+      } else {
+        occupiedCells += 1;
+      }
+    }
+  }
+
+  const total = Math.max(1, freeCells + occupiedCells + unknownCells);
+  const freeRatio = freeCells / total;
+  const occupiedRatio = occupiedCells / total;
+  const unknownRatio = unknownCells / total;
+  const ok =
+    freeRatio >= CLEAN_AREA_MIN_FREE_RATIO &&
+    unknownRatio <= CLEAN_AREA_MAX_UNKNOWN_RATIO &&
+    occupiedRatio <= CLEAN_AREA_MAX_OCCUPIED_RATIO;
+
+  return {
+    ok,
+    freeRatio,
+    occupiedRatio,
+    unknownRatio,
+    message: ok
+      ? "Area ready."
+      : unknownRatio > CLEAN_AREA_MAX_UNKNOWN_RATIO
+        ? "Area contains too much unknown space."
+        : occupiedRatio > CLEAN_AREA_MAX_OCCUPIED_RATIO
+          ? "Area includes occupied cells."
+          : "Area needs more free known space.",
+  };
+}
+
+function getCleanAreaScreenRect(rect: CleanAreaRect, bounds: MapBounds, viewport: MapViewport): React.CSSProperties {
+  const topLeft = worldToScreen({ x: rect.minX, y: rect.maxY }, bounds, viewport);
+  const bottomRight = worldToScreen({ x: rect.maxX, y: rect.minY }, bounds, viewport);
+  return {
+    left: `${topLeft.x}px`,
+    top: `${topLeft.y}px`,
+    width: `${Math.max(0, bottomRight.x - topLeft.x)}px`,
+    height: `${Math.max(0, bottomRight.y - topLeft.y)}px`,
+  };
+}
+
 function getMapLayerStyle(bounds: MapBounds, viewport: MapViewport): React.CSSProperties {
   return {
     left: `${viewport.offsetX}px`,
@@ -559,29 +769,63 @@ function getRasterLayerStyle(
   };
 }
 
-function getMapPrompt(routeVisualState: RouteVisualState, hasTarget: boolean, mappingState: MappingSessionState): string {
-  if (mappingState === "mapping") {
+function getMapPrompt(args: {
+  routeVisualState: RouteVisualState;
+  hasTarget: boolean;
+  mappingState: MappingSessionState;
+  cleanAreaToolActive: boolean;
+  cleanAreaVisualState: CleanAreaVisualState;
+  hasCleanArea: boolean;
+}): string {
+  if (args.cleanAreaVisualState === "preparing") {
+    return "Preparing clean area";
+  }
+  if (args.cleanAreaVisualState === "running") {
+    return "Cleaning area";
+  }
+  if (args.cleanAreaVisualState === "paused") {
+    return "Clean Area paused";
+  }
+  if (args.cleanAreaVisualState === "canceling") {
+    return "Canceling Clean Area";
+  }
+  if (args.cleanAreaToolActive) {
+    return args.hasCleanArea ? "Clean Area selected" : "Clean Area";
+  }
+  if (args.cleanAreaVisualState === "confirmed") {
+    return "Clean Area ready";
+  }
+  if (args.cleanAreaVisualState === "completed") {
+    return "Clean Area complete";
+  }
+  if (args.cleanAreaVisualState === "failed") {
+    return "Clean Area needs attention";
+  }
+  if (args.cleanAreaVisualState === "canceled") {
+    return "Clean Area canceled";
+  }
+  if (args.mappingState === "mapping") {
     return "Mapping in progress";
   }
-  if (mappingState === "review") {
+  if (args.mappingState === "review") {
     return "Review map";
   }
-  if (mappingState === "paused") {
+  if (args.mappingState === "paused") {
     return "Mapping paused";
   }
-  if (routeVisualState === "completed") {
+  if (args.routeVisualState === "completed") {
     return "Destination reached";
   }
-  if (routeVisualState === "active") {
+  if (args.routeVisualState === "active") {
     return "Heading to destination";
   }
-  if (routeVisualState === "failed") {
+  if (args.routeVisualState === "failed") {
     return "Run needs attention";
   }
-  if (routeVisualState === "canceled") {
+  if (args.routeVisualState === "canceled") {
     return "Run canceled";
   }
-  return hasTarget ? "Destination selected" : "Click to choose destination";
+  return args.hasTarget ? "Destination selected" : "Click to choose destination";
 }
 
 function formatDistanceShort(distance: number | null): string | null {
@@ -859,6 +1103,7 @@ export function MapCanvas(props: MapCanvasProps) {
   const layerButtonRef = useRef<HTMLButtonElement | null>(null);
   const layerPopoverRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<PointerDragState | null>(null);
+  const cleanAreaInteractionRef = useRef<CleanAreaInteractionState | null>(null);
   const hasFitInitialMapRef = useRef(false);
   const previousMappingStateRef = useRef<MappingSessionState>(props.mappingState);
   const [stageSize, setStageSize] = useState<CanvasSize>({ width: 1, height: 1 });
@@ -1093,7 +1338,12 @@ export function MapCanvas(props: MapCanvasProps) {
 
   const hasTarget = props.draftTarget != null;
   const displayedTarget = props.sentTarget ?? props.draftTarget;
-  const targetSelectionDisabled = props.disableTargetSelection || props.mappingState === "mapping" || props.mappingState === "paused" || props.mappingState === "review";
+  const targetSelectionDisabled =
+    props.disableTargetSelection ||
+    Boolean(props.cleanAreaToolActive) ||
+    props.mappingState === "mapping" ||
+    props.mappingState === "paused" ||
+    props.mappingState === "review";
   const previewLine =
     props.routeVisualState === "staged" && displayedRobotPose && props.draftTarget
       ? [
@@ -1111,7 +1361,52 @@ export function MapCanvas(props: MapCanvasProps) {
         .join(" "),
     [bounds, routePoints, viewport],
   );
-  const mapPrompt = getMapPrompt(props.routeVisualState, hasTarget, props.mappingState);
+  const cleanAreaVisualState = props.cleanAreaVisualState ?? "idle";
+  const cleanAreaPreviewSegments = useMemo(() => {
+    const points = (props.cleanAreaPreviewPoints ?? []).filter((point): point is MapPoint => (
+      Number.isFinite(point.x) && Number.isFinite(point.y)
+    ));
+    const currentIndex = clamp(props.cleanAreaCurrentIndex ?? 0, 0, Math.max(points.length - 1, 0));
+    const hasProgressState =
+      cleanAreaVisualState === "running" ||
+      cleanAreaVisualState === "paused" ||
+      cleanAreaVisualState === "canceling" ||
+      cleanAreaVisualState === "completed" ||
+      cleanAreaVisualState === "failed" ||
+      cleanAreaVisualState === "canceled";
+
+    if (!hasProgressState || points.length < 2) {
+      const preview = pointsToSvgString(points, bounds, viewport);
+      return { preview, completed: "", current: "", remaining: preview };
+    }
+
+    const completedEnd = cleanAreaVisualState === "completed" ? points.length : currentIndex + 1;
+    const completedPoints = points.slice(0, clamp(completedEnd, 0, points.length));
+    const currentPoints = cleanAreaVisualState === "completed" ? [] : points.slice(currentIndex, currentIndex + 2);
+    const remainingStart = Math.max(currentIndex + 1, 0);
+    const remainingPoints = cleanAreaVisualState === "completed" ? [] : points.slice(remainingStart);
+
+    return {
+      preview: pointsToSvgString(points, bounds, viewport),
+      completed: pointsToSvgString(completedPoints, bounds, viewport),
+      current: pointsToSvgString(currentPoints, bounds, viewport),
+      remaining: pointsToSvgString(remainingPoints, bounds, viewport),
+    };
+  }, [bounds, cleanAreaVisualState, props.cleanAreaCurrentIndex, props.cleanAreaPreviewPoints, viewport]);
+  const cleanAreaValidation = props.cleanAreaRect
+    ? getCleanAreaValidation(props.cleanAreaRect, occupancyMap, bounds)
+    : null;
+  const cleanAreaScreenStyle = props.cleanAreaRect
+    ? getCleanAreaScreenRect(props.cleanAreaRect, bounds, viewport)
+    : null;
+  const mapPrompt = getMapPrompt({
+    routeVisualState: props.routeVisualState,
+    hasTarget,
+    mappingState: props.mappingState,
+    cleanAreaToolActive: Boolean(props.cleanAreaToolActive),
+    cleanAreaVisualState,
+    hasCleanArea: props.cleanAreaRect != null,
+  });
   const activeTargetLabel = getTargetLabel(props.routeVisualState, props.targetDistance);
   const overlayStatus: OverlayAvailability = {
     map: occupancyMap ? "live" : "waiting",
@@ -1159,6 +1454,12 @@ export function MapCanvas(props: MapCanvasProps) {
     }
     return null;
   })();
+
+  useEffect(() => {
+    if (props.cleanAreaRect) {
+      props.onCleanAreaChange?.(props.cleanAreaRect, getCleanAreaValidation(props.cleanAreaRect, occupancyMap, bounds));
+    }
+  }, [bounds, occupancyMap, props.cleanAreaRect, props.onCleanAreaChange]);
 
   function toggleLayer(layerKey: MapOverlayKey): void {
     setVisibleLayers((current) => ({
@@ -1216,8 +1517,62 @@ export function MapCanvas(props: MapCanvasProps) {
     });
   }
 
+  function worldPointFromPointer(clientX: number, clientY: number): MapPoint | null {
+    if (!stageRef.current) {
+      return null;
+    }
+    const rect = stageRef.current.getBoundingClientRect();
+    return clampPointToBounds(
+      screenToWorld(
+        {
+          x: clientX - rect.left,
+          y: clientY - rect.top,
+        },
+        bounds,
+        viewport,
+      ),
+      bounds,
+    );
+  }
+
+  function updateCleanAreaRect(rect: CleanAreaRect): void {
+    const clamped = clampCleanAreaRect(rect, bounds);
+    props.onCleanAreaChange?.(clamped, getCleanAreaValidation(clamped, occupancyMap, bounds));
+  }
+
+  function startCleanAreaInteraction(
+    event: React.PointerEvent<HTMLElement>,
+    mode: CleanAreaInteractionState["mode"],
+    handle: CleanAreaHandle | null,
+  ): void {
+    event.stopPropagation();
+    event.preventDefault();
+    if (!props.cleanAreaToolActive || props.isGoalActive) {
+      return;
+    }
+    const worldPoint = worldPointFromPointer(event.clientX, event.clientY);
+    if (!worldPoint) {
+      return;
+    }
+    cleanAreaInteractionRef.current = {
+      pointerId: event.pointerId,
+      mode,
+      handle,
+      startWorld: worldPoint,
+      startRect: props.cleanAreaRect ?? null,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (mode === "draw") {
+      updateCleanAreaRect(normalizeCleanAreaRect(worldPoint, worldPoint));
+    }
+  }
+
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
     if (props.isGoalActive) {
+      return;
+    }
+    if (props.cleanAreaToolActive) {
+      startCleanAreaInteraction(event, "draw", null);
       return;
     }
     dragStateRef.current = {
@@ -1232,6 +1587,31 @@ export function MapCanvas(props: MapCanvasProps) {
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>): void {
+    const cleanAreaInteraction = cleanAreaInteractionRef.current;
+    if (cleanAreaInteraction && cleanAreaInteraction.pointerId === event.pointerId) {
+      const worldPoint = worldPointFromPointer(event.clientX, event.clientY);
+      if (!worldPoint) {
+        return;
+      }
+      if (cleanAreaInteraction.mode === "draw") {
+        updateCleanAreaRect(normalizeCleanAreaRect(cleanAreaInteraction.startWorld, worldPoint));
+      } else if (cleanAreaInteraction.mode === "move" && cleanAreaInteraction.startRect) {
+        updateCleanAreaRect(
+          moveCleanAreaRect(
+            cleanAreaInteraction.startRect,
+            {
+              x: worldPoint.x - cleanAreaInteraction.startWorld.x,
+              y: worldPoint.y - cleanAreaInteraction.startWorld.y,
+            },
+            bounds,
+          ),
+        );
+      } else if (cleanAreaInteraction.mode === "resize" && cleanAreaInteraction.startRect && cleanAreaInteraction.handle) {
+        updateCleanAreaRect(resizeCleanAreaRect(cleanAreaInteraction.startRect, cleanAreaInteraction.handle, worldPoint, bounds));
+      }
+      return;
+    }
+
     const dragState = dragStateRef.current;
     if (!dragState || dragState.pointerId !== event.pointerId || props.isGoalActive) {
       return;
@@ -1255,6 +1635,16 @@ export function MapCanvas(props: MapCanvasProps) {
   }
 
   function onPointerEnd(event: React.PointerEvent<HTMLDivElement>): void {
+    const cleanAreaInteraction = cleanAreaInteractionRef.current;
+    if (cleanAreaInteraction && cleanAreaInteraction.pointerId === event.pointerId) {
+      cleanAreaInteractionRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      event.stopPropagation();
+      return;
+    }
+
     const dragState = dragStateRef.current;
     if (!dragState || dragState.pointerId !== event.pointerId) {
       return;
@@ -1475,6 +1865,36 @@ export function MapCanvas(props: MapCanvasProps) {
                 />
               </>
             ) : null}
+            {props.cleanAreaRect && cleanAreaPreviewSegments.preview ? (
+              <>
+                <polyline
+                  className="vacuum-map-clean-path-casing"
+                  points={cleanAreaPreviewSegments.preview}
+                  vectorEffect="non-scaling-stroke"
+                />
+                {cleanAreaPreviewSegments.remaining ? (
+                  <polyline
+                    className={`vacuum-map-clean-path vacuum-map-clean-path--${cleanAreaVisualState} vacuum-map-clean-path--remaining`}
+                    points={cleanAreaPreviewSegments.remaining}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : null}
+                {cleanAreaPreviewSegments.completed ? (
+                  <polyline
+                    className={`vacuum-map-clean-path vacuum-map-clean-path--${cleanAreaVisualState} vacuum-map-clean-path--completed-lines`}
+                    points={cleanAreaPreviewSegments.completed}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : null}
+                {cleanAreaPreviewSegments.current ? (
+                  <polyline
+                    className={`vacuum-map-clean-path vacuum-map-clean-path--${cleanAreaVisualState} vacuum-map-clean-path--current`}
+                    points={cleanAreaPreviewSegments.current}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : null}
+              </>
+            ) : null}
             {visibleLayers.plan && previewLine ? (
               <>
                 <line
@@ -1504,6 +1924,37 @@ export function MapCanvas(props: MapCanvasProps) {
             ref={depthCanvasRef}
             className="vacuum-map-stage__overlay-canvas vacuum-map-stage__overlay-canvas--depth"
           />
+
+          {props.cleanAreaRect && cleanAreaScreenStyle ? (
+            <div
+              className={`vacuum-clean-area vacuum-clean-area--${cleanAreaVisualState} ${cleanAreaValidation?.ok ? "vacuum-clean-area--valid" : "vacuum-clean-area--invalid"}`}
+              style={cleanAreaScreenStyle}
+              onPointerDown={(event) => startCleanAreaInteraction(event, "move", null)}
+            >
+              <div className="vacuum-clean-area__fill" />
+              <div className="vacuum-clean-area__label">
+                <strong>Clean Area</strong>
+                <span>
+                  {(props.cleanAreaRect.maxX - props.cleanAreaRect.minX).toFixed(1)} m ×{" "}
+                  {(props.cleanAreaRect.maxY - props.cleanAreaRect.minY).toFixed(1)} m
+                </span>
+                <span>
+                  {((props.cleanAreaRect.maxX - props.cleanAreaRect.minX) * (props.cleanAreaRect.maxY - props.cleanAreaRect.minY)).toFixed(1)} m²
+                </span>
+              </div>
+              {props.cleanAreaToolActive
+                ? CLEAN_AREA_HANDLES.map((handle) => (
+                    <button
+                      key={handle}
+                      className={`vacuum-clean-area__handle vacuum-clean-area__handle--${handle}`}
+                      type="button"
+                      aria-label={`Resize clean area ${handle}`}
+                      onPointerDown={(event) => startCleanAreaInteraction(event, "resize", handle)}
+                    />
+                  ))
+                : null}
+            </div>
+          ) : null}
 
           {displayedRobotPose ? (() => {
             const position = worldToScreen(displayedRobotPose, bounds, viewport);

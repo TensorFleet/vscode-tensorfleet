@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
 import { ros2Bridge } from "../../ros2-bridge";
 import {
@@ -12,6 +12,9 @@ import {
 } from "../../vacuum-adapter";
 import {
   MapCanvas,
+  type CleanAreaRect,
+  type CleanAreaValidation,
+  type CleanAreaVisualState,
   type MapCanvasMetadata,
   type MapCanvasTarget,
   type MappingSessionState,
@@ -21,6 +24,17 @@ import { TeleopCard } from "./TeleopCard";
 import "./VacuumControlPanel.css";
 
 type DraftTarget = MapCanvasTarget;
+type CleanAreaMissionState =
+  | "idle"
+  | "editing"
+  | "confirmed"
+  | "preparing"
+  | "running"
+  | "paused"
+  | "canceling"
+  | "completed"
+  | "failed"
+  | "canceled";
 
 type OperatorTone = "ready" | "warning" | "success" | "danger" | "info";
 type StatusChipTone = "success" | "active" | "inactive";
@@ -101,6 +115,10 @@ function formatArea(value: number): string {
   return Number.isFinite(value) ? `${value.toFixed(1)} m²` : "n/a";
 }
 
+function formatDimension(value: number): string {
+  return Number.isFinite(value) ? `${value.toFixed(1)} m` : "n/a";
+}
+
 function formatResolution(value: number): string {
   return value > 0 ? `${value.toFixed(3)} m/cell` : "n/a";
 }
@@ -154,6 +172,83 @@ function headingLabel(yaw: number): string {
   const headings = ["East", "North-East", "North", "North-West", "West", "South-West", "South", "South-East"];
   const normalized = ((yaw % 360) + 360) % 360;
   return headings[Math.round(normalized / 45) % headings.length]!;
+}
+
+function getCleanAreaSize(rect: CleanAreaRect | null): { width: number; height: number; area: number } {
+  if (!rect) {
+    return { width: 0, height: 0, area: 0 };
+  }
+  const width = Math.max(0, rect.maxX - rect.minX);
+  const height = Math.max(0, rect.maxY - rect.minY);
+  return { width, height, area: width * height };
+}
+
+function getCleanAreaSpacing(mapMetadata: MapCanvasMetadata | null): number {
+  const resolution = mapMetadata?.resolution ?? 0;
+  const cellAwareSpacing = resolution > 0 ? resolution * 6 : 0;
+  return clamp(Math.max(0.35, cellAwareSpacing), 0.35, 0.7);
+}
+
+function getPathDistance(points: Array<{ x: number; y: number }>): number {
+  let distance = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1]!;
+    const current = points[index]!;
+    distance += Math.hypot(current.x - previous.x, current.y - previous.y);
+  }
+  return distance;
+}
+
+function getCleanAreaMetrics(points: DraftTarget[], currentIndex: number): {
+  passCount: number;
+  totalDistance: number;
+  remainingDistance: number;
+} {
+  const clampedIndex = clamp(currentIndex, 0, points.length);
+  const remainingPoints = points.slice(Math.max(0, clampedIndex));
+  return {
+    passCount: Math.ceil(points.length / 2),
+    totalDistance: getPathDistance(points),
+    remainingDistance: getPathDistance(remainingPoints),
+  };
+}
+
+function buildLawnmowerWaypoints(rect: CleanAreaRect, spacing = 0.35): DraftTarget[] {
+  const width = Math.max(0, rect.maxX - rect.minX);
+  const height = Math.max(0, rect.maxY - rect.minY);
+  const margin = Math.min(0.18, width / 4, height / 4);
+  const minX = rect.minX + margin;
+  const maxX = rect.maxX - margin;
+  const minY = rect.minY + margin;
+  const maxY = rect.maxY - margin;
+  const sweepHeight = Math.max(0, maxY - minY);
+  const rowCount = Math.max(2, Math.floor(sweepHeight / spacing) + 1);
+  const waypoints: DraftTarget[] = [];
+
+  for (let row = 0; row < rowCount; row += 1) {
+    const t = rowCount === 1 ? 0 : row / (rowCount - 1);
+    const y = minY + sweepHeight * t;
+    const leftToRight = row % 2 === 0;
+    waypoints.push({
+      x: leftToRight ? minX : maxX,
+      y,
+      yaw: leftToRight ? 0 : 180,
+    });
+    waypoints.push({
+      x: leftToRight ? maxX : minX,
+      y,
+      yaw: leftToRight ? 0 : 180,
+    });
+  }
+
+  return waypoints.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+}
+
+function getCleanAreaVisualState(state: CleanAreaMissionState, toolActive: boolean): CleanAreaVisualState {
+  if (toolActive) {
+    return "editing";
+  }
+  return state;
 }
 
 function getOperatorState(args: {
@@ -247,7 +342,7 @@ function getOperatorState(args: {
     };
   }
 
-  if (args.navigationState === "failed" || args.navigationState === "unknown") {
+  if (args.navigationState === "failed" || args.navigationState === "blocked" || args.navigationState === "unknown") {
     return {
       key: "failed",
       title: "Needs attention",
@@ -281,7 +376,7 @@ function getRouteVisualState(
   if (navigationState === "canceled") {
     return "canceled";
   }
-  if (navigationState === "failed" || navigationState === "unknown") {
+  if (navigationState === "failed" || navigationState === "blocked" || navigationState === "unknown") {
     return "failed";
   }
   if (active) {
@@ -854,6 +949,202 @@ function MappingCard(props: {
   );
 }
 
+function CleanAreaCard(props: {
+  state: CleanAreaMissionState;
+  toolActive: boolean;
+  rect: CleanAreaRect | null;
+  validation: CleanAreaValidation | null;
+  waypointCount: number;
+  currentWaypointIndex: number;
+  passCount: number;
+  estimatedDistance: number;
+  distanceRemaining: number;
+  commandError: string | null;
+  canStart: boolean;
+  canCancel: boolean;
+  canPause: boolean;
+  onActivateTool: () => void;
+  onConfirm: () => void;
+  onStart: () => void;
+  onPause: () => void;
+  onRetry: () => void;
+  onSkip: () => void;
+  onCancel: () => void;
+  onClear: () => void;
+}): JSX.Element {
+  const size = getCleanAreaSize(props.rect);
+  const progress =
+    props.state === "completed"
+      ? 1
+      : props.waypointCount > 0
+        ? clamp(props.currentWaypointIndex / props.waypointCount, 0, 0.98)
+        : 0;
+  const stateCopy: Record<CleanAreaMissionState, { badge: string; detail: string }> = {
+    idle: {
+      badge: "Idle",
+      detail: "Select a bounded free-space region before starting an area clean.",
+    },
+    editing: {
+      badge: "Editing",
+      detail: props.validation?.message ?? "Draw or adjust the clean area on the map.",
+    },
+    confirmed: {
+      badge: "Preview",
+      detail: "Clean Area Preview",
+    },
+    preparing: {
+      badge: "Preparing",
+      detail: "Preparing first waypoint.",
+    },
+    running: {
+      badge: "Cleaning",
+      detail: `Waypoint ${Math.min(props.currentWaypointIndex + 1, props.waypointCount)} / ${props.waypointCount}.`,
+    },
+    paused: {
+      badge: "Paused",
+      detail: `Paused at waypoint ${Math.min(props.currentWaypointIndex + 1, props.waypointCount)} / ${props.waypointCount}.`,
+    },
+    canceling: {
+      badge: "Canceling",
+      detail: "Stopping the current navigation goal.",
+    },
+    completed: {
+      badge: "Done",
+      detail: "Area clean completed.",
+    },
+    failed: {
+      badge: "Issue",
+      detail: props.commandError ?? `Could not reach waypoint ${Math.min(props.currentWaypointIndex + 1, props.waypointCount)}.`,
+    },
+    canceled: {
+      badge: "Stopped",
+      detail: "Area clean canceled.",
+    },
+  };
+  const copy = stateCopy[props.state];
+
+  return (
+    <section className={`vacuum-panel-card vacuum-panel-card--clean-area vacuum-panel-card--clean-area-${props.state}`}>
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Clean Area</p>
+        <span className="vacuum-clean-area-badge">{copy.badge}</span>
+      </div>
+      <p className="vacuum-clean-area-copy">{copy.detail}</p>
+
+      {props.commandError && props.state !== "failed" ? (
+        <div className="vacuum-mapping-error" role="status">
+          {props.commandError}
+        </div>
+      ) : null}
+
+      <div className="vacuum-clean-area-stats">
+        <div>
+          <span>Size</span>
+          <strong>
+            {props.rect ? `${formatDimension(size.width)} × ${formatDimension(size.height)}` : "No area"}
+          </strong>
+        </div>
+        <div>
+          <span>Area</span>
+          <strong>{props.rect ? formatArea(size.area) : "n/a"}</strong>
+        </div>
+        <div>
+          <span>Free</span>
+          <strong>{props.validation ? formatPercent(props.validation.freeRatio) : "n/a"}</strong>
+        </div>
+        <div>
+          <span>Passes</span>
+          <strong>{props.passCount || "n/a"}</strong>
+        </div>
+        <div>
+          <span>Distance</span>
+          <strong>{props.estimatedDistance > 0 ? formatDistance(props.estimatedDistance) : "n/a"}</strong>
+        </div>
+      </div>
+
+      {props.state === "confirmed" ? (
+        <div className="vacuum-clean-area-preview">
+          <strong>Estimated passes: {props.passCount || "n/a"}</strong>
+          <span>Estimated distance: {props.estimatedDistance > 0 ? formatDistance(props.estimatedDistance) : "n/a"}</span>
+        </div>
+      ) : null}
+
+      {props.state === "preparing" || props.state === "running" || props.state === "paused" || props.state === "canceling" ? (
+        <>
+          <div className="vacuum-progress">
+            <div
+              className={`vacuum-progress__bar vacuum-progress__bar--${props.state === "paused" ? "paused" : "active"}`}
+              style={{ width: `${Math.max(progress * 100, props.state === "preparing" ? 3 : 6)}%` }}
+            />
+          </div>
+          <div className="vacuum-clean-area-progress-label">
+            Coverage: {Math.round(progress * 100)}% · Distance remaining: {formatDistance(props.distanceRemaining)}
+          </div>
+        </>
+      ) : null}
+
+      {props.state === "failed" ? (
+        <div className="vacuum-clean-area-failure-actions">
+          <span>Options</span>
+          <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onRetry} disabled={!props.canStart}>
+            Retry waypoint
+          </button>
+          <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onSkip}>
+            Skip waypoint
+          </button>
+          <button className="vacuum-action vacuum-action--danger" type="button" onClick={props.onCancel}>
+            Cancel cleaning
+          </button>
+        </div>
+      ) : null}
+
+      <div className="vacuum-actions">
+        {props.state === "preparing" || props.state === "running" || props.state === "paused" || props.state === "canceling" ? (
+          <>
+            {props.state === "paused" ? (
+              <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onStart} disabled={!props.canStart}>
+                Resume
+              </button>
+            ) : (
+              <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onPause} disabled={!props.canPause}>
+                Pause
+              </button>
+            )}
+            <button className="vacuum-action vacuum-action--danger" type="button" onClick={props.onCancel} disabled={!props.canCancel}>
+              <StopIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onActivateTool}>
+              {props.toolActive ? "Drawing area" : props.rect ? "Edit area" : "Clean Area"}
+            </button>
+            {props.toolActive || props.state === "editing" ? (
+              <button
+                className="vacuum-action vacuum-action--ghost"
+                type="button"
+                onClick={props.onConfirm}
+                disabled={!props.rect || !props.validation?.ok}
+              >
+                Preview Path
+              </button>
+            ) : null}
+            {props.state === "confirmed" || props.state === "completed" || props.state === "canceled" ? (
+              <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onStart} disabled={!props.canStart}>
+                {props.state === "confirmed" ? "Start Cleaning" : "Start cleaning"}
+              </button>
+            ) : null}
+            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onClear} disabled={!props.rect}>
+              Clear area
+            </button>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function VacuumControlPanel() {
   const adapter = useVacuumAdapter();
   const snapshot = adapter.snapshot;
@@ -866,7 +1157,16 @@ export function VacuumControlPanel() {
   const [mapName, setMapName] = useState("Lab Mapping Run 1");
   const [savedMap, setSavedMap] = useState<SavedMapSummary | null>(null);
   const [mappingCommandError, setMappingCommandError] = useState<string | null>(null);
+  const [cleanAreaToolActive, setCleanAreaToolActive] = useState(false);
+  const [cleanAreaRect, setCleanAreaRect] = useState<CleanAreaRect | null>(null);
+  const [cleanAreaValidation, setCleanAreaValidation] = useState<CleanAreaValidation | null>(null);
+  const [cleanAreaState, setCleanAreaState] = useState<CleanAreaMissionState>("idle");
+  const [cleanAreaWaypoints, setCleanAreaWaypoints] = useState<DraftTarget[]>([]);
+  const [cleanAreaCurrentIndex, setCleanAreaCurrentIndex] = useState(0);
+  const [cleanAreaCommandError, setCleanAreaCommandError] = useState<string | null>(null);
   const goalStartTimeRef = useRef<number | null>(null);
+  const cleanAreaCancelRequestedRef = useRef(false);
+  const cleanAreaSawActiveRef = useRef(false);
 
   const currentPose = snapshot.pose.coordinates;
   const availability = snapshot.availability.status;
@@ -1035,6 +1335,14 @@ export function VacuumControlPanel() {
   const recoveryWarning = recoveryCount != null && recoveryCount > 0;
   const isMappingWorkflowActive =
     mappingState === "mapping" || mappingState === "paused" || mappingState === "review";
+  const isCleanAreaRunning =
+    cleanAreaState === "preparing" || cleanAreaState === "running" || cleanAreaState === "canceling";
+  const isCleanAreaActive = isCleanAreaRunning || cleanAreaState === "paused";
+  const cleanAreaVisualState = getCleanAreaVisualState(cleanAreaState, cleanAreaToolActive);
+  const cleanAreaSpacing = getCleanAreaSpacing(mapMetadata);
+  const cleanAreaPreviewPoints =
+    cleanAreaWaypoints.length > 0 ? cleanAreaWaypoints : cleanAreaRect ? buildLawnmowerWaypoints(cleanAreaRect, cleanAreaSpacing) : null;
+  const cleanAreaMetrics = getCleanAreaMetrics(cleanAreaPreviewPoints ?? [], cleanAreaCurrentIndex);
 
   useEffect(() => {
     if (isGoalActive) {
@@ -1059,8 +1367,27 @@ export function VacuumControlPanel() {
     routeVisualState === "completed" || routeVisualState === "failed" || routeVisualState === "canceled";
   const runTarget = draftTarget ?? (isTerminalState ? sentTarget : null);
   const canSendRun =
-    Boolean(runTarget) && goToLocationSupported && readinessReady && !isSendingGoal;
+    Boolean(runTarget) && goToLocationSupported && readinessReady && !isSendingGoal && !isCleanAreaRunning;
   const canCancelRun = cancelNavigationSupported && !isCancelingGoal;
+  const canStartCleanArea =
+    Boolean(cleanAreaRect) &&
+    Boolean(cleanAreaValidation?.ok) &&
+    cleanAreaWaypoints.length > 0 &&
+    goToLocationSupported &&
+    readinessReady &&
+    !isSendingGoal &&
+    !isGoalActive &&
+    !isMappingWorkflowActive;
+
+  const handleCleanAreaChange = useCallback((rect: CleanAreaRect, validation: CleanAreaValidation): void => {
+    setCleanAreaRect(rect);
+    setCleanAreaValidation(validation);
+    setCleanAreaWaypoints(validation.ok ? buildLawnmowerWaypoints(rect, getCleanAreaSpacing(mapMetadata)) : []);
+    setCleanAreaCommandError(validation.ok ? null : validation.message);
+    setCleanAreaState((current) => {
+      return current === "idle" || current === "editing" ? "editing" : current;
+    });
+  }, [mapMetadata]);
 
   async function handleSend(overrideTarget?: DraftTarget): Promise<void> {
     const target = overrideTarget ?? runTarget;
@@ -1084,7 +1411,7 @@ export function VacuumControlPanel() {
   }
 
   function handleTargetStart(target: DraftTarget): void {
-    if (isMappingWorkflowActive) {
+    if (isMappingWorkflowActive || cleanAreaToolActive || isCleanAreaActive) {
       return;
     }
     setSentTarget(null);
@@ -1092,7 +1419,7 @@ export function VacuumControlPanel() {
   }
 
   function handleTargetRotate(yaw: number): void {
-    if (isMappingWorkflowActive) {
+    if (isMappingWorkflowActive || cleanAreaToolActive || isCleanAreaActive) {
       return;
     }
     setDraftTarget((current) => {
@@ -1242,6 +1569,164 @@ export function VacuumControlPanel() {
     setSentTarget(null);
   }
 
+  function handleActivateCleanAreaTool(): void {
+    if (isGoalActive || isMappingWorkflowActive || isCleanAreaActive) {
+      return;
+    }
+    setCleanAreaToolActive(true);
+    setCleanAreaState("editing");
+    setCleanAreaCommandError(null);
+    setDraftTarget(null);
+    setSentTarget(null);
+  }
+
+  function handleConfirmCleanArea(): void {
+    if (!cleanAreaRect || !cleanAreaValidation?.ok) {
+      return;
+    }
+    setCleanAreaToolActive(false);
+    setCleanAreaWaypoints(buildLawnmowerWaypoints(cleanAreaRect, cleanAreaSpacing));
+    setCleanAreaCurrentIndex(0);
+    setCleanAreaCommandError(null);
+    setCleanAreaState("confirmed");
+  }
+
+  function handleClearCleanArea(): void {
+    if (isCleanAreaActive) {
+      return;
+    }
+    setCleanAreaToolActive(false);
+    setCleanAreaRect(null);
+    setCleanAreaValidation(null);
+    setCleanAreaWaypoints([]);
+    setCleanAreaCurrentIndex(0);
+    setCleanAreaCommandError(null);
+    setCleanAreaState("idle");
+  }
+
+  async function dispatchCleanAreaWaypoint(index: number): Promise<void> {
+    const target = cleanAreaWaypoints[index];
+    if (!target) {
+      setCleanAreaState("completed");
+      return;
+    }
+    cleanAreaSawActiveRef.current = false;
+    setCleanAreaCurrentIndex(index);
+    setDraftTarget(null);
+    setSentTarget(target);
+    const result = await adapter.sendCommand({ command: "go_to_location", target });
+    if (!result.ok) {
+      setCleanAreaCommandError(result.error.message);
+      setCleanAreaState("failed");
+      return;
+    }
+    setCleanAreaState("running");
+  }
+
+  function handleStartCleanArea(): void {
+    if (!canStartCleanArea) {
+      return;
+    }
+    cleanAreaCancelRequestedRef.current = false;
+    cleanAreaSawActiveRef.current = false;
+    setCleanAreaToolActive(false);
+    setCleanAreaCommandError(null);
+    const startIndex = cleanAreaState === "paused" ? cleanAreaCurrentIndex : 0;
+    setCleanAreaCurrentIndex(startIndex);
+    setCleanAreaState("preparing");
+    void dispatchCleanAreaWaypoint(startIndex);
+  }
+
+  async function handlePauseCleanArea(): Promise<void> {
+    if (cleanAreaState !== "running" && cleanAreaState !== "preparing") {
+      return;
+    }
+    cleanAreaCancelRequestedRef.current = false;
+    if (isGoalActive || navigationState === "active" || navigationState === "sending") {
+      const result = await adapter.sendCommand({ command: "cancel_navigation" });
+      if (!result.ok) {
+        setCleanAreaCommandError(result.error.message);
+        setCleanAreaState("failed");
+        return;
+      }
+    }
+    setCleanAreaState("paused");
+  }
+
+  async function handleCancelCleanArea(): Promise<void> {
+    cleanAreaCancelRequestedRef.current = true;
+    setCleanAreaState("canceling");
+    if (isGoalActive || navigationState === "active" || navigationState === "sending") {
+      const result = await adapter.sendCommand({ command: "cancel_navigation" });
+      if (!result.ok) {
+        setCleanAreaCommandError(result.error.message);
+        setCleanAreaState("failed");
+      }
+      return;
+    }
+    setCleanAreaState("canceled");
+  }
+
+  function handleRetryCleanAreaWaypoint(): void {
+    if (!canStartCleanArea) {
+      return;
+    }
+    cleanAreaCancelRequestedRef.current = false;
+    setCleanAreaCommandError(null);
+    setCleanAreaState("preparing");
+    void dispatchCleanAreaWaypoint(cleanAreaCurrentIndex);
+  }
+
+  function handleSkipCleanAreaWaypoint(): void {
+    const nextIndex = cleanAreaCurrentIndex + 1;
+    cleanAreaCancelRequestedRef.current = false;
+    setCleanAreaCommandError(null);
+    if (nextIndex >= cleanAreaWaypoints.length) {
+      setCleanAreaCurrentIndex(cleanAreaWaypoints.length);
+      setCleanAreaState("completed");
+      return;
+    }
+    setCleanAreaState("preparing");
+    void dispatchCleanAreaWaypoint(nextIndex);
+  }
+
+  useEffect(() => {
+    if (cleanAreaState !== "running" && cleanAreaState !== "canceling") {
+      return;
+    }
+    if (isGoalActive || navigationState === "active" || navigationState === "sending" || navigationState === "canceling") {
+      cleanAreaSawActiveRef.current = true;
+      return;
+    }
+    if (!cleanAreaSawActiveRef.current) {
+      return;
+    }
+    if (navigationState === "completed") {
+      const nextIndex = cleanAreaCurrentIndex + 1;
+      if (nextIndex >= cleanAreaWaypoints.length) {
+        setCleanAreaCurrentIndex(cleanAreaWaypoints.length);
+        setCleanAreaState("completed");
+        return;
+      }
+      void dispatchCleanAreaWaypoint(nextIndex);
+      return;
+    }
+    if (navigationState === "canceled") {
+      if (cleanAreaCancelRequestedRef.current || cleanAreaState === "canceling") {
+        setCleanAreaState("canceled");
+        setCleanAreaCommandError(null);
+        return;
+      }
+      setCleanAreaState("failed");
+      setCleanAreaCommandError("Clean area run was canceled outside the area workflow.");
+      return;
+    }
+    if (navigationState === "failed" || navigationState === "blocked" || navigationState === "unknown") {
+      setCleanAreaState("failed");
+      setCleanAreaCommandError(snapshot.navigation.detail ?? "Navigation failed while cleaning the selected area.");
+    }
+  }, [cleanAreaCurrentIndex, cleanAreaState, cleanAreaWaypoints.length, isGoalActive, navigationState, snapshot.navigation.detail]);
+
   return (
     <div className="vacuum-shell">
       <aside className="vacuum-rail">
@@ -1325,15 +1810,21 @@ export function VacuumControlPanel() {
             planPoints={displayedPlanPoints}
             draftTarget={draftTarget}
             sentTarget={sentTarget}
+            cleanAreaRect={cleanAreaRect}
+            cleanAreaPreviewPoints={cleanAreaPreviewPoints}
+            cleanAreaCurrentIndex={cleanAreaCurrentIndex}
+            cleanAreaToolActive={cleanAreaToolActive}
+            cleanAreaVisualState={cleanAreaVisualState}
             routeVisualState={routeVisualState}
             isGoalActive={isGoalActive}
             mappingState={mappingState}
-            disableTargetSelection={isMappingWorkflowActive}
+            disableTargetSelection={isMappingWorkflowActive || cleanAreaToolActive || isCleanAreaActive}
             targetDistance={destinationDistance}
             adapterMapGrid={snapshot.map.grid}
             adapterMapMetadata={snapshot.map.metadata}
             onTargetStart={handleTargetStart}
             onTargetRotate={handleTargetRotate}
+            onCleanAreaChange={handleCleanAreaChange}
             onMapMetadataChange={setMapMetadata}
           />
 
@@ -1399,6 +1890,32 @@ export function VacuumControlPanel() {
                 disabledReason="Pause auto mapping before using manual control."
               />
             </CardGroup>
+
+            <CollapsibleGroup title="Clean Area" status={cleanAreaState === "running" ? "Running" : cleanAreaRect ? "Area selected" : "No area"}>
+              <CleanAreaCard
+                state={cleanAreaState}
+                toolActive={cleanAreaToolActive}
+                rect={cleanAreaRect}
+                validation={cleanAreaValidation}
+                waypointCount={cleanAreaWaypoints.length}
+                currentWaypointIndex={cleanAreaCurrentIndex}
+                passCount={cleanAreaMetrics.passCount}
+                estimatedDistance={cleanAreaMetrics.totalDistance}
+                distanceRemaining={cleanAreaMetrics.remainingDistance}
+                commandError={cleanAreaCommandError}
+                canStart={canStartCleanArea}
+                canCancel={cancelNavigationSupported && !isCancelingGoal}
+                canPause={cancelNavigationSupported && !isCancelingGoal}
+                onActivateTool={handleActivateCleanAreaTool}
+                onConfirm={handleConfirmCleanArea}
+                onStart={handleStartCleanArea}
+                onPause={() => void handlePauseCleanArea()}
+                onRetry={handleRetryCleanAreaWaypoint}
+                onSkip={handleSkipCleanAreaWaypoint}
+                onCancel={() => void handleCancelCleanArea()}
+                onClear={handleClearCleanArea}
+              />
+            </CollapsibleGroup>
 
             <CollapsibleGroup title="Destination Run" status={hasTarget ? destinationBadgeLabel : "No target"}>
               <section className={`vacuum-panel-card vacuum-panel-card--destination ${displayedTarget ? "vacuum-panel-card--destination-selected" : ""}`}>

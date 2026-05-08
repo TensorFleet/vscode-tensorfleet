@@ -926,6 +926,8 @@ body {
 
 .vacuum-map-path,
 .vacuum-map-path-casing,
+.vacuum-map-clean-path,
+.vacuum-map-clean-path-casing,
 .vacuum-map-preview-line,
 .vacuum-map-preview-line-casing {
   fill: none;
@@ -987,6 +989,217 @@ body {
 .vacuum-map-preview-line--staged {
   stroke: url(#vacuum-preview-gradient);
   filter: drop-shadow(0 0 4px rgba(56, 200, 176, 0.2));
+}
+
+.vacuum-map-clean-path-casing {
+  stroke: rgba(12, 16, 20, 0.38);
+  stroke-width: 0.8;
+}
+
+.vacuum-map-clean-path {
+  stroke: rgba(67, 224, 197, 0.82);
+  stroke-width: 0.36;
+  stroke-dasharray: 1.1 0.72;
+  opacity: 0.9;
+  filter: drop-shadow(0 0 4px rgba(56, 200, 176, 0.2));
+}
+
+.vacuum-map-clean-path--running {
+  stroke: rgba(115, 182, 242, 0.9);
+  filter:
+    drop-shadow(0 1px 1px rgba(8, 12, 16, 0.28))
+    drop-shadow(0 0 5px rgba(115, 182, 242, 0.22));
+}
+
+.vacuum-map-clean-path--preparing,
+.vacuum-map-clean-path--paused,
+.vacuum-map-clean-path--canceling {
+  stroke: rgba(115, 182, 242, 0.82);
+}
+
+.vacuum-map-clean-path--completed {
+  stroke: rgba(88, 211, 141, 0.86);
+}
+
+.vacuum-map-clean-path--failed,
+.vacuum-map-clean-path--canceled {
+  stroke: rgba(255, 179, 92, 0.86);
+}
+
+.vacuum-map-clean-path--remaining {
+  opacity: 0.45;
+}
+
+.vacuum-map-clean-path--completed-lines {
+  stroke: rgba(88, 211, 141, 0.9);
+  stroke-dasharray: none;
+  opacity: 0.96;
+}
+
+.vacuum-map-clean-path--current {
+  stroke: #ffffff;
+  stroke-width: 0.5;
+  stroke-dasharray: none;
+  opacity: 0.96;
+  filter:
+    drop-shadow(0 1px 1px rgba(8, 12, 16, 0.32))
+    drop-shadow(0 0 5px rgba(115, 182, 242, 0.36));
+}
+
+.vacuum-clean-area {
+  position: absolute;
+  z-index: 6;
+  min-width: 8px;
+  min-height: 8px;
+  border: 1.5px solid rgba(67, 224, 197, 0.88);
+  box-shadow:
+    0 0 0 1px rgba(6, 14, 14, 0.55),
+    0 0 18px rgba(56, 200, 176, 0.14);
+  pointer-events: auto;
+}
+
+.vacuum-clean-area--invalid {
+  border-color: rgba(255, 179, 92, 0.9);
+  box-shadow:
+    0 0 0 1px rgba(35, 18, 4, 0.6),
+    0 0 18px rgba(255, 179, 92, 0.12);
+}
+
+.vacuum-clean-area--running {
+  border-color: rgba(115, 182, 242, 0.9);
+}
+
+.vacuum-clean-area--completed {
+  border-color: rgba(88, 211, 141, 0.9);
+}
+
+.vacuum-clean-area__fill {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(67, 224, 197, 0.13) 0,
+      rgba(67, 224, 197, 0.13) 6px,
+      rgba(67, 224, 197, 0.04) 6px,
+      rgba(67, 224, 197, 0.04) 12px
+    ),
+    rgba(56, 200, 176, 0.12);
+  pointer-events: none;
+}
+
+.vacuum-clean-area--invalid .vacuum-clean-area__fill {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 179, 92, 0.13) 0,
+      rgba(255, 179, 92, 0.13) 6px,
+      rgba(255, 179, 92, 0.04) 6px,
+      rgba(255, 179, 92, 0.04) 12px
+    ),
+    rgba(255, 179, 92, 0.09);
+}
+
+.vacuum-clean-area__label {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  display: grid;
+  gap: 2px;
+  max-width: min(170px, calc(100% - 20px));
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(232, 226, 214, 0.1);
+  background: rgba(9, 22, 21, 0.84);
+  color: #eafffb;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.vacuum-clean-area--invalid .vacuum-clean-area__label {
+  background: rgba(39, 26, 9, 0.86);
+  color: #ffe7c4;
+}
+
+.vacuum-clean-area__label strong,
+.vacuum-clean-area__label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-clean-area__label strong {
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vacuum-clean-area__label span {
+  font-size: 10px;
+  font-weight: 750;
+  color: currentColor;
+  opacity: 0.86;
+}
+
+.vacuum-clean-area__handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1.5px solid rgba(5, 16, 16, 0.8);
+  background: #eafffb;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.3);
+}
+
+.vacuum-clean-area__handle--nw,
+.vacuum-clean-area__handle--w,
+.vacuum-clean-area__handle--sw {
+  left: -6px;
+}
+
+.vacuum-clean-area__handle--ne,
+.vacuum-clean-area__handle--e,
+.vacuum-clean-area__handle--se {
+  right: -6px;
+}
+
+.vacuum-clean-area__handle--n,
+.vacuum-clean-area__handle--nw,
+.vacuum-clean-area__handle--ne {
+  top: -6px;
+}
+
+.vacuum-clean-area__handle--s,
+.vacuum-clean-area__handle--sw,
+.vacuum-clean-area__handle--se {
+  bottom: -6px;
+}
+
+.vacuum-clean-area__handle--n,
+.vacuum-clean-area__handle--s {
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+
+.vacuum-clean-area__handle--e,
+.vacuum-clean-area__handle--w {
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+
+.vacuum-clean-area__handle--nw,
+.vacuum-clean-area__handle--se {
+  cursor: nwse-resize;
+}
+
+.vacuum-clean-area__handle--ne,
+.vacuum-clean-area__handle--sw {
+  cursor: nesw-resize;
 }
 
 .vacuum-map-stage__center-prompt {
@@ -1438,6 +1651,34 @@ body {
   border-color: rgba(255, 116, 97, 0.22);
 }
 
+.vacuum-panel-card--clean-area {
+  gap: 13px;
+}
+
+.vacuum-panel-card--clean-area-editing,
+.vacuum-panel-card--clean-area-confirmed {
+  border-color: rgba(56, 200, 176, 0.2);
+}
+
+.vacuum-panel-card--clean-area-running {
+  border-color: rgba(115, 182, 242, 0.22);
+}
+
+.vacuum-panel-card--clean-area-preparing,
+.vacuum-panel-card--clean-area-paused,
+.vacuum-panel-card--clean-area-canceling {
+  border-color: rgba(115, 182, 242, 0.18);
+}
+
+.vacuum-panel-card--clean-area-completed {
+  border-color: rgba(88, 211, 141, 0.2);
+}
+
+.vacuum-panel-card--clean-area-failed,
+.vacuum-panel-card--clean-area-canceled {
+  border-color: rgba(255, 179, 92, 0.2);
+}
+
 .vacuum-mapping-badge {
   padding: 5px 8px;
   border-radius: 999px;
@@ -1450,12 +1691,105 @@ body {
   text-transform: uppercase;
 }
 
+.vacuum-clean-area-badge {
+  padding: 5px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 200, 176, 0.16);
+  background: rgba(56, 200, 176, 0.1);
+  color: var(--vacuum-accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .vacuum-mapping-copy {
   margin: 0;
   color: var(--vacuum-text-soft);
   font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
+}
+
+.vacuum-clean-area-copy {
+  margin: 0;
+  color: var(--vacuum-text-soft);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.vacuum-clean-area-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.vacuum-clean-area-stats div {
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(232, 226, 214, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.vacuum-clean-area-stats span {
+  display: block;
+  color: var(--vacuum-text-muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.vacuum-clean-area-stats strong {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--vacuum-text);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-clean-area-progress-label {
+  color: var(--vacuum-text-soft);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.vacuum-clean-area-preview {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 200, 176, 0.12);
+  background: rgba(56, 200, 176, 0.06);
+}
+
+.vacuum-clean-area-preview strong {
+  color: var(--vacuum-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.vacuum-clean-area-preview span,
+.vacuum-clean-area-failure-actions span {
+  color: var(--vacuum-text-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.vacuum-clean-area-failure-actions {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 116, 97, 0.18);
+  background: rgba(255, 116, 97, 0.06);
 }
 
 .vacuum-mapping-error {
@@ -2186,7 +2520,12 @@ body {
   background: linear-gradient(90deg, var(--vacuum-info), #a8d7ff);
 }
 
-.vacuum-progress__bar--active::after {
+.vacuum-progress__bar--paused {
+  background: linear-gradient(90deg, var(--vacuum-warning), #ffd19a);
+}
+
+.vacuum-progress__bar--active::after,
+.vacuum-progress__bar--paused::after {
   content: "";
   position: absolute;
   inset: 0;
