@@ -878,7 +878,13 @@ Constraints:
 - coverage should succeed or fail through the adapter's navigation and mission
   state surfaces;
 - UI for selecting an area belongs above the contract, not in backend-specific
-  code.
+  code;
+- the first Clean Area MVP may execute a lawnmower-shaped sequence of
+  `go_to_location` waypoints through `vacuum_adapter`, but that is not yet a
+  cleaning-coverage guarantee. True coverage needs configurable cleaning swath
+  width/overlap, edge and corner handling, free-cell clipping around interior
+  obstacles or unknown space, and coverage progress based on actual robot
+  footprint history rather than waypoint count alone.
 
 ## Layer 5 Milestone: Room / Zone Semantics
 

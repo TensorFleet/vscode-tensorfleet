@@ -784,6 +784,9 @@ TurtleBot4/Nav2 backend maps mapping commands/status to VM ROS services/topics,
 and the Valetudo backend explicitly reports auto mapping unsupported.
 Near-term work is to rebuild the VM, validate runtime auto mapping and map
 persistence, then move to Clean Area MVP coverage above the adapter boundary.
+Clean Area MVP should be documented and tested as waypoint execution with a
+lawnmower preview; full cleaning coverage still requires swath/overlap,
+edge/corner, obstacle/unknown-space clipping, and footprint-history progress.
 
 1. [x] Keep `steps.md` aligned with the actual `Vacuum Control` component state.
 2. [x] Keep `extension.md` aligned with the global Layer 2 topic map used by

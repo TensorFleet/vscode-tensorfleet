@@ -338,6 +338,12 @@ Clean Area MVP: select a bounded region, generate a lawnmower preview, execute
 waypoints through `vacuum_adapter`, and expose progress/cancel/failure above the
 adapter contract.
 
+The initial Clean Area implementation should be treated as waypoint-based
+coverage validation, not proof that every cell was cleaned. A later true
+coverage pass must account for cleaning swath width and overlap, edge/corner
+coverage, obstacle or unknown-space clipping inside the selected area, and
+progress from actual robot footprint history instead of waypoint count alone.
+
 Layer 3 now has a working and live-validated TurtleBot4/Nav2 adapter, a mission
 state machine, `Vacuum Control` consumption through `useVacuumAdapter`, focused
 command/contract regression coverage, and a Valetudo non-hardware interface
