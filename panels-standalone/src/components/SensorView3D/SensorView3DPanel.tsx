@@ -291,17 +291,30 @@ function applyTopicVisibilityChange(
 }
 
 function choosePreferredFrame(frameNames: string[], current?: string): string | undefined {
-  const exactPriority = [
-    "odom",
-    "map",
-    "world",
-    "base_link",
-    "base_footprint",
-    "simple_bot/base_link",
-    "x500_0",
-    "lidar",
-    "laser",
-  ];
+  const exactPriority =
+    ["px4", "ardupilot"].includes(getActiveVmConfigId())
+      ? [
+          "x500_0",
+          "odom",
+          "map",
+          "world",
+          "base_link",
+          "base_footprint",
+          "simple_bot/base_link",
+          "lidar",
+          "laser",
+        ]
+      : [
+          "odom",
+          "map",
+          "world",
+          "base_link",
+          "base_footprint",
+          "simple_bot/base_link",
+          "x500_0",
+          "lidar",
+          "laser",
+        ];
   for (const preferred of exactPriority) {
     if (frameNames.includes(preferred)) {
       return preferred;
