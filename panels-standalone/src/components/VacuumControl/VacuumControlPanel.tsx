@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
-import { ros2Bridge } from "../../ros2-bridge";
+import { ros2Bridge } from "tensorfleet-ros";
 import {
   formatDuration,
   useVacuumAdapter,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ros2Bridge } from "../../../ros2-bridge";
+import { ros2Bridge } from "tensorfleet-ros";
 import { normalizeRosMessage } from "../../../components/Nav2/runtime/nav2RuntimeUtils";
 import { useNav2Runtime } from "../../../components/Nav2/runtime/useNav2Runtime";
 import type { VacuumAdapter } from "../../adapter";

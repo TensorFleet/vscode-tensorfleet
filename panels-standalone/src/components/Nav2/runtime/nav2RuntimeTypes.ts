@@ -1,4 +1,4 @@
-import type { Subscription } from "../../../ros2-bridge";
+import type { Subscription } from "tensorfleet-ros";
 import type { TfEdgeSnapshot, TfGraphSnapshot } from "tensorfleet-util/ros/ros-bridge-api";
 
 export type GoalState =
