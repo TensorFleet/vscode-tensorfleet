@@ -36,6 +36,27 @@ type DiffResult = {
 type DiffObject = Record<string, DiffResult>;
 
 const MESSAGE_RATE_WINDOW_MS = 1000; // Calculate rate over 1 second
+const DEFAULT_TOPIC = "/clock";
+const TURTLEBOT4_ACTION_TOPIC_PREFIX = "/navigate_to_pose/_action/";
+const TURTLEBOT4_STATUS_KEYWORDS = ["battery", "dock", "hazard", "imu"] as const;
+
+type PinnedTopic = {
+  topic: string;
+  label: string;
+  type?: string;
+  advertised: boolean;
+};
+
+const TURTLEBOT4_CORE_PINNED_TOPICS = [
+  { topic: "/navigate_to_pose/_action/status", label: "Nav2 Status" },
+  { topic: "/navigate_to_pose/_action/feedback", label: "Nav2 Feedback" },
+  { topic: "/navigate_to_pose/_action/result", label: "Nav2 Result" },
+  { topic: "/odom", label: "Odometry" },
+  { topic: "/scan", label: "Lidar Scan" },
+  { topic: "/map", label: "SLAM Map" },
+  { topic: "/local_costmap/costmap", label: "Local Costmap" },
+  { topic: "/global_costmap/costmap", label: "Global Costmap" },
+] as const;
 
 const jsonTreeTheme: Theme = {
   scheme: "tensorfleet-dark",
@@ -57,6 +78,119 @@ const jsonTreeTheme: Theme = {
   base0E: "#c678dd",
   base0F: "#7f8493",
 };
+
+function getActiveVmConfigId(): string {
+  return (typeof window !== "undefined" ? (window as any).TENSORFLEET_VM_CONFIG_ID : "") ?? "";
+}
+
+function getTurtleBot4PinnedLabel(topic: string): string {
+  if (topic === "/navigate_to_pose/_action/status") {
+    return "Nav2 Status";
+  }
+  if (topic === "/navigate_to_pose/_action/feedback") {
+    return "Nav2 Feedback";
+  }
+  if (topic === "/navigate_to_pose/_action/result") {
+    return "Nav2 Result";
+  }
+  if (topic === "/odom") {
+    return "Odometry";
+  }
+  if (topic === "/scan") {
+    return "Lidar Scan";
+  }
+  if (topic === "/map") {
+    return "SLAM Map";
+  }
+  if (topic === "/local_costmap/costmap") {
+    return "Local Costmap";
+  }
+  if (topic === "/global_costmap/costmap") {
+    return "Global Costmap";
+  }
+
+  const normalizedTopic = topic.toLowerCase();
+  if (normalizedTopic.includes("battery")) {
+    return "Battery";
+  }
+  if (normalizedTopic.includes("dock")) {
+    return "Dock";
+  }
+  if (normalizedTopic.includes("hazard")) {
+    return "Hazard";
+  }
+  if (normalizedTopic.includes("imu")) {
+    return "IMU";
+  }
+
+  const suffix = topic.split("/").filter(Boolean).at(-1);
+  return suffix ? suffix.replaceAll("_", " ") : topic;
+}
+
+function getTurtleBot4PinPriority(topic: string): number {
+  const pinnedIndex = TURTLEBOT4_CORE_PINNED_TOPICS.findIndex((pinnedTopic) => pinnedTopic.topic === topic);
+  if (pinnedIndex !== -1) {
+    return pinnedIndex;
+  }
+
+  const normalizedTopic = topic.toLowerCase();
+  for (const [index, keyword] of TURTLEBOT4_STATUS_KEYWORDS.entries()) {
+    if (normalizedTopic.includes(keyword)) {
+      return TURTLEBOT4_CORE_PINNED_TOPICS.length + index;
+    }
+  }
+
+  return TURTLEBOT4_CORE_PINNED_TOPICS.length + TURTLEBOT4_STATUS_KEYWORDS.length + 1;
+}
+
+function getTurtleBot4PinnedTopics(discoveredTopics: DiscoveredTopic[]): PinnedTopic[] {
+  const discoveredTopicsByName = new Map(discoveredTopics.map((topic) => [topic.topic, topic]));
+  const pinnedTopicsByName = new Map<string, PinnedTopic>();
+
+  for (const pinnedTopic of TURTLEBOT4_CORE_PINNED_TOPICS) {
+    const discoveredTopic = discoveredTopicsByName.get(pinnedTopic.topic);
+    pinnedTopicsByName.set(pinnedTopic.topic, {
+      topic: pinnedTopic.topic,
+      label: pinnedTopic.label,
+      type: discoveredTopic?.type,
+      advertised: discoveredTopic != undefined,
+    });
+  }
+
+  const discoveredTurtleBot4Pins = discoveredTopics
+    .filter((topic) => {
+      if (topic.topic.startsWith(TURTLEBOT4_ACTION_TOPIC_PREFIX)) {
+        return true;
+      }
+      const normalizedTopic = topic.topic.toLowerCase();
+      return TURTLEBOT4_STATUS_KEYWORDS.some((keyword) => normalizedTopic.includes(keyword));
+    })
+    .sort((leftTopic, rightTopic) => {
+      const priorityDelta =
+        getTurtleBot4PinPriority(leftTopic.topic) - getTurtleBot4PinPriority(rightTopic.topic);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+      return leftTopic.topic.localeCompare(rightTopic.topic);
+    });
+
+  for (const discoveredTopic of discoveredTurtleBot4Pins) {
+    pinnedTopicsByName.set(discoveredTopic.topic, {
+      topic: discoveredTopic.topic,
+      label: getTurtleBot4PinnedLabel(discoveredTopic.topic),
+      type: discoveredTopic.type,
+      advertised: true,
+    });
+  }
+
+  return [...pinnedTopicsByName.values()].sort((leftTopic, rightTopic) => {
+    const priorityDelta = getTurtleBot4PinPriority(leftTopic.topic) - getTurtleBot4PinPriority(rightTopic.topic);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+    return leftTopic.topic.localeCompare(rightTopic.topic);
+  });
+}
 
 
 function formatPreview(value: unknown): string {
@@ -265,7 +399,7 @@ function computeDiff(oldObj: unknown, newObj: unknown): DiffObject {
 }
 
 export function RawMessagesPanel() {
-  const [selectedTopic, setSelectedTopic] = useState("/clock");
+  const [selectedTopic, setSelectedTopic] = useState(DEFAULT_TOPIC);
   const [searchTerm, setSearchTerm] = useState("");
   const [currentMessage, setCurrentMessage] = useState<ReceivedMessage | null>(null);
   const [previousMessage, setPreviousMessage] = useState<ReceivedMessage | null>(null);
@@ -285,6 +419,13 @@ export function RawMessagesPanel() {
   const currentMessageRef = useRef<ReceivedMessage | null>(null); // Use ref to track current message for previous message tracking
 
   const [discoveredTopics, setDiscoveredTopics] = useState<DiscoveredTopic[]>([]);
+  const activeVmConfigId = getActiveVmConfigId();
+  const pinnedTopics = useMemo(() => {
+    return activeVmConfigId === "turtlebot4" ? getTurtleBot4PinnedTopics(discoveredTopics) : [];
+  }, [activeVmConfigId, discoveredTopics]);
+  const pinnedTopicOrder = useMemo(() => {
+    return new Map(pinnedTopics.map((topic, index) => [topic.topic, index]));
+  }, [pinnedTopics]);
   
   // Update discovered topics periodically to reflect new topics from the bridge
   useEffect(() => {
@@ -299,20 +440,69 @@ export function RawMessagesPanel() {
     return () => clearInterval(interval);
   }, []);
   
-  const selectedSuggestion = useMemo(() => {
-    return discoveredTopics.find((s) => s.topic === selectedTopic);
-  }, [selectedTopic, discoveredTopics]);
-
   const filteredTopics = useMemo(() => {
-    if (!searchTerm.trim()) {
-      return discoveredTopics;
+    const term = searchTerm.trim().toLowerCase();
+    const mergedTopics = new Map<string, DiscoveredTopic>();
+
+    for (const discoveredTopic of discoveredTopics) {
+      mergedTopics.set(discoveredTopic.topic, discoveredTopic);
     }
-    const term = searchTerm.toLowerCase();
-    return discoveredTopics.filter((topic) =>
-      topic.topic.toLowerCase().includes(term) ||
-      topic.type.toLowerCase().includes(term)
-    );
-  }, [discoveredTopics, searchTerm]);
+
+    for (const pinnedTopic of pinnedTopics) {
+      if (mergedTopics.has(pinnedTopic.topic)) {
+        continue;
+      }
+      mergedTopics.set(pinnedTopic.topic, {
+        topic: pinnedTopic.topic,
+        type: pinnedTopic.type ?? "Expected TurtleBot4 topic",
+      });
+    }
+
+    return [...mergedTopics.values()]
+      .filter((topic) => {
+        if (!term) {
+          return true;
+        }
+        return (
+          topic.topic.toLowerCase().includes(term) ||
+          topic.type.toLowerCase().includes(term)
+        );
+      })
+      .sort((leftTopic, rightTopic) => {
+        const leftPinnedIndex = pinnedTopicOrder.get(leftTopic.topic);
+        const rightPinnedIndex = pinnedTopicOrder.get(rightTopic.topic);
+
+        if (leftPinnedIndex != undefined && rightPinnedIndex != undefined) {
+          return leftPinnedIndex - rightPinnedIndex;
+        }
+        if (leftPinnedIndex != undefined) {
+          return -1;
+        }
+        if (rightPinnedIndex != undefined) {
+          return 1;
+        }
+        return leftTopic.topic.localeCompare(rightTopic.topic);
+      });
+  }, [discoveredTopics, pinnedTopicOrder, pinnedTopics, searchTerm]);
+
+  const selectedSuggestion = useMemo(() => {
+    return filteredTopics.find((topic) => topic.topic === selectedTopic);
+  }, [filteredTopics, selectedTopic]);
+
+  useEffect(() => {
+    if (activeVmConfigId !== "turtlebot4") {
+      return;
+    }
+
+    setSelectedTopic((previousTopic) => {
+      if (previousTopic && previousTopic !== DEFAULT_TOPIC) {
+        return previousTopic;
+      }
+      const preferredPinnedTopic =
+        pinnedTopics.find((topic) => topic.advertised)?.topic ?? pinnedTopics[0]?.topic;
+      return preferredPinnedTopic ?? previousTopic;
+    });
+  }, [activeVmConfigId, pinnedTopics]);
   
   // Calculate message rate over the last second
   useEffect(() => {
@@ -520,6 +710,10 @@ export function RawMessagesPanel() {
     if (topic) {
       setSelectedTopic(topic);
     }
+  }, []);
+
+  const handlePinnedTopicSelect = useCallback((topic: string) => {
+    setSelectedTopic(topic);
   }, []);
 
 
@@ -837,6 +1031,38 @@ export function RawMessagesPanel() {
               </div>
 
               <div className="raw-messages-header__form">
+                {pinnedTopics.length > 0 && (
+                  <div className="raw-messages-header__pinned">
+                    <div className="raw-messages-header__pinned-heading">
+                      <span className="raw-messages-header__form-label">Pinned TurtleBot4 Topics</span>
+                      <span className="raw-messages-header__pinned-hint">
+                        Prioritized for Nav2 and robot-state bringup
+                      </span>
+                    </div>
+                    <div className="raw-messages-header__pinned-list">
+                      {pinnedTopics.map((topic) => {
+                        const isSelected = selectedTopic === topic.topic;
+                        const isActive = activeTopic === topic.topic;
+                        return (
+                          <button
+                            key={topic.topic}
+                            className={`raw-messages-header__pinned-button${isSelected ? " raw-messages-header__pinned-button--selected" : ""}${isActive ? " raw-messages-header__pinned-button--active" : ""}${!topic.advertised ? " raw-messages-header__pinned-button--expected" : ""}`}
+                            type="button"
+                            onClick={() => handlePinnedTopicSelect(topic.topic)}
+                            disabled={isSubscribed}
+                            title={topic.type ? `${topic.topic} — ${topic.type}` : topic.topic}
+                          >
+                            <span className="raw-messages-header__pinned-button-label">{topic.label}</span>
+                            <span className="raw-messages-header__pinned-button-topic">{topic.topic}</span>
+                            <span className="raw-messages-header__pinned-button-state">
+                              {topic.advertised ? "Advertised" : "Expected"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <label className="raw-messages-header__form-group">
                   <span className="raw-messages-header__form-label">Search Topics</span>
                   <input

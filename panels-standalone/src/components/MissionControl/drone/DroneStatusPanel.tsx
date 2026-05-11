@@ -90,6 +90,14 @@ function autopilotText(name?: string) {
   }
 }
 
+function isExternalControlActive(state: any) {
+  const mode = String(state?.vehicle?.mode ?? "").toUpperCase();
+  if (mode === "OFFBOARD" || mode === "GUIDED") {
+    return true;
+  }
+  return Boolean(state?.vehicle?.guided);
+}
+
 export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
   const s: any = useDroneState(model);
 
@@ -119,6 +127,7 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
 
   const armReasonsText =
     armReasons.length ? armReasons.join(", ") : (armable === false ? "Unknown" : NDASH);
+  const externalControlText = isExternalControlActive(s) ? "Enabled" : "Disabled";
 
   return (
     <div className="drone-status">
@@ -136,6 +145,7 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
         <Row label={<span>📡 Mode</span>} value={s?.vehicle?.mode ?? NDASH} />
         <Row label={<span>Armed</span>} value={s?.vehicle?.armed ? "Yes" : "No"} />
         <Row label={<span>Guided</span>} value={s?.vehicle?.guided ? "Yes" : "No"} />
+        <Row label={<span>Teleop Control</span>} value={externalControlText} />
         <Row label={<span>Landed State</span>} value={landedText(s?.extended?.landed_state)} />
 
         <hr className="dsp-sep" />
