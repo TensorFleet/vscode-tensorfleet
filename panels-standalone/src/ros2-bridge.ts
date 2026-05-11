@@ -12,7 +12,12 @@
 import { FoxgloveWsClient } from "./foxglove-networking";
 import { ROS_PORTS } from "./ws-proxy-client";
 import * as RosTypes from "tensorfleet-util/ros/ros-types";
-import { ROS2BridgeApi } from "tensorfleet-util/ros/ros-bridge-api";
+import {
+  ROS2BridgeApi,
+  type ServicesChangedHandler,
+  type TfEdgeSnapshot,
+  type TfGraphSnapshot,
+} from "tensorfleet-util/ros/ros-bridge-api";
 
 // (optional but nice) local type for the rosapi response
 type RosapiNodesResponse = { nodes: string[] };
@@ -27,6 +32,12 @@ interface ConnectionSettings {
   token: string;
   targetPort: number;
 }
+
+type TfEdgeRecord = TfEdgeSnapshot;
+type TfTransformRecord = Record<string, unknown> & {
+  header?: { frame_id?: string };
+  child_frame_id?: string;
+};
 
 export interface Subscription {
   topic: string;
@@ -71,6 +82,9 @@ const TOPICS_BY_VM_CONFIG: Record<string, Subscription[]> = {
     { topic: "/so_arm101/side_camera/image_raw", type: "sensor_msgs/msg/Image" },
     { topic: "/so_arm101/wrist_camera/image_raw", type: "sensor_msgs/msg/Image" },
   ],
+  turtlebot4: [
+    { topic: "/oakd/rgb/preview/image_raw", type: "sensor_msgs/msg/Image" },
+  ],
 };
 
 // Minimal fallback when no VM config is known.
@@ -101,6 +115,7 @@ export class ROS2Bridge {
 
   private messageHandlers = new Map<string, Set<(message: any) => void>>();
   private subscriptions = new Map<string, Subscription>();
+  private latestMessages = new Map<string, any>();
 
   // track discovered topics from the bridge
   private discoveredTopics: Map<string, string> = new Map(); // topic -> type
@@ -120,9 +135,14 @@ export class ROS2Bridge {
 
   // frame_id -> topics that have produced that frame
   private frameTopics = new Map<string, Set<string>>();
+  private tfDynamicEdges = new Map<string, TfEdgeRecord>();
+  private tfStaticEdges = new Map<string, TfEdgeRecord>();
+  private tfStaticTransforms = new Map<string, TfTransformRecord>();
+  private tfGraphLastUpdatedAt: number | null = null;
 
   // Available topics change notifications
   private availableTopicsListeners = new Set<(topics: Subscription[]) => void>();
+  private availableServicesListeners = new Set<ServicesChangedHandler>();
   private topicsWatchTimer: number | null = null;
   private _lastTopicsSig: string | null = null;
 
@@ -200,6 +220,10 @@ export class ROS2Bridge {
       token,
       nodeId,
       targetPort: port,
+    });
+
+    this.client.onAvailableServicesChanged((services) => {
+      this._notifyAvailableServicesChanged(services);
     });
 
     // Needed to compute 3D transforms.
@@ -306,6 +330,9 @@ export class ROS2Bridge {
     }
     this.client = null;
     this.discoveredTopics.clear();
+    this.latestMessages.clear();
+    this.tfStaticTransforms.clear();
+    this._notifyAvailableServicesChanged([]);
     // Clear server info on disconnect
     this.serverInfoReady = null;
     this.serverInfoResolver = null;
@@ -351,6 +378,7 @@ export class ROS2Bridge {
     }
 
     this._forwardSubscription(subscription);
+    this.replayLatestMessage(topic, handler);
 
     return () => this.unsubscribe(topic, handler);
   }
@@ -359,6 +387,31 @@ export class ROS2Bridge {
     if (!this.client) return;
     // Foxglove subscribes by *topic name* (schemaName is resolved server-side)
     this.client.subscribe(sub.topic);
+  }
+
+  private replayLatestMessage(topic: string, handler: (message: any) => void): void {
+    const message = this.getReplayMessage(topic);
+    if (!message) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      const handlers = this.messageHandlers.get(topic);
+      if (handlers?.has(handler)) {
+        handler(message);
+      }
+    }, 0);
+  }
+
+  private getReplayMessage(topic: string): any | null {
+    if (this.isTfStaticTopic(topic) && this.tfStaticTransforms.size > 0) {
+      return {
+        topic,
+        type: "tf2_msgs/msg/TFMessage",
+        msg: { transforms: Array.from(this.tfStaticTransforms.values()) },
+      };
+    }
+    return this.latestMessages.get(topic) ?? null;
   }
 
   unsubscribe(topic: string, handler: (message: any) => void) {
@@ -495,6 +548,10 @@ export class ROS2Bridge {
     return this.client?.getTopicType(topic);
   }
 
+  getAvailableServices(): string[] {
+    return this.client?.getAvailableServices() ?? [];
+  }
+
   /**
    * Returns image topics split into three groups:
    * - `primary`: live topics that match the active VM config (the feeds you care about)
@@ -535,7 +592,7 @@ export class ROS2Bridge {
   }
 
   /** Generic Foxglove service call (requires FoxgloveWsClient service support). */
-  async callService<T = any>(name: string, request: any): Promise<T> {
+  async callService<T = any>(name: string, request: any, opts?: { timeoutMs?: number }): Promise<T> {
     if (!this.serverInfoReady) throw new Error("callService() before connect");
     await this.serverInfoReady;
     if (!this.client) throw new Error("callService() before connect");
@@ -544,7 +601,8 @@ export class ROS2Bridge {
     }
     return await (this.client as any).callService({
       serviceName: name,
-      request: request
+      request: request,
+      timeoutMs: opts?.timeoutMs,
     }) as T;
   }
 
@@ -652,6 +710,7 @@ export class ROS2Bridge {
     const topic: string = data.topic;
     const type: string = data.type;
     let msg: any = data.msg;
+    const receivedAt = Date.now();
 
     // --- fix RawImage-like messages regardless of schemaName ---
     if (msg && typeof msg === "object") {
@@ -700,15 +759,21 @@ export class ROS2Bridge {
       this.noteFrame(frameId, topic);
     }
 
+    this.latestMessages.set(topic, data);
+
     if (type === "tf2_msgs/msg/TFMessage" && Array.isArray(msg.transforms)) {
-      for (const tf of msg.transforms as Array<{
-        header?: { frame_id?: string };
-        child_frame_id?: string;
-      }>) {
+      const isStatic = this.isTfStaticTopic(topic);
+      for (const tf of msg.transforms as TfTransformRecord[]) {
         const parent = tf.header?.frame_id;
         const child = tf.child_frame_id;
         if (parent) this.noteFrame(parent, topic);
         if (child) this.noteFrame(child, topic);
+        if (parent && child) {
+          this.noteTfEdge(topic, parent, child, receivedAt, isStatic);
+          if (isStatic) {
+            this.tfStaticTransforms.set(`${parent}->${child}`, tf);
+          }
+        }
       }
     }
 
@@ -912,13 +977,56 @@ export class ROS2Bridge {
     topics.add(topic);
   }
 
+  private noteTfEdge(
+    topic: string,
+    parentFrame: string,
+    childFrame: string,
+    lastMessageAt: number,
+    isStatic: boolean,
+  ) {
+    const key = `${parentFrame}->${childFrame}`;
+    const nextRecord: TfEdgeRecord = {
+      parentFrame,
+      childFrame,
+      topic,
+      lastMessageAt,
+      isStatic,
+    };
+    if (isStatic) {
+      this.tfStaticEdges.set(key, nextRecord);
+    } else {
+      this.tfDynamicEdges.set(key, nextRecord);
+    }
+    this.tfGraphLastUpdatedAt = lastMessageAt;
+  }
+
+  private isTfStaticTopic(topic: string): boolean {
+    return topic === "/tf_static" || topic.endsWith("/tf_static");
+  }
+
   getKnownFrames(): string[] {
     return Array.from(this.frameIds.values()).sort();
+  }
+
+  getKnownTfFrames(): string[] {
+    return this.getKnownFrames();
   }
 
   getFrameSources(frameId: string): string[] {
     const set = this.frameTopics.get(frameId);
     return set ? Array.from(set.values()).sort() : [];
+  }
+
+  getTfGraphSnapshot(): TfGraphSnapshot {
+    return {
+      dynamicEdges: Array.from(this.tfDynamicEdges.values()).sort((left, right) =>
+        `${left.parentFrame}->${left.childFrame}`.localeCompare(`${right.parentFrame}->${right.childFrame}`),
+      ),
+      staticEdges: Array.from(this.tfStaticEdges.values()).sort((left, right) =>
+        `${left.parentFrame}->${left.childFrame}`.localeCompare(`${right.parentFrame}->${right.childFrame}`),
+      ),
+      lastUpdatedAt: this.tfGraphLastUpdatedAt,
+    };
   }
 
   // ---------------- Available topics change API ----------------
@@ -948,6 +1056,28 @@ export class ROS2Bridge {
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error("[ROS2Bridge] topicsChanged listener error:", e);
+      }
+    }
+  }
+
+  onAvailableServicesChanged(cb: ServicesChangedHandler): () => void {
+    this.availableServicesListeners.add(cb);
+    try {
+      cb(this.getAvailableServices());
+    } catch (e) {
+      console.error("[ROS2Bridge] servicesChanged initial callback error:", e);
+    }
+    return () => {
+      this.availableServicesListeners.delete(cb);
+    };
+  }
+
+  private _notifyAvailableServicesChanged(services: string[]) {
+    for (const fn of this.availableServicesListeners) {
+      try {
+        fn(services);
+      } catch (e) {
+        console.error("[ROS2Bridge] servicesChanged listener error:", e);
       }
     }
   }

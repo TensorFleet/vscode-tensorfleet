@@ -68,6 +68,10 @@ const VEC3_ZERO = new THREE.Vector3();
 
 const tempColor = { r: 0, g: 0, b: 0, a: 0 };
 
+function toColorByte(value: number): number {
+  return Math.round(Math.min(Math.max(value, 0), 1) * 255);
+}
+
 function createLaserScanGeometry(topic: string, usage: THREE.Usage): DynamicBufferGeometry {
   const geometry = new DynamicBufferGeometry(usage);
   geometry.name = `${topic}:LaserScan:geometry`;
@@ -296,7 +300,13 @@ class LaserScanHistoryRenderable extends Renderable<LaserScanHistoryUserData> {
     for (let i = 0; i < ranges.length; i++) {
       const colorValue = colorField === "range" ? ranges[i]! : (intensities[i] ?? 0);
       colorConverter(tempColor, colorValue);
-      colorAttribute.setXYZW(i, tempColor.r, tempColor.g, tempColor.b, tempColor.a);
+      colorAttribute.setXYZW(
+        i,
+        toColorByte(tempColor.r),
+        toColorByte(tempColor.g),
+        toColorByte(tempColor.b),
+        toColorByte(tempColor.a),
+      );
     }
 
     rangeAttribute.needsUpdate = true;
