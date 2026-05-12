@@ -1441,8 +1441,8 @@ body {
   max-height: 100%;
   min-height: 0;
   align-self: stretch;
-  display: grid;
-  grid-auto-rows: max-content;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -2737,7 +2737,6 @@ body {
   }
 
   .vacuum-sidebar {
-    grid-template-columns: 1fr;
     overflow-y: auto;
     overflow-x: hidden;
   }
@@ -2781,7 +2780,6 @@ body {
   }
 
   .vacuum-sidebar {
-    grid-template-columns: 1fr;
     overflow-y: auto;
     overflow-x: hidden;
   }
@@ -3177,4 +3175,108 @@ body {
 .vacuum-camera-restore:hover {
   background: rgba(26, 26, 26, 0.96);
   border-color: rgba(56, 200, 176, 0.3);
+}
+
+/* ────────────────────────────────────────────
+   Mode switcher
+──────────────────────────────────────────── */
+
+.vacuum-mode-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.vacuum-mode-switcher__label {
+  margin: 0;
+  color: var(--vacuum-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 0 2px;
+}
+
+.vacuum-mode-switcher__tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border-radius: 18px;
+  border: 1px solid var(--vacuum-panel-border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.vacuum-mode-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 6px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--vacuum-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+  line-height: 1;
+}
+
+.vacuum-mode-tab:hover:not(:disabled) {
+  color: var(--vacuum-text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.vacuum-mode-tab:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.vacuum-mode-tab__icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Mapping tab – teal */
+.vacuum-mode-tab--mapping.vacuum-mode-tab--active {
+  color: var(--vacuum-accent);
+  background: rgba(56, 200, 176, 0.14);
+  border-color: rgba(56, 200, 176, 0.24);
+}
+
+/* Navigate tab – blue */
+.vacuum-mode-tab--navigation.vacuum-mode-tab--active {
+  color: var(--vacuum-info);
+  background: rgba(115, 182, 242, 0.14);
+  border-color: rgba(115, 182, 242, 0.24);
+}
+
+/* Clean area tab – violet */
+.vacuum-mode-tab--clean.vacuum-mode-tab--active {
+  color: #c084fc;
+  background: rgba(192, 132, 252, 0.14);
+  border-color: rgba(192, 132, 252, 0.24);
+}
+
+/* ────────────────────────────────────────────
+   Mode content container
+──────────────────────────────────────────── */
+
+.vacuum-mode-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Tighten destination card for navigate mode */
+.vacuum-panel-card--destination .vacuum-dest-row__sub {
+  white-space: pre-wrap;
 }

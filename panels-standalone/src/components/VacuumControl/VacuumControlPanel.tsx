@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
 import { ros2Bridge } from "tensorfleet-ros";
 import {
@@ -6,7 +6,6 @@ import {
   useVacuumAdapter,
   type VacuumCommandResult,
   type VacuumMappingStatus,
-  type VacuumMissionState,
   type VacuumNavigationState,
   type VacuumSavedMapSummary,
 } from "../../vacuum-adapter";
@@ -36,7 +35,6 @@ type CleanAreaMissionState =
   | "failed"
   | "canceled";
 
-type OperatorTone = "ready" | "warning" | "success" | "danger" | "info";
 type StatusChipTone = "success" | "active" | "inactive";
 type SavedMapSummary = {
   name: string;
@@ -66,26 +64,6 @@ function mapAdapterMappingState(state: VacuumMappingStatus["state"]): MappingSes
   }
   return "not_started";
 }
-
-type OperatorStateKey =
-  | "disconnected"
-  | "waiting-map"
-  | "waiting-localization"
-  | "checking"
-  | "ready"
-  | "mapping"
-  | "navigating"
-  | "completed"
-  | "failed"
-  | "canceled";
-
-type OperatorState = {
-  key: OperatorStateKey;
-  title: string;
-  detail: string;
-  badge: string;
-  tone: OperatorTone;
-};
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -251,116 +229,6 @@ function getCleanAreaVisualState(state: CleanAreaMissionState, toolActive: boole
   return state;
 }
 
-function getOperatorState(args: {
-  availability: "online" | "connecting" | "offline";
-  mapReady: boolean;
-  poseAvailable: boolean;
-  preflightReady: boolean;
-  navigationState: VacuumNavigationState;
-  missionState: VacuumMissionState;
-  isCanceling: boolean;
-  targetSelected: boolean;
-}): OperatorState {
-  if (args.availability !== "online") {
-    return {
-      key: "disconnected",
-      title: args.availability === "connecting" ? "Connecting" : "Disconnected",
-      detail: "Connection needed.",
-      badge: args.availability === "connecting" ? "Connecting" : "Offline",
-      tone: "warning",
-    };
-  }
-
-  if (!args.mapReady) {
-    return {
-      key: "waiting-map",
-      title: "Waiting for map",
-      detail: "Map not ready yet.",
-      badge: "Map",
-      tone: "warning",
-    };
-  }
-
-  if (!args.poseAvailable) {
-    return {
-      key: "waiting-localization",
-      title: "Positioning robot",
-      detail: "Robot position is still settling.",
-      badge: "Locating",
-      tone: "warning",
-    };
-  }
-
-  if (!args.preflightReady) {
-    return {
-      key: "checking",
-      title: "Almost ready",
-      detail: "Final checks are still running.",
-      badge: "Checking",
-      tone: "info",
-    };
-  }
-
-  if (args.missionState === "navigating") {
-    const stopping = args.isCanceling || args.navigationState === "canceling";
-    return {
-      key: "navigating",
-      title: stopping ? "Stopping" : "On the way",
-      detail: stopping ? "Stopping this run." : "Moving to the selected destination.",
-      badge: stopping ? "Stopping" : "Active",
-      tone: "info",
-    };
-  }
-
-  if (args.missionState === "mapping") {
-    return {
-      key: "mapping",
-      title: "Mapping",
-      detail: "Mapping workflow active.",
-      badge: "Mapping",
-      tone: "info",
-    };
-  }
-
-  if (args.navigationState === "completed") {
-    return {
-      key: "completed",
-      title: "Completed",
-      detail: "Destination reached.",
-      badge: "Done",
-      tone: "success",
-    };
-  }
-
-  if (args.navigationState === "canceled") {
-    return {
-      key: "canceled",
-      title: "Canceled",
-      detail: "Run stopped.",
-      badge: "Stopped",
-      tone: "warning",
-    };
-  }
-
-  if (args.navigationState === "failed" || args.navigationState === "blocked" || args.navigationState === "unknown") {
-    return {
-      key: "failed",
-      title: "Needs attention",
-      detail: "Could not complete the run.",
-      badge: "Issue",
-      tone: "danger",
-    };
-  }
-
-  return {
-    key: "ready",
-    title: args.targetSelected ? "Ready to send" : "Ready",
-    detail: args.targetSelected ? "Destination selected." : "Choose a destination on the map.",
-    badge: args.targetSelected ? "Selected" : "Ready",
-    tone: "ready",
-  };
-}
-
 function getRouteVisualState(
   navigationState: VacuumNavigationState,
   active: boolean,
@@ -484,70 +352,6 @@ function StatusChipIcon(props: { className?: string; kind: "connected" | "map" |
   );
 }
 
-function StateIcon(props: { className?: string; stateKey: OperatorStateKey }) {
-  if (props.stateKey === "ready") {
-    return (
-      <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
-        <path d="m5 12.5 4.2 4.2L19 7" />
-      </svg>
-    );
-  }
-
-  if (props.stateKey === "waiting-map" || props.stateKey === "waiting-localization" || props.stateKey === "checking") {
-    return (
-      <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="8" />
-        <path d="M12 8v4l2.5 2.5" />
-      </svg>
-    );
-  }
-
-  if (props.stateKey === "navigating") {
-    return (
-      <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
-        <path d="M5 18 19 6" />
-        <path d="M10 6h9v9" />
-      </svg>
-    );
-  }
-
-  if (props.stateKey === "completed") {
-    return (
-      <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
-        <path d="M6 18V7.5h10l-1.7 3.2L16 14H6" />
-        <path d="m8 16 2.4 2.4L18.5 10" />
-      </svg>
-    );
-  }
-
-  if (props.stateKey === "failed") {
-    return (
-      <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
-        <path d="M12 4 3.5 19h17z" />
-        <path d="M12 9v4.5" />
-        <circle cx="12" cy="17" r="1" />
-      </svg>
-    );
-  }
-
-  if (props.stateKey === "canceled" || props.stateKey === "disconnected") {
-    return (
-      <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="8" />
-        <path d="M9 9l6 6" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="8" />
-      <path d="M12 8v5" />
-      <circle cx="12" cy="16.5" r="0.8" />
-    </svg>
-  );
-}
-
 function ConnectionPillIcon(props: { className?: string }) {
   return (
     <svg aria-hidden="true" className={props.className} viewBox="0 0 12 12">
@@ -620,50 +424,33 @@ function ChevronIcon(props: { expanded: boolean; className?: string }) {
   );
 }
 
-function CollapsibleGroup(props: {
-  title: string;
-  status?: string;
-  defaultExpanded?: boolean;
-  children: ReactNode;
-}): JSX.Element {
-  const [isExpanded, setIsExpanded] = useState(props.defaultExpanded ?? true);
-
+function MappingModeIcon(props: { className?: string }) {
   return (
-    <section className="vacuum-card-group">
-      <button
-        className="vacuum-card-group__head"
-        type="button"
-        onClick={() => { setIsExpanded((value) => !value); }}
-        aria-expanded={isExpanded}
-      >
-        <span className="vacuum-card-group__title">{props.title}</span>
-        <span className="vacuum-card-group__right">
-          {props.status ? <span className="vacuum-card-group__status">{props.status}</span> : null}
-          <ChevronIcon className="vacuum-card-group__chevron" expanded={isExpanded} />
-        </span>
-      </button>
-      {isExpanded ? <div className="vacuum-card-group__body">{props.children}</div> : null}
-    </section>
+    <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
+      <path d="M4 6.5 8.5 5l7 2L20 5.5v11.5L15.5 18.5l-7-2L4 18z" />
+      <path d="M8.5 5v13" />
+      <path d="M15.5 7v11.5" />
+    </svg>
   );
 }
 
-function CardGroup(props: {
-  title: string;
-  status?: string;
-  children: ReactNode;
-}): JSX.Element {
+function NavigateModeIcon(props: { className?: string }) {
   return (
-    <section className="vacuum-card-group">
-      <div className="vacuum-card-group__head vacuum-card-group__head--static">
-        <span className="vacuum-card-group__title">{props.title}</span>
-        {props.status ? (
-          <span className="vacuum-card-group__right">
-            <span className="vacuum-card-group__status">{props.status}</span>
-          </span>
-        ) : null}
-      </div>
-      <div className="vacuum-card-group__body">{props.children}</div>
-    </section>
+    <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
+      <path d="M5 18.5 9.5 6 20 4 15.5 16.5z" />
+      <path d="m9.5 6 6 6" />
+    </svg>
+  );
+}
+
+function CleanModeIcon(props: { className?: string }) {
+  return (
+    <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
+      <rect x="3" y="3" width="18" height="18" rx="2.5" />
+      <path d="M7 8h10" />
+      <path d="M7 12h10" />
+      <path d="M7 16h6" />
+    </svg>
   );
 }
 
@@ -1164,22 +951,17 @@ export function VacuumControlPanel() {
   const [cleanAreaWaypoints, setCleanAreaWaypoints] = useState<DraftTarget[]>([]);
   const [cleanAreaCurrentIndex, setCleanAreaCurrentIndex] = useState(0);
   const [cleanAreaCommandError, setCleanAreaCommandError] = useState<string | null>(null);
+  const [activeMode, setActiveMode] = useState<"mapping" | "navigation" | "clean">("navigation");
   const goalStartTimeRef = useRef<number | null>(null);
   const cleanAreaCancelRequestedRef = useRef(false);
   const cleanAreaSawActiveRef = useRef(false);
 
   const currentPose = snapshot.pose.coordinates;
   const availability = snapshot.availability.status;
-  const mapReady = snapshot.map.readiness === "ready";
   const isMapReceiving = snapshot.map.receiving;
   const poseReady = snapshot.pose.available;
   const readinessReady = snapshot.readiness.ready;
-  const preflightBlocking = snapshot.readiness.blockingReasons.some(
-    (reason) => reason === "Navigation checks are not ready.",
-  );
-  const preflightReady = !preflightBlocking;
   const navigationState = snapshot.navigation.state;
-  const missionState = snapshot.mission.state;
   const isGoalActive = snapshot.navigation.active;
   const isSendingGoal = snapshot.navigation.isSending;
   const isCancelingGoal = snapshot.navigation.isCanceling;
@@ -1197,17 +979,6 @@ export function VacuumControlPanel() {
     sentTarget != null && routeVisualState !== "staged" && routeVisualState !== "canceled"
       ? snapshot.navigation.planPath
       : null;
-
-  const operatorState = getOperatorState({
-    availability,
-    mapReady,
-    poseAvailable: poseReady,
-    preflightReady,
-    navigationState,
-    missionState,
-    isCanceling: isCancelingGoal,
-    targetSelected: hasTarget,
-  });
 
   const destinationDistance = distanceBetween(currentPose, displayedTarget);
   const destinationBearing = bearingBetween(currentPose, displayedTarget);
@@ -1324,7 +1095,6 @@ export function VacuumControlPanel() {
     }
     return Math.max(routeProgress * 100, 6);
   })();
-  const progressPctLabel = isIndeterminate ? "—" : `${Math.round(routeProgress * 100)}%`;
   const elapsedLabel = snapshot.navigation.progress.navigationTime != null
     ? formatDuration(snapshot.navigation.progress.navigationTime)
     : wallClockElapsed != null
@@ -1333,11 +1103,15 @@ export function VacuumControlPanel() {
   const recoveryCount = toFiniteNumber(snapshot.navigation.progress.recoveries);
   const recoveryLabel = formatRecoveries(recoveryCount);
   const recoveryWarning = recoveryCount != null && recoveryCount > 0;
+  const modeBreadcrumb =
+    activeMode === "mapping" ? "Mapping" : activeMode === "clean" ? "Clean Area" : "Navigate";
+
   const isMappingWorkflowActive =
     mappingState === "mapping" || mappingState === "paused" || mappingState === "review";
   const isCleanAreaRunning =
     cleanAreaState === "preparing" || cleanAreaState === "running" || cleanAreaState === "canceling";
   const isCleanAreaActive = isCleanAreaRunning || cleanAreaState === "paused";
+  const isCleanAreaModeLocked = isCleanAreaActive || cleanAreaToolActive;
   const cleanAreaVisualState = getCleanAreaVisualState(cleanAreaState, cleanAreaToolActive);
   const cleanAreaSpacing = getCleanAreaSpacing(mapMetadata);
   const cleanAreaPreviewPoints =
@@ -1727,6 +1501,16 @@ export function VacuumControlPanel() {
     }
   }, [cleanAreaCurrentIndex, cleanAreaState, cleanAreaWaypoints.length, isGoalActive, navigationState, snapshot.navigation.detail]);
 
+  useEffect(() => {
+    if (isMappingWorkflowActive) {
+      setActiveMode("mapping");
+    } else if (isCleanAreaActive || cleanAreaToolActive) {
+      setActiveMode("clean");
+    } else if (isGoalActive) {
+      setActiveMode("navigation");
+    }
+  }, [isMappingWorkflowActive, isCleanAreaActive, cleanAreaToolActive, isGoalActive]);
+
   return (
     <div className="vacuum-shell">
       <aside className="vacuum-rail">
@@ -1761,7 +1545,7 @@ export function VacuumControlPanel() {
         <header className="vacuum-header">
           <div className="vacuum-header__left">
             <h1 className="vacuum-header__title">Vacuum Control</h1>
-            <span className="vacuum-header__breadcrumb">Navigation</span>
+            <span className="vacuum-header__breadcrumb">{modeBreadcrumb}</span>
           </div>
           <div className="vacuum-header__right">
             {availability === "offline" ? (
@@ -1830,240 +1614,236 @@ export function VacuumControlPanel() {
 
           <div className="vacuum-sidebar">
 
-            <section className={`vacuum-panel-card vacuum-panel-card--state vacuum-panel-card--${operatorState.tone}`} aria-live="polite">
-              <div className="vacuum-panel-card__head">
-                <p className="vacuum-panel-card__eyebrow">Current State</p>
+            {/* ── Mode switcher ── */}
+            <div className="vacuum-mode-switcher">
+              <span className="vacuum-mode-switcher__label">Mode</span>
+              <div className="vacuum-mode-switcher__tabs">
+                <button
+                  type="button"
+                  className={`vacuum-mode-tab vacuum-mode-tab--mapping${activeMode === "mapping" ? " vacuum-mode-tab--active" : ""}`}
+                  onClick={() => { setActiveMode("mapping"); }}
+                  disabled={isCleanAreaModeLocked || (isGoalActive && !isMappingWorkflowActive)}
+                  title={isCleanAreaModeLocked ? "Finish clean area first" : isGoalActive && !isMappingWorkflowActive ? "Stop navigation first" : "Mapping"}
+                >
+                  <MappingModeIcon className="vacuum-mode-tab__icon" />
+                  <span>Mapping</span>
+                </button>
+                <button
+                  type="button"
+                  className={`vacuum-mode-tab vacuum-mode-tab--navigation${activeMode === "navigation" ? " vacuum-mode-tab--active" : ""}`}
+                  onClick={() => { setActiveMode("navigation"); }}
+                  disabled={isMappingWorkflowActive || isCleanAreaModeLocked}
+                  title={isMappingWorkflowActive ? "Finish mapping first" : isCleanAreaModeLocked ? "Finish clean area first" : "Navigate"}
+                >
+                  <NavigateModeIcon className="vacuum-mode-tab__icon" />
+                  <span>Navigate</span>
+                </button>
+                <button
+                  type="button"
+                  className={`vacuum-mode-tab vacuum-mode-tab--clean${activeMode === "clean" ? " vacuum-mode-tab--active" : ""}`}
+                  onClick={() => { setActiveMode("clean"); }}
+                  disabled={isMappingWorkflowActive || (isGoalActive && !isCleanAreaActive)}
+                  title={isMappingWorkflowActive ? "Finish mapping first" : isGoalActive && !isCleanAreaActive ? "Stop navigation first" : "Clean area"}
+                >
+                  <CleanModeIcon className="vacuum-mode-tab__icon" />
+                  <span>Clean area</span>
+                </button>
               </div>
-              <div className="vacuum-state-row">
-                <div className={`vacuum-state-icon vacuum-state-icon--${operatorState.tone}`}>
-                  <StateIcon className="vacuum-state-icon__svg" stateKey={operatorState.key} />
-                </div>
-                <div className="vacuum-state-row__text">
-                  <p className="vacuum-state-row__title">{operatorState.title}</p>
-                  <p className="vacuum-state-row__detail">{operatorState.detail}</p>
-                </div>
-                <VacuumMark className="vacuum-state-row__disc" aria-hidden="true" />
+            </div>
+
+            {/* ── Mapping mode ── */}
+            {activeMode === "mapping" && (
+              <div className="vacuum-mode-content">
+                <MappingCard
+                  mappingState={mappingState}
+                  mappingStatus={mappingStatus}
+                  metadata={mapMetadata}
+                  savedMap={savedMap}
+                  savedMaps={mappingStatus.savedMaps}
+                  commandError={mappingCommandError}
+                  mapName={mapName}
+                  now={metadataClock}
+                  onMapNameChange={setMapName}
+                  autoSupported={autoMappingSupported}
+                  manualSupported={mappingSessionSupported}
+                  onStartAuto={() => void handleStartAutoMapping()}
+                  onStartManual={() => void handleStartManualMapping()}
+                  onPause={() => void handlePauseMapping()}
+                  onContinue={() => void handleContinueMapping()}
+                  onFinish={() => void handleFinishMapping()}
+                  onDiscard={() => void handleDiscardMapping()}
+                  onUseMap={() => void handleUseMap()}
+                  onLoadMap={(name) => void handleLoadMap(name)}
+                  onImproveMap={(name) => void handleImproveMap(name)}
+                  onRemap={() => void handleRemap()}
+                />
+                <TeleopCard
+                  disabled={mappingStatus.state === "auto_mapping"}
+                  disabledReason="Pause auto mapping before using manual control."
+                />
               </div>
-              <div className="vacuum-readiness-grid">
-                <div className={`vacuum-readiness-item ${availability === "online" ? "vacuum-readiness-item--ready" : ""}`}>
-                  <span>Connection</span>
-                  <strong>{availability === "online" ? "Online" : availability === "connecting" ? "Connecting" : "Offline"}</strong>
-                </div>
-                <div className={`vacuum-readiness-item ${isMapReceiving ? "vacuum-readiness-item--ready" : ""}`}>
-                  <span>Map</span>
-                  <strong>{isMapReceiving ? "Live" : "Waiting"}</strong>
-                </div>
-                <div className={`vacuum-readiness-item ${poseReady ? "vacuum-readiness-item--ready" : ""}`}>
-                  <span>Position</span>
-                  <strong>{poseReady ? "Known" : "Settling"}</strong>
-                </div>
-              </div>
-            </section>
+            )}
 
-            <CardGroup title="Mapping & Manual Control" status={mappingStatus.state === "auto_mapping" ? "Auto mapping" : "Ready"}>
-              <MappingCard
-                mappingState={mappingState}
-                mappingStatus={mappingStatus}
-                metadata={mapMetadata}
-                savedMap={savedMap}
-                savedMaps={mappingStatus.savedMaps}
-                commandError={mappingCommandError}
-                mapName={mapName}
-                now={metadataClock}
-                onMapNameChange={setMapName}
-                autoSupported={autoMappingSupported}
-                manualSupported={mappingSessionSupported}
-                onStartAuto={() => void handleStartAutoMapping()}
-                onStartManual={() => void handleStartManualMapping()}
-                onPause={() => void handlePauseMapping()}
-                onContinue={() => void handleContinueMapping()}
-                onFinish={() => void handleFinishMapping()}
-                onDiscard={() => void handleDiscardMapping()}
-                onUseMap={() => void handleUseMap()}
-                onLoadMap={(name) => void handleLoadMap(name)}
-                onImproveMap={(name) => void handleImproveMap(name)}
-                onRemap={() => void handleRemap()}
-              />
-
-              <TeleopCard
-                disabled={mappingStatus.state === "auto_mapping"}
-                disabledReason="Pause auto mapping before using manual control."
-              />
-            </CardGroup>
-
-            <CollapsibleGroup title="Clean Area" status={cleanAreaState === "running" ? "Running" : cleanAreaRect ? "Area selected" : "No area"}>
-              <CleanAreaCard
-                state={cleanAreaState}
-                toolActive={cleanAreaToolActive}
-                rect={cleanAreaRect}
-                validation={cleanAreaValidation}
-                waypointCount={cleanAreaWaypoints.length}
-                currentWaypointIndex={cleanAreaCurrentIndex}
-                passCount={cleanAreaMetrics.passCount}
-                estimatedDistance={cleanAreaMetrics.totalDistance}
-                distanceRemaining={cleanAreaMetrics.remainingDistance}
-                commandError={cleanAreaCommandError}
-                canStart={canStartCleanArea}
-                canCancel={cancelNavigationSupported && !isCancelingGoal}
-                canPause={cancelNavigationSupported && !isCancelingGoal}
-                onActivateTool={handleActivateCleanAreaTool}
-                onConfirm={handleConfirmCleanArea}
-                onStart={handleStartCleanArea}
-                onPause={() => void handlePauseCleanArea()}
-                onRetry={handleRetryCleanAreaWaypoint}
-                onSkip={handleSkipCleanAreaWaypoint}
-                onCancel={() => void handleCancelCleanArea()}
-                onClear={handleClearCleanArea}
-              />
-            </CollapsibleGroup>
-
-            <CollapsibleGroup title="Destination Run" status={hasTarget ? destinationBadgeLabel : "No target"}>
-              <section className={`vacuum-panel-card vacuum-panel-card--destination ${displayedTarget ? "vacuum-panel-card--destination-selected" : ""}`}>
-                <div className="vacuum-panel-card__head">
-                  <p className="vacuum-panel-card__eyebrow">Selected Destination</p>
+            {/* ── Navigate mode ── */}
+            {activeMode === "navigation" && (
+              <div className="vacuum-mode-content">
+                <section className={`vacuum-panel-card vacuum-panel-card--destination ${displayedTarget ? "vacuum-panel-card--destination-selected" : ""}`}>
+                  <div className="vacuum-panel-card__head">
+                    <p className="vacuum-panel-card__eyebrow">Destination</p>
+                    {displayedTarget ? (
+                      <span className="vacuum-destination-status">{destinationBadgeLabel}</span>
+                    ) : null}
+                  </div>
                   {displayedTarget ? (
-                    <span className="vacuum-destination-status">{destinationBadgeLabel}</span>
-                  ) : null}
-                </div>
-                {displayedTarget ? (
-                  <>
-                    <div className="vacuum-dest-row">
-                      <div className="vacuum-dest-row__icon-wrap">
-                        <CompassIcon className="vacuum-dest-row__icon vacuum-dest-row__icon--compass" direction={displayedTarget.yaw} />
+                    <>
+                      <div className="vacuum-dest-row">
+                        <div className="vacuum-dest-row__icon-wrap">
+                          <CompassIcon className="vacuum-dest-row__icon vacuum-dest-row__icon--compass" direction={displayedTarget.yaw} />
+                        </div>
+                        <div className="vacuum-dest-row__text">
+                          <p className="vacuum-dest-row__title">Destination selected</p>
+                          <p className="vacuum-dest-row__sub">{targetDistanceLabel} from robot · bearing {targetBearingLabel}</p>
+                          <p className="vacuum-dest-row__sub">coords: {formatCoordinate(displayedTarget.x)}, {formatCoordinate(displayedTarget.y)} · facing {targetHeadingLabel}</p>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="vacuum-dest-row vacuum-dest-row--empty">
+                      <div className="vacuum-dest-row__icon-wrap vacuum-dest-row__icon-wrap--muted">
+                        <DestinationEmptyIcon className="vacuum-dest-row__icon vacuum-dest-row__icon--empty" />
                       </div>
                       <div className="vacuum-dest-row__text">
-                        <p className="vacuum-dest-row__title">Destination selected</p>
-                        <p className="vacuum-dest-row__sub">{targetDistanceLabel} from robot</p>
+                        <p className="vacuum-dest-row__title vacuum-dest-row__title--muted">No destination</p>
+                        <p className="vacuum-dest-row__sub">
+                          {isMappingWorkflowActive ? "Disabled during mapping" : "Click the map to pick one"}
+                        </p>
                       </div>
                     </div>
-                    <div className="vacuum-destination-details">
+                  )}
+                </section>
+
+                {showProgressMetric ? (
+                  <section className={`vacuum-panel-card vacuum-panel-card--progress vacuum-panel-card--progress-${routeVisualState}`}>
+                    <div className="vacuum-panel-card__head">
+                      <p className="vacuum-panel-card__eyebrow">Progress</p>
+                      <span className={`vacuum-progress-status vacuum-progress-status--${routeVisualState}`}>
+                        {progressStatusLabel}
+                      </span>
+                    </div>
+                    <p className="vacuum-progress-label">{progressLabel}</p>
+                    <div className="vacuum-progress">
+                      <div
+                        className={`vacuum-progress__bar vacuum-progress__bar--${routeVisualState}${isIndeterminate ? " vacuum-progress__bar--indeterminate" : ""}`}
+                        style={isIndeterminate ? undefined : { width: `${displayedTarget ? progressBarWidth : 0}%` }}
+                      />
+                    </div>
+                    <div className="vacuum-stats vacuum-stats--progress">
                       <div>
-                        <span>Facing</span>
-                        <strong>{targetHeadingLabel}</strong>
+                        <span>Remaining</span>
+                        <strong>{formatDistance(routeDistanceRemaining)}</strong>
                       </div>
                       <div>
-                        <span>Bearing</span>
-                        <strong>{targetBearingLabel}</strong>
+                        <span>Elapsed</span>
+                        <strong>{elapsedLabel}</strong>
                       </div>
                       <div>
-                        <span>Map coords</span>
-                        <strong>
-                          {formatCoordinate(displayedTarget.x)}, {formatCoordinate(displayedTarget.y)}
+                        <span>Recoveries</span>
+                        <strong style={recoveryWarning ? { color: "var(--vacuum-warning)" } : undefined}>
+                          {recoveryLabel}
                         </strong>
                       </div>
                     </div>
-                  </>
+                  </section>
                 ) : (
-                  <div className="vacuum-dest-row vacuum-dest-row--empty">
-                    <div className="vacuum-dest-row__icon-wrap vacuum-dest-row__icon-wrap--muted">
-                      <DestinationEmptyIcon className="vacuum-dest-row__icon vacuum-dest-row__icon--empty" />
-                    </div>
-                    <div className="vacuum-dest-row__text">
-                      <p className="vacuum-dest-row__title vacuum-dest-row__title--muted">No destination</p>
-                      <p className="vacuum-dest-row__sub">
-                        {isMappingWorkflowActive ? "Disabled during mapping" : "Click the map to pick one"}
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </section>
-
-              {showProgressMetric ? (
-                <section className={`vacuum-panel-card vacuum-panel-card--progress vacuum-panel-card--progress-${routeVisualState}`}>
-                  <div className="vacuum-panel-card__head">
+                  <section className="vacuum-panel-card vacuum-panel-card--progress-idle">
                     <p className="vacuum-panel-card__eyebrow">Progress</p>
-                    <span className={`vacuum-progress-status vacuum-progress-status--${routeVisualState}`}>
-                      {progressStatusLabel}
-                    </span>
-                  </div>
-                  <div className="vacuum-progress-summary">
-                    <strong className={`vacuum-progress-pct vacuum-progress-pct--${routeVisualState}${isIndeterminate ? " vacuum-progress-pct--indeterminate" : ""}`}>
-                      {progressPctLabel}
-                    </strong>
-                    <p className="vacuum-progress-label">{progressLabel}</p>
-                  </div>
-                  <div className="vacuum-progress">
-                    <div
-                      className={`vacuum-progress__bar vacuum-progress__bar--${routeVisualState}${isIndeterminate ? " vacuum-progress__bar--indeterminate" : ""}`}
-                      style={isIndeterminate ? undefined : { width: `${displayedTarget ? progressBarWidth : 0}%` }}
-                    />
-                  </div>
-                  <div className="vacuum-stats vacuum-stats--progress">
-                    <div>
-                      <span>Remaining</span>
-                      <strong>{formatDistance(routeDistanceRemaining)}</strong>
-                    </div>
-                    <div>
-                      <span>Elapsed</span>
-                      <strong>{elapsedLabel}</strong>
-                    </div>
-                    <div>
-                      <span>Recoveries</span>
-                      <strong style={recoveryWarning ? { color: "var(--vacuum-warning)" } : undefined}>
-                        {recoveryLabel}
-                      </strong>
-                    </div>
-                  </div>
-                </section>
-              ) : (
-                <section className="vacuum-panel-card vacuum-panel-card--progress-idle">
-                  <p className="vacuum-panel-card__eyebrow">Progress</p>
-                  <p className="vacuum-progress-idle-hint">Start a run to see progress.</p>
-                </section>
-              )}
+                    <p className="vacuum-progress-idle-hint">Start a run to see progress.</p>
+                  </section>
+                )}
 
-              <section className="vacuum-panel-card vacuum-panel-card--actions">
-                <div className="vacuum-panel-card__head">
-                  <p className="vacuum-panel-card__eyebrow">Actions</p>
-                </div>
-                <p className="vacuum-action-hint">{actionHint}</p>
-                <div className="vacuum-actions">
-                  {availability !== "online" ? (
+                <section className="vacuum-panel-card vacuum-panel-card--actions">
+                  <p className="vacuum-action-hint">{actionHint}</p>
+                  <div className="vacuum-actions">
+                    {availability !== "online" ? (
+                      <button
+                        className="vacuum-action vacuum-action--primary"
+                        type="button"
+                        onClick={openOverlay}
+                      >
+                        <GearIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                        Connection settings
+                      </button>
+                    ) : isGoalActive ? (
+                      <button
+                        className="vacuum-action vacuum-action--danger"
+                        type="button"
+                        onClick={() => void handleCancel()}
+                        disabled={!canCancelRun}
+                      >
+                        <StopIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                        {isCancelingGoal ? "Stopping..." : "Stop run"}
+                      </button>
+                    ) : (
+                      <button
+                        className="vacuum-action vacuum-action--primary"
+                        type="button"
+                        onClick={() => void handleSend()}
+                        disabled={!canSendRun}
+                      >
+                        {isSendingGoal ? (
+                          <SpinnerIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                        ) : (
+                          <SendIcon className="vacuum-action__icon" />
+                        )}
+                        {primaryActionLabel}
+                      </button>
+                    )}
                     <button
-                      className="vacuum-action vacuum-action--primary"
+                      className="vacuum-action vacuum-action--ghost"
                       type="button"
-                      onClick={openOverlay}
+                      onClick={handleClear}
+                      disabled={!hasTarget || isGoalActive}
                     >
-                      <GearIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
-                      Connection settings
+                      <ClearIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
+                      Clear destination
                     </button>
-                  ) : isGoalActive ? (
-                    <button
-                      className="vacuum-action vacuum-action--danger"
-                      type="button"
-                      onClick={() => void handleCancel()}
-                      disabled={!canCancelRun}
-                    >
-                      <StopIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
-                      {isCancelingGoal ? "Stopping..." : "Stop run"}
-                    </button>
-                  ) : (
-                    <button
-                      className="vacuum-action vacuum-action--primary"
-                      type="button"
-                      onClick={() => void handleSend()}
-                      disabled={!canSendRun}
-                    >
-                      {isSendingGoal ? (
-                        <SpinnerIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
-                      ) : (
-                        <SendIcon className="vacuum-action__icon" />
-                      )}
-                      {primaryActionLabel}
-                    </button>
-                  )}
-                  <button
-                    className="vacuum-action vacuum-action--ghost"
-                    type="button"
-                    onClick={handleClear}
-                    disabled={!hasTarget || isGoalActive}
-                  >
-                    <ClearIcon className="vacuum-action__icon vacuum-action__icon--stroke" />
-                    Clear destination
-                  </button>
-                </div>
-              </section>
-            </CollapsibleGroup>
+                  </div>
+                </section>
+              </div>
+            )}
+
+            {/* ── Clean area mode ── */}
+            {activeMode === "clean" && (
+              <div className="vacuum-mode-content">
+                <CleanAreaCard
+                  state={cleanAreaState}
+                  toolActive={cleanAreaToolActive}
+                  rect={cleanAreaRect}
+                  validation={cleanAreaValidation}
+                  waypointCount={cleanAreaWaypoints.length}
+                  currentWaypointIndex={cleanAreaCurrentIndex}
+                  passCount={cleanAreaMetrics.passCount}
+                  estimatedDistance={cleanAreaMetrics.totalDistance}
+                  distanceRemaining={cleanAreaMetrics.remainingDistance}
+                  commandError={cleanAreaCommandError}
+                  canStart={canStartCleanArea}
+                  canCancel={cancelNavigationSupported && !isCancelingGoal}
+                  canPause={cancelNavigationSupported && !isCancelingGoal}
+                  onActivateTool={handleActivateCleanAreaTool}
+                  onConfirm={handleConfirmCleanArea}
+                  onStart={handleStartCleanArea}
+                  onPause={() => void handlePauseCleanArea()}
+                  onRetry={handleRetryCleanAreaWaypoint}
+                  onSkip={handleSkipCleanAreaWaypoint}
+                  onCancel={() => void handleCancelCleanArea()}
+                  onClear={handleClearCleanArea}
+                />
+                <TeleopCard
+                  disabled={isCleanAreaActive}
+                  disabledReason="Stop the cleaning run before using manual control."
+                />
+              </div>
+            )}
 
           </div>
         </section>
