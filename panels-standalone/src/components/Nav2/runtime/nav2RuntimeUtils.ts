@@ -24,6 +24,21 @@ export function nowMs(): number {
   return Date.now();
 }
 
+type ServiceDiscoveryEntry = string | { service?: unknown; name?: unknown };
+
+export function normalizeServiceNames(services: unknown): string[] {
+  if (!Array.isArray(services)) {
+    return [];
+  }
+  return services.flatMap((entry: ServiceDiscoveryEntry) => {
+    if (typeof entry === "string") {
+      return entry;
+    }
+    const serviceName = typeof entry.service === "string" ? entry.service : typeof entry.name === "string" ? entry.name : null;
+    return serviceName ? serviceName : [];
+  });
+}
+
 function snakeToCamel(value: string): string {
   return value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 }

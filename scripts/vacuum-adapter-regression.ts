@@ -16,6 +16,9 @@ import {
   parseVacuumMapGrid,
 } from "../panels-standalone/src/vacuum-adapter/mapGrid";
 import {
+  normalizeServiceNames,
+} from "../panels-standalone/src/components/Nav2/runtime/nav2RuntimeUtils";
+import {
   dispatchTurtleBot4Nav2Command,
 } from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/commandDispatcher";
 import {
@@ -258,6 +261,18 @@ function testCapabilityCoverage(): void {
   assert.equal(valetudo.auto_mapping.supported, false);
 }
 
+function testServiceDiscoveryNormalization(): void {
+  assert.deepEqual(
+    normalizeServiceNames([
+      SEND_GOAL_SERVICE,
+      { service: CANCEL_GOAL_SERVICE, type: "action_msgs/srv/CancelGoal" },
+      { name: MAPPING_SERVICE_NAMES.startAuto, type: "std_srvs/srv/Trigger" },
+      { service: 42, type: "invalid" },
+    ]),
+    [SEND_GOAL_SERVICE, CANCEL_GOAL_SERVICE, MAPPING_SERVICE_NAMES.startAuto],
+  );
+}
+
 function testStateMapping(): void {
   const idle = mapTurtleBot4Nav2State({ runtime: createRuntime({ goalState: "ready" }), currentTarget: null });
   assert.equal(idle.mission.state, "idle");
@@ -404,6 +419,7 @@ async function main(): Promise<void> {
   testMapMetadata();
   testValetudoCommandStub();
   testPublicContractAndUiBoundary();
+  testServiceDiscoveryNormalization();
   await testTurtleBot4Commands();
   await testTurtleBot4MappingCommands();
   await testTurtleBot4UnsupportedCommands();
