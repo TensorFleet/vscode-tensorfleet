@@ -7,8 +7,6 @@ panels-standalone/docs/lichtblick-integration/
 src/generated/telemetry-config.ts
 dist/
 tensorfleet-drone-*.vsix
-
 .DS_Store
-
 .codex
 .idea/
