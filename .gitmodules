@@ -1,0 +1,6 @@
+[submodule "panels-standalone/packages/tensorfleet-util"]
+	path = panels-standalone/packages/tensorfleet-util
+	url = https://github.com/TensorFleet/tensorfleet-util.git
+[submodule "panels-standalone/packages/tensorfleet-ros"]
+	path = panels-standalone/packages/tensorfleet-ros
+	url = https://github.com/TensorFleet/tensorfleet-ros.git

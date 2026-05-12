@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ObjectPool } from "@lichtblick/den/collection";
-import { ros2Bridge, type Subscription } from "../../ros2-bridge";
+import { ros2Bridge, type Subscription } from "tensorfleet-ros";
 import {
   getRecordEntry,
   normalizeRosMessage,

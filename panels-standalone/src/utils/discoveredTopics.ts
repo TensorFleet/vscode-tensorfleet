@@ -1,4 +1,4 @@
-import { ros2Bridge } from "../ros2-bridge";
+import { ros2Bridge } from "tensorfleet-ros";
 
 export type DiscoveredTopic = {
   topic: string;

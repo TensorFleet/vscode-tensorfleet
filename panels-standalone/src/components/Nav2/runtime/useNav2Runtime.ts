@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ros2Bridge } from "../../../ros2-bridge";
+import { ros2Bridge } from "tensorfleet-ros";
 import {
   ACTION_FEEDBACK_TOPIC,
   ACTION_STATUS_TOPIC,
@@ -40,6 +40,7 @@ import {
   getLifecycleServiceName,
   mapActionStatusCodeToGoalState,
   mapResultStatusToGoalState,
+  normalizeServiceNames,
   normalizeRosMessage,
   nowMs,
   uuidToKey,
@@ -49,7 +50,9 @@ export function useNav2Runtime(): Nav2RuntimeState {
   const [connectionStatus, setConnectionStatus] = useState<"connected" | "connecting" | "disconnected">("connecting");
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [availableTopics, setAvailableTopics] = useState(ros2Bridge.getAvailableTopics());
-  const [availableServices, setAvailableServices] = useState<string[]>([]);
+  const [availableServices, setAvailableServices] = useState<string[]>(() =>
+    normalizeServiceNames(ros2Bridge.getAvailableServices()),
+  );
   const [messageTimestamps, setMessageTimestamps] = useState<Record<string, number | null>>({});
   const [odomMessage, setOdomMessage] = useState<Record<string, unknown> | null>(null);
   const [poseMessage, setPoseMessage] = useState<Record<string, unknown> | null>(null);
@@ -85,7 +88,7 @@ export function useNav2Runtime(): Nav2RuntimeState {
       setAvailableTopics(topics);
     });
     const unsubscribeServices = ros2Bridge.onAvailableServicesChanged((services) => {
-      setAvailableServices(services);
+      setAvailableServices(normalizeServiceNames(services));
     });
 
     const markTopicMessage = (topic: string) => {

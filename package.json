@@ -10,6 +10,9 @@
     "url": "https://github.com/TensorFleet/vscode-tensorfleet.git"
   },
   "icon": "media/store-icon.png",
+  "workspaces": [
+    "packages/*"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -333,6 +336,7 @@
     "tensorfleet-mcp": "./dist/mcp-server.js"
   },
   "dependencies": {
+    "tensorfleet-auth": "workspace:*",
     "@foxglove/schemas": "^1.8.0",
     "@foxglove/ws-protocol": "^0.8.0",
     "@lichtblick/message-definition": "^1.0.0",

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ros2Bridge } from "../../ros2-bridge";
+import { ros2Bridge } from "tensorfleet-ros";
 import type { ImageMessage } from "tensorfleet-util/ros/ros-types";
 
 const PREFERRED_TOPICS = [

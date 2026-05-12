@@ -8,7 +8,7 @@
 // - Added VM-config teleop profiles for ground robots, TurtleBot4, drones, and custom teleops
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ros2Bridge } from '../../ros2-bridge';
+import { ros2Bridge } from 'tensorfleet-ros';
 import { getTopicSuggestions } from '../../utils/discoveredTopics';
 import { DirectionalPad } from './DirectionalPad';
 import { geometryMsgOptions } from './constants';

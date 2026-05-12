@@ -19,4 +19,3 @@ export function unsupportedCommand(command: VacuumCommandName, message?: string)
     message: message ?? `Command ${command} is not supported by this backend.`,
   };
 }
-

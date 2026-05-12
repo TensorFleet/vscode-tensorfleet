@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ros2Bridge } from "../../ros2-bridge";
+import { ros2Bridge } from "tensorfleet-ros";
 import {
   getRecordEntry,
   normalizeRosMessage,

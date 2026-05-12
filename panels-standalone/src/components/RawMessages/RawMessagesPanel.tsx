@@ -6,7 +6,8 @@
 import React, { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Theme } from "react-base16-styling";
 import { JSONTree } from "react-json-tree";
-import { Subscription, ros2Bridge, type ImageMessage } from "../../ros2-bridge";
+import { Subscription, ros2Bridge } from "tensorfleet-ros";
+import type { ImageMessage } from "tensorfleet-util/ros/ros-types";
 import { getTopicSuggestions, type DiscoveredTopic } from "../../utils/discoveredTopics";
 import "./RawMessagesPanel.css";
 import { ConnectionSettingsProvider, ConnectionSettingsTrigger } from '../ConnectionSettingsProvider';
