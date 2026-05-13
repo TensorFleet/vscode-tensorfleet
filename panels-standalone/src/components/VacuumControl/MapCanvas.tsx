@@ -19,6 +19,7 @@ import {
   type ProjectedMapPoint,
 } from "./mapOverlayUtils";
 import { CameraOverlay } from "./CameraOverlay";
+import type { CleanAreaCoverageSnapshot, CleanAreaCoverageOverlayCell } from "./cleanAreaCoverage";
 
 export type MapCanvasTarget = {
   x: number;
@@ -167,6 +168,7 @@ export type MapCanvasProps = {
   cleanAreaRect?: CleanAreaRect | null;
   cleanAreaPreviewPoints?: MapPoint[] | null;
   cleanAreaCurrentIndex?: number;
+  cleanAreaCoverage?: CleanAreaCoverageSnapshot | null;
   cleanAreaToolActive?: boolean;
   cleanAreaVisualState?: CleanAreaVisualState;
   interactionMode?: MapInteractionMode;
@@ -702,6 +704,30 @@ function getCleanAreaScreenRect(rect: CleanAreaRect, bounds: MapBounds, viewport
     top: `${topLeft.y}px`,
     width: `${Math.max(0, bottomRight.x - topLeft.x)}px`,
     height: `${Math.max(0, bottomRight.y - topLeft.y)}px`,
+  };
+}
+
+function getCleanAreaCellScreenRect(
+  cell: CleanAreaCoverageOverlayCell,
+  bounds: MapBounds,
+  viewport: MapViewport,
+): React.CSSProperties {
+  return getCleanAreaScreenRect(cell, bounds, viewport);
+}
+
+function getRobotFootprintStyle(
+  pose: MapPoint,
+  swathWidth: number,
+  bounds: MapBounds,
+  viewport: MapViewport,
+): React.CSSProperties {
+  const position = worldToScreen(pose, bounds, viewport);
+  const diameter = Math.max(8, swathWidth * viewport.scale);
+  return {
+    left: `${position.x}px`,
+    top: `${position.y}px`,
+    width: `${diameter}px`,
+    height: `${diameter}px`,
   };
 }
 
@@ -1941,6 +1967,26 @@ export function MapCanvas(props: MapCanvasProps) {
             ref={depthCanvasRef}
             className="vacuum-map-stage__overlay-canvas vacuum-map-stage__overlay-canvas--depth"
           />
+
+          {props.cleanAreaCoverage ? (
+            <div className="vacuum-clean-area-coverage" aria-hidden="true">
+              {props.cleanAreaCoverage.overlayCells.map((cell) => (
+                <span
+                  key={cell.key}
+                  className={`vacuum-clean-area-coverage__cell vacuum-clean-area-coverage__cell--${cell.state}`}
+                  style={getCleanAreaCellScreenRect(cell, bounds, viewport)}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {props.cleanAreaCoverage && displayedRobotPose ? (
+            <span
+              className="vacuum-clean-area-footprint"
+              aria-hidden="true"
+              style={getRobotFootprintStyle(displayedRobotPose, props.cleanAreaCoverage.swathWidth, bounds, viewport)}
+            />
+          ) : null}
 
           {props.cleanAreaRect && cleanAreaScreenStyle ? (
             <div

@@ -35,6 +35,14 @@ import {
 import {
   mapValetudoCapabilities,
 } from "../panels-standalone/src/vacuum-adapter/backends/valetudo/capabilityMapper";
+import {
+  buildCleanAreaCoverageSnapshot,
+  buildCleanAreaCoverageTarget,
+  markCleanAreaCoveredCells,
+} from "../panels-standalone/src/components/VacuumControl/cleanAreaCoverage";
+import {
+  buildLawnmowerWaypoints,
+} from "../panels-standalone/src/components/VacuumControl/cleanAreaPlanner";
 
 const repoRoot = resolve(import.meta.dir, "..");
 
@@ -340,6 +348,68 @@ function testMapMetadata(): void {
   assert.equal(metadata.lastUpdateAt, 123);
 }
 
+function testCleanAreaCoverageAndPlanning(): void {
+  const grid = parseVacuumMapGrid({
+    info: {
+      width: 20,
+      height: 20,
+      resolution: 0.1,
+      origin: { position: { x: 0, y: 0 }, orientation: { w: 1 } },
+    },
+    header: { frame_id: "map" },
+    data: Array.from({ length: 400 }, () => 0),
+  });
+  assert.ok(grid);
+
+  const rect = { minX: 0.2, minY: 0.2, maxX: 1.2, maxY: 1.5 };
+  const target = buildCleanAreaCoverageTarget(rect, grid);
+  assert.ok(target);
+  assert.equal(target.occupiedCells.length, 0);
+  assert.equal(target.unknownCells.length, 0);
+  assert.ok(target.cleanableCells.length > 100);
+
+  const waypoints = buildLawnmowerWaypoints({
+    rect,
+    spacing: 0.24,
+    swathWidth: 0.3,
+    target,
+  });
+  assert.ok(waypoints.length >= 8, "planner should create dense overlapping passes");
+  assert.ok(Math.min(...waypoints.map((point) => point.x)) <= rect.minX + 0.16, "first lane should cover left edge");
+  assert.ok(Math.max(...waypoints.map((point) => point.x)) >= rect.maxX - 0.16, "last lane should cover right edge");
+  assert.ok(Math.min(...waypoints.map((point) => point.y)) <= rect.minY + 0.16, "pass endpoints should cover lower edge");
+  assert.ok(Math.max(...waypoints.map((point) => point.y)) >= rect.maxY - 0.16, "pass endpoints should cover upper edge");
+
+  const compactRect = { minX: 0.3, minY: 0.3, maxX: 1.0, maxY: 1.0 };
+  const compactTarget = buildCleanAreaCoverageTarget(compactRect, grid);
+  assert.ok(compactTarget);
+  const compactWaypoints = buildLawnmowerWaypoints({
+    rect: compactRect,
+    spacing: 0.12,
+    swathWidth: 0.3,
+    goalCompletionTolerance: 0.28,
+    target: compactTarget,
+  });
+  assert.ok(compactWaypoints.length >= 12, "small square clean areas should get dense passes");
+  assert.ok(Math.min(...compactWaypoints.map((point) => point.y)) <= compactRect.minY + 0.01);
+  assert.ok(Math.max(...compactWaypoints.map((point) => point.y)) >= compactRect.maxY - 0.01);
+  assert.ok(Math.min(...compactWaypoints.map((point) => point.x)) <= compactRect.minX - 0.25);
+  assert.ok(Math.max(...compactWaypoints.map((point) => point.x)) >= compactRect.maxX + 0.25);
+
+  const covered = markCleanAreaCoveredCells({
+    target,
+    coveredCellKeys: new Set(),
+    previousPose: { x: 0.35, y: 0.35, yaw: 0 },
+    currentPose: { x: 1.05, y: 0.35, yaw: 0 },
+    swathWidth: 0.3,
+  });
+  const snapshot = buildCleanAreaCoverageSnapshot({ target, coveredCellKeys: covered, swathWidth: 0.3 });
+  assert.ok(snapshot);
+  assert.ok(snapshot.coveredCells > 0);
+  assert.equal(snapshot.remainingCells + snapshot.coveredCells, snapshot.targetCells);
+  assert.ok(snapshot.overlayCells.every((cell) => Number.isFinite(cell.minX) && Number.isFinite(cell.maxY)));
+}
+
 function testValetudoCommandStub(): void {
   const capabilities = mapValetudoCapabilities([
     "BasicControlCapability",
@@ -417,6 +487,7 @@ async function main(): Promise<void> {
   testCapabilityCoverage();
   testStateMapping();
   testMapMetadata();
+  testCleanAreaCoverageAndPlanning();
   testValetudoCommandStub();
   testPublicContractAndUiBoundary();
   testServiceDiscoveryNormalization();

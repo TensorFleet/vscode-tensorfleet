@@ -341,24 +341,34 @@ Current Clean Area MVP:
 - `MapCanvas` supports drawing, moving, and resizing a rectangular clean-area
   selection.
 - the selection is validated against map bounds and occupancy data.
-- `VacuumControlPanel.tsx` generates a simple lawnmower waypoint preview from
-  the selected rectangle.
-- route generation clips sampled rows to known free cells in the normalized
+- `cleanAreaPlanner.ts` generates a swath-overlap lawnmower waypoint preview
+  from the selected rectangle and chooses the longer axis for passes.
+- route generation clips sampled lanes to known free cells in the normalized
   occupancy grid instead of sending full-width rows through blocked or unknown
   cells.
+- boundary pass goals extend about 0.28 m past the selected edge so Nav2's
+  close-enough goal completion does not skip the last part of each pass.
 - the run dispatches each waypoint through `adapter.sendCommand({ command:
   "go_to_location", ... })`, keeping execution above the adapter boundary.
+- `cleanAreaCoverage.ts` classifies cleanable target cells and excluded
+  occupied/unknown/out-of-bounds cells from the normalized map grid.
+- active clean-area runs use map-frame robot pose history and a 0.30 m
+  simulation swath to mark cleanable cells covered.
+- confirmed clean-area runs freeze the coverage target and render coverage
+  cells from world-space bounds so map/grid updates do not erase covered cells.
+- `MapCanvas` renders coverage cells and the current robot footprint; the
+  sidebar reports covered, remaining, target cleanable, skipped, and waypoint
+  progress metrics.
 - the UI exposes preparing, running, paused, canceling, completed, failed, and
   canceled states with pause, cancel, retry waypoint, skip waypoint, and clear
   controls.
 - mode switching prevents mapping, point navigation, and clean-area runs from
   conflicting with each other.
 
-Treat this as waypoint-based coverage validation, not proof that every cell was
-cleaned. A later true coverage pass must account for cleaning swath width and
-overlap, edge/corner coverage, full obstacle/unknown-space decomposition inside
-the selected area, and progress from actual robot footprint history instead of
-waypoint count alone.
+Treat this as first-pass footprint coverage accounting, still executed by the
+current waypoint runner. Later passes must add configurable swath/overlap,
+runtime-derived goal tolerance, edge/corner coverage, coverage-threshold
+completion, and stronger behavior near obstacles and unknown cells.
 
 Layer 3 now has a working and live-validated TurtleBot4/Nav2 adapter, a mission
 state machine, `Vacuum Control` consumption through `useVacuumAdapter`, focused
@@ -651,10 +661,26 @@ Current Clean Area MVP:
 
 - `MapCanvas` supports rectangular clean-area selection with draw, move, and
   resize interactions.
-- `VacuumControlPanel.tsx` generates a lawnmower waypoint preview and executes
-  it by sending adapter `go_to_location` commands.
-- `cleanAreaPlanner.ts` owns route generation and clips sampled rows to known
+- `cleanAreaPlanner.ts` generates a swath-overlap lawnmower waypoint preview.
+- `VacuumControlPanel.tsx` executes the route by sending adapter
+  `go_to_location` commands.
+- `cleanAreaPlanner.ts` owns route generation and clips sampled lanes to known
   free occupancy-grid cells.
+- Boundary pass goals are extended about 0.28 m past the selected rectangle to
+  compensate for Nav2's goal tolerance, which can otherwise report success
+  while the robot is still short of the actual edge.
+- `cleanAreaCoverage.ts` classifies selected map cells as cleanable, occupied,
+  unknown, or out-of-bounds from the normalized adapter grid.
+- Confirmed clean-area runs freeze that target and store overlay world bounds,
+  so covered cells remain stable across live map updates during execution.
+- Clean-area progress is now footprint-history based: during an active run,
+  map-frame robot poses mark cleanable target cells covered using a 0.30 m
+  simulation swath.
+- `MapCanvas` renders remaining, covered, excluded occupied/unknown cells, and
+  the current robot footprint over the selected clean area.
+- `CleanAreaCard` shows coverage percent, covered area, remaining area, target
+  cleanable area, skipped cells, swath width, and waypoint progress as a
+  secondary metric.
 - Clean-area UI state covers editing, confirmed, preparing, running, paused,
   canceling, completed, failed, and canceled.
 - Operators can pause, cancel, retry a failed waypoint, skip a waypoint, and
@@ -670,9 +696,10 @@ Constraints:
   state surfaces
 - Layer 4 has started because Layer 3 is real, and coverage logic should still
   never touch backend-specific topics directly
-- the current Clean Area MVP is not true coverage accounting; footprint-history
-  progress, swath/overlap, edge/corner handling, and complete area
-  decomposition around obstacles or unknown cells remain future work
+- first-pass footprint-history progress now exists above the adapter boundary;
+  configurable swath/overlap, runtime-derived goal tolerance, edge/corner
+  handling, coverage-threshold completion, and stronger obstacle-adjacent
+  behavior remain future work
 
 ### Layer 5: Room / Zone Semantics
 
@@ -883,8 +910,8 @@ Current right-column card truth:
   is sufficient to attempt goal dispatch
 - mode locking prevents mapping, point navigation, and clean-area runs from
   competing with each other
-- Clean Area MVP progress is waypoint-based; it is not yet true cell-coverage
-  progress from robot footprint history
+- Clean Area progress is now footprint-history based over cleanable map cells;
+  waypoint progress remains visible as a secondary execution metric
 
 Current bridge and overlay truth:
 

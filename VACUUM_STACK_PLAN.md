@@ -67,11 +67,14 @@ change them:
 - Current position: Layer 4 prerequisite (Mapping + Whole Map View) is
   implemented for TurtleBot4/Nav2 simulation with VM-owned auto mapping and
   saved-map load/list plumbing.
-- Clean Area MVP exists above the adapter as waypoint-based coverage
-  validation: the UI selects a bounded region, previews a lawnmower route, and
-  executes waypoints through `go_to_location`.
-- True coverage accounting, dock / undock, and battery-aware return/resume are
-  still Layer 4 follow-ups; row-level obstacle/unknown clipping has started.
+- Clean Area MVP exists above the adapter as footprint-history coverage
+  validation: the UI selects a bounded region, previews a swath-overlap
+  lawnmower route, and executes waypoints through `go_to_location`. Boundary
+  pass goals are extended past the selected edge to compensate for Nav2's
+  close-enough goal completion tolerance.
+- Configurable coverage accounting, dock / undock, and battery-aware
+  return/resume are still Layer 4 follow-ups; lane-level obstacle/unknown
+  clipping and stable covered-cell accounting have started.
 - Coverage (Layer 4) and room/zone semantics (Layer 5) must sit above the
   adapter contract, not below it, so they stay backend-neutral.
 - Real hardware (Layer 6) is the last layer; it targets Valetudo-compatible
@@ -329,7 +332,8 @@ Still out of scope for this prerequisite:
 
 ### Layer 4: Coverage
 
-Status: Clean Area MVP implemented as waypoint-based validation; true coverage,
+Status: Clean Area MVP implemented with adapter-backed waypoint execution and
+first-pass footprint-history coverage progress. Configurable swath/overlap,
 dock / undock, and battery-aware execution are still pending.
 
 Purpose:
@@ -345,13 +349,31 @@ Current Clean Area MVP:
   selection on the normalized map viewport.
 - The clean-area selection is validated against map bounds and occupancy data
   before a run can start.
-- `VacuumControlPanel.tsx` builds a simple lawnmower waypoint preview from the
-  selected rectangle, with spacing derived from map resolution.
+- `cleanAreaPlanner.ts` builds a swath-overlap lawnmower waypoint preview from
+  the selected rectangle, chooses the longer axis for passes, and keeps lane
+  spacing at or below the 0.30 m simulation swath.
+- Boundary pass endpoints are extended by about 0.28 m outside the selected
+  rectangle so Nav2's goal tolerance does not advance to the next waypoint
+  before the robot physically crosses the clean-area edge.
 - Clean-area route generation now uses the normalized occupancy grid to clip
-  each sampled row to known free cells instead of blindly sweeping through
+  each sampled lane to known free cells instead of blindly sweeping through
   occupied or unknown cells.
 - The run executes each waypoint through `adapter.sendCommand({ command:
   "go_to_location", ... })`, so it stays above the adapter boundary.
+- `cleanAreaCoverage.ts` computes cleanable target cells from the selected
+  rectangle, excluding occupied, unknown, and out-of-bounds cells from the
+  coverage denominator.
+- Clean-area progress is now based on covered square meters: robot pose history
+  in map frame is treated as a 0.30 m cleaning swath, and cleanable cells
+  touched by that swath become covered.
+- Confirmed clean-area runs freeze the coverage target and render coverage
+  cells from world-space bounds so live map/grid updates do not make already
+  covered cells disappear during a run.
+- `MapCanvas` renders a coverage overlay for remaining target cells, covered
+  cells, excluded occupied/unknown cells, and the current robot footprint.
+- `CleanAreaCard` shows coverage percentage, covered area, remaining area,
+  target cleanable area, skipped cells, swath width, and secondary waypoint
+  progress.
 - The UI exposes preparing, running, paused, canceling, completed, failed, and
   canceled states; it also supports pause, cancel, retry waypoint, skip
   waypoint, and clear.
@@ -362,12 +384,13 @@ Current Clean Area MVP:
 
 MVP limits:
 
-- this proves adapter-backed waypoint execution over a selected region;
-- it does not prove physical cleaning coverage of every cell;
-- progress is based on waypoint sequence progress, not robot footprint history;
-- clipping is row-level waypoint clipping, not complete area decomposition;
-- swath width, overlap, edge/corner coverage, footprint-history progress,
-  dock / undock, and battery-aware return/resume remain follow-up work.
+- this proves adapter-backed waypoint execution plus first-pass physical
+  coverage accounting over selected free cells;
+- clipping is lane-level waypoint clipping, not complete area decomposition;
+- swath width is fixed for the simulation MVP, and configurable overlap,
+  runtime-derived goal tolerance, edge/corner coverage, stronger
+  obstacle-adjacent behavior, dock / undock, and battery-aware return/resume
+  remain follow-up work.
 
 Layer 4 should be implemented above the `vacuum_adapter` contract so the same
 coverage logic works for any backend that advertises the required capabilities.

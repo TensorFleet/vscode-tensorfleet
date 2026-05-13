@@ -153,11 +153,29 @@ Implemented extension behavior:
 - `MapCanvas` supports drawing, moving, and resizing a rectangular clean-area
   selection on the normalized map viewport;
 - clean-area selection is validated against map bounds and occupancy data;
-- the selected rectangle produces a simple lawnmower waypoint preview;
-- the waypoint planner clips each sampled row to known free occupancy-grid
-  cells, avoiding obvious occupied or unknown cells in the selected area;
+- the selected rectangle produces a swath-overlap lawnmower waypoint preview;
+- the waypoint planner chooses the longer axis for passes, keeps lane spacing
+  at or below the 0.30 m simulation swath, and clips each sampled lane to known
+  free occupancy-grid cells;
+- boundary pass goals are extended about 0.28 m past the selected edge so
+  Nav2's close-enough goal completion does not switch waypoints before the
+  robot crosses the clean-area edge;
 - the run dispatches each waypoint through `adapter.sendCommand({ command:
   "go_to_location", ... })`;
+- `cleanAreaCoverage.ts` classifies the selected rectangle into cleanable,
+  occupied, unknown, and out-of-bounds map cells from the normalized adapter
+  grid;
+- active clean-area runs mark free target cells covered from map-frame pose
+  history using a 0.30 m cleaning swath, so progress is area-based rather than
+  only waypoint-based;
+- confirmed clean-area runs freeze the coverage target and render coverage
+  cells from world-space bounds so live map/grid updates do not erase covered
+  cells during the run;
+- `MapCanvas` overlays remaining, covered, occupied/unknown cells, and the
+  current robot footprint while the Clean Area selection is visible;
+- `CleanAreaCard` shows coverage percentage, covered area, remaining area,
+  target cleanable area, skipped cells, swath width, and secondary waypoint
+  progress;
 - clean-area visual and control states include editing, confirmed, preparing,
   running, paused, canceling, completed, failed, and canceled;
 - the operator can pause, cancel, retry waypoint, skip waypoint, and clear the
@@ -168,13 +186,14 @@ Implemented extension behavior:
 
 MVP limits:
 
-- this validates waypoint execution over a bounded region, not full cleaning
-  coverage;
-- progress is waypoint-based, not based on robot footprint history;
-- current clipping is row-level waypoint clipping, not complete area
+- this now has first-pass footprint-history coverage accounting, but still uses
+  the current waypoint runner for execution;
+- current clipping is lane-level waypoint clipping, not complete area
   decomposition;
-- swath width, overlap, edge/corner handling, footprint-history progress,
-  dock / undock, and battery-aware return/resume remain later Layer 4 work.
+- swath width is fixed at 0.30 m for the simulation MVP;
+- configurable overlap, runtime-derived goal tolerance, edge/corner handling,
+  stronger obstacle-adjacent behavior, dock / undock, and battery-aware
+  return/resume remain later Layer 4 work.
 
 ## Layer 3 Result
 
@@ -871,12 +890,15 @@ footprint-history progress.
 18. [x] Add Clean Area MVP selection, lawnmower waypoint preview, and
     adapter-backed waypoint execution.
 19. [x] Add row-level occupancy-grid clipping to Clean Area waypoint planning.
-20. [ ] Live-validate Clean Area MVP against the VM, including pause, cancel,
+20. [x] Add first-pass footprint-history coverage progress and map overlay
+    above the adapter boundary.
+21. [ ] Live-validate Clean Area MVP against the VM, including pause, cancel,
     retry, skip, failure handling, and mode locking.
-21. [ ] Harden true coverage semantics: swath/overlap, edge/corner handling,
+22. [ ] Harden true coverage semantics: configurable swath/overlap,
+    edge/corner handling,
     complete area decomposition around obstacles/unknown cells, and
-    footprint-history progress.
-22. [ ] Keep the VM integration service plan for Valetudo in Layer 6.
+    coverage-threshold completion.
+23. [ ] Keep the VM integration service plan for Valetudo in Layer 6.
 
 Suggested verification after patching:
 

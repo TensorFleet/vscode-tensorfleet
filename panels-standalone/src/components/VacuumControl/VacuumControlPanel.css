@@ -1069,6 +1069,48 @@ body {
   pointer-events: auto;
 }
 
+.vacuum-clean-area-coverage {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.vacuum-clean-area-coverage__cell {
+  position: absolute;
+  box-shadow: inset 0 0 0 0.5px rgba(10, 18, 22, 0.2);
+}
+
+.vacuum-clean-area-coverage__cell--remaining {
+  background: rgba(255, 206, 113, 0.28);
+}
+
+.vacuum-clean-area-coverage__cell--covered {
+  background: rgba(64, 219, 151, 0.42);
+}
+
+.vacuum-clean-area-coverage__cell--occupied {
+  background: rgba(37, 42, 45, 0.42);
+}
+
+.vacuum-clean-area-coverage__cell--unknown,
+.vacuum-clean-area-coverage__cell--out_of_bounds {
+  background: rgba(148, 154, 160, 0.36);
+}
+
+.vacuum-clean-area-footprint {
+  position: absolute;
+  z-index: 7;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  background: rgba(115, 182, 242, 0.18);
+  box-shadow:
+    0 0 0 1px rgba(22, 47, 69, 0.38),
+    0 0 16px rgba(115, 182, 242, 0.28);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
 .vacuum-clean-area--invalid {
   --clean-area-accent: 255, 179, 92;
   --clean-area-shadow: 35, 18, 4;
@@ -1750,6 +1792,42 @@ body {
   color: var(--vacuum-text-soft);
   font-size: 11px;
   font-weight: 750;
+}
+
+.vacuum-clean-area-coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.vacuum-clean-area-coverage-grid div {
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(115, 182, 242, 0.1);
+  background: rgba(115, 182, 242, 0.045);
+}
+
+.vacuum-clean-area-coverage-grid span {
+  display: block;
+  color: var(--vacuum-text-muted);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.vacuum-clean-area-coverage-grid strong {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--vacuum-text);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .vacuum-clean-area-preview {
