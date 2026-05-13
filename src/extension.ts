@@ -7,7 +7,7 @@ import { VMManagerIntegration } from './vm-manager';
 import {
   VM_CONFIGS,
   type VMConfig,
-} from '../panels-standalone/packages/tensorfleet-util/src/config/vm-config';
+} from 'tensorfleet-auth/vm-config';
 import * as auth from './auth';
 import * as help from './help';
 import { UnifiedStatusCoordinator } from './unified-status';

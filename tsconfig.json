@@ -12,11 +12,16 @@
     "noImplicitReturns": true,
     "noUnusedLocals": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "tensorfleet-auth": ["panels-standalone/packages/tensorfleet-auth/src/index.ts"],
+      "tensorfleet-auth/*": ["panels-standalone/packages/tensorfleet-auth/src/*"]
+    }
   },
   "include": [
     "src",
-    "panels-standalone/packages/tensorfleet-util/src/config"
+    "panels-standalone/packages/tensorfleet-auth/src"
   ],
   "exclude": [
     "src/webviews/**/*"

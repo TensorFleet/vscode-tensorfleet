@@ -36,7 +36,17 @@ const shebangPlugin = () => ({
 
 export default defineConfig({
   resolve: {
-    preserveSymlinks: true
+    preserveSymlinks: true,
+    alias: [
+      {
+        find: /^tensorfleet-auth\/(.*)$/,
+        replacement: path.resolve(__dirname, 'panels-standalone/packages/tensorfleet-auth/src/$1.ts'),
+      },
+      {
+        find: 'tensorfleet-auth',
+        replacement: path.resolve(__dirname, 'panels-standalone/packages/tensorfleet-auth/src/index.ts'),
+      },
+    ],
   },
   // Build-time constants - these are replaced at compile time
   // Usage: if (__DEV__) { ... } - dead code eliminated in prod builds

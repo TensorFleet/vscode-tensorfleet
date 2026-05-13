@@ -11,7 +11,7 @@ import {
   detectConfigFromWorkspace,
   isValidConfigId,
   type VMConfig,
-} from '../panels-standalone/packages/tensorfleet-util/src/config/vm-config';
+} from 'tensorfleet-auth/vm-config';
 import {
   createVmSnapshot,
   fetchVmSnapshot,
@@ -30,7 +30,7 @@ import {
   type VmManagerClientOptions,
   type VmSnapshot,
   type VmState,
-} from '../panels-standalone/packages/tensorfleet-util/src/config/vm-manager-client';
+} from 'tensorfleet-auth/vm-manager-client';
 
 interface VmQuickPickItem extends vscode.QuickPickItem {
   action?: () => Promise<void> | void | Thenable<void>;
