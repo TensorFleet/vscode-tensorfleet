@@ -1365,6 +1365,11 @@ export function VacuumControlPanel() {
     setCleanAreaState("confirmed");
   }
 
+  function clearCleanAreaNavigationTarget(): void {
+    setDraftTarget(null);
+    setSentTarget(null);
+  }
+
   function handleClearCleanArea(): void {
     if (isCleanAreaActive) {
       return;
@@ -1381,6 +1386,7 @@ export function VacuumControlPanel() {
   async function dispatchCleanAreaWaypoint(index: number): Promise<void> {
     const target = cleanAreaWaypoints[index];
     if (!target) {
+      clearCleanAreaNavigationTarget();
       setCleanAreaState("completed");
       return;
     }
@@ -1424,6 +1430,7 @@ export function VacuumControlPanel() {
         return;
       }
     }
+    clearCleanAreaNavigationTarget();
     setCleanAreaState("paused");
   }
 
@@ -1438,6 +1445,7 @@ export function VacuumControlPanel() {
       }
       return;
     }
+    clearCleanAreaNavigationTarget();
     setCleanAreaState("canceled");
   }
 
@@ -1457,6 +1465,7 @@ export function VacuumControlPanel() {
     setCleanAreaCommandError(null);
     if (nextIndex >= cleanAreaWaypoints.length) {
       setCleanAreaCurrentIndex(cleanAreaWaypoints.length);
+      clearCleanAreaNavigationTarget();
       setCleanAreaState("completed");
       return;
     }
@@ -1479,6 +1488,7 @@ export function VacuumControlPanel() {
       const nextIndex = cleanAreaCurrentIndex + 1;
       if (nextIndex >= cleanAreaWaypoints.length) {
         setCleanAreaCurrentIndex(cleanAreaWaypoints.length);
+        clearCleanAreaNavigationTarget();
         setCleanAreaState("completed");
         return;
       }
@@ -1487,15 +1497,18 @@ export function VacuumControlPanel() {
     }
     if (navigationState === "canceled") {
       if (cleanAreaCancelRequestedRef.current || cleanAreaState === "canceling") {
+        clearCleanAreaNavigationTarget();
         setCleanAreaState("canceled");
         setCleanAreaCommandError(null);
         return;
       }
+      clearCleanAreaNavigationTarget();
       setCleanAreaState("failed");
       setCleanAreaCommandError("Clean area run was canceled outside the area workflow.");
       return;
     }
     if (navigationState === "failed" || navigationState === "blocked" || navigationState === "unknown") {
+      clearCleanAreaNavigationTarget();
       setCleanAreaState("failed");
       setCleanAreaCommandError(snapshot.navigation.detail ?? "Navigation failed while cleaning the selected area.");
     }
