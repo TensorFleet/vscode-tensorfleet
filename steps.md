@@ -156,9 +156,11 @@ Layer 2 — Navigation                closed for TurtleBot4/Nav2 simulation
 Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
                                     Valetudo stub reserved for Layer 6
 Layer 4 prerequisite: Mapping + Whole Map View
-                                    implemented with VM-owned auto mapping,
-                                    runtime validation pending
-Layer 4 — Coverage                  planned after runtime mapping validation
+                                    implemented with VM-owned auto mapping
+                                    and saved-map load/list plumbing
+Layer 4 — Coverage                  Clean Area MVP implemented as
+                                    waypoint-based validation; true coverage,
+                                    dock, and battery behavior pending
 Layer 5 — Room / Zone Semantics     planned
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
@@ -222,8 +224,10 @@ Validated `Vacuum Control` operator flows:
   the VS Code webview
 
 The Layer 2 operator slice and Layer 3 adapter slice are validated end-to-end
-through the single-panel `Vacuum Control` workflow. The supporting debug panels
-remain useful for runtime validation, but they are no longer the normal path.
+through the single-panel `Vacuum Control` workflow. The panel now also contains
+the first Layer 4 Clean Area MVP, implemented above the adapter as a rectangular
+lawnmower waypoint workflow. The supporting debug panels remain useful for
+runtime validation, but they are no longer the normal path.
 
 The dock issue remains important, but it should now be treated as a runtime
 caveat:
@@ -235,8 +239,8 @@ caveat:
 
 Explicitly out of the closed Layer 2/Layer 3 simulation slice:
 
-- coverage path planning and lawnmower cleaning (Layer 4)
-- dock / undock workflow and battery-aware execution (Layer 4)
+- Clean Area MVP behavior, true coverage planning, dock / undock workflow, and
+  battery-aware execution (Layer 4)
 - room / zone naming and segmentation (Layer 5)
 - real vacuum hardware and Valetudo integration runtime (Layer 6)
 
@@ -272,15 +276,11 @@ What remains a runtime caveat:
 
 ## Recommended Next Step
 
-Before Layer 4 coverage, rebuild the VM and runtime-test the implemented auto
-mapping milestone against the live VM:
+The Mapping + Whole Map View prerequisite is implemented, including saved-map
+inventory/load state. The next validation focus is the current Clean Area MVP
+and the remaining true-coverage gaps.
 
-```text
-Layer 4 prerequisite: Mapping + Whole Map View
-```
-
-This milestone makes `Vacuum Control` feel like a robot-vacuum product before
-it offers coverage cleaning:
+The mapping milestone makes `Vacuum Control` feel like a robot-vacuum product:
 
 - first valid `/map` opens in a full known map view
 - Fit Map returns to the full `/map` occupancy-grid bounds, not the robot,
@@ -291,13 +291,15 @@ it offers coverage cleaning:
   for map, and mostly unexplored states
 - mapping can be started in auto or manual mode, paused/resumed, finished for
   review, accepted, or discarded through `vacuum_adapter`
+- saved maps can be listed through `snapshot.mapping.savedMaps` and loaded
+  through adapter `load_map`
 - the autonomous exploration loop lives in the VM runtime and continues across
   panel reloads, UI closure, and websocket reconnects
 - manual teleop is available for manual mapping, paused mapping, and
   `needs_assistance` recovery
-- no coverage planning, lawnmower paths, room segmentation, zone editing, dock
-  UI, scheduling, consumables, or Valetudo hardware behavior belongs in this
-  milestone
+- true coverage accounting, room segmentation, zone editing, dock UI,
+  scheduling, consumables, or Valetudo hardware behavior remains outside this
+  milestone; row-level obstacle/unknown clipping has started in Clean Area
 - map readiness metadata is visible: dimensions, resolution,
   free/occupied/unknown/known ratios, approximate known area, last update age,
   and pose availability
@@ -333,16 +335,30 @@ Runtime validation checklist after VM rebuild:
 - accepted maps appear under `/opt/tensorfleet/maps/current_map.*`.
 - repeated failures enter `needs_assistance`.
 
-After this prerequisite is done, the next Layer 4 coverage milestone should be
-Clean Area MVP: select a bounded region, generate a lawnmower preview, execute
-waypoints through `vacuum_adapter`, and expose progress/cancel/failure above the
-adapter contract.
+Current Clean Area MVP:
 
-The initial Clean Area implementation should be treated as waypoint-based
-coverage validation, not proof that every cell was cleaned. A later true
-coverage pass must account for cleaning swath width and overlap, edge/corner
-coverage, obstacle or unknown-space clipping inside the selected area, and
-progress from actual robot footprint history instead of waypoint count alone.
+- `Vacuum Control` has `Mapping`, `Navigate`, and `Clean Area` modes.
+- `MapCanvas` supports drawing, moving, and resizing a rectangular clean-area
+  selection.
+- the selection is validated against map bounds and occupancy data.
+- `VacuumControlPanel.tsx` generates a simple lawnmower waypoint preview from
+  the selected rectangle.
+- route generation clips sampled rows to known free cells in the normalized
+  occupancy grid instead of sending full-width rows through blocked or unknown
+  cells.
+- the run dispatches each waypoint through `adapter.sendCommand({ command:
+  "go_to_location", ... })`, keeping execution above the adapter boundary.
+- the UI exposes preparing, running, paused, canceling, completed, failed, and
+  canceled states with pause, cancel, retry waypoint, skip waypoint, and clear
+  controls.
+- mode switching prevents mapping, point navigation, and clean-area runs from
+  conflicting with each other.
+
+Treat this as waypoint-based coverage validation, not proof that every cell was
+cleaned. A later true coverage pass must account for cleaning swath width and
+overlap, edge/corner coverage, full obstacle/unknown-space decomposition inside
+the selected area, and progress from actual robot footprint history instead of
+waypoint count alone.
 
 Layer 3 now has a working and live-validated TurtleBot4/Nav2 adapter, a mission
 state machine, `Vacuum Control` consumption through `useVacuumAdapter`, focused
@@ -422,12 +438,13 @@ Layer 3 exit validation completed:
    - Confirm failure paths and unsupported command behavior are explicit and
      predictable.
 
-Layer 4 can now start, as long as coverage logic consumes normalized adapter
-state and commands instead of raw backend topics.
+Layer 4 has started with the Clean Area MVP. Further coverage logic must keep
+consuming normalized adapter state and commands instead of raw backend topics.
 
 Out of Layer 3 (defer to later layers):
 
-- coverage path planning and "clean this area" (Layer 4)
+- Clean Area MVP, true coverage planning, and "clean this area" behavior
+  (Layer 4)
 - dock / undock and battery-aware execution beyond what the contract models
   (Layer 4)
 - room / zone naming and segmentation UI (Layer 5)
@@ -463,8 +480,10 @@ Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
                                     Valetudo stub reserved for Layer 6
 Layer 4 prerequisite: Mapping + Whole Map View
                                     implemented for TurtleBot4/Nav2
-                                    simulation; live validation pending
-Layer 4 — Coverage                  planned after mapping validation
+                                    simulation
+Layer 4 — Coverage                  Clean Area MVP implemented as
+                                    waypoint-based validation; true coverage,
+                                    dock, and battery behavior pending
 Layer 5 — Room / Zone Semantics     planned
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
@@ -542,7 +561,8 @@ What now exists in the repo:
   explicit `VacuumMissionStatus`, `VacuumNavigationStatus`, `VacuumReadiness`,
   and capability descriptor types
 - a TurtleBot4/Nav2 backend hook (`useTurtleBot4Nav2Adapter`) that wraps
-  `useNav2Runtime`, reports mission state as `idle` or `navigating`, maps
+  `useNav2Runtime`, reports mission state as `idle`, `navigating`, or
+  `mapping` for the currently implemented TurtleBot4/Nav2 flows, maps
   `go_to_location` to the Nav2 `NavigateToPose` action, and rejects vacuum-only
   commands (`start_cleaning`, `pause`, `resume`, `return_to_dock`, etc.) with
   `unsupported`
@@ -551,6 +571,8 @@ What now exists in the repo:
   `nav_msgs/msg/Path` message
 - normalized `snapshot.map.grid`, `snapshot.map.metadata`, and
   `snapshot.mapping` surfaces for adapter-backed mapping workflows
+- saved-map inventory and load state through `snapshot.mapping.savedMaps`,
+  `activeMapName`, `loadedMapPath`, `loadError`, and the `load_map` command
 - a `useVacuumAdapter` entry point that picks the backend (only TurtleBot4/Nav2
   wired today), plus Valetudo capability, state, command, and runtime-boundary
   mapper stubs reserved for Layer 6
@@ -587,11 +609,12 @@ It should explicitly report unsupported vacuum features such as:
 
 ### Layer 4 Prerequisite: Mapping + Whole Map View
 
-Status: implemented for TurtleBot4/Nav2 simulation; live VM validation pending.
+Status: implemented for TurtleBot4/Nav2 simulation.
 
 Purpose:
 
-- build, view, review, accept, and discard maps before coverage cleaning
+- build, view, review, accept, discard, list, and load maps before true
+  coverage cleaning
 - keep autonomous exploration in the VM runtime, not in React/webview state
 - expose mapping commands and status through `vacuum_adapter`
 - persist accepted maps when the backend supports saving
@@ -601,7 +624,7 @@ Current TurtleBot4/Nav2 behavior:
 - VM runtime publishes `/vacuum_mapping/status` and owns the frontier
   exploration loop.
 - Adapter commands map to VM services for start auto/manual, pause, resume,
-  finish, discard, accept, and save.
+  finish, discard, accept, save, and load.
 - `finish_mapping` stops exploration and enters review.
 - `accept_map` marks the reviewed map current and attempts to save
   `/opt/tensorfleet/maps/current_map.*`.
@@ -609,17 +632,35 @@ Current TurtleBot4/Nav2 behavior:
   vacuum runs are autosaved after a quiet interval while SLAM remains active.
 - `needs_assistance` is first-class for blocked motion, unreachable frontiers,
   stale map, missing pose, repeated failures, or unavailable Nav2.
+- saved-map inventory is carried in `snapshot.mapping.savedMaps`, and loading a
+  saved map is dispatched through `load_map`.
 
 ### Layer 4: Coverage
 
-Status: planned after mapping runtime validation.
+Status: Clean Area MVP implemented as waypoint-based validation; true coverage,
+dock / undock, and battery-aware behavior pending.
 
 Purpose:
 
 - add a coverage path planner that produces a lawnmower pattern over a bounded
-  region
+  region; the current MVP does this as an in-panel waypoint sequence
 - teach the adapter about dock / undock behavior and battery awareness
 - make "clean this area" work end-to-end in simulation through the adapter
+
+Current Clean Area MVP:
+
+- `MapCanvas` supports rectangular clean-area selection with draw, move, and
+  resize interactions.
+- `VacuumControlPanel.tsx` generates a lawnmower waypoint preview and executes
+  it by sending adapter `go_to_location` commands.
+- `cleanAreaPlanner.ts` owns route generation and clips sampled rows to known
+  free occupancy-grid cells.
+- Clean-area UI state covers editing, confirmed, preparing, running, paused,
+  canceling, completed, failed, and canceled.
+- Operators can pause, cancel, retry a failed waypoint, skip a waypoint, and
+  clear the area when a run is inactive.
+- Mapping, navigation, and clean-area modes are mutually locked while a
+  conflicting workflow is active.
 
 Constraints:
 
@@ -627,8 +668,11 @@ Constraints:
   topics
 - coverage should succeed or fail through the adapter's navigation and mission
   state surfaces
-- Layer 4 can now start because Layer 3 is real, but coverage logic should
-  still never touch backend-specific topics directly
+- Layer 4 has started because Layer 3 is real, and coverage logic should still
+  never touch backend-specific topics directly
+- the current Clean Area MVP is not true coverage accounting; footprint-history
+  progress, swath/overlap, edge/corner handling, and complete area
+  decomposition around obstacles or unknown cells remain future work
 
 ### Layer 5: Room / Zone Semantics
 
@@ -766,6 +810,11 @@ Current visible shell components:
   image topics; draggable, minimizable, and hideable
 - `CurrentStateCard` with operator state, readiness evidence grid, and
   pending-state icons
+- mode switcher for `Mapping`, `Navigate`, and `Clean Area`
+- `MappingCard` with auto/manual mapping, review/accept/discard, saved-map
+  inventory, and load controls
+- `CleanAreaCard` with rectangle selection, lawnmower waypoint preview,
+  progress, pause, cancel, retry waypoint, skip waypoint, and clear controls
 - `SelectedDestinationCard` with distance, facing, bearing, and map coordinates
 - `ProgressCard` with progress percentage, indeterminate animation, remaining
   distance, elapsed navigation time, and recovery count
@@ -808,6 +857,10 @@ Current map-canvas truth:
 - robot marker, destination marker labels, route overlay, and staged preview
   line have been restyled for contrast against the occupancy map
 - route and staged preview visibility follow the Plan layer toggle
+- clean-area selection overlays use the same world-to-screen transform as the
+  base map, robot marker, navigation target, and route
+- clean-area route preview renders completed/current/remaining waypoint
+  segments for the active MVP run state
 
 Current right-column card truth:
 
@@ -828,6 +881,10 @@ Current right-column card truth:
 - readiness model: start is gated only on `mapReady` and `preflightReady`;
   `poseReady` no longer blocks the start action because map availability alone
   is sufficient to attempt goal dispatch
+- mode locking prevents mapping, point navigation, and clean-area runs from
+  competing with each other
+- Clean Area MVP progress is waypoint-based; it is not yet true cell-coverage
+  progress from robot footprint history
 
 Current bridge and overlay truth:
 
@@ -865,6 +922,17 @@ Closed Layer 2 topics and services already used by the panel/runtime:
 - `/local_costmap/costmap`
 - `/global_costmap/costmap`
 - `/stop_status`
+- `/vacuum_mapping/status`
+- `/vacuum_mapping/start_auto`
+- `/vacuum_mapping/start_manual`
+- `/vacuum_mapping/pause`
+- `/vacuum_mapping/resume`
+- `/vacuum_mapping/finish`
+- `/vacuum_mapping/discard`
+- `/vacuum_mapping/accept`
+- `/vacuum_mapping/save_map`
+- `/vacuum_mapping/load_map`
+- `/vacuum_mapping/list_maps`
 - `/navigate_to_pose/_action/send_goal`
 - `/navigate_to_pose/_action/get_result`
 - `/navigate_to_pose/_action/cancel_goal`

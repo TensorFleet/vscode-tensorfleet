@@ -65,10 +65,13 @@ change them:
   navigation, then the vacuum adapter contract, then coverage, then room/zone
   semantics, and finally real hardware.
 - Current position: Layer 4 prerequisite (Mapping + Whole Map View) is
-  implemented for TurtleBot4/Nav2 simulation with VM-owned auto mapping;
-  rebuild and live runtime validation are pending.
-- Coverage starts after the user can reliably view, build, review, persist, and
-  reuse the current known map.
+  implemented for TurtleBot4/Nav2 simulation with VM-owned auto mapping and
+  saved-map load/list plumbing.
+- Clean Area MVP exists above the adapter as waypoint-based coverage
+  validation: the UI selects a bounded region, previews a lawnmower route, and
+  executes waypoints through `go_to_location`.
+- True coverage accounting, dock / undock, and battery-aware return/resume are
+  still Layer 4 follow-ups; row-level obstacle/unknown clipping has started.
 - Coverage (Layer 4) and room/zone semantics (Layer 5) must sit above the
   adapter contract, not below it, so they stay backend-neutral.
 - Real hardware (Layer 6) is the last layer; it targets Valetudo-compatible
@@ -124,8 +127,10 @@ Layer 3 — Vacuum Adapter            (closed for TurtleBot4/Nav2 simulation,
                                      Valetudo stub reserved for Layer 6)
 Layer 4 prerequisite: Mapping + Whole Map View
                                      (implemented for TurtleBot4/Nav2
-                                      simulation; live validation pending)
-Layer 4 — Coverage                  (planned after mapping validation)
+                                      simulation)
+Layer 4 — Coverage                  (Clean Area MVP implemented as
+                                     waypoint-based validation; true coverage,
+                                     dock, and battery behavior pending)
 Layer 5 — Room / Zone Semantics     (planned)
 Layer 6 — Real Hardware (Valetudo)  (planned)
 ```
@@ -241,8 +246,7 @@ Current truth (April 30, 2026):
 
 ### Layer 4 Prerequisite: Mapping + Whole Map View
 
-Status: implemented for the TurtleBot4/Nav2 simulation path; live VM rebuild
-and runtime validation are pending.
+Status: implemented for the TurtleBot4/Nav2 simulation path.
 
 Purpose:
 
@@ -298,6 +302,11 @@ Current implementation:
 - After an accepted map is saved, later `/map` growth from normal destination
   or vacuum runs is autosaved after a quiet interval, as long as SLAM remains
   active.
+- `snapshot.mapping.savedMaps`, `activeMapName`, `loadedMapPath`, and
+  `loadError` expose saved-map inventory and load state.
+- The TurtleBot4/Nav2 adapter maps `load_map` through the VM mapping runtime;
+  `MappingCard` can load a saved map back into the current mapping/navigation
+  context.
 
 Boundary rule:
 
@@ -309,8 +318,8 @@ Boundary rule:
 
 Still out of scope for this prerequisite:
 
-- coverage path planning;
-- lawnmower paths;
+- true coverage accounting;
+- robot-footprint coverage history;
 - room segmentation;
 - zone/no-go editors;
 - dock UI;
@@ -320,13 +329,45 @@ Still out of scope for this prerequisite:
 
 ### Layer 4: Coverage
 
-Status: planned after mapping runtime validation.
+Status: Clean Area MVP implemented as waypoint-based validation; true coverage,
+dock / undock, and battery-aware execution are still pending.
 
 Purpose:
 
 - add a coverage path planner that produces a lawnmower pattern over a region;
 - teach the adapter about dock / undock behavior and battery awareness;
 - make "clean this area" work end-to-end in simulation through the adapter.
+
+Current Clean Area MVP:
+
+- `Vacuum Control` has `Mapping`, `Navigate`, and `Clean Area` modes.
+- `MapCanvas` supports drawing, moving, and resizing a rectangular clean-area
+  selection on the normalized map viewport.
+- The clean-area selection is validated against map bounds and occupancy data
+  before a run can start.
+- `VacuumControlPanel.tsx` builds a simple lawnmower waypoint preview from the
+  selected rectangle, with spacing derived from map resolution.
+- Clean-area route generation now uses the normalized occupancy grid to clip
+  each sampled row to known free cells instead of blindly sweeping through
+  occupied or unknown cells.
+- The run executes each waypoint through `adapter.sendCommand({ command:
+  "go_to_location", ... })`, so it stays above the adapter boundary.
+- The UI exposes preparing, running, paused, canceling, completed, failed, and
+  canceled states; it also supports pause, cancel, retry waypoint, skip
+  waypoint, and clear.
+- Mapping, navigation, and clean-area mode switches lock each other while a
+  conflicting workflow is active.
+- Teleop remains available outside active clean-area runs and is disabled while
+  the waypoint run is active.
+
+MVP limits:
+
+- this proves adapter-backed waypoint execution over a selected region;
+- it does not prove physical cleaning coverage of every cell;
+- progress is based on waypoint sequence progress, not robot footprint history;
+- clipping is row-level waypoint clipping, not complete area decomposition;
+- swath width, overlap, edge/corner coverage, footprint-history progress,
+  dock / undock, and battery-aware return/resume remain follow-up work.
 
 Layer 4 should be implemented above the `vacuum_adapter` contract so the same
 coverage logic works for any backend that advertises the required capabilities.
@@ -390,8 +431,12 @@ Layer 6 also owns the VM-managed real-vacuum runtime:
 
 ### Simulation-complete slice (Layers 4–5)
 
-- coverage (lawnmower) cleaning of a selected area works end-to-end in
-  simulation through the adapter;
+- Clean Area MVP can execute a selected rectangular lawnmower waypoint sequence
+  through the adapter;
+- row-level clean-area waypoint generation clips sampled rows to known free
+  cells in the occupancy grid;
+- true coverage cleaning accounts for robot footprint history, swath width,
+  overlap, edge/corner handling, and full obstacle/unknown-space decomposition;
 - dock / undock and battery-aware behavior are visible through the adapter
   state;
 - the map is divided into named zones and "clean room 3" translates into
@@ -480,6 +525,11 @@ Current extension truth for the closed Layer 2/Layer 3 simulation slice:
   it discovers image topics from the bridge and prefers the OAK-D RGB preview
   stream (`/oakd/rgb/preview/image_raw`); camera access validates one of the
   first usable vertical slice success criteria (pose, map, and camera visible)
+- `MappingCard` exposes saved-map inventory and load behavior through
+  adapter-level `snapshot.mapping.savedMaps` and `load_map`
+- `Clean Area` mode is the current Layer 4 MVP: it selects a bounded rectangle,
+  previews lawnmower waypoints, and drives them through adapter
+  `go_to_location` commands
 - live VS Code webview validation covers connect, map render, target select,
   send goal, progress visibility, cancel, terminal state, failure paths,
   overlays, teleop, and second-goal-after-cancel behavior
@@ -490,16 +540,18 @@ Remaining caveats for this slice:
   failed
 - clear-space validation is still required before treating navigation failure
   as a software defect
+- Clean Area MVP is waypoint validation, not a guarantee of complete cell
+  coverage
 
 Practical implication:
 
 - the TurtleBot4/Nav2 operator flow is proven through the current extension
   panel and supporting runtime surfaces;
 - Layer 3 adapter work is closed for the TurtleBot4/Nav2 simulation path;
-- coverage (Layer 4), room / zone semantics (Layer 5), and real hardware
+- true coverage accounting, room / zone semantics (Layer 5), and real hardware
   (Layer 6) all sit above the adapter contract;
-- docking, battery, charging, scheduling, consumables, and OpenClaw
-  integration all belong to Layer 4 or later, above the adapter contract.
+- docking, battery, charging, scheduling, consumables, and OpenClaw integration
+  all belong to later Layer 4+ work above the adapter contract.
 
 ## Role Of The VS Code Extension
 
@@ -839,7 +891,7 @@ Completed exit validation:
 
 Out of Layer 3:
 
-- coverage path planning (Layer 4)
+- Clean Area MVP and true coverage path planning (Layer 4)
 - dock / undock and battery-aware execution beyond what the contract models
   (Layer 4)
 - room / zone naming and segmentation UI (Layer 5)
@@ -863,8 +915,10 @@ Layer 4 adds the first cleaning behavior above the adapter contract.
 
 Scope:
 
-- a coverage path planner that produces a lawnmower pattern over a bounded
-  region;
+- the current Clean Area MVP produces a simple lawnmower waypoint sequence over
+  a bounded rectangle;
+- true coverage planning must add coverage accounting beyond the MVP waypoint
+  sequence;
 - dock / undock awareness in the adapter state and commands;
 - battery-aware execution, so the robot can return to dock when needed and
   resume from where it stopped;
