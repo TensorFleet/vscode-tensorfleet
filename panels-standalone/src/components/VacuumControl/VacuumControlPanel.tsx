@@ -1599,10 +1599,11 @@ export function VacuumControlPanel() {
             cleanAreaCurrentIndex={cleanAreaCurrentIndex}
             cleanAreaToolActive={cleanAreaToolActive}
             cleanAreaVisualState={cleanAreaVisualState}
+            interactionMode={activeMode}
             routeVisualState={routeVisualState}
             isGoalActive={isGoalActive}
             mappingState={mappingState}
-            disableTargetSelection={isMappingWorkflowActive || cleanAreaToolActive || isCleanAreaActive}
+            disableTargetSelection={activeMode !== "navigation" || isMappingWorkflowActive || cleanAreaToolActive || isCleanAreaActive}
             targetDistance={destinationDistance}
             adapterMapGrid={snapshot.map.grid}
             adapterMapMetadata={snapshot.map.metadata}

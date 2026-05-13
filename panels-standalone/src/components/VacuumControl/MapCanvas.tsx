@@ -142,6 +142,7 @@ type CleanAreaInteractionState = {
 };
 
 export type RouteVisualState = "idle" | "staged" | "active" | "completed" | "failed" | "canceled";
+export type MapInteractionMode = "mapping" | "navigation" | "clean";
 
 type RasterLayerKey = "map" | "globalCostmap" | "localCostmap";
 type RasterLayerMode = "map" | "global-costmap" | "local-costmap";
@@ -168,6 +169,7 @@ export type MapCanvasProps = {
   cleanAreaCurrentIndex?: number;
   cleanAreaToolActive?: boolean;
   cleanAreaVisualState?: CleanAreaVisualState;
+  interactionMode?: MapInteractionMode;
   routeVisualState: RouteVisualState;
   isGoalActive: boolean;
   mappingState: MappingSessionState;
@@ -770,6 +772,7 @@ function getRasterLayerStyle(
 }
 
 function getMapPrompt(args: {
+  interactionMode: MapInteractionMode;
   routeVisualState: RouteVisualState;
   hasTarget: boolean;
   mappingState: MappingSessionState;
@@ -777,6 +780,9 @@ function getMapPrompt(args: {
   cleanAreaVisualState: CleanAreaVisualState;
   hasCleanArea: boolean;
 }): string {
+  if (args.interactionMode === "mapping") {
+    return args.mappingState === "saved" ? "Current map ready" : "Mapping";
+  }
   if (args.cleanAreaVisualState === "preparing") {
     return "Preparing clean area";
   }
@@ -824,6 +830,9 @@ function getMapPrompt(args: {
   }
   if (args.routeVisualState === "canceled") {
     return "Run canceled";
+  }
+  if (args.interactionMode === "clean") {
+    return "Clean Area";
   }
   return args.hasTarget ? "Destination selected" : "Click to choose destination";
 }
@@ -1336,9 +1345,12 @@ export function MapCanvas(props: MapCanvasProps) {
     };
   }, [isLayerPickerOpen]);
 
-  const hasTarget = props.draftTarget != null;
-  const displayedTarget = props.sentTarget ?? props.draftTarget;
+  const interactionMode = props.interactionMode ?? "navigation";
+  const canShowNavigationTarget = interactionMode === "navigation" || props.isGoalActive;
+  const displayedTarget = canShowNavigationTarget ? props.sentTarget ?? props.draftTarget : null;
+  const hasTarget = displayedTarget != null;
   const targetSelectionDisabled =
+    interactionMode !== "navigation" ||
     props.disableTargetSelection ||
     Boolean(props.cleanAreaToolActive) ||
     props.mappingState === "mapping" ||
@@ -1400,6 +1412,7 @@ export function MapCanvas(props: MapCanvasProps) {
     ? getCleanAreaScreenRect(props.cleanAreaRect, bounds, viewport)
     : null;
   const mapPrompt = getMapPrompt({
+    interactionMode,
     routeVisualState: props.routeVisualState,
     hasTarget,
     mappingState: props.mappingState,
@@ -1985,7 +1998,7 @@ export function MapCanvas(props: MapCanvasProps) {
           })() : null}
         </div>
 
-        {!props.draftTarget && !props.isGoalActive && !targetSelectionDisabled ? (
+        {interactionMode === "navigation" && !props.draftTarget && !props.isGoalActive && !targetSelectionDisabled ? (
           <div className="vacuum-map-stage__center-prompt">
             <strong>Choose destination</strong>
             <span>{bounds.hasLiveMap ? "Click the map to stage a run" : "Live map unavailable, placeholder ready"}</span>
