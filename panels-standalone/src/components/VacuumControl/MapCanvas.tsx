@@ -345,40 +345,44 @@ function parseOccupancyMap(message: Record<string, unknown> | null): OccupancyMa
 
 function drawPlaceholderMap(canvas: HTMLCanvasElement): void {
   const size = 320;
-  const context = canvas.getContext("2d");
-  if (!context) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
     return;
   }
 
   canvas.width = size;
   canvas.height = size;
 
-  const image = context.createImageData(size, size);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const index = (y * size + x) * 4;
-      const mainCorridor = Math.sin((x + 28) * 0.024) + Math.cos((y - 34) * 0.028);
-      const sideWalls = Math.sin((x - y) * 0.06) + Math.cos((x + y) * 0.04);
-      const occupied =
-        mainCorridor > 1.33 ||
-        sideWalls > 1.46 ||
-        x < 12 ||
-        y < 12 ||
-        x > size - 12 ||
-        y > size - 12;
+  const wallColor = `rgb(${MAP_OCCUPIED_COLOR.r},${MAP_OCCUPIED_COLOR.g},${MAP_OCCUPIED_COLOR.b})`;
+  const freeColor = `rgb(${MAP_FREE_COLOR.r},${MAP_FREE_COLOR.g},${MAP_FREE_COLOR.b})`;
 
-      const r = occupied ? MAP_OCCUPIED_COLOR.r : MAP_FREE_COLOR.r;
-      const g = occupied ? MAP_OCCUPIED_COLOR.g : MAP_FREE_COLOR.g;
-      const b = occupied ? MAP_OCCUPIED_COLOR.b : MAP_FREE_COLOR.b;
+  ctx.fillStyle = wallColor;
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = freeColor;
 
-      image.data[index] = r;
-      image.data[index + 1] = g;
-      image.data[index + 2] = b;
-      image.data[index + 3] = 255;
-    }
+  // Rooms: living room, kitchen, hallway, bedroom 1, bedroom 2
+  const rooms = [
+    { x: 12, y: 12, w: 176, h: 144 },
+    { x: 200, y: 12, w: 108, h: 144 },
+    { x: 12, y: 168, w: 296, h: 40 },
+    { x: 12, y: 220, w: 136, h: 88 },
+    { x: 160, y: 220, w: 148, h: 88 },
+  ];
+  for (const r of rooms) {
+    ctx.fillRect(r.x, r.y, r.w, r.h);
   }
 
-  context.putImageData(image, 0, 0);
+  // Doorways connecting the rooms
+  const doorways = [
+    { x: 80, y: 156, w: 48, h: 14 },
+    { x: 228, y: 156, w: 44, h: 14 },
+    { x: 52, y: 208, w: 40, h: 14 },
+    { x: 196, y: 208, w: 40, h: 14 },
+    { x: 188, y: 52, w: 14, h: 56 },
+  ];
+  for (const d of doorways) {
+    ctx.fillRect(d.x, d.y, d.w, d.h);
+  }
 }
 
 function clearCanvas(canvas: HTMLCanvasElement): void {
