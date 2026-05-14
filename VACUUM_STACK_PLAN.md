@@ -2,176 +2,202 @@
 
 ## Purpose
 
-This document is the planning source of truth for the vacuum stack.
+This document is the architecture and planning source of truth for the vacuum
+stack.
 
-It covers both:
+It holds the pieces together:
 
-- the long-term product and architecture direction; and
-- the current TurtleBot4-based simulation and VM integration reality.
+- product goal
+- backend boundary
+- layer plan
+- capability model
+- adapter contract
+- current layer status
+- future milestones
+
+Use `steps.md` for current implementation progress and validation. Use
+`extension.md` for VS Code extension files, panels, topics, endpoints, and
+extension follow-up work.
 
 ## Goal
 
 Build the software stack for a future robot vacuum before buying hardware.
 
-The near-term goal is:
+Near-term goal:
 
-- a simulated robot appears in our system;
-- it is controllable through ROS 2;
-- it can navigate in simulation;
-- the VS Code extension and related panels are useful operator surfaces;
-- we avoid coupling product behavior to TurtleBot4-specific APIs.
+- a simulated robot appears in our system
+- it is controllable through ROS 2
+- it can navigate in simulation
+- the VS Code extension and panels are useful operator surfaces
+- product behavior does not couple to TurtleBot4-specific APIs
 
-The longer-term goal is:
+Longer-term goal:
 
-- a vacuum-facing contract exists above the robot backend;
+- a vacuum-facing contract exists above robot backends
 - docking, pause/resume, room cleaning, battery-aware execution, and mission
-  state fit naturally into that contract;
-- the same higher-level product logic can later move from TurtleBot4
-  simulation to a real vacuum backend with minimal churn.
+  state fit naturally into that contract
+- higher-level product logic can move from TurtleBot4 simulation to a real
+  vacuum backend with minimal churn
+- simulation becomes the regression harness for later hardware work
+- the system remains local-first
 
 TurtleBot4 is not the product. It is the first development backend.
 
 ## Product Boundary
 
-TurtleBot4 is the first development backend.
-
-The product-facing boundary is a repo-owned vacuum contract.
+The product-facing boundary is a repo-owned `vacuum_adapter` contract.
 
 Backend differences must surface through:
 
-- capabilities;
-- normalized state; and
-- explicit unsupported operations.
+- capabilities
+- normalized state
+- explicit unsupported operations
 
 No client above the adapter may depend on TurtleBot4-specific topics, helper
-services, or node APIs. TurtleBot4-specific helpers such as
-`TurtleBot4Navigator` are useful backend implementation details because they
-add docking and undocking behavior on top of Nav2, but they must stay private
-to the TurtleBot4 backend and must not define the public contract. See the
-current TurtleBot4 docs for navigation and `TurtleBot4Navigator` behavior:
-[Navigation](https://turtlebot.github.io/turtlebot4-user-manual/tutorials/navigation.html),
-[TurtleBot 4 Navigator](https://turtlebot.github.io/turtlebot4-user-manual/tutorials/turtlebot4_navigator.html).
+services, node APIs, Nav2 internals, or Valetudo class names.
+
+TurtleBot4-specific helpers such as `TurtleBot4Navigator` may be useful backend
+implementation details because they add docking and undocking behavior on top
+of Nav2. They must stay private to the TurtleBot4 backend and must not define
+the public contract.
+
+Reference docs for TurtleBot4 behavior:
+
+- [Navigation](https://turtlebot.github.io/turtlebot4-user-manual/tutorials/navigation.html)
+- [TurtleBot 4 Navigator](https://turtlebot.github.io/turtlebot4-user-manual/tutorials/turtlebot4_navigator.html)
+
+## Architecture Direction
+
+Current target architecture:
+
+```text
+VS Code extension / product UI
+  -> vacuum_adapter contract
+     -> TurtleBot4/Nav2 backend adapter
+        -> VM TurtleBot4 simulation runtime
+
+     -> Valetudo backend adapter
+        -> VM-managed Valetudo integration runtime
+           -> real Valetudo-compatible vacuum on local network
+```
+
+VM boundary:
+
+```text
+VM owns backend runtime/integration services.
+vacuum_adapter owns product-facing contract/capabilities/state.
+```
+
+In the VM:
+
+- TurtleBot4/Nav2 runtime
+- Foxglove/ROS bridge
+- Valetudo integration runtime
+- MQTT broker/client if needed
+- hardware discovery/config
+- runtime health checks
+
+Outside VM / shared product layer:
+
+- `vacuum_adapter` contract
+- normalized state model
+- capability descriptors
+- command semantics
+- UI-facing assumptions
+- coverage and room/zone logic above the adapter
 
 ## Planning Decisions
 
-These are the current working decisions unless we find a concrete reason to
-change them:
+Current working decisions:
 
 - ROS 2 is the foundation.
 - TurtleBot4 is the first backend, not the public product contract.
-- The public boundary should be a repo-owned vacuum-facing interface, not raw
-  TurtleBot4 topics.
-- Layers are built in order: sensors first, then localization + map, then
-  navigation, then the vacuum adapter contract, then coverage, then room/zone
-  semantics, and finally real hardware.
-- Current position: Layer 4 prerequisite (Mapping + Whole Map View) is
-  implemented for TurtleBot4/Nav2 simulation with VM-owned auto mapping and
-  saved-map load/list plumbing.
-- Clean Area MVP exists above the adapter: the UI selects a bounded region,
-  previews occupancy-clipped swath-overlap lawnmower waypoints, executes each
-  waypoint through `go_to_location`, and reports footprint-history coverage
-  progress over normalized map cells.
-- Coverage now uses a product-level coverage profile for swath width, overlap,
-  navigation goal tolerance, boundary margin, minimum useful region size, and
-  completion threshold. The default profile preserves the TurtleBot4 simulation
-  behavior.
-- Boundary pass goals are extended from the configured navigation tolerance
-  plus boundary margin, and the current UI treats 95% covered cleanable cells
-  as the completion threshold.
-- Connected cleanable-region decomposition has started for coverage accounting
-  and tiny-region skipping. Component-level route planning, stronger
-  edge/corner behavior, dock / undock execution, and battery-aware
-  return/resume are still Layer 4 follow-ups.
-- Coverage (Layer 4) and room/zone semantics (Layer 5) must sit above the
-  adapter contract, not below it, so they stay backend-neutral.
-- Real hardware (Layer 6) is the last layer; it targets Valetudo-compatible
-  vacuums and reuses the same adapter contract and UI that were validated in
-  simulation.
-- The first real-hardware path should target Valetudo-compatible vacuums.
-- Valetudo should influence the capability model from the start, but it should
-  not define the public contract.
-- Valetudo-specific capability names/classes should stay inside the Valetudo
-  backend adapter.
-- Capabilities should be descriptors with support status, source, backend
-  mapping, commands, attributes, and notes, not simple booleans only.
+- The public boundary is repo-owned and vacuum-facing, not raw TurtleBot4
+  topics.
+- Layers are built bottom-up: sensors, localization/map, navigation, adapter,
+  coverage, room/zone semantics, real hardware.
+- Higher layers must depend on adapter capabilities and normalized state.
 - Product/UI clients must branch on capability flags, not backend names.
-- Public `vacuum_adapter` contract files should own backend-neutral state and
-  command types; backend/runtime-specific imports belong inside backend mappers.
-- Setter commands should have explicit payload shapes rather than being modeled
-  as payload-free simple commands.
+- Public contract files own backend-neutral state and command types.
+- Backend/runtime-specific imports belong inside backend mappers.
+- Setter commands use explicit payload shapes.
 - Long-running robot behavior belongs in the VM runtime or backend process, not
-  React/webview hooks. UI and adapter code issue commands and render state.
-- Auto mapping is exposed through backend-neutral capabilities and commands:
-  `mapping_session`, `auto_mapping`, `start_mapping`, `pause_mapping`,
-  `resume_mapping`, `finish_mapping`, `discard_mapping`, and `accept_map`.
-- `finish_mapping` stops exploration and enters review. `accept_map` marks the
-  reviewed map current and reports whether persistence succeeded or remains
-  session-level.
-- The VM should eventually run the Valetudo integration runtime so users do not
-  need to install local integration tooling.
-- The VM may host MQTT/client/discovery/adapter services, but it should not own
+  React/webview hooks.
+- Auto mapping is VM-owned and exposed through backend-neutral capabilities and
+  commands.
+- Coverage and room/zone semantics sit above the adapter, not below it.
+- Real hardware is the last layer and targets Valetudo-compatible vacuums first.
+- Valetudo influences capability design, but does not define the public
+  contract.
+- Valetudo-specific capability names/classes stay private to the Valetudo
+  backend adapter.
+- The VM may host MQTT/client/discovery/adapter services, but it does not own
   the public `vacuum_adapter` contract.
-- Docs should say "Valetudo integration runtime in the VM," not imply that
-  Valetudo itself necessarily runs in the VM.
-- First Valetudo hardware validation should prove reachability, status,
-  capabilities, normalized state, and one basic command before room/zone
-  workflows.
-- The contract should reuse standard ROS 2 and Nav2 interfaces where they
-  already fit.
+- Say "Valetudo integration runtime in the VM," not "Valetudo in the VM."
+- First Valetudo hardware validation proves reachability, status, capabilities,
+  normalized state, and one basic command before room/zone workflows.
+- Standard ROS 2 and Nav2 interfaces should be reused where they fit.
 - Simulation should be realistic enough to validate workflow, not just expose
   `cmd_vel`.
-- Simulation should become the regression harness for later hardware work.
-- The system should be local-first.
+
+Current position:
+
+- Layer 0 is validated.
+- Layer 1 is running.
+- Layer 2 is closed for TurtleBot4/Nav2 simulation.
+- Layer 3 is closed for TurtleBot4/Nav2 simulation.
+- The Layer 4 prerequisite, Mapping + Whole Map View, is implemented.
+- Layer 4 Clean Area MVP exists above the adapter.
+- Layer 5 and Layer 6 are planned.
 
 ## Current Layer Structure
 
-The stack is built bottom-up in seven layers. Each layer is stable before the
-next one starts, and every higher layer depends on the lower ones being
-trustworthy.
-
 ```text
-Layer 0 — Sensors                   (validated)
-Layer 1 — Localization + Map        (running)
-Layer 2 — Navigation                (closed for TurtleBot4/Nav2 simulation)
-Layer 3 — Vacuum Adapter            (closed for TurtleBot4/Nav2 simulation,
-                                     Valetudo stub reserved for Layer 6)
+Layer 0 — Sensors                   validated
+Layer 1 — Localization + Map        running
+Layer 2 — Navigation                closed for TurtleBot4/Nav2 simulation
+Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
+                                    Valetudo stub reserved for Layer 6
 Layer 4 prerequisite: Mapping + Whole Map View
-                                     (implemented for TurtleBot4/Nav2
-                                      simulation)
-Layer 4 — Coverage                  (Clean Area MVP implemented with
-                                     occupancy-clipped waypoints and
-                                     footprint-history progress; production
-                                     coverage, dock, and battery behavior
-                                     pending)
-Layer 5 — Room / Zone Semantics     (planned)
-Layer 6 — Real Hardware (Valetudo)  (planned)
+                                    implemented for TurtleBot4/Nav2 simulation
+Layer 4 — Coverage                  Clean Area MVP implemented with
+                                    occupancy-clipped waypoints and
+                                    footprint-history progress; production
+                                    coverage, dock, and battery behavior
+                                    pending
+Layer 5 — Room / Zone Semantics     planned
+Layer 6 — Real Hardware (Valetudo)  planned
 ```
 
-### Layer 0: Sensors
+Each layer should be stable before the next layer depends on it.
+
+## Layer 0: Sensors
 
 Status: validated.
 
 Meaning:
 
-- the simulated TurtleBot4 boots reliably in the VM;
-- camera, lidar, and depth point cloud streams are visible in the extension;
-- the robot exists and publishes sensor data.
+- simulated TurtleBot4 boots reliably in the VM
+- camera, lidar, and depth point cloud streams are visible in the extension
+- the robot exists and publishes sensor data
 
-### Layer 1: Localization + Map
+Layer 0 proves the robot exists as an observable runtime object.
+
+## Layer 1: Localization + Map
 
 Status: running.
 
 Meaning:
 
-- SLAM Toolbox runs in the VM and builds a map as the robot moves;
-- the robot knows where it is in that map;
-- the TF tree `map -> odom -> base_link` is continuously available;
-- `/map`, `/odom`, `/tf`, and `/tf_static` are observable from the extension.
+- SLAM Toolbox runs in the VM and builds a map as the robot moves
+- the robot knows where it is in that map
+- TF tree `map -> odom -> base_link` is continuously available
+- `/map`, `/odom`, `/tf`, and `/tf_static` are observable from the extension
 
-Layer 1 is the foundation every higher layer assumes. Coverage and room/zone
-semantics especially depend on a stable map frame and consistent pose.
+Layer 1 is the foundation for navigation, coverage, room/zone semantics, and
+later hardware regression.
 
-### Layer 2: Navigation
+## Layer 2: Navigation
 
 Status: closed for TurtleBot4/Nav2 simulation.
 
@@ -190,21 +216,20 @@ connect -> render map -> select target -> send goal -> observe progress/result
 -> cancel/clear/retry as needed
 ```
 
-Main surface:
-
-- `Vacuum Control`
-
 Backend:
 
 - TurtleBot4 simulation in VM
 - Nav2 runtime
 - Foxglove bridge
 
-Remaining runtime caveat:
+Current caveat:
 
-- dock-blocked starts still require clear-space validation;
+- dock-blocked starts still require clear-space validation
 
-### Layer 3: Vacuum Adapter
+Layer 2 is closed as a simulation operator slice. Further docking/undocking
+behavior belongs to Layer 4 mission execution, not Layer 2 navigation closure.
+
+## Layer 3: Vacuum Adapter
 
 Status: closed for TurtleBot4/Nav2 simulation; Valetudo backend interface stub
 reserved for Layer 6.
@@ -212,508 +237,229 @@ reserved for Layer 6.
 Purpose:
 
 - normalize TurtleBot4/Nav2 runtime behavior into a `vacuum_adapter` contract
-  with `VacuumState` and `VacuumCommands` shapes;
-- make the extension talk to the contract, not raw ROS topics;
-- introduce an explicit mission state machine covering
-  `idle / navigating / cleaning / paused / returning / charging`;
-- support a TurtleBot4/Nav2 backend adapter first and a Valetudo backend
-  adapter second;
-- make clients branch on capability descriptors, not backend names;
-- keep the public contract types backend-neutral while backend adapters
-  normalize Nav2, Valetudo, or other runtime details.
+- make the extension talk to vacuum concepts, not raw ROS topics
+- introduce explicit capabilities, normalized state, and command results
+- carry a mission state machine:
+  `idle / navigating / cleaning / paused / returning / charging`
+- support TurtleBot4/Nav2 first and Valetudo later
 
-Layer 3 is the first layer that product clients depend on. Layers 4, 5, and 6
-all assume this contract already exists.
+Current implementation:
 
-Current truth (May 14, 2026):
+- public `VacuumAdapter` surface and `useVacuumAdapter` hook live under
+  `panels-standalone/src/vacuum-adapter/`
+- TurtleBot4/Nav2 backend `useTurtleBot4Nav2Adapter` wraps `useNav2Runtime`
+- adapter snapshot exposes availability, identity, pose, map, navigation,
+  mapping, mission, battery, readiness, and capabilities
+- `Vacuum Control` consumes the adapter instead of raw Nav2 runtime
+- `go_to_location` and `cancel_navigation` dispatch through
+  `adapter.sendCommand`
+- command dispatch is extracted into a pure helper for regression tests
+- vacuum-only commands unsupported by TurtleBot4/Nav2 fail explicitly
+- Valetudo backend stub defines capability, state, command, and runtime-boundary
+  mapper shapes
+- `bun run test:vacuum-adapter` covers the adapter boundary
 
-- the public `VacuumAdapter` surface and a `useVacuumAdapter` hook live under
-  `panels-standalone/src/vacuum-adapter/`;
-- a TurtleBot4/Nav2 backend (`useTurtleBot4Nav2Adapter`) wraps
-  `useNav2Runtime` and emits the normalized snapshot, mission state, and
-  command dispatcher;
-- TurtleBot4/Nav2 command dispatch is extracted into a pure helper so
-  supported commands and explicit unsupported failures can be tested without
-  mounting React hooks;
-- `Vacuum Control` reads snapshot fields and dispatches `go_to_location` and
-  `cancel_navigation` through `adapter.sendCommand(...)` instead of calling
-  Nav2 runtime methods directly;
-- vacuum-only commands (`start_cleaning`, `pause`, `resume`, `return_to_dock`,
-  `segment_cleaning`, `zone_cleaning`, `set_fan_speed`, `set_water_usage`)
-  are advertised as unsupported by the TurtleBot4/Nav2 adapter and fail
-  explicitly through the contract;
-- the mission state machine reports `idle` or `navigating` on TurtleBot4/Nav2
-  and keeps the remaining states available for later backends;
-- `bun run test:vacuum-adapter` covers capability coverage, TurtleBot4/Nav2
-  command dispatch, unsupported command failures, normalized plan path mapping,
-  mission state mapping, public contract import boundaries, and backend-name
-  branching in `VacuumControlPanel.tsx`;
-- the Valetudo backend stub now defines capability, state, command, and
-  runtime-boundary mapper shapes for the Layer 6 integration to populate.
-- live VS Code webview validation confirms connection, map rendering, target
-  selection, goal send, goal cancel, terminal states, failure paths, overlays,
-  teleop, and a second goal after cancel without reloading.
-- fresh target selection after cancel resets marker state and clears stale
-  canceled plan geometry.
+Layer 3 acceptance criterion:
 
-### Layer 4 Prerequisite: Mapping + Whole Map View
+When Layer 6 ships, existing vacuum UI surfaces should continue to work through
+`vacuum_adapter` without backend-specific UI rewrites. UI code may branch on
+capabilities and normalized state, but not on whether the backend is
+TurtleBot4/Nav2, Valetudo, or a vendor/model.
 
-Status: implemented for the TurtleBot4/Nav2 simulation path.
+Out of Layer 3:
+
+- production-complete coverage behavior beyond the current Clean Area MVP
+- dock / undock and battery-aware execution beyond what the contract models
+- room / zone naming and segmentation UI
+- Valetudo VM service plan and MQTT vs HTTP/client API decisions
+- first real hardware validation
+
+## Layer 4 Prerequisite: Mapping + Whole Map View
+
+Status: implemented for TurtleBot4/Nav2 simulation.
 
 Purpose:
 
-- make the first valid `/map` display as the full known occupancy-grid bounds;
-- provide an explicit map viewport model with `fit`, `manual`, and
-  `follow_robot` modes;
-- keep the base map, costmaps, plan path, lidar/depth overlays, robot marker,
-  and target marker aligned through one world-to-screen transform;
-- give the operator auto and manual mapping workflows before coverage cleaning;
-- show whether the current map is missing, active, mostly unknown, in review,
-  or accepted for later navigation/coverage.
+- make the first valid `/map` display as full known occupancy-grid bounds
+- provide explicit map viewport modes: `fit`, `manual`, `follow_robot`
+- keep base map, costmaps, plan path, lidar/depth overlays, robot marker, and
+  target marker aligned through one world-to-screen transform
+- give the operator auto and manual mapping workflows before coverage cleaning
+- show whether the current map is missing, active, mostly unknown, in review, or
+  accepted for later navigation/coverage
 - keep autonomous exploration in the VM runtime so it survives panel reloads,
-  UI closure, websocket reconnects, and extension hiccups.
+  UI closure, websocket reconnects, and extension hiccups
 
 Current implementation:
 
 - `vacuum_adapter` exposes `snapshot.map.grid`, `snapshot.map.metadata`, and
-  `snapshot.mapping` without ROS/Nav2/TurtleBot4/Valetudo imports in the public
-  contract.
-- `MapCanvas` renders the product base map from the adapter-normalized grid
-  when available and keeps live `/map` as a fallback/diagnostic path.
-- `MapCanvas` still renders `/global_costmap/costmap`,
-  `/local_costmap/costmap`, lidar, depth obstacles, route overlays, markers,
-  and camera overlay.
-- Fit Map uses the full occupancy-grid dimensions and panel size with padding;
-  it does not fit to robot pose, route geometry, target position, costmaps, or
-  known/free cells only.
-- First valid `/map` enters Full known map view. If map dimensions or panel
-  size change while still in fit mode, the canvas refits. Manual pan/zoom keeps
-  the user's viewport. Follow Robot recenters around the robot pose until the
-  user pans, zooms, or fits.
-- Map controls expose Zoom In, Zoom Out, Fit Map, Follow Robot, zoom readout,
-  and a view-state label such as Full known map, Manual view, Following robot,
-  Waiting for map, or Map mostly unexplored.
-- `snapshot.mapping.state` reports `idle`, `manual_mapping`, `auto_mapping`,
-  `paused`, `needs_assistance`, `review`, `accepted`, `discarded`, or `error`.
-- Mapping status reports known/unknown ratios, frontier count, visited and
-  failed goal counts, active goal, state reason, timestamps, and persistence
-  outcome instead of a fake whole-home progress percentage.
-- `MappingCard` shows Start auto mapping, Manual mapping, Pause, Resume auto
-  mapping, Finish & review, Discard, and Accept map flows with map metadata.
-- Map metadata includes dimensions, resolution, known/free/occupied/unknown
-  ratios, approximate known area, last update age, pose availability, and a
-  simple readiness label.
-- During mapping/review states, map clicks do not stage navigation targets by
-  default.
-- Teleop is available during manual mapping, paused auto mapping, and
-  `needs_assistance`; active auto mapping blocks competing teleop until paused.
-- Accept map asks the backend to mark the reviewed map current. The
-  TurtleBot4/Nav2 VM runtime attempts to persist it through
-  `nav2_map_server map_saver_cli` under `/opt/tensorfleet/maps/current_map.*`
-  by default and reports save path/error state through `snapshot.mapping`.
-- After an accepted map is saved, later `/map` growth from normal destination
-  or vacuum runs is autosaved after a quiet interval, as long as SLAM remains
-  active.
-- `snapshot.mapping.savedMaps`, `activeMapName`, `loadedMapPath`, and
-  `loadError` expose saved-map inventory and load state.
-- The TurtleBot4/Nav2 adapter maps `load_map` through the VM mapping runtime;
-  `MappingCard` can load a saved map back into the current mapping/navigation
-  context.
+  `snapshot.mapping`
+- `MapCanvas` renders product base map from adapter-normalized grid and keeps
+  live `/map` as fallback/diagnostic visualization
+- Fit Map uses occupancy-grid dimensions and panel size with padding
+- map controls expose Zoom In, Zoom Out, Fit Map, Follow Robot, zoom readout,
+  and view-state label
+- mapping state reports `idle`, `manual_mapping`, `auto_mapping`, `paused`,
+  `needs_assistance`, `review`, `accepted`, `discarded`, or `error`
+- mapping status reports known/unknown ratio, frontier count, visited/failed
+  goals, active goal, reason, timestamps, and persistence outcome
+- `MappingCard` supports auto/manual mapping, pause/resume, finish/review,
+  discard, accept, saved-map inventory, and load
+- active auto mapping blocks competing teleop until paused
+- manual mapping, paused mapping, and `needs_assistance` keep teleop available
+- Accept map attempts VM-side persistence under
+  `/opt/tensorfleet/maps/current_map.*`
+- after accepted map save, later `/map` growth is autosaved after a quiet
+  interval while SLAM remains active
+- saved-map inventory and load state flow through adapter mapping fields
 
 Boundary rule:
 
-- UI rendering may keep direct diagnostic subscriptions for overlays and
-  fallback visualization.
+- UI rendering may keep direct diagnostic subscriptions for overlays.
 - Product workflows should consume adapter-level map/session state.
-- Future coverage planning must consume normalized map and pose data above the
-  adapter boundary, not become coupled to raw ROS topics.
+- Coverage planning must consume normalized map and pose above the adapter.
 
-Still out of scope for this prerequisite:
-
-- production-complete coverage behavior beyond the current Clean Area MVP;
-- configurable production coverage semantics;
-- room segmentation;
-- zone/no-go editors;
-- dock UI;
-- battery-aware return/resume;
-- Valetudo hardware integration;
-- scheduling and consumables.
-
-### Layer 4: Coverage
+## Layer 4: Coverage
 
 Status: Clean Area MVP implemented with adapter-backed waypoint execution,
-occupancy-grid lane clipping, footprint-history coverage progress, a
-profile-backed coverage configuration, connected-region accounting, and a 95%
-covered-cell completion threshold. Component-level area route planning, stronger
-edge/corner behavior, dock / undock execution, and battery-aware execution are
-still pending.
+occupancy-grid lane clipping, footprint-history progress, profile-backed
+coverage configuration, connected-region accounting, and a 95% covered-cell
+completion threshold.
 
 Purpose:
 
-- add a coverage path planner that produces a lawnmower pattern over a region;
-- teach the adapter about dock / undock behavior and battery awareness;
-- make "clean this area" work end-to-end in simulation through the adapter.
+- add coverage path planning over a bounded region
+- teach the adapter and UI how cleaning state differs from simple navigation
+- add dock / undock and battery-aware execution
+- make "clean this area" work end-to-end in simulation through the adapter
 
 Current Clean Area MVP:
 
-- `Vacuum Control` has `Mapping`, `Navigate`, and `Clean Area` modes.
+- `Vacuum Control` has `Mapping`, `Navigate`, and `Clean Area` modes
 - `MapCanvas` supports drawing, moving, and resizing a rectangular clean-area
-  selection on the normalized map viewport.
-- The clean-area selection is validated against map bounds and occupancy data
-  before a run can start.
-- `cleanAreaProfile.ts` owns the current coverage profile: swath width,
-  overlap, navigation goal tolerance, boundary margin, minimum useful region
-  size, completion threshold, and derived lane spacing / boundary extension.
-- `cleanAreaPlanner.ts` builds a profile-backed swath-overlap lawnmower
-  waypoint preview from the selected rectangle, chooses the longer axis for
-  passes, and keeps lane spacing at or below the configured swath.
-- Boundary pass endpoints are extended by the profile-derived boundary
-  extension so close-enough goal tolerance does not advance to the next
-  waypoint before the robot physically crosses the clean-area edge.
-- Clean-area route generation now uses the normalized occupancy grid to clip
-  each sampled lane to known free cells instead of blindly sweeping through
-  occupied or unknown cells.
-- The run executes each waypoint through `adapter.sendCommand({ command:
-  "go_to_location", ... })`, so it stays above the adapter boundary.
-- `cleanAreaCoverage.ts` computes cleanable target cells from the selected
-  rectangle, excluding occupied, unknown, and out-of-bounds cells from the
-  coverage denominator.
-- `cleanAreaCoverage.ts` decomposes cleanable cells into connected regions and
-  marks tiny disconnected regions as skipped, so the coverage target is no
-  longer just a flat rectangle of free cells.
-- Clean-area progress is now based on covered square meters: robot pose history
-  in map frame is treated as the configured cleaning swath, and cleanable cells
-  touched by that swath become covered.
-- Confirmed clean-area runs freeze the coverage target and render coverage
-  cells from world-space bounds so live map/grid updates do not make already
-  covered cells disappear during a run.
-- `MapCanvas` renders a coverage overlay for remaining target cells, covered
-  cells, excluded occupied/unknown cells, and the current robot footprint.
-- `CleanAreaCard` shows an end-user cleaning summary: coverage percentage,
-  cleaned area, remaining area, skipped area, and simple route status.
+  selection
+- clean-area selection is validated against map bounds and occupancy data
+- `cleanAreaProfile.ts` owns swath width, overlap, navigation goal tolerance,
+  boundary margin, minimum useful region size, completion threshold, derived
+  lane spacing, and boundary extension
+- default profile preserves the 0.30 m simulation swath
+- `cleanAreaPlanner.ts` builds a swath-overlap lawnmower waypoint preview
+- the planner chooses the longer axis for passes
+- sampled lanes are clipped to known free occupancy-grid cells
+- boundary pass endpoints are extended to compensate for Nav2 goal tolerance
+- the run executes each waypoint through
+  `adapter.sendCommand({ command: "go_to_location", target })`
+- `cleanAreaCoverage.ts` classifies cells as cleanable, occupied, unknown,
+  out-of-bounds, too small, remaining, or covered
+- cleanable cells are decomposed into connected regions
+- tiny disconnected regions are skipped
+- progress is covered square meters from robot footprint history in map frame
+- confirmed runs freeze coverage targets so live map updates do not erase
+  covered cells
+- `MapCanvas` renders remaining, covered, excluded, skipped, and footprint
+  overlays
+- `CleanAreaCard` reports percentage, cleaned area, remaining area, skipped
+  area, waypoint progress, pass count, and route status
 - Clean Area mode includes a capability-driven mission lifecycle card for dock,
-  return-to-dock, battery, and charging state. Unsupported operations remain
-  explicit through adapter capabilities.
-- The UI exposes preparing, running, paused, canceling, completed, failed, and
-  canceled states; it also supports pause, cancel, retry waypoint, skip
-  waypoint, and clear.
-- Mapping, navigation, and clean-area mode switches lock each other while a
-  conflicting workflow is active.
-- Teleop remains available outside active clean-area runs and is disabled while
-  the waypoint run is active.
+  return-to-dock, battery, and charging state
+- states include editing, confirmed, preparing, running, paused, canceling,
+  completed, failed, and canceled
+- operators can pause, cancel, retry waypoint, skip waypoint, and clear
 
-MVP limits:
+Production Layer 4 follow-up:
 
-- this proves adapter-backed waypoint execution plus first-pass physical
-  coverage accounting over selected free cells;
-- clipping is lane-level waypoint clipping; connected-region accounting exists,
-  but route generation is not yet component-level area planning;
-- stronger edge/corner coverage, obstacle-adjacent behavior, dock / undock
-  execution, and battery-aware return/resume remain follow-up work.
+- stronger edge/corner coverage
+- obstacle-adjacent behavior
+- component-level route planning around interior obstacles and unknown space
+- dock / undock execution
+- battery-aware return/resume
+- resume/recovery semantics
+- stronger failure semantics for route-finished with uncovered cells
 
-Layer 4 should be implemented above the `vacuum_adapter` contract so the same
-coverage logic works for any backend that advertises the required capabilities.
+Layer 4 must stay above `vacuum_adapter`.
 
-### Layer 5: Room / Zone Semantics
+## Layer 5: Room / Zone Semantics
 
 Status: planned.
 
 Purpose:
 
-- divide the map into named zones / rooms;
-- translate "clean room 3" into one or more coverage goals;
-- make the full vacuum workflow work end-to-end in simulation;
-- keep zone naming and segmentation in product-facing state, not in backend
-  topics.
+- divide the map into named zones / rooms
+- translate "clean room 3" into one or more Layer 4 coverage goals
+- expose room / zone state through normalized product-facing state
+- make the full vacuum workflow work end-to-end in simulation
 
-Layer 5 depends on Layer 4 (coverage) and Layer 3 (adapter contract). It is
-where simulation reaches product-complete behavior.
+Constraints:
 
-### Layer 6: Real Hardware (Valetudo)
+- room / zone naming is product-facing and must not live in backend topics
+- segmentation logic may consume backend input where useful, including Valetudo
+  zones later, but the public shape must be backend-neutral
+- Layer 5 should be demonstrable in simulation before Layer 6 begins
+
+## Layer 6: Real Hardware (Valetudo)
 
 Status: planned.
 
 Purpose:
 
-- ship a Valetudo backend that implements the same `vacuum_adapter` contract
-  the TurtleBot4/Nav2 backend uses;
-- swap the TurtleBot4 simulation for a real Valetudo-compatible vacuum with no
-  changes above the adapter;
-- keep the same extension, same UI, and same workflows — only the backend
-  changes.
+- ship a Valetudo backend implementing the same `vacuum_adapter` contract
+- swap TurtleBot4 simulation for a real Valetudo-compatible vacuum with no
+  changes above the adapter
+- keep the same extension, same UI, and same workflows
+- run the Valetudo integration runtime in the VM so users do not need local
+  integration tooling
 
-Layer 6 also owns the VM-managed real-vacuum runtime:
+Important wording:
 
-- make Valetudo-backed hardware usable without local user setup;
-- host the Valetudo integration client, MQTT / client service, discovery /
-  config, backend adapter process, and health checks in the VM as needed;
-- keep `vacuum_adapter` as the product contract outside the VM runtime
-  details.
+- say "Valetudo integration runtime in the VM"
+- do not imply the VM replaces the Valetudo instance on the robot
 
-## Success Criteria
-
-### First usable vertical slice (Layers 0–2)
-
-- one simulated robot appears in our system;
-- the robot boots reliably in the VM;
-- pose, map, and camera are visible;
-- a ROS client can send a navigation goal and observe progress and result;
-- the system uses standard ROS 2 / Nav2 interfaces where they fit;
-- the path toward a later vacuum-specific abstraction stays clean.
-
-### Adapter slice (Layer 3)
-
-- the extension operates the robot through `vacuum_adapter` rather than raw
-  ROS topics;
-- a TurtleBot4/Nav2 backend normalizes into `VacuumState` and `VacuumCommands`;
-- unsupported vacuum capabilities are advertised as unsupported rather than
-  hidden;
-- the mission state machine carries `idle / navigating / cleaning / paused /
-  returning / charging` explicitly.
-
-### Simulation-complete slice (Layers 4–5)
-
-- Clean Area MVP can execute a selected rectangular lawnmower waypoint sequence
-  through the adapter;
-- row-level clean-area waypoint generation clips sampled rows to known free
-  cells in the occupancy grid;
-- production coverage cleaning accounts for robot footprint history,
-  configurable swath width, overlap, edge/corner handling, and full
-  obstacle/unknown-space decomposition;
-- dock / undock and battery-aware behavior are visible through the adapter
-  state;
-- the map is divided into named zones and "clean room 3" translates into
-  coverage goals;
-- the full vacuum workflow is demonstrated in simulation without leaking
-  backend-specific details to the UI.
-
-### Full platform success (Layer 6)
-
-- the same client-facing vacuum contract works against TurtleBot4 simulation
-  and a real vacuum backend;
-- a Valetudo backend implements the same contract and the extension / UI run
-  unchanged against real hardware;
-- backend differences are expressed through capability flags and explicit
-  unsupported operations, not product forks;
-- docking, mission lifecycle, battery state, and room / zone workflows fit the
-  same contract;
-- simulation acts as the regression harness for real hardware work.
-
-## Non-Goals For The First Milestone
-
-- perfect simulation of brushes, dust bin, water tank, or consumables;
-- support for every vacuum vendor;
-- exact reproduction of a commercial vacuum UI;
-- hardware procurement decisions;
-- forcing OpenClaw to be the foundation before the robot stack is stable.
-
-## Why TurtleBot4
-
-TurtleBot4 is a good stand-in because it already gives us most of the surfaces
-needed to validate the robotics side of the platform:
-
-- differential-drive motion;
-- lidar, IMU, odometry, and camera streams;
-- hazard and contact-related signals;
-- docking-related topics;
-- strong ROS 2 compatibility;
-- a simulation path we already control inside this repo and VM environment.
-
-TurtleBot4 is still not a vacuum. It does not natively model:
-
-- cleaning coverage;
-- room and zone semantics;
-- suction or water modes;
-- consumables or maintenance state;
-- vendor-specific charging, mapping, and docking behavior.
-
-Those concepts should be introduced in repo-owned layers above the robot
-backend, not leaked directly into UI or product logic.
-
-## Product And Operator Positioning
-
-The system should first work as a deterministic, local ROS 2 vacuum platform.
-
-Current positioning:
-
-- the VS Code extension should be treated as an important part of the platform,
-  not just a debugging extra;
-- the VS Code extension and related panels should be the main first-mile UI
-  for bringup and validation;
-- TurtleBot4 should be treated as the development harness;
-- OpenClaw may become useful later, but should sit above a stable
-  vacuum-facing contract rather than directly on TurtleBot4 internals.
-
-Current extension truth for the closed Layer 2/Layer 3 simulation slice:
-
-- Layers 0 and 1 (sensors, SLAM map + TF) are validated through the extension
-  as the foundation every higher layer assumes
-- the Layer 2 TurtleBot4/Nav2 operator slice is closed as of April 30, 2026,
-  and the Layer 3 adapter contract is closed for the simulation path
-- `Vacuum Control` is the validated operator surface for this slice
-- the panel is map-first and consumes the `vacuum_adapter` contract for
-  product-facing navigation state and commands
-- the dedicated `MapCanvas` surface now renders live occupancy-grid data from
-  `/map` and tolerates Foxglove typed-array payload shapes
-- `MapCanvas` now exposes a floating layers checklist for the base map, global
-  costmap, local costmap, active plan, lidar, and depth obstacles
-- lidar and depth obstacle overlays are extension-side visualization aids: they
-  are projected into the map frame from TF and rendered below robot / target
-  markers, not introduced as new product-contract surfaces
-- `TeleopCard` provides compact manual robot control inside the panel sidebar;
-  it publishes `geometry_msgs/msg/Twist` to `/cmd_vel_raw` — a deliberate
-  choice because the VM's `twist_deadman.py` accepts both `Twist` and
-  `TwistStamped` on that topic and it keeps teleop off the Nav2 command path
-- `CameraOverlay` provides a floating PiP camera window inside the map canvas;
-  it discovers image topics from the bridge and prefers the OAK-D RGB preview
-  stream (`/oakd/rgb/preview/image_raw`); camera access validates one of the
-  first usable vertical slice success criteria (pose, map, and camera visible)
-- `MappingCard` exposes saved-map inventory and load behavior through
-  adapter-level `snapshot.mapping.savedMaps` and `load_map`
-- `Clean Area` mode is the current Layer 4 MVP: it selects a bounded rectangle,
-  previews lawnmower waypoints, and drives them through adapter
-  `go_to_location` commands
-- live VS Code webview validation covers connect, map render, target select,
-  send goal, progress visibility, cancel, terminal state, failure paths,
-  overlays, teleop, and second-goal-after-cancel behavior
-
-Remaining caveats for this slice:
-
-- dock-blocked starts can still make a healthy Nav2 stack look stalled or
-  failed
-- clear-space validation is still required before treating navigation failure
-  as a software defect
-- Clean Area MVP has first-pass cell coverage progress, but it is still not
-  production-complete coverage behavior
-
-Practical implication:
-
-- the TurtleBot4/Nav2 operator flow is proven through the current extension
-  panel and supporting runtime surfaces;
-- Layer 3 adapter work is closed for the TurtleBot4/Nav2 simulation path;
-- production coverage semantics, room / zone semantics (Layer 5), and real
-  hardware (Layer 6) all sit above the adapter contract;
-- docking, battery, charging, scheduling, consumables, and OpenClaw integration
-  all belong to later Layer 4+ work above the adapter contract.
-
-## Role Of The VS Code Extension
-
-The existing VS Code extension is part of the platform strategy.
-
-During the first milestones, it should be the main operator and developer
-surface because it already gives us fast feedback on robot and simulation
-state.
-
-The extension should be the main place where we validate:
-
-- whether the robot is present and healthy;
-- whether lidar, camera, 3D, and simulation views are actually useful;
-- whether navigation behavior is understandable enough to debug;
-- whether real-time state is visible enough to support development;
-- whether the vacuum-facing contract exposes the right product information.
-
-The important existing surfaces are:
-
-- lidar panels;
-- camera panels;
-- 3D panels;
-- Gazebo web or simulation views;
-- any robot/entity discovery and state surfaces already present in the
-  extension.
-
-Current truth:
-
-- the existing TurtleBot4-facing panels are primarily debugging and validation
-  surfaces;
-- they are useful for proving Layer 0 (sensors) and Layer 1 (SLAM, TF, odom)
-  runtime health, plus Nav2 traffic and motion for Layer 2;
-- `Vacuum Control` now provides the validated Layer 2 navigation operator
-  workflow.
-
-Near-term implication:
-
-- near-term extension work should maintain and regress-test the closed
-  Layer 2/Layer 3 TurtleBot4/Nav2 operator slice;
-- Layer 4 should build coverage behavior above the existing adapter contract
-  instead of raw ROS topics;
-- room / zone UI (Layer 5), real-hardware Valetudo work (Layer 6), consumables
-  UI, scheduling, and OpenClaw work should remain above the adapter boundary.
-
-As the stack matures, the extension should also be a natural place for a small
-set of vacuum-specific controls and status surfaces, such as:
-
-- start mission;
-- pause, resume, and stop;
-- return to dock;
-- room or zone selection;
-- mission state;
-- battery and charging status;
-- fault and recovery state.
-
-## Architecture Direction
-
-The current target architecture is:
+Target path:
 
 ```text
-VS Code extension / product UI
-  -> vacuum_adapter contract
-     -> TurtleBot4/Nav2 backend adapter
-        -> VM TurtleBot4 simulation runtime
-
-     -> Valetudo backend adapter
-        -> VM-managed Valetudo integration runtime
-           -> real Valetudo-compatible vacuum on local network
+real vacuum running Valetudo
+  -> VM-managed Valetudo integration client / MQTT broker / adapter service
+  -> vacuum_adapter
+  -> extension / product UI
 ```
 
-The important boundary is `vacuum_adapter`.
-
-That should become the stable surface that higher-level clients use.
-TurtleBot4 and later vacuum-vendor specifics should remain implementation
-details behind it.
-Contract modules should not import panel/runtime-specific backend types. Those
-imports are allowed in backend adapters, which normalize the backend shape into
-the public capability, state, and command contract.
-
-VM boundary:
+First Layer 6 validation path:
 
 ```text
-VM owns backend runtime/integration services.
-vacuum_adapter owns product-facing contract/capabilities/state.
+Valetudo robot reachable
+-> VM receives status / capabilities
+-> adapter normalizes state
+-> extension displays capability / state summary
+-> one basic command works
 ```
 
-In the VM:
+Good first commands:
 
-- TurtleBot4/Nav2 runtime
-- Foxglove/ROS bridge
-- Valetudo integration runtime
-- MQTT broker/client if needed
-- hardware discovery/config
+- start
+- pause
+- stop
+- return_to_dock
 
-Outside VM / shared product layer:
-
-- `vacuum_adapter` contract
-- normalized state model
-- capability descriptors
-- command semantics
-- UI-facing assumptions
+Only after that basic reachability slice works should Layer 6 exercise Layer 4
+coverage and Layer 5 room/zone flows against real hardware.
 
 ## Capability Model
 
 The vacuum contract must be capability-driven from the start.
 
-Valetudo explicitly models robots as different subsets and supersets of
-capabilities, and not every robot supports the same commands, status surfaces,
-or map workflows. See
-[Capabilities overview](https://valetudo.cloud/pages/usage/capabilities-overview.html)
-and [MQTT implementation details](https://valetudo.cloud/pages/development/mqtt/).
-The upstream project is
-[Hypfer/Valetudo](https://github.com/Hypfer/Valetudo).
+Valetudo models robots as different subsets and supersets of capabilities. Not
+every robot supports the same commands, status surfaces, or map workflows.
+
+Reference docs:
+
+- [Valetudo capabilities overview](https://valetudo.cloud/pages/usage/capabilities-overview.html)
+- [Valetudo MQTT implementation details](https://valetudo.cloud/pages/development/mqtt/)
+- [Valetudo project](https://github.com/Hypfer/Valetudo)
 
 Valetudo should influence the capability model, but it must not define the
-public contract. Public capability names should be backend-neutral product
-terms, not Valetudo class names.
+public contract.
 
-Use public names such as:
+Public backend-neutral capability names include:
 
 - `start_cleaning`
 - `pause`
@@ -724,6 +470,8 @@ Use public names such as:
 - `cancel_navigation`
 - `manual_control`
 - `navigation_status`
+- `mapping_session`
+- `auto_mapping`
 - `segment_cleaning`
 - `zone_cleaning`
 - `fan_speed`
@@ -731,6 +479,8 @@ Use public names such as:
 - `consumables`
 - `events`
 - `dock_state`
+- `battery`
+- `charging`
 
 Do not expose public flags such as:
 
@@ -752,8 +502,10 @@ Private mapping examples:
 - Valetudo `FanSpeedControlCapability` -> `fan_speed`
 - Valetudo `WaterUsageControlCapability` -> `water_usage`
 - Nav2 `NavigateToPose` -> `go_to_location`
+- VM `/vacuum_mapping/*` services and `/vacuum_mapping/status` ->
+  `mapping_session` / `auto_mapping`
 
-Capability flags should be descriptors, not simple booleans:
+Capability flags should be descriptors:
 
 ```ts
 type CapabilitySupport = {
@@ -769,15 +521,9 @@ type CapabilitySupport = {
 Reason: real backends may support the same high-level feature with different
 constraints, coordinate systems, command shapes, or partial behavior.
 
-Commands should use backend-neutral payloads. `go_to_location` should carry a
-target pose owned by the adapter contract, while setter commands such as
-`set_fan_speed` and `set_water_usage` should carry the selected value explicitly.
-Backend adapters can map those values to backend-specific presets or command
-formats.
+### Capability Tiers
 
-### Core capability tiers
-
-**Tier 1: Required on every backend**
+Tier 1: required on every backend
 
 - robot identity
 - availability / connectivity
@@ -787,7 +533,7 @@ formats.
 - mission status
 - navigation-to-pose or equivalent move command
 
-**Tier 2: Common vacuum controls**
+Tier 2: common vacuum controls
 
 - return to dock
 - pause mission
@@ -796,7 +542,7 @@ formats.
 - dock state
 - charging state
 
-**Tier 3: Advanced vacuum workflows**
+Tier 3: advanced vacuum workflows
 
 - room / segment cleaning
 - zone cleaning
@@ -804,36 +550,36 @@ formats.
 - consumable state
 - maintenance state
 
-**Tier 4: Vendor-specific extensions**
+Tier 4: vendor-specific extensions
 
-- any backend-specific feature not portable enough for the shared contract
+- backend-specific features not portable enough for the shared contract
 
-### Capability design rules
+### Capability Design Rules
 
-- every backend must advertise capability flags explicitly;
-- clients must branch on capability flags, not backend names;
+- every backend advertises capability flags explicitly
+- clients branch on capability flags, not backend names
 - clients must not ask whether the backend is TurtleBot4, Valetudo, Roborock,
-  or a specific robot model before deciding which controls to show;
-- capability presence must be validated against actual behavior;
-- reconnect or backend reconfiguration may require capability refresh;
-- vendor-specific features may exist, but they must not silently redefine the
-  shared contract.
+  or a specific model before deciding which controls to show
+- capability presence must be validated against actual behavior
+- reconnect or backend reconfiguration may require capability refresh
+- vendor-specific features may exist but must not silently redefine the shared
+  contract
 
 ## Vacuum Contract
 
-The public contract should describe a vacuum robot, not a TurtleBot4 and not a
+The public contract describes a vacuum robot, not a TurtleBot4 and not a
 specific vacuum vendor.
 
 The contract must be:
 
-- capability-based;
-- stable across backends;
-- built on standard ROS 2 / Nav2 interfaces where they already fit;
-- extended only where vacuum-specific semantics are required.
+- capability-based
+- stable across backends
+- built on standard ROS 2 / Nav2 interfaces where they fit
+- extended only where vacuum-specific semantics are required
 
-### Core normalized surfaces
+### Core Normalized Surfaces
 
-Every backend should provide the following normalized surfaces:
+Every backend should provide normalized surfaces for:
 
 - robot identity
 - connectivity / availability
@@ -844,9 +590,11 @@ Every backend should provide the following normalized surfaces:
 - mission state
 - fault state
 - capability flags
+- readiness evidence
+- navigation state and progress
+- mapping state when mapping is supported
 
-Where standard ROS 2 / Nav2 types already fit, they should be reused directly.
-Examples include:
+Where standard ROS 2 / Nav2 types already fit, they should be reused or mapped:
 
 - `nav2_msgs/action/NavigateToPose`
 - `sensor_msgs/msg/BatteryState`
@@ -855,11 +603,10 @@ Examples include:
 - `geometry_msgs/msg/PoseStamped`
 - `sensor_msgs/msg/Image` when a backend meaningfully exposes a camera feed
 
-### Vacuum-specific normalized surfaces
+### Vacuum-Specific Normalized Surfaces
 
-Custom messages or services should exist only for concepts that are not
-cleanly expressed through standard ROS 2 or Nav2 types. Likely examples
-include:
+Custom messages or services should exist only for concepts not cleanly expressed
+through standard ROS 2 or Nav2 types:
 
 - dock state
 - mission lifecycle state
@@ -867,29 +614,63 @@ include:
 - room / segment cleaning requests
 - zone cleaning requests
 - backend capability advertisement
+- cleaning mode / fan / water presets
+- consumable and maintenance state
 
-### Unsupported operations
+### Commands
+
+Current public command names include:
+
+- `go_to_location`
+- `cancel_navigation`
+- `manual_control`
+- `start_mapping`
+- `pause_mapping`
+- `resume_mapping`
+- `finish_mapping`
+- `discard_mapping`
+- `accept_map`
+- `load_map`
+- `start_cleaning`
+- `pause`
+- `resume`
+- `stop`
+- `return_to_dock`
+- `segment_cleaning`
+- `zone_cleaning`
+- `set_fan_speed`
+- `set_water_usage`
+
+Payload rules:
+
+- `go_to_location` carries a backend-neutral target pose
+- mapping commands carry mode/name where needed
+- setter commands carry selected values explicitly
+- unsupported commands fail predictably
+- streaming teleop should not be forced into a one-shot command model
+
+### Unsupported Operations
 
 If a backend does not support a capability:
 
-- it must advertise that capability as unavailable;
-- the unsupported command must fail explicitly and predictably;
-- clients must not infer support from backend type;
-- higher-level workflows must branch on capability flags, not backend name.
-
-TurtleBot4/Nav2 should explicitly report unsupported vacuum capabilities rather
-than hiding them or pretending to support them.
+- advertise that capability as unavailable
+- return explicit unsupported command results
+- do not hide the operation silently
+- do not infer support from backend type
+- keep higher-level workflows branching on capability flags
 
 Initial TurtleBot4/Nav2 supported capabilities can include:
 
-- `map`
-- `pose`
+- map
+- pose
 - `go_to_location`
 - `cancel_navigation`
 - `manual_control`
 - `navigation_status`
+- `mapping_session`
+- `auto_mapping`
 
-Initial TurtleBot4/Nav2 unsupported capabilities should include:
+Initial TurtleBot4/Nav2 unsupported capabilities include:
 
 - `start_cleaning`
 - `segment_cleaning`
@@ -899,157 +680,190 @@ Initial TurtleBot4/Nav2 unsupported capabilities should include:
 - `consumables`
 - real dock behavior
 
-## Layer 3 Milestone
+## Product And Operator Positioning
 
-Layer 3 is closed for the TurtleBot4/Nav2 simulation path.
+The system should first work as a deterministic, local ROS 2 vacuum platform.
 
-Acceptance criterion:
+Current positioning:
 
-When Layer 6 (real hardware) ships and Valetudo is integrated, existing vacuum
-UI surfaces should continue to work through the `vacuum_adapter` contract
-without backend-specific UI rewrites. UI code may branch on adapter
-capabilities and normalized state, but it must not branch on whether the
-backend is TurtleBot4/Nav2, Valetudo, or a vendor/model. Backend-specific
-behavior belongs in backend adapters.
+- the VS Code extension is an important part of the platform, not just a
+  debugging extra
+- the extension and related panels are the main first-mile UI for bringup and
+  validation
+- TurtleBot4 is the development harness
+- OpenClaw may become useful later, but should sit above a stable
+  vacuum-facing contract rather than directly on TurtleBot4 internals
+
+The current operator flow is proven through `Vacuum Control`. Supporting panels
+remain useful for runtime validation, but they are not the primary product
+surface.
+
+As the stack matures, the extension should naturally expose vacuum-specific
+controls and status:
+
+- start mission
+- pause / resume / stop
+- return to dock
+- room or zone selection
+- mission state
+- battery and charging status
+- fault and recovery state
+
+Extension-specific implementation details are documented in `extension.md`.
+
+## Success Criteria
+
+### First Usable Vertical Slice: Layers 0-2
+
+- one simulated robot appears in our system
+- the robot boots reliably in the VM
+- pose, map, and camera are visible
+- a ROS client can send a navigation goal and observe progress/result
+- standard ROS 2 / Nav2 interfaces are used where they fit
+- the path toward a vacuum-specific abstraction stays clean
+
+### Adapter Slice: Layer 3
+
+- extension operates the robot through `vacuum_adapter`
+- TurtleBot4/Nav2 backend normalizes into vacuum state and commands
+- unsupported vacuum capabilities are advertised as unsupported
+- mission state machine explicitly carries `idle / navigating / cleaning /
+  paused / returning / charging`
+- public contract files do not import backend-specific runtime or panel types
+- adapter boundary has regression coverage
+
+### Simulation-Complete Slice: Layers 4-5
+
+- Clean Area MVP executes selected rectangular lawnmower waypoint sequences
+  through the adapter
+- row-level waypoint generation clips sampled rows to known free cells
+- production coverage accounts for footprint history, configurable swath,
+  overlap, edge/corner handling, and full obstacle/unknown decomposition
+- dock / undock and battery-aware behavior are visible through adapter state
+- map is divided into named zones
+- "clean room 3" translates into coverage goals
+- full vacuum workflow is demonstrated in simulation without leaking backend
+  details to UI
+
+### Full Platform: Layer 6
+
+- same vacuum contract works against TurtleBot4 simulation and real hardware
+- Valetudo backend implements the same contract
+- extension/UI run unchanged against real hardware
+- backend differences are capability flags and explicit unsupported operations,
+  not product forks
+- docking, mission lifecycle, battery state, and room/zone workflows fit the
+  same contract
+- simulation acts as the regression harness for hardware work
+
+## Milestones
+
+### Layer 3 Milestone: Closed
 
 Completed scope:
 
-1. Define the `vacuum_adapter` capability / state / command contract.
-2. Add a TurtleBot4/Nav2 adapter from the already-working simulation runtime.
-3. Migrate `Vacuum Control` to consume the contract instead of raw ROS topics.
-4. Add an explicit mission state machine covering `idle / navigating /
-   cleaning / paused / returning / charging`.
-5. Add a contract regression harness for the adapter boundary.
-6. Add a Valetudo adapter interface stub that will be populated in Layer 6.
+1. Define `vacuum_adapter` capability/state/command contract.
+2. Add TurtleBot4/Nav2 adapter from the working simulation runtime.
+3. Migrate `Vacuum Control` to consume the contract.
+4. Add mission state machine.
+5. Add adapter regression harness.
+6. Add Valetudo adapter interface stub.
 
 Completed exit validation:
 
-1. The documented verification command set passes.
-2. The hardened contract is revalidated against the live VM through the VS Code
-   webview `Vacuum Control` panel.
+1. Verification command set passes.
+2. Hardened contract is validated against the live VM through `Vacuum Control`.
 3. Target selection, goal send, cancel, terminal state, failure path, overlays,
    teleop, and second-goal-after-cancel behavior are validated.
-4. Dock interaction remains a runtime caveat and moves to Layer 4 runtime setup
-   work where dock / undock and battery-aware execution belong.
+4. Dock interaction remains a runtime caveat and moves to Layer 4 runtime setup.
 
-Out of Layer 3:
-
-- production-complete coverage behavior beyond the current Clean Area MVP
-  (Layer 4)
-- dock / undock and battery-aware execution beyond what the contract models
-  (Layer 4)
-- room / zone naming and segmentation UI (Layer 5)
-- VM service plan for the Valetudo integration runtime (Layer 6)
-- MQTT vs HTTP/client API decisions for Valetudo (Layer 6)
-- first real hardware validation flow (Layer 6)
-
-Do not start with:
-
-- room cleaning UI
-- zone editor
-- multi-room workflows
-- map editing
-- scheduling
-- consumables UI
-- OpenClaw integration
-
-## Layer 4 Milestone: Coverage
-
-Layer 4 adds the first cleaning behavior above the adapter contract.
+### Layer 4 Milestone: In Progress
 
 Scope:
 
-- the current Clean Area MVP produces a simple lawnmower waypoint sequence over
-  a bounded rectangle;
-- production coverage planning must harden the MVP's coverage accounting
-  beyond the current waypoint runner;
-- dock / undock awareness in the adapter state and commands;
-- battery-aware execution, so the robot can return to dock when needed and
-  resume from where it stopped;
-- a "clean this area" flow that works end-to-end in simulation through the
-  adapter.
+- harden current Clean Area MVP beyond waypoint-runner behavior
+- production coverage planning
+- dock / undock awareness in adapter state/commands
+- battery-aware execution and resume
+- "clean this area" flow end-to-end in simulation
 
 Constraints:
 
-- the planner must consume the adapter's normalized map and pose, not raw ROS
-  topics;
-- coverage should succeed or fail through the adapter's navigation and mission
-  state surfaces;
-- UI for selecting an area belongs above the contract, not in backend-specific
-  code;
-- the current Clean Area MVP executes a lawnmower-shaped sequence of
-  `go_to_location` waypoints through `vacuum_adapter`, clips sampled lanes to
-  known free cells, tracks footprint-history progress, and uses a
-  product-level coverage profile. Production coverage still needs stronger edge
-  and corner handling, component-level route planning around interior obstacles
-  or unknown space, and resume/recovery semantics.
+- planner consumes normalized map and pose
+- coverage succeeds/fails through adapter navigation and mission state
+- UI selection belongs above the contract
+- backend-specific code must not own coverage semantics
 
-## Layer 5 Milestone: Room / Zone Semantics
-
-Layer 5 turns coverage into product-complete vacuum behavior.
+### Layer 5 Milestone: Planned
 
 Scope:
 
-- divide the map into named zones / rooms;
-- translate "clean room 3" into one or more coverage goals for Layer 4;
-- expose room / zone state through the adapter's normalized state;
-- complete the full vacuum workflow end-to-end in simulation.
+- named rooms/zones
+- room/zone editor or import path
+- translate room/zone requests into Layer 4 coverage goals
+- keep public shape backend-neutral even if backend input helps segmentation
 
-Constraints:
+### Layer 6 Milestone: Planned
 
-- room / zone naming is product-facing and must not live in backend topics;
-- segmentation logic may use backend input where Valetudo provides it, but the
-  public shape must be backend-neutral;
-- Layer 5 should be demonstrable in simulation before Layer 6 begins.
+Scope:
 
-## Layer 6 Milestone: Real Hardware (Valetudo)
+- VM-managed Valetudo integration runtime
+- Valetudo backend adapter
+- real hardware reachability
+- status/capability normalization
+- first basic command
+- later: run Layer 4 and Layer 5 flows against hardware
 
-Layer 6 swaps the simulated TurtleBot4 backend for a real Valetudo-compatible
-vacuum. No changes above the adapter contract should be required.
+## Non-Goals For First Milestones
 
-Valetudo-compatible vacuums are the first real-hardware target.
+- perfect simulation of brushes, dust bin, water tank, or consumables
+- support for every vacuum vendor
+- exact reproduction of a commercial vacuum UI
+- hardware procurement decisions
+- forcing OpenClaw to be the foundation before the robot stack is stable
+- room cleaning UI before coverage is production-ready
+- zone editor before coverage and segmentation boundaries are clear
+- scheduling and consumables before the core mission lifecycle is stable
 
-The VM should eventually run the Valetudo integration runtime so users do not
-need to install or operate extra integration tooling locally. Depending on the
-implementation, the VM may run:
+## Why TurtleBot4
 
-- MQTT broker, if needed
-- Valetudo client / integration service
-- Valetudo backend adapter process
-- discovery / config service
-- runtime health checks
+TurtleBot4 is a good stand-in because it provides most surfaces needed to
+validate the robotics side:
 
-Important wording:
+- differential-drive motion
+- lidar, IMU, odometry, and camera streams
+- hazard and contact-related signals
+- docking-related topics
+- strong ROS 2 compatibility
+- a simulation path we control inside this repo and VM environment
 
-- say "Valetudo integration runtime in the VM"
-- do not imply that the VM replaces the Valetudo instance on the robot
+TurtleBot4 is still not a vacuum. It does not natively model:
 
-Valetudo normally runs on or with the robot vacuum firmware. The VM-managed
-layer should sit around that robot-side Valetudo instance:
+- cleaning coverage
+- room and zone semantics
+- suction or water modes
+- consumables or maintenance state
+- vendor-specific charging, mapping, and docking behavior
 
-```text
-real vacuum running Valetudo
-  -> VM-managed Valetudo integration client / MQTT broker / adapter service
-  -> vacuum_adapter
-  -> extension / product UI
-```
+Those concepts belong in repo-owned layers above the robot backend.
 
-The first real-hardware validation path should be basic:
+## Documentation Ownership
 
-```text
-Valetudo robot reachable
--> VM receives status / capabilities
--> adapter normalizes state
--> extension displays capability / state summary
--> one basic command works
-```
+Keep the docs separated this way:
 
-Good first commands for Layer 6:
+- `VACUUM_STACK_PLAN.md`: architecture, product boundary, layer plan,
+  capability model, contract, milestones, non-goals.
+- `steps.md`: current implementation progress, completed work, validation,
+  runtime caveats, open work.
+- `extension.md`: VS Code extension reference, file map, endpoints, topics,
+  panels, bridge behavior, and extension follow-up work.
 
-- start
-- pause
-- stop
-- return_to_dock
+When updating docs:
 
-Only after that basic reachability slice works should Layer 6 exercise Layer 4
-coverage and Layer 5 room / zone flows against real hardware.
+- do not duplicate long topic/file lists into the architecture doc unless they
+  define a contract boundary
+- do not put future architecture decisions into `steps.md`
+- do not put broad product-layer planning into `extension.md`
+- preserve implementation evidence in `steps.md`
+- preserve extension operational facts in `extension.md`
+- preserve cross-layer design decisions here

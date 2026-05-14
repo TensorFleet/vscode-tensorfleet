@@ -1,544 +1,89 @@
-# TurtleBot4 VS Code Extension Integration Notes
+# VS Code Extension Vacuum / Nav2 Reference
 
-This file is the extension-side companion to:
+## Purpose
 
-- `steps.md`
-- `VACUUM_STACK_PLAN.md`
+This file contains extension-specific knowledge for the TurtleBot4/Nav2 vacuum
+work in `~/vscode-tensorfleet`.
 
-It captures what the VS Code extension needs to know about the validated
-TurtleBot4/Nav2 operator slice and the next adapter-backed product direction.
+It covers:
 
-The old Layer 2 constraint was extension-side only: validate the VM runtime
-through `Vacuum Control` without blocking on a vacuum adapter, mission
-lifecycle, docking behavior, or normalized backend contract. That constraint is
-closed, and Layer 3 is now wrapped for the TurtleBot4/Nav2 simulation path. The
-Layer 4 prerequisite, Mapping + Whole Map View, is implemented with VM-owned
-auto mapping. Layer 4 coverage has started with the Clean Area MVP: rectangular
-selection, occupancy-clipped lawnmower waypoints, adapter-backed waypoint
-execution, and first-pass footprint-history progress.
+- extension repository structure
+- standalone panel entrypoints
+- runtime bridge endpoints
+- panel topic and service maps
+- `Vacuum Control` implementation boundaries
+- supporting debug panel expectations
+- extension follow-up work
 
-The full seven-layer plan this file aligns with:
+It is not the implementation progress report. Use `steps.md` for progress and
+validation status. It is not the architecture source of truth. Use
+`VACUUM_STACK_PLAN.md` for the layer plan, product boundary, adapter contract,
+and future architecture.
 
-```text
-Layer 0 — Sensors                   validated
-Layer 1 — Localization + Map        running
-Layer 2 — Navigation                closed for TurtleBot4/Nav2 simulation
-Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
-                                    Valetudo stub reserved for Layer 6
-Layer 4 prerequisite: Mapping + Whole Map View
-                                    implemented for TurtleBot4/Nav2
-                                    simulation
-Layer 4 — Coverage                  Clean Area MVP implemented with
-                                    occupancy-clipped waypoints and
-                                    footprint-history progress; production
-                                    coverage, dock, and battery behavior
-                                    pending
-Layer 5 — Room / Zone Semantics     planned
-Layer 6 — Real Hardware (Valetudo)  planned
-```
+## Current Extension Goal
 
-## Current Integration Goal
-
-Use the existing VS Code extension panels in `~/vscode-tensorfleet` against the
-current TurtleBot4/Nav2 VM backend.
+Use the existing VS Code extension panels against the current TurtleBot4/Nav2 VM
+backend.
 
 The extension should:
 
 1. Connect to the running VM bridge endpoints.
-2. Treat the single-panel `Vacuum Control` operator workflow as the closed
-   Layer 2/Layer 3 TurtleBot4/Nav2 simulation slice.
-3. Show live map, lidar, odom/TF, costmap, and navigation status data where the
-   current panels support those message types.
-4. Expose enough Nav2 action visibility to drive and validate goal execution.
+2. Treat `Vacuum Control` as the normal operator surface for the closed Layer 2
+   navigation slice and closed Layer 3 adapter slice.
+3. Show live map, lidar, odom/TF, costmap, camera, navigation, and mapping state
+   where the current panels support those message types.
+4. Expose enough Nav2 action visibility to validate goal execution.
 5. Treat Clean Area as the current Layer 4 MVP: rectangular selection,
    occupancy-clipped lawnmower waypoint preview, adapter-backed waypoint
    execution, and footprint-history progress.
-6. Record panel gaps as extension follow-up tasks, not as blockers for the
-   closed Layer 3 adapter slice.
+6. Record panel gaps as extension follow-up work, not as blockers for the
+   already-closed Layer 2/Layer 3 simulation slice.
 
-## Layer 2 / Layer 3 Closure
+## Repository
 
-As of May 14, 2026, the Layer 2 TurtleBot4/Nav2 operator slice and Layer 3
-adapter slice are closed for the simulation path, and the current Layer 4
-Clean Area MVP is implemented in the same panel above the adapter boundary.
-The operator flow is validated end-to-end and `Vacuum Control` consumes the
-`vacuum_adapter` contract through `useVacuumAdapter` instead of
-`useNav2Runtime`.
-
-Frozen truth:
-
-- `Vacuum Control` works against the live VM runtime through the current
-  Foxglove bridge path.
-- The operator panel validates the normal one-panel flow: connect, render map,
-  select a map target, send a Nav2 goal, observe progress, cancel when needed,
-  and observe terminal state.
-- The panel uses the `vacuum_adapter` contract for product-facing navigation
-  state, capabilities, normalized plan path, goal send, and cancel behavior.
-- VS Code webview validation covers target replacement, stale canceled marker
-  reset, stale plan clearing, failure states, overlays, teleop, and sending a
-  second goal after cancel without reload.
-- Remaining dock-blocked start behavior is a runtime caveat, not a Layer 2
-  blocker.
-- Clear-space validation is still required before interpreting a failed or
-  stalled run as a software failure.
-
-Explicitly out of the closed Layer 2/Layer 3 simulation slice:
-
-- production-complete coverage behavior beyond the current Clean Area MVP
-  (Layer 4)
-- docking / return-to-dock workflow and battery-aware execution (Layer 4)
-- room, zone, and segmentation UI (Layer 5)
-- real vacuum hardware and Valetudo integration runtime (Layer 6)
-
-## Mapping + Whole Map View
-
-`Vacuum Control` now has the map foundation milestone needed before Layer 4
-coverage. The autonomous loop is not a React/webview concern: it runs in the VM
-runtime and the extension only sends adapter commands, subscribes to mapping
-status, and renders the workflow.
-
-Implemented extension behavior:
-
-- first valid `/map` fits the full known occupancy-grid bounds by default;
-- `MapCanvas` renders the product base map from adapter-normalized
-  `snapshot.map.grid` when available and keeps direct `/map` rendering as a
-  fallback/diagnostic path;
-- Fit Map uses `map.info.width`, `map.info.height`, resolution, canvas size,
-  and padding, not robot pose, route geometry, selected target, or costmaps;
-- `MapCanvas` has explicit `fit`, `manual`, and `follow_robot` viewport modes;
-- Zoom In, Zoom Out, Fit Map, Follow Robot, zoom readout, and view labels are
-  visible in the map controls;
-- pan/zoom, fit, follow, panel resize, base map, costmaps, plan path,
-  lidar/depth overlays, robot marker, and target marker share one
-  world-to-screen transform;
-- unknown cells render as muted map space and the map boundary is outlined so a
-  partial map is not confused with panel background;
-- `MappingCard` adds Start auto mapping, Manual mapping, Pause, Resume auto
-  mapping, Finish & review, Discard, and Accept map states;
-- mapping/review mode disables navigation target staging by default;
-- active auto mapping disables competing teleop until paused, while manual
-  mapping, paused mapping, and `needs_assistance` keep teleop available;
-- map metadata is shown: dimensions, resolution, known/free/occupied/unknown
-  ratios, known area, last update age, pose availability, and readiness;
-- mapping status shows known/unknown ratio, frontier count, visited and failed
-  goal counts, active goal, state reason, last error, update time, and
-  persistence result;
-- Accept map marks the reviewed map current and reports whether the backend
-  saved it persistently or only accepted it for the session.
-
-Boundary note:
-
-- `MapCanvas` can still render live `/map` and overlay topics directly for
-  diagnostics and fallback visualization.
-- Product workflows should consume adapter-level map/session state.
-- Future coverage planning should consume normalized map and pose data above
-  the `vacuum_adapter` boundary rather than raw ROS topics.
-
-VM runtime behavior surfaced through the extension:
-
-- `/vacuum_mapping/status` publishes the mapping snapshot.
-- `/vacuum_mapping/start_auto`, `/start_manual`, `/pause`, `/resume`,
-  `/finish`, `/discard`, `/accept`, `/save_map`, `/load_map`, and `/list_maps`
-  are adapter-command targets or mapping-runtime surfaces.
-- The TurtleBot4/Nav2 VM runtime saves accepted maps under
-  `/opt/tensorfleet/maps/current_map.*` by default.
-- After an accepted map is saved, later `/map` growth from normal destination
-  or vacuum runs is autosaved after the map settles, as long as SLAM remains
-  active.
-- `snapshot.mapping.savedMaps`, `activeMapName`, `loadedMapPath`, and
-  `loadError` expose saved-map inventory and load state to `MappingCard`.
-
-## Clean Area MVP
-
-`Vacuum Control` now includes the first Layer 4 coverage MVP. It is deliberately
-implemented above the adapter boundary: the UI chooses a region and generates
-waypoints, while execution goes through adapter `go_to_location` commands.
-
-Implemented extension behavior:
-
-- the sidebar has `Mapping`, `Navigate`, and `Clean Area` modes;
-- `MapCanvas` supports drawing, moving, and resizing a rectangular clean-area
-  selection on the normalized map viewport;
-- clean-area selection is validated against map bounds and occupancy data;
-- Clean Area uses a product-level coverage profile for swath width, overlap,
-  navigation goal tolerance, boundary margin, minimum useful region size, and
-  completion threshold;
-- the selected rectangle produces a profile-backed swath-overlap lawnmower
-  waypoint preview;
-- the waypoint planner chooses the longer axis for passes, keeps lane spacing
-  at or below the configured swath, and clips each sampled lane to known free
-  occupancy-grid cells;
-- boundary pass goals are extended from the configured navigation goal
-  tolerance plus boundary margin so close-enough goal completion does not
-  switch waypoints before the robot crosses the clean-area edge;
-- the run dispatches each waypoint through `adapter.sendCommand({ command:
-  "go_to_location", ... })`;
-- `cleanAreaCoverage.ts` classifies the selected rectangle into cleanable,
-  occupied, unknown, and out-of-bounds map cells from the normalized adapter
-  grid;
-- `cleanAreaCoverage.ts` decomposes cleanable cells into connected regions and
-  marks tiny disconnected regions as skipped instead of silently planning
-  pointless waypoints;
-- active clean-area runs mark free target cells covered from map-frame pose
-  history using the configured cleaning swath, so progress is area-based rather
-  than only waypoint-based;
-- confirmed clean-area runs freeze the coverage target and render coverage
-  cells from world-space bounds so live map/grid updates do not erase covered
-  cells during the run;
-- `MapCanvas` overlays remaining, covered, occupied/unknown cells, and the
-  current robot footprint while the Clean Area selection is visible;
-- `CleanAreaCard` shows a user-facing cleaning summary: coverage percentage,
-  cleaned area, remaining area, skipped area, and simple route status;
-- Clean Area mode also shows adapter-driven mission lifecycle state for dock,
-  return-to-dock, battery, and charging capabilities without branching on
-  backend names;
-- clean-area visual and control states include editing, confirmed, preparing,
-  running, paused, canceling, completed, failed, and canceled;
-- the operator can pause, cancel, retry waypoint, skip waypoint, and clear the
-  selected area when inactive;
-- mapping, navigation, and clean-area modes lock each other while a conflicting
-  workflow is active;
-- `TeleopCard` is disabled during active clean-area waypoint runs.
-
-MVP limits:
-
-- this now has first-pass footprint-history coverage accounting, but still uses
-  the current waypoint runner for execution;
-- current clipping is still lane-level waypoint clipping; connected-region
-  decomposition exists for cleanable-cell accounting, but component-level
-  route planning is not complete yet;
-- the default profile matches the 0.30 m simulation swath, but coverage
-  constants no longer live directly in the planner;
-- the UI treats 95% covered cleanable cells as complete and can report
-  route-finished when uncovered cleanable cells remain;
-- stronger edge/corner handling, obstacle-adjacent behavior, dock / undock
-  execution, and battery-aware return/resume remain later Layer 4 work.
-
-## Layer 3 Result
-
-Layer 3 is closed for the TurtleBot4/Nav2 simulation path.
-
-Layer 3 should define the product-facing capability, state, and command
-boundary above robot backends. Extension/product clients should talk in vacuum
-concepts and capability descriptors, not raw TurtleBot4 topics, Nav2 internals,
-or Valetudo-specific class names.
-The public `vacuum_adapter` contract should own its coordinate, state, and
-command payload types; backend/runtime-specific types should be imported only by
-backend adapters.
-
-Current target architecture:
-
-```text
-VS Code extension / product UI          (Layers 4 and 5 live here)
-  -> vacuum_adapter contract            (Layer 3)
-     -> TurtleBot4/Nav2 backend adapter (Layer 3, over Layer 2 runtime)
-        -> VM TurtleBot4 simulation runtime
-
-     -> Valetudo backend adapter        (Layer 6)
-        -> VM-managed Valetudo integration runtime
-           -> real Valetudo-compatible vacuum on local network
-```
-
-Layer 3 scope for the extension:
-
-1. Consume the `vacuum_adapter` capability / state / command contract.
-2. Migrate `Vacuum Control` from raw ROS topics onto the contract so the panel
-   branches on capabilities and normalized state instead of backend specifics.
-3. Surface the mission state machine (`idle / navigating / cleaning / paused /
-   returning / charging`) from the adapter.
-4. Leave a Valetudo adapter interface stub for the Layer 6 integration to
-   populate later.
-
-Current Layer 3 status (May 14, 2026):
-
-- The `vacuum_adapter` contract now owns a public `VacuumAdapter` surface with
-  `snapshot` + `sendCommand`, and a TurtleBot4/Nav2 backend hook
-  (`useTurtleBot4Nav2Adapter`) that wraps `useNav2Runtime` behind the contract.
-- `VacuumControlPanel.tsx` consumes the adapter through `useVacuumAdapter`
-  instead of `useNav2Runtime` directly; all navigation state, readiness
-  evidence, capability gating, and plan path rendering in the panel now flow
-  through the adapter snapshot.
-- `go_to_location` and `cancel_navigation` are dispatched as
-  `adapter.sendCommand(...)` instead of raw `runtime.sendGoal` / `cancelGoal`
-  calls.
-- TurtleBot4/Nav2 command dispatch is extracted into a pure
-  `commandDispatcher.ts` helper used by `useTurtleBot4Nav2Adapter`, so
-  supported and unsupported command behavior can be tested outside React.
-- The adapter emits a `mission` field with the explicit mission state machine
-  (`idle / navigating / cleaning / paused / returning / charging`). The
-  TurtleBot4/Nav2 backend reports `idle` or `navigating` today and keeps the
-  remaining states as "not supported" so the UI can branch on capability
-  descriptors rather than backend identity.
-- Plan path rendering in `MapCanvas` now consumes a normalized
-  `VacuumPathPoint[]` surface (`snapshot.navigation.planPath`) instead of the
-  raw `nav_msgs/msg/Path` message shape, keeping the visualization surface
-  decoupled from backend-specific pose shapes.
-- `manual_control` (teleop) remains wired through the existing `TeleopCard`
-  publisher to `/cmd_vel_raw` and is explicitly rejected by
-  `adapter.sendCommand` with an `invalid_request` result, because routing it
-  through `sendCommand` would require a streaming teleop channel that is not
-  part of this adapter slice.
-- A focused adapter regression harness is available through
-  `bun run test:vacuum-adapter`. It checks capability coverage, TurtleBot4/Nav2
-  supported and unsupported commands, normalized plan-path mapping, mission
-  state mapping, public contract import boundaries, and backend-name branching
-  in `VacuumControlPanel.tsx`.
-- The Valetudo backend stub now includes capability, state, command, and
-  runtime-boundary mapper shapes for Layer 6. It does not implement hardware
-  connectivity yet.
-- Live VS Code webview validation confirms the adapter-backed `Vacuum Control`
-  flow against the VM: connect, render map, select target, send goal, cancel,
-  see terminal state, handle failure paths, use overlays, use teleop, and send
-  a second goal after cancel without reloading.
-- Fresh target selection after cancel now resets the marker to staged/selected
-  state and clears stale canceled plan geometry.
-
-Out of Layer 3 (later layers):
-
-- production-complete coverage behavior beyond the current Clean Area MVP
-  (Layer 4)
-- dock / undock and battery-aware execution beyond what the contract models
-  (Layer 4)
-- room / zone naming and segmentation UI (Layer 5)
-- Valetudo VM service plan, MQTT vs HTTP choice, and real-hardware validation
-  (Layer 6)
-
-## Later Layers At A Glance
-
-These layers are out of scope for now but the extension plan should respect
-them so Layer 3 work does not box them out.
-
-- Layer 4 (Coverage): the current Clean Area MVP is a rectangular lawnmower
-  waypoint workflow above the adapter contract with occupancy-grid lane
-  clipping and first-pass footprint-history progress. Configurable
-  swath/overlap, production area decomposition, dock / undock, and
-  battery-aware execution are still Layer 4 follow-ups.
-- Layer 5 (Room / Zone Semantics): named zones and a "clean room 3" flow that
-  translates into Layer 4 coverage goals. Any room / zone UI in the extension
-  belongs here.
-- Layer 6 (Real Hardware / Valetudo): the Valetudo backend adapter and the
-  VM-managed Valetudo integration runtime. When this lands, the extension and
-  UI should run unchanged against the same `vacuum_adapter` contract.
-
-Not the next milestone:
-
-- more TurtleBot4 UI polish
-- more debug panels
-- OpenClaw
-- room cleaning UI
-- docking UI
-- zone cleaning UI
-- consumables UI
-- scheduling UI
-
-## Capability Decisions
-
-The public contract should use backend-neutral product capability names:
-
-- `start_cleaning`
-- `pause`
-- `resume`
-- `stop`
-- `return_to_dock`
-- `go_to_location`
-- `cancel_navigation`
-- `manual_control`
-- `navigation_status`
-- `mapping_session`
-- `auto_mapping`
-- `segment_cleaning`
-- `zone_cleaning`
-- `fan_speed`
-- `water_usage`
-- `consumables`
-- `events`
-- `dock_state`
-
-Do not expose Valetudo implementation class names as public flags, such as:
-
-- `BasicControlCapability`
-- `MapSegmentationCapability`
-- `ZoneCleaningCapability`
-- `FanSpeedControlCapability`
-- `WaterUsageControlCapability`
-
-Valetudo concepts should map privately inside the backend adapter:
-
-- Valetudo `BasicControlCapability` -> `start_cleaning` / `pause` / `stop` /
-  `return_to_dock`
-- Valetudo `GoToLocationCapability` -> `go_to_location`
-- Valetudo `MapSegmentationCapability` -> `segment_cleaning`
-- Valetudo `ZoneCleaningCapability` -> `zone_cleaning`
-- Valetudo `FanSpeedControlCapability` -> `fan_speed`
-- Valetudo `WaterUsageControlCapability` -> `water_usage`
-- Nav2 `NavigateToPose` -> `go_to_location`
-- VM `/vacuum_mapping/*` services and `/vacuum_mapping/status` ->
-  `mapping_session` / `auto_mapping`
-
-Capabilities should be descriptors, not booleans only:
-
-```ts
-type CapabilitySupport = {
-  supported: boolean;
-  source?: "turtlebot4_nav2" | "valetudo" | "mock";
-  backendCapability?: string;
-  commands?: string[];
-  attributes?: string[];
-  notes?: string;
-};
-```
-
-Product/UI logic should ask whether capabilities are supported. It should not
-branch on backend names such as TurtleBot4, Valetudo, Roborock, or any specific
-robot model.
-
-Layer 3 acceptance criterion:
-
-When Layer 6 (real hardware) ships and Valetudo is integrated, existing vacuum
-UI surfaces should continue to work through the `vacuum_adapter` contract
-without backend-specific UI rewrites. UI code may branch on adapter
-capabilities and normalized state, but it must not branch on whether the
-backend is TurtleBot4/Nav2, Valetudo, or a vendor/model. Backend-specific
-behavior belongs in backend adapters.
-
-Command contracts should be explicit about payloads. For example,
-`go_to_location` carries a backend-neutral target pose, and setter commands such
-as `set_fan_speed` and `set_water_usage` carry a selected value rather than
-being modeled as payload-free simple commands.
-
-## VM-Managed Valetudo Path (Layer 6)
-
-Valetudo-compatible vacuums are the first real-hardware backend target and
-belong to Layer 6. Valetudo should influence the Layer 3 capability model, but
-it should not define the public contract. Valetudo-specific naming remains
-inside the Valetudo backend adapter.
-
-Reference docs:
-
-- [Valetudo capabilities overview](https://valetudo.cloud/pages/usage/capabilities-overview.html)
-- [Valetudo MQTT implementation details](https://valetudo.cloud/pages/development/mqtt/)
-- [Valetudo project](https://github.com/Hypfer/Valetudo)
-
-The VM should eventually host the Valetudo integration runtime so users do not
-need to install local integration tooling. Depending on the backend choice, the
-VM may run:
-
-- MQTT broker, if needed
-- Valetudo client/integration service
-- Valetudo backend adapter process
-- discovery/config service
-- runtime health checks
-
-Boundary decision:
-
-```text
-VM owns backend runtime/integration services.
-vacuum_adapter owns product-facing contract/capabilities/state.
-```
-
-In the VM:
-
-- TurtleBot4/Nav2 runtime
-- Foxglove/ROS bridge
-- Valetudo integration runtime
-- MQTT broker/client if needed
-- hardware discovery/config
-
-Outside VM / shared product layer:
-
-- `vacuum_adapter` contract
-- normalized state model
-- capability descriptors
-- command semantics
-- UI-facing assumptions
-
-Docs should say "Valetudo integration runtime in the VM," not "Valetudo in the
-VM." Valetudo normally runs on the robot vacuum itself; the VM hosts the
-integration layer around that robot.
-
-First Valetudo hardware validation should stay basic:
-
-```text
-Valetudo robot reachable
--> VM receives status/capabilities
--> adapter normalizes state
--> extension displays capability/state summary
--> one basic command works
-```
-
-Good first commands:
-
-- start
-- pause
-- stop
-- return_to_dock
-
-## Extension Repository
-
-The extension repo is:
+Extension repo:
 
 - `~/vscode-tensorfleet`
 
-Important files for the closed Layer 2/Layer 3 simulation slice:
+Important files:
 
 - `src/extension.ts`
 - `src/regions.ts`
 - `src/templates/drone-view-list.html`
+- `panels-standalone/src/vacuum_control.tsx`
 - `panels-standalone/src/ros2-bridge.ts`
+- `panels-standalone/src/foxglove-networking.ts`
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
 - `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
 - `panels-standalone/src/components/VacuumControl/TeleopCard.tsx`
 - `panels-standalone/src/components/VacuumControl/CameraOverlay.tsx`
 - `panels-standalone/src/components/VacuumControl/mapOverlayUtils.ts`
+- `panels-standalone/src/components/VacuumControl/cleanAreaProfile.ts`
+- `panels-standalone/src/components/VacuumControl/cleanAreaPlanner.ts`
+- `panels-standalone/src/components/VacuumControl/cleanAreaCoverage.ts`
 - `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
 - `panels-standalone/src/components/Nav2/runtime/nav2RuntimeConstants.ts`
+- `panels-standalone/src/components/Nav2/runtime/nav2RuntimeTypes.ts`
+- `panels-standalone/src/components/Nav2/runtime/nav2RuntimeUtils.ts`
 - `panels-standalone/src/components/SensorView3D/SensorView3DPanel.tsx`
 - `panels-standalone/src/components/RawMessages/RawMessagesPanel.tsx`
 - `panels-standalone/src/components/MissionControl/MissionControl.tsx`
 - `panels-standalone/src/components/MissionControl/map/DroneMap.tsx`
+- `panels-standalone/src/vacuum-adapter/`
 
 Current notable extension state:
 
-- `src/regions.ts` already defines Foxglove and ROS bridge ports:
+- `src/regions.ts` defines Foxglove and ROS bridge ports:
   - Foxglove: `8765`
   - rosbridge: `9091`
 - `src/extension.ts` injects `window.TENSORFLEET_VM_CONFIG_ID` into standalone
   panels when a VM config is known.
-- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
-  exists as the closed Layer 2/Layer 3 operator shell.
-- `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
-  now holds the dedicated map rendering and interaction surface for that shell.
-- `MapCanvas.tsx` now accepts both plain-array and typed-array occupancy-grid
-  payloads from Foxglove so live `/map` data renders instead of falling back to
-  placeholder content.
-- `MapCanvas.tsx` now has a floating `Layers` control with checklist toggles
-  for Map, Global costmap, Local costmap, Plan, Lidar, and Depth obstacles.
-- `mapOverlayUtils.ts` owns extension-local sensor overlay projection for lidar
-  and depth obstacle points using `/tf`, `/tf_static`, and a local
-  `TransformTree`; it now uses frame ID fallback candidate lists for robot pose
-  and lidar frames to handle naming variation across runtime configurations; laser
-  scan topic discovery now matches any `sensor_msgs/msg/LaserScan` or
-  `foxglove.LaserScan` topic, preferring `/scan`; point cloud field decoding
-  supports both plain JS arrays and typed arrays from Foxglove payloads.
-- `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts` is the
-  shared runtime seam used by both the debug-facing Nav2 panel and the operator
-  panel.
-- `panels-standalone/src/ros2-bridge.ts` now caches the latest message per
-  topic and replays it to each new subscriber immediately on subscribe; static
-  TF transforms are accumulated per unique edge and replayed as a synthetic
-  bundle to new `/tf_static` subscribers so panels never miss static TF data
-  on connect or reconnect.
-- `SensorView3DPanel.tsx` is already useful as a supporting debug surface
-  because it can render LaserScan, TF, odometry, occupancy grid, and costmap
-  style data through the Lichtblick renderer.
-- `MissionControl.tsx` and `DroneMap.tsx` are currently drone/GPS oriented and
-  should not be treated as the primary SLAM map panel.
+- `panels-standalone/src/vacuum_control.tsx` mounts `VacuumControlPanel`.
+- `panels-standalone/src/ros2-bridge.ts` currently uses Foxglove first.
 
 ## VM Bridge Endpoints
 
-For this closed Layer 2/Layer 3 simulation slice, the extension uses the
-already running VM bridge
-endpoints:
+Current VM endpoints:
 
 - Foxglove/Lichtblick panels: `ws://172.16.0.10:8765`
 - rosbridge-specific panels: `ws://172.16.0.10:9091`
@@ -548,32 +93,23 @@ The current standalone panel path primarily uses Foxglove:
 - `panels-standalone/src/ros2-bridge.ts`
 - `panels-standalone/src/foxglove-networking.ts`
 
-`ros2-bridge.ts` currently defines `ConnectionMode = "foxglove"`, so new panel
-work should assume Foxglove first unless a panel explicitly needs rosbridge.
+`ros2-bridge.ts` defines `ConnectionMode = "foxglove"`, so new panel work
+should assume Foxglove first unless a panel explicitly needs rosbridge.
 
-## Vacuum Control Current Truth
+## Runtime Topic And Service Map
 
-The closed Layer 2/Layer 3 simulation slice is the dedicated `Vacuum Control`
-panel rather than a broader TurtleBot4 preset effort across every existing
-panel.
+Current operator slice uses global topics and action paths. Older
+`/turtlebot4/*` topic guidance is outdated for this slice.
 
-Current runtime seam:
-
-- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
-- `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
-- `panels-standalone/src/components/VacuumControl/TeleopCard.tsx`
-- `panels-standalone/src/components/VacuumControl/CameraOverlay.tsx`
-- `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
-
-Current runtime topic and service map for this slice:
+Current topics and services used by the panel/runtime:
 
 - `/map`
 - `/scan`
-- depth point cloud topic discovered from advertised `sensor_msgs/msg/PointCloud2`
-  topics, preferring `/oakd/rgb/preview/depth/points`
+- depth `sensor_msgs/msg/PointCloud2` topic discovered from advertised topics,
+  preferring `/oakd/rgb/preview/depth/points`
 - camera image topic discovered from advertised `sensor_msgs/msg/Image` and
   `sensor_msgs/msg/CompressedImage` topics, preferring
-  `/oakd/rgb/preview/image_raw` (`CameraOverlay`)
+  `/oakd/rgb/preview/image_raw`
 - `/odom`
 - `/pose`
 - `/tf`
@@ -581,7 +117,8 @@ Current runtime topic and service map for this slice:
 - `/plan`
 - `/transformed_global_plan`
 - `/cmd_vel_nav`
-- `/cmd_vel_raw` (publish — `TeleopCard` manual control at 10 Hz)
+- `/cmd_vel_raw` publish path for `TeleopCard`
+- `/cmd_vel`
 - `/local_costmap/costmap`
 - `/global_costmap/costmap`
 - `/stop_status`
@@ -602,85 +139,321 @@ Current runtime topic and service map for this slice:
 - `/navigate_to_pose/_action/status`
 - `/navigate_to_pose/_action/feedback`
 
-Important correction:
+## Bridge Behavior
 
-- older `/turtlebot4/*` topic guidance in earlier versions of this file reflects
-  an outdated assumption for this slice
-- the current operator panel and shared Nav2 runtime are built around the
-  global topics and action paths listed above
-- do not re-scope this closed operator slice around namespaced topic defaults
-  unless the runtime changes again
+Current bridge behavior that extension work can rely on:
 
-## Supporting Panel Mapping
+- Foxglove service discovery is available through the extension bridge.
+- Foxglove service-call support tolerates missing request schemas for common
+  ROS 2 action service shapes.
+- `ros2-bridge.ts` caches the latest message per topic and replays it
+  immediately to a new subscriber.
+- `ros2-bridge.ts` accumulates static TF transforms per unique edge and replays
+  them as a synthetic bundle when a new subscriber joins `/tf_static`.
+- `CameraOverlay` receives frames as data URIs from the existing bridge image
+  conversion path.
+- New image subscriptions must pass both `{ topic, type }` so Foxglove channels
+  wire correctly.
 
-### Vacuum Control
+## Vacuum Control
+
+`Vacuum Control` is the validated operator panel for the current
+TurtleBot4/Nav2 simulation path.
 
 Files:
 
-- `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
-- `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
-- `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/TeleopCard.tsx`
-- `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/CameraOverlay.tsx`
-- `~/vscode-tensorfleet/panels-standalone/src/components/VacuumControl/mapOverlayUtils.ts`
-- `~/vscode-tensorfleet/panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
+- `panels-standalone/src/vacuum_control.tsx`
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
+- `panels-standalone/src/components/VacuumControl/MapCanvas.tsx`
+- `panels-standalone/src/components/VacuumControl/TeleopCard.tsx`
+- `panels-standalone/src/components/VacuumControl/CameraOverlay.tsx`
+- `panels-standalone/src/components/VacuumControl/mapOverlayUtils.ts`
+- `panels-standalone/src/components/VacuumControl/cleanAreaProfile.ts`
+- `panels-standalone/src/components/VacuumControl/cleanAreaPlanner.ts`
+- `panels-standalone/src/components/VacuumControl/cleanAreaCoverage.ts`
+- `panels-standalone/src/components/Nav2/runtime/useNav2Runtime.ts`
+- `panels-standalone/src/vacuum-adapter/useVacuumAdapter.ts`
 
-Purpose:
+Panel responsibilities:
 
-- the validated Layer 2 operator surface
 - map-first goal selection
-- operator-facing state, progress, and actions
-- `NavigateToPose` send/cancel workflow using the shared runtime seam
+- operator-facing connection, readiness, state, progress, and actions
+- `NavigateToPose` send/cancel through `vacuum_adapter`
+- adapter-backed mapping controls
+- saved-map inventory and loading
+- Clean Area MVP controls and visualization
+- teleop and camera PiP inside the operator workflow
 
-Current expectation:
+Current expectations:
 
-- this panel is the closed Layer 2/Layer 3 operator workflow
-- it now also hosts the Layer 4 Clean Area MVP above the adapter boundary
-- `Header` and `StatusStrip` remain inline in `VacuumControlPanel.tsx`
-- `MapCanvas` is the dedicated internal map seam for rendering and placement
-- `MapCanvas` now renders the live occupancy grid correctly for Foxglove
-  payloads that expose occupancy data as typed arrays
-- `MapCanvas` now renders optional global and local costmap overlays on
-  dedicated raster canvases
-- `MapCanvas` now exposes a floating `Layers` button and checklist popover for
-  Map, Global costmap, Local costmap, Plan, Lidar, and Depth obstacles
-- `MapCanvas` hosts `CameraOverlay` as an absolutely-positioned floating window
-  inside the map stage; pointer events on the overlay are stopped so the map's
-  goal-placement handler is never triggered by camera window interaction
-- Plan visibility is operator-toggleable from the layers popover
-- lidar and depth obstacles are projected into `map` frame with the local
-  `TransformTree` in `mapOverlayUtils.ts`
-- sensor overlays render on dedicated canvases below robot and target markers
-  so projected points do not hide primary navigation markers
-- `TeleopCard.tsx` is the collapsible manual control card at the bottom of the
-  sidebar; it publishes `geometry_msgs/msg/Twist` to `/cmd_vel_raw` at 10 Hz;
-  keyboard WASD / arrow control is opt-in via a toggle so it does not conflict
-  with map interactions; the card shows a live velocity readout while moving
-- `CameraOverlay.tsx` auto-discovers image topics via `ros2Bridge.getAvailableImageTopics()`,
-  requiring `{ topic, type }` in the `subscribe()` call to correctly wire the
-  Foxglove channel; it prefers `/oakd/rgb/preview/image_raw` for TurtleBot4 and
-  falls back to other discovered image topics; frames arrive as data URIs from
-  the bridge's existing image conversion pipeline and are rendered in an `<img>`
-- readiness model: start is gated on `mapReady` and `preflightReady` only;
-  `poseReady` no longer blocks the start action
-- `VacuumControlPanel.tsx` derives the current pose display via `useMemo` from
-  `runtime.currentMapPose` through `getPoseCoordinates` rather than using
-  `runtime.currentMapCoordinates` directly
+- `Header` and `StatusStrip` remain inline in `VacuumControlPanel.tsx`.
 - `VacuumControlPanel.tsx` owns the `Mapping`, `Navigate`, and `Clean Area`
-  mode switcher and prevents conflicting workflows from running together
-- `MappingCard` exposes adapter-backed saved-map inventory and load behavior
-- `CleanAreaCard` exposes rectangle selection, occupancy-clipped lawnmower
-  waypoint preview, progress, pause, cancel, retry waypoint, skip waypoint, and
-  clear controls
-- future changes should maintain this live-runtime behavior rather than adding
-  mock-only UI
+  mode switcher.
+- Mode switching prevents mapping, point navigation, and clean-area runs from
+  conflicting.
+- `VacuumControlPanel.tsx` consumes `useVacuumAdapter`, not raw
+  `useNav2Runtime`, for product-facing behavior.
+- Navigation state, readiness evidence, capability gating, plan path rendering,
+  send goal, and cancel all flow through the adapter snapshot/commands.
+- The panel branches on capability descriptors and normalized state, not backend
+  names.
+- Future changes should maintain live-runtime behavior rather than adding
+  mock-only UI.
+
+## MapCanvas
+
+`MapCanvas` is the dedicated internal map rendering and interaction surface for
+`Vacuum Control`.
+
+Responsibilities:
+
+- render adapter-normalized `snapshot.map.grid` as the product base map
+- keep direct `/map` rendering available as diagnostic/fallback visualization
+- render `/global_costmap/costmap` and `/local_costmap/costmap`
+- render route overlays, staged preview lines, robot marker, destination marker,
+  clean-area selection, clean-area path preview, and coverage overlays
+- support pan, zoom, Fit Map, Follow Robot, map fit, manual view, and panel
+  resize
+- draw, move, and resize rectangular clean-area selections
+- validate clean-area selections against live map bounds and occupancy data
+- host `CameraOverlay` as an absolutely positioned floating window inside the
+  map stage
+
+Current behavior:
+
+- First valid `/map` fits the full known occupancy-grid bounds.
+- Fit Map uses map dimensions, resolution, panel size, and padding.
+- Fit Map does not fit to robot pose, selected target, route geometry, costmaps,
+  or known/free cells only.
+- `fit`, `manual`, and `follow_robot` viewport modes are explicit.
+- Manual pan/zoom disables follow mode.
+- Base map, costmaps, plan path, lidar/depth overlays, robot marker, target
+  marker, clean-area rectangle, route preview, and coverage cells share one
+  world-to-screen transform.
+- Unknown cells render as muted map space and the map boundary is outlined so a
+  partial map is not confused with the panel background.
+- The floating `Layers` control toggles Map, Global costmap, Local costmap,
+  Plan, Lidar, and Depth obstacles.
+- Pointer events inside camera overlay controls do not trigger map target
+  placement.
+
+## Overlay Utilities
+
+`mapOverlayUtils.ts` owns extension-local sensor overlay projection for lidar
+and depth obstacle points.
+
+Current behavior:
+
+- Builds a local `TransformTree` from `/tf` and `/tf_static`.
+- Projects lidar and depth obstacle points into `map` frame.
+- Uses robot pose frame fallback candidates:
+  - `base_footprint`
+  - `base_link`
+  - namespaced variants
+- Uses lidar frame fallback candidates:
+  - `rplidar_link`
+  - `base_scan`
+  - `laser`
+  - namespaced variants
+- Laser scan topic discovery matches any advertised `sensor_msgs/msg/LaserScan`
+  or `foxglove.LaserScan`, preferring `/scan`.
+- Point cloud field decoding supports plain JS arrays and typed arrays such as
+  `Float32Array`.
+
+Overlay note:
+
+- Lidar and depth obstacle overlays are extension-side visualization aids.
+- They are projected into the map frame and rendered below robot/target markers.
+- They are not new product-contract surfaces.
+
+## TeleopCard
+
+File:
+
+- `panels-standalone/src/components/VacuumControl/TeleopCard.tsx`
+
+Current behavior:
+
+- Collapsible manual control card at the bottom of the sidebar.
+- Directional D-pad.
+- Publishes `geometry_msgs/msg/Twist` to `/cmd_vel_raw`.
+- Publishes at 10 Hz while moving.
+- Optional WASD / arrow-key mode is opt-in via a toggle so it does not conflict
+  with map interactions.
+- Shows live velocity readout while moving.
+- Available during manual mapping, paused auto mapping, and `needs_assistance`.
+- Disabled during active auto mapping and active clean-area waypoint runs.
+
+Important boundary:
+
+- Teleop is not routed through `adapter.sendCommand`.
+- The adapter explicitly rejects `manual_control` as an invalid one-shot command
+  because teleop is a streaming control channel.
+- The VM `twist_deadman.py` accepts both `Twist` and `TwistStamped` on
+  `/cmd_vel_raw`.
+
+## CameraOverlay
+
+File:
+
+- `panels-standalone/src/components/VacuumControl/CameraOverlay.tsx`
+
+Current behavior:
+
+- Floating PiP camera window inside `MapCanvas`.
+- Auto-discovers image topics through `ros2Bridge.getAvailableImageTopics()`.
+- Prefers `/oakd/rgb/preview/image_raw`.
+- Falls back to other advertised image topics.
+- Supports `sensor_msgs/msg/Image` and `sensor_msgs/msg/CompressedImage`.
+- Frames arrive as data URIs and render in an `<img>`.
+- Draggable, minimizable, and hideable.
+- Stops pointer events so camera interactions do not place map targets.
+
+## Mapping UI
+
+`MappingCard` is implemented in `VacuumControlPanel.tsx`.
+
+Current behavior:
+
+- Start auto mapping.
+- Start manual mapping.
+- Pause.
+- Resume auto mapping.
+- Finish & review.
+- Discard session.
+- Accept map.
+- Saved-map inventory.
+- Saved-map load.
+- Improve current map.
+
+Mapping status displays:
+
+- known ratio
+- unknown ratio
+- frontier count
+- visited goal count
+- failed goal count
+- active goal
+- state reason
+- last error
+- update time
+- persistence result
+- active map name
+- loaded map path
+- saved map path
+- saved maps
+- load/save errors
+
+Extension boundary:
+
+- Autonomous exploration is VM-owned.
+- React/webview code sends adapter commands and renders mapping state.
+- The UI should not own the long-running exploration loop.
+
+## Clean Area UI
+
+Clean Area is the current Layer 4 MVP hosted inside `Vacuum Control`.
+
+Files:
+
+- `VacuumControlPanel.tsx`
+- `MapCanvas.tsx`
+- `cleanAreaProfile.ts`
+- `cleanAreaPlanner.ts`
+- `cleanAreaCoverage.ts`
+
+Current behavior:
+
+- Rectangular selection through draw, move, and resize.
+- Validation against map bounds and occupancy data.
+- Coverage profile for swath width, overlap, navigation goal tolerance,
+  boundary margin, minimum useful region size, completion threshold, lane
+  spacing, and boundary extension.
+- Lanes are generated as swath-overlap lawnmower passes.
+- Sampled lanes are clipped to known free occupancy-grid cells.
+- Boundary pass endpoints are extended so Nav2's close-enough goal completion
+  does not leave clean-area edges uncovered.
+- Execution dispatches each waypoint through
+  `adapter.sendCommand({ command: "go_to_location", target })`.
+- Coverage target is built from adapter-normalized map cells.
+- Occupied, unknown, out-of-bounds, and too-small cells are excluded/skipped.
+- Active coverage progress uses map-frame pose history and configured swath.
+- Confirmed runs freeze the coverage target so map updates do not erase
+  covered cells.
+- Map overlay renders remaining, covered, excluded, skipped, and footprint
+  states.
+- Sidebar reports percentage, cleaned area, remaining area, skipped area,
+  simple route status, pass count, distance, and waypoint progress.
+- States: editing, confirmed, preparing, running, paused, canceling, completed,
+  failed, canceled.
+- Controls: preview path, start, pause, resume, cancel, retry waypoint, skip
+  waypoint, clear area.
+
+Current MVP limits:
+
+- Execution is still the current waypoint runner.
+- Coverage progress is first-pass footprint-history accounting.
+- Route generation is not yet component-level area planning.
+- Strong edge/corner, obstacle-adjacent, dock/undock, and battery-aware
+  behavior remain future Layer 4 work.
+
+## Vacuum Adapter Extension Boundary
+
+Extension/product clients should talk in vacuum concepts and capability
+descriptors, not raw TurtleBot4 topics, Nav2 internals, or Valetudo class
+names.
+
+Current adapter files:
+
+- `panels-standalone/src/vacuum-adapter/adapter.ts`
+- `panels-standalone/src/vacuum-adapter/capabilities.ts`
+- `panels-standalone/src/vacuum-adapter/commands.ts`
+- `panels-standalone/src/vacuum-adapter/errors.ts`
+- `panels-standalone/src/vacuum-adapter/index.ts`
+- `panels-standalone/src/vacuum-adapter/mapGrid.ts`
+- `panels-standalone/src/vacuum-adapter/messageUtils.ts`
+- `panels-standalone/src/vacuum-adapter/state.ts`
+- `panels-standalone/src/vacuum-adapter/useVacuumAdapter.ts`
+- `panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/`
+- `panels-standalone/src/vacuum-adapter/backends/valetudo/`
+
+Current target shape:
+
+```text
+VS Code extension / product UI
+  -> vacuum_adapter contract
+     -> TurtleBot4/Nav2 backend adapter
+        -> VM TurtleBot4 simulation runtime
+
+     -> Valetudo backend adapter
+        -> VM-managed Valetudo integration runtime
+           -> real Valetudo-compatible vacuum on local network
+```
+
+Layer 3 extension facts:
+
+- Public `VacuumAdapter` exposes `snapshot` and `sendCommand`.
+- `useTurtleBot4Nav2Adapter` wraps `useNav2Runtime`.
+- `VacuumControlPanel.tsx` consumes `useVacuumAdapter`.
+- `go_to_location` and `cancel_navigation` use `adapter.sendCommand`.
+- Plan rendering consumes normalized `snapshot.navigation.planPath`.
+- Mission state exposes `idle / navigating / cleaning / paused / returning /
+  charging`.
+- TurtleBot4/Nav2 reports unsupported vacuum-only operations explicitly.
+- Valetudo backend stubs exist but do not implement hardware connectivity yet.
+
+Capability model and Valetudo planning details are documented in
+`VACUUM_STACK_PLAN.md`.
+
+## Supporting Panel Mapping
 
 ### 3D Sensor View
 
 File:
 
-- `~/vscode-tensorfleet/panels-standalone/src/components/SensorView3D/SensorView3DPanel.tsx`
+- `panels-standalone/src/components/SensorView3D/SensorView3DPanel.tsx`
 
-Useful closed Layer 2/Layer 3 topics:
+Useful topics:
 
 - `/scan`
 - `/odom`
@@ -690,78 +463,72 @@ Useful closed Layer 2/Layer 3 topics:
 - `/local_costmap/costmap`
 - `/global_costmap/costmap`
 
-Needed extension-side work:
+Expectation:
 
-1. Keep TF, odom, lidar, map, and costmap visibility aligned with the global
-   topic map used by the Nav2 runtime seam.
-2. For occupancy grids, use map coloring for `/map` and costmap coloring for
-   local/global costmaps.
-3. Keep renderer config discovery-based so the panel still works with other
-   robots.
-
-This is the best supporting surface for validating lidar, TF, odom, map, and
-costmaps without mixing raw debug UI into the main operator panel.
+- Keep TF, odom, lidar, map, and costmap visibility aligned with the global
+  topic map used by the Nav2 runtime seam.
+- Use map coloring for `/map`.
+- Use costmap coloring for local/global costmaps.
+- Keep renderer config discovery-driven so the panel still works with other
+  robots.
+- Treat this as the best supporting debug surface for lidar, TF, odom, map, and
+  costmaps without mixing raw debug UI into the main operator panel.
 
 ### Raw Messages Panel
 
 File:
 
-- `~/vscode-tensorfleet/panels-standalone/src/components/RawMessages/RawMessagesPanel.tsx`
+- `panels-standalone/src/components/RawMessages/RawMessagesPanel.tsx`
 
-Useful closed Layer 2/Layer 3 topics:
+Useful topics:
 
-- `/navigate_to_pose/_action/status` if advertised
-- `/navigate_to_pose/_action/feedback` if advertised
+- `/navigate_to_pose/_action/status`
+- `/navigate_to_pose/_action/feedback`
 - `/odom`
 - `/scan`
 - `/map`
 - `/local_costmap/costmap`
 - `/global_costmap/costmap`
 
-Needed extension-side work:
+Expectation:
 
-1. Add a pinned topic set aligned with the current global Nav2/SLAM runtime.
-2. Prefer advertised action status/feedback topics over hard-coded assumptions
-   where possible.
-3. Use Raw Messages as the first detailed Nav2 visibility surface before adding
-   richer diagnostics.
-
-This should work now for any advertised topic because the raw panel is already
-generic.
+- Add a pinned topic set aligned with the current global Nav2/SLAM runtime.
+- Prefer advertised action status/feedback topics over hard-coded assumptions
+  where possible.
+- Use Raw Messages as the first detailed Nav2 visibility surface before adding
+  richer diagnostics.
+- The panel should work now for any advertised topic because it is generic.
 
 ### Map / Mission Control Panel
 
 Files:
 
-- `~/vscode-tensorfleet/panels-standalone/src/components/MissionControl/MissionControl.tsx`
-- `~/vscode-tensorfleet/panels-standalone/src/components/MissionControl/map/DroneMap.tsx`
+- `panels-standalone/src/components/MissionControl/MissionControl.tsx`
+- `panels-standalone/src/components/MissionControl/map/DroneMap.tsx`
 
 Current state:
 
-- this panel is drone/GPS oriented
-- it uses a `DroneStateModel`
+- drone/GPS oriented
+- uses `DroneStateModel`
 - `DroneMap` is an OpenLayers world map with GPS-style vehicle state
-- it is not currently a SLAM occupancy-grid map panel
+- not a SLAM occupancy-grid map panel
 
 Do not use this panel as the primary SLAM map validation surface without
 rewriting it.
 
-Useful extension-side follow-up:
+Follow-up options:
 
-1. Either rename/scope the current panel as drone-specific, or
-2. add a new robot map panel that renders `nav_msgs/msg/OccupancyGrid` from:
-   - `/map`
-   - `/local_costmap/costmap`
-   - `/global_costmap/costmap`
+1. Rename/scope the current panel as drone-specific.
+2. Add a new robot map panel that renders `nav_msgs/msg/OccupancyGrid` from
+   `/map`, `/local_costmap/costmap`, and `/global_costmap/costmap`.
 
-For follow-up debugging and regression checks, prefer `Vacuum Control`, the 3D
-sensor panel, and raw messages for map and costmap validation.
+For vacuum debugging and regression checks, prefer `Vacuum Control`, 3D Sensor
+View, and Raw Messages.
 
-## Extension Follow-Up After Layer 3
+## Extension Follow-Up Work
 
-These features should work with the current VM stack. They are maintenance and
-debugging follow-ups after the closed Layer 2/Layer 3 operator slice, not the
-main Layer 4 coverage path.
+These are extension maintenance and debugging follow-ups after the closed
+Layer 2/Layer 3 operator slice. They are not the main Layer 4 coverage path.
 
 1. Vacuum Control maintenance hardening
 
@@ -775,63 +542,43 @@ main Layer 4 coverage path.
    - route overlay
    - progress state
    - action state
-
-   This is now maintenance and regression hardening for the closed Layer 2/Layer
-   3 slice.
+   - mapping state
+   - Clean Area state
 
 2. 3D debug layout
 
-   Add a one-click layout or panel state that makes the 3D sensor view show:
+   Add a one-click layout or panel state showing:
 
    - lidar scan
    - odom/follow frame
    - map occupancy grid
    - local/global costmaps
 
-   This can be implemented entirely as renderer defaults and topic visibility
-   rules.
-
 3. Nav2 action monitor
 
-   Add a small status surface for the `NavigateToPose` action using advertised
-   action topics:
-
-   - status
-   - feedback
-
-   The first version can be read-only. It only needs to show whether a goal is
-   active, succeeded, canceled, or failed, plus the latest feedback fields that
-   are present.
+   Add a small read-only surface for advertised `NavigateToPose` status and
+   feedback topics. It should show whether a goal is active, succeeded,
+   canceled, or failed, plus latest feedback fields that are present.
 
 4. Goal details / diagnostics surface
 
-   Add a small read-only surface that exposes:
-
-   - active goal status
-   - latest feedback values
-   - terminal result summary
-
-   This complements `Vacuum Control` without forcing raw debug details into the
-   operator cards.
+   Add a read-only surface for active goal status, latest feedback values, and
+   terminal result summary.
 
 5. Occupancy-grid map panel
 
-   Add a new robot map panel that renders `nav_msgs/msg/OccupancyGrid` directly
-   in canvas:
+   Add a robot/SLAM map panel rendering:
 
-   - `/map` as the SLAM map
-   - `/local_costmap/costmap` as local planner costmap
-   - `/global_costmap/costmap` as global planner costmap
+   - `/map`
+   - `/local_costmap/costmap`
+   - `/global_costmap/costmap`
 
-   This should be a robot/SLAM map panel, not an OpenLayers GPS map.
-
-   This is now lower priority than before for the closed Layer 2/Layer 3 slice
-   because `Vacuum Control` already renders the base occupancy map and
-   local/global costmaps as operator overlays.
+   This is lower priority because `Vacuum Control` already renders base map and
+   costmaps.
 
 6. Robot status panel
 
-   Add a compact robot status panel using discovered runtime status topics:
+   Add a compact status panel using discovered runtime status topics:
 
    - battery percentage/voltage/current
    - IMU presence and latest timestamp
@@ -841,19 +588,10 @@ main Layer 4 coverage path.
    - TF freshness
    - Nav2 action status
 
-   This can be read-only and discovery-driven.
-
 7. Topic health checklist
 
-   Add a panel section that marks each expected Layer 2 topic as:
-
-   - advertised
-   - receiving messages
-   - stale
-   - missing
-
-   This would make VM-side validation much faster because it turns the manual
-   checklist from `steps.md` into an extension UI.
+   Add a panel section that marks each expected Layer 2 topic as advertised,
+   receiving messages, stale, or missing.
 
 8. First-mile operator dashboard
 
@@ -863,102 +601,43 @@ main Layer 4 coverage path.
    - 3D Sensor View
    - Raw Messages Panel
 
-   The command should leave the current drone mission-control panel out unless
-   it has been rewritten for SLAM maps.
+   Leave the current drone mission-control panel out unless it has been
+   rewritten for SLAM maps.
 
-## Recommended Immediate Work
+## Verification
 
-The Layer 3 contract hardening pass is wrapped. Mapping + Whole Map View,
-saved-map inventory/load, and the Clean Area MVP are implemented for the
-TurtleBot4/Nav2 simulation path. `Vacuum Control` consumes the
-`vacuum_adapter` contract through `useVacuumAdapter`; the TurtleBot4/Nav2
-backend maps mapping commands/status to VM ROS services/topics; and the
-Valetudo backend explicitly reports auto mapping unsupported.
-
-Near-term work is to validate the Clean Area MVP against the live VM as
-adapter-backed waypoint execution with occupancy-clipped lawnmower preview,
-footprint-history coverage progress, pause/cancel/retry/skip controls, and
-mode locking. Profile-backed swath/overlap, runtime-derived goal tolerance,
-connected-region accounting, and capability surfacing are now started.
-Remaining work is stronger edge/corner handling, component-level route planning
-around obstacles/unknown cells, and resume/recovery semantics.
-
-1. [x] Keep `steps.md` aligned with the actual `Vacuum Control` component state.
-2. [x] Keep `extension.md` aligned with the global Layer 2 topic map used by
-   `useNav2Runtime.ts`.
-3. [x] Validate `VacuumControlPanel.tsx` against the live VM as the
-   runtime-testable operator surface.
-4. [x] Add `TeleopCard` for manual robot control via `/cmd_vel_raw`.
-5. [x] Add `CameraOverlay` for live camera feed from the OAK-D sensor.
-6. [ ] Keep `RawMessagesPanel.tsx` and `SensorView3DPanel.tsx` useful as
-   supporting debug surfaces for the same runtime topics.
-7. [x] Build the extension panels and verify the panel bundle compiles.
-8. [x] Define the first `vacuum_adapter` capability/state/command contract.
-9. [x] Add a TurtleBot4/Nav2 adapter mapping the validated runtime into the
-   contract.
-10. [x] Migrate `Vacuum Control` to consume the `vacuum_adapter` contract
-    instead of raw ROS topics (Layer 3).
-11. [x] Add an explicit mission state machine covering `idle / navigating /
-    cleaning / paused / returning / charging` to the adapter (Layer 3).
-12. [x] Add a focused `vacuum_adapter` regression harness for command,
-    capability, state, and UI boundary checks.
-13. [x] Expand the Valetudo adapter interface stub with capability, state,
-    command, and runtime-boundary mapper shapes.
-14. [x] Validate the hardened adapter contract against the live VM.
-15. [x] Add Mapping + Whole Map View adapter state, controls, metadata, and
-    review/accept flow before coverage.
-16. [x] Add TurtleBot4/Nav2 auto mapping command/status mapping to the VS Code
-    adapter.
-17. [x] Add saved-map inventory/load state and `load_map` adapter dispatch.
-18. [x] Add Clean Area MVP selection, lawnmower waypoint preview, and
-    adapter-backed waypoint execution.
-19. [x] Add row-level occupancy-grid clipping to Clean Area waypoint planning.
-20. [x] Add first-pass footprint-history coverage progress and map overlay
-    above the adapter boundary.
-21. [ ] Live-validate Clean Area MVP against the VM, including pause, cancel,
-    retry, skip, failure handling, and mode locking.
-22. [ ] Harden production coverage semantics: stronger edge/corner handling,
-    component-level area route planning around obstacles/unknown cells, and
-    resume/recovery behavior.
-23. [ ] Keep the VM integration service plan for Valetudo in Layer 6.
-
-Suggested verification after patching:
+Suggested verification after extension changes:
 
 ```sh
-cd ~/vscode-tensorfleet
 bun run test:vacuum-adapter
 bun run typecheck
 bun run --cwd panels-standalone build
 ```
 
-The closed Layer 2/Layer 3 runtime validation covers:
+Live extension validation should cover:
 
 - Foxglove connection reaches `ws://172.16.0.10:8765`.
-- `Vacuum Control` connects and shows the live connection state.
-- `Vacuum Control` receives `/map` and renders the occupancy map when present.
-- live `/map` rendering still works when Foxglove delivers occupancy data as a
-  typed array rather than a plain JS array.
-- the layers popover toggles Map, Global costmap, Local costmap, Plan, Lidar,
-  and Depth obstacles without placing a target.
-- global and local costmaps align with the active map viewport when enabled.
-- lidar and depth obstacle overlays either project into `map` frame or clearly
-  show waiting / no-TF state.
-- `Vacuum Control` receives live pose and can place a target from the map.
-- `Vacuum Control` can send a goal through `/navigate_to_pose/_action/send_goal`.
-- `Vacuum Control` shows live progress from advertised Nav2 feedback when
-  available.
-- `Vacuum Control` can cancel an active run and show canceled / terminal state.
-- `Vacuum Control` clears stale canceled marker/plan state when a fresh target
-  is selected after cancel.
-- `Vacuum Control` can send a second goal after cancel without reloading.
-- failure paths, layer overlays, sensor overlays, and teleop work in the VS
-  Code webview.
+- `Vacuum Control` connects and shows live connection state.
+- `/map` is received and rendered.
+- typed-array occupancy payloads render correctly.
+- layers toggle without placing a target.
+- global/local costmaps align with the active viewport.
+- lidar/depth overlays project into map frame or show waiting/no-TF state.
+- live pose is received.
+- target placement works from the map.
+- goal send reaches `/navigate_to_pose/_action/send_goal`.
+- feedback/status progress appears when available.
+- cancel transitions correctly.
+- stale canceled marker/plan state clears on fresh target selection.
+- second goal after cancel works without reload.
+- mapping controls reflect VM-owned mapping state.
+- Clean Area preview and execution state render correctly.
 - supporting debug panels can inspect `/scan`, `/odom`, `/tf`, `/tf_static`,
-  `/map`, and costmaps as needed.
+  `/map`, and costmaps.
 
-## Not Next
+## Not Extension-Immediate
 
-Do not make these the next milestone:
+Do not make these the next extension milestone:
 
 - room cleaning UI
 - zone cleaning UI
