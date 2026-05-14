@@ -3,7 +3,7 @@
 ## Scope
 
 This file records the current state of the TurtleBot4 + Nav2 validation work as
-of May 6, 2026.
+of May 14, 2026.
 
 It is a runtime handoff, not a design doc.
 
@@ -158,9 +158,11 @@ Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
 Layer 4 prerequisite: Mapping + Whole Map View
                                     implemented with VM-owned auto mapping
                                     and saved-map load/list plumbing
-Layer 4 — Coverage                  Clean Area MVP implemented as
-                                    waypoint-based validation; true coverage,
-                                    dock, and battery behavior pending
+Layer 4 — Coverage                  Clean Area MVP implemented with
+                                    occupancy-clipped waypoints and
+                                    footprint-history progress; production
+                                    coverage, dock, and battery behavior
+                                    pending
 Layer 5 — Room / Zone Semantics     planned
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
@@ -239,7 +241,9 @@ caveat:
 
 Explicitly out of the closed Layer 2/Layer 3 simulation slice:
 
-- Clean Area MVP behavior, true coverage planning, dock / undock workflow, and
+- Clean Area remains Layer 4 behavior, even though its current MVP now lives in
+  the same `Vacuum Control` panel above the adapter boundary
+- production-complete coverage planning, dock / undock workflow, and
   battery-aware execution (Layer 4)
 - room / zone naming and segmentation (Layer 5)
 - real vacuum hardware and Valetudo integration runtime (Layer 6)
@@ -297,7 +301,7 @@ The mapping milestone makes `Vacuum Control` feel like a robot-vacuum product:
   panel reloads, UI closure, and websocket reconnects
 - manual teleop is available for manual mapping, paused mapping, and
   `needs_assistance` recovery
-- true coverage accounting, room segmentation, zone editing, dock UI,
+- production coverage semantics, room segmentation, zone editing, dock UI,
   scheduling, consumables, or Valetudo hardware behavior remains outside this
   milestone; row-level obstacle/unknown clipping has started in Clean Area
 - map readiness metadata is visible: dimensions, resolution,
@@ -341,19 +345,22 @@ Current Clean Area MVP:
 - `MapCanvas` supports drawing, moving, and resizing a rectangular clean-area
   selection.
 - the selection is validated against map bounds and occupancy data.
-- `cleanAreaPlanner.ts` generates a swath-overlap lawnmower waypoint preview
-  from the selected rectangle and chooses the longer axis for passes.
+- `cleanAreaProfile.ts` owns profile-backed swath, overlap, tolerance, margin,
+  region-size, and completion settings.
+- `cleanAreaPlanner.ts` generates a profile-backed swath-overlap lawnmower
+  waypoint preview from the selected rectangle and chooses the longer axis for
+  passes.
 - route generation clips sampled lanes to known free cells in the normalized
   occupancy grid instead of sending full-width rows through blocked or unknown
   cells.
-- boundary pass goals extend about 0.28 m past the selected edge so Nav2's
+- boundary pass goals extend by the profile-derived boundary extension so
   close-enough goal completion does not skip the last part of each pass.
 - the run dispatches each waypoint through `adapter.sendCommand({ command:
   "go_to_location", ... })`, keeping execution above the adapter boundary.
 - `cleanAreaCoverage.ts` classifies cleanable target cells and excluded
   occupied/unknown/out-of-bounds cells from the normalized map grid.
-- active clean-area runs use map-frame robot pose history and a 0.30 m
-  simulation swath to mark cleanable cells covered.
+- active clean-area runs use map-frame robot pose history and the configured
+  cleaning swath to mark cleanable cells covered.
 - confirmed clean-area runs freeze the coverage target and render coverage
   cells from world-space bounds so map/grid updates do not erase covered cells.
 - `MapCanvas` renders coverage cells and the current robot footprint; the
@@ -366,9 +373,13 @@ Current Clean Area MVP:
   conflicting with each other.
 
 Treat this as first-pass footprint coverage accounting, still executed by the
-current waypoint runner. Later passes must add configurable swath/overlap,
-runtime-derived goal tolerance, edge/corner coverage, coverage-threshold
-completion, and stronger behavior near obstacles and unknown cells.
+current waypoint runner. Coverage now uses a product-level profile for swath
+width, overlap, navigation goal tolerance, boundary margin, minimum useful
+region size, and completion threshold. The UI uses a 95% covered-cell threshold
+for a complete run and can report a route-finished state when uncovered
+cleanable cells remain. Later passes must add stronger edge/corner coverage,
+component-level route planning, and stronger behavior near obstacles and
+unknown cells.
 
 Layer 3 now has a working and live-validated TurtleBot4/Nav2 adapter, a mission
 state machine, `Vacuum Control` consumption through `useVacuumAdapter`, focused
@@ -453,8 +464,8 @@ consuming normalized adapter state and commands instead of raw backend topics.
 
 Out of Layer 3 (defer to later layers):
 
-- Clean Area MVP, true coverage planning, and "clean this area" behavior
-  (Layer 4)
+- production-complete coverage planning and room/zone cleaning behavior
+  (Layer 4+)
 - dock / undock and battery-aware execution beyond what the contract models
   (Layer 4)
 - room / zone naming and segmentation UI (Layer 5)
@@ -491,9 +502,11 @@ Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
 Layer 4 prerequisite: Mapping + Whole Map View
                                     implemented for TurtleBot4/Nav2
                                     simulation
-Layer 4 — Coverage                  Clean Area MVP implemented as
-                                    waypoint-based validation; true coverage,
-                                    dock, and battery behavior pending
+Layer 4 — Coverage                  Clean Area MVP implemented with
+                                    occupancy-clipped waypoints and
+                                    footprint-history progress; production
+                                    coverage, dock, and battery behavior
+                                    pending
 Layer 5 — Room / Zone Semantics     planned
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
@@ -647,8 +660,11 @@ Current TurtleBot4/Nav2 behavior:
 
 ### Layer 4: Coverage
 
-Status: Clean Area MVP implemented as waypoint-based validation; true coverage,
-dock / undock, and battery-aware behavior pending.
+Status: Clean Area MVP implemented with occupancy-clipped waypoint execution,
+footprint-history coverage progress, profile-backed coverage configuration,
+connected-region accounting, and a 95% covered-cell completion threshold.
+Production coverage route planning, dock / undock execution, and battery-aware
+behavior are pending.
 
 Purpose:
 
@@ -661,26 +677,33 @@ Current Clean Area MVP:
 
 - `MapCanvas` supports rectangular clean-area selection with draw, move, and
   resize interactions.
-- `cleanAreaPlanner.ts` generates a swath-overlap lawnmower waypoint preview.
+- `cleanAreaProfile.ts` owns the coverage profile: swath width, overlap,
+  navigation goal tolerance, boundary margin, minimum useful region size, and
+  completion threshold.
+- `cleanAreaPlanner.ts` generates a profile-backed swath-overlap lawnmower
+  waypoint preview.
 - `VacuumControlPanel.tsx` executes the route by sending adapter
   `go_to_location` commands.
 - `cleanAreaPlanner.ts` owns route generation and clips sampled lanes to known
   free occupancy-grid cells.
-- Boundary pass goals are extended about 0.28 m past the selected rectangle to
-  compensate for Nav2's goal tolerance, which can otherwise report success
-  while the robot is still short of the actual edge.
+- Boundary pass goals are extended by the profile-derived boundary extension to
+  compensate for close-enough goal tolerance, which can otherwise report
+  success while the robot is still short of the actual edge.
 - `cleanAreaCoverage.ts` classifies selected map cells as cleanable, occupied,
   unknown, or out-of-bounds from the normalized adapter grid.
+- `cleanAreaCoverage.ts` decomposes cleanable cells into connected regions and
+  marks tiny disconnected regions as skipped.
 - Confirmed clean-area runs freeze that target and store overlay world bounds,
   so covered cells remain stable across live map updates during execution.
 - Clean-area progress is now footprint-history based: during an active run,
-  map-frame robot poses mark cleanable target cells covered using a 0.30 m
-  simulation swath.
+  map-frame robot poses mark cleanable target cells covered using the
+  configured cleaning swath.
 - `MapCanvas` renders remaining, covered, excluded occupied/unknown cells, and
   the current robot footprint over the selected clean area.
-- `CleanAreaCard` shows coverage percent, covered area, remaining area, target
-  cleanable area, skipped cells, swath width, and waypoint progress as a
-  secondary metric.
+- `CleanAreaCard` shows an end-user cleaning summary: coverage percent, cleaned
+  area, remaining area, skipped area, and simple route status.
+- Clean Area mode shows adapter-driven mission lifecycle state for dock,
+  return-to-dock, battery, and charging capabilities.
 - Clean-area UI state covers editing, confirmed, preparing, running, paused,
   canceling, completed, failed, and canceled.
 - Operators can pause, cancel, retry a failed waypoint, skip a waypoint, and
@@ -696,10 +719,10 @@ Constraints:
   state surfaces
 - Layer 4 has started because Layer 3 is real, and coverage logic should still
   never touch backend-specific topics directly
-- first-pass footprint-history progress now exists above the adapter boundary;
-  configurable swath/overlap, runtime-derived goal tolerance, edge/corner
-  handling, coverage-threshold completion, and stronger obstacle-adjacent
-  behavior remain future work
+- first-pass footprint-history progress, coverage profile config, and
+  connected-region accounting now exist above the adapter boundary; stronger
+  edge/corner handling, component-level area route planning, and stronger
+  obstacle-adjacent behavior remain future work
 
 ### Layer 5: Room / Zone Semantics
 
