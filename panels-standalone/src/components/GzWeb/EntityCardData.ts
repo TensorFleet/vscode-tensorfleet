@@ -2,7 +2,7 @@
 // Entity Card Data Types
 // ============================================================================
 
-import { EntityData, EntityCardDataImpl } from 'tensorfleet-util/ros/fetchFeaturedEntities';
+import { EntityData, EntityCardDataImpl } from 'tensorfleet-util/ros/fetch-featured-entities';
 
 export interface EntityCardData extends EntityData {}
 

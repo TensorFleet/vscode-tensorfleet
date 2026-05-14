@@ -6,7 +6,6 @@ import {
   RGBA_S3TC_DXT3_Format,
   RGBA_S3TC_DXT5_Format,
   RGB_ETC1_Format,
-  CompressedPixelFormat,
 } from "three";
 
 class DDSLoader extends CompressedTextureLoader {

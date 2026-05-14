@@ -1,8 +1,4 @@
-/* Ported from: lichtblick/packages/suite-base/src/panels/Teleop/DirectionalPad.style.ts
-   Date: 2025-11-06
-   Modifications: Converted from CSS-in-JS (tss-react/mui) to traditional CSS
-   Theme colors extracted from Material-UI default dark theme
-*/
+/* DirectionalPad.css — Enhanced styling with glow effects */
 
 .directional-pad-container {
   display: flex;
@@ -16,66 +12,59 @@
 .directional-pad-svg {
   max-height: 100%;
   max-width: 100%;
+  transition: filter 0.3s ease;
+}
+
+.directional-pad-svg:has(.directional-pad-button.active) {
+  filter: drop-shadow(0 0 20px rgba(59, 130, 246, 0.2));
 }
 
 .directional-pad-button {
   cursor: pointer;
-  /* theme.palette.action.hover ≈ rgba(255, 255, 255, 0.08) in dark theme */
-  fill: rgba(255, 255, 255, 0.08);
-  /* theme.palette.divider ≈ rgba(255, 255, 255, 0.12) */
-  stroke: rgba(255, 255, 255, 0.12);
+  fill: rgba(255, 255, 255, 0.05);
+  stroke: rgba(255, 255, 255, 0.08);
   stroke-width: 0.5;
-  transition: fill 0.2s ease, stroke 0.2s ease;
+  transition: fill 0.15s ease, stroke 0.15s ease;
 }
 
 .directional-pad-button:hover {
-  /* theme.palette.primary.main with alpha (selectedOpacity + hoverOpacity) */
-  fill: rgba(33, 150, 243, 0.16);
-  /* theme.palette.primary.main */
-  stroke: #2196f3;
+  fill: rgba(59, 130, 246, 0.12);
+  stroke: rgba(59, 130, 246, 0.4);
 }
 
-/* Adjacent sibling selector for icon - triggers when button is hovered */
 .directional-pad-button:hover + .directional-pad-button-icon {
-  fill: #2196f3;
+  fill: #60a5fa;
 }
 
 .directional-pad-button.active {
-  /* theme.palette.primary.main */
-  fill: #2196f3 !important;
-  /* theme.palette.primary.dark */
-  stroke: #1976d2 !important;
+  fill: #3b82f6 !important;
+  stroke: #2563eb !important;
 }
 
-.directional-pad-button.active:hover + .directional-pad-button-icon {
-  /* theme.palette.common.white */
-  fill: #ffffff;
+.directional-pad-button.active + .directional-pad-button-icon {
+  fill: #ffffff !important;
 }
 
 .directional-pad-button.disabled {
   cursor: auto;
   stroke-width: 0;
-  /* theme.palette.action.disabledBackground */
-  fill: rgba(255, 255, 255, 0.12);
+  fill: rgba(255, 255, 255, 0.06);
 }
 
 .directional-pad-button.disabled:hover {
-  fill: rgba(255, 255, 255, 0.12);
+  fill: rgba(255, 255, 255, 0.06);
 }
 
 .directional-pad-button.disabled:hover + .directional-pad-button-icon {
-  /* theme.palette.background.default in dark theme */
-  fill: #1e1e1e;
+  fill: #0c0e14;
 }
 
 .directional-pad-button-icon {
   pointer-events: none;
-  /* theme.palette.text.primary ≈ rgba(255, 255, 255, 0.87) */
-  fill: rgba(255, 255, 255, 0.87);
-  transition: fill 0.2s ease;
+  fill: rgba(255, 255, 255, 0.65);
+  transition: fill 0.15s ease;
 }
 
 .directional-pad-button-icon.disabled {
-  fill: #1e1e1e;
+  fill: #0c0e14;
 }
-

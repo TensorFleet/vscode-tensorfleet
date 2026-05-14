@@ -10,6 +10,9 @@
     "url": "https://github.com/TensorFleet/vscode-tensorfleet.git"
   },
   "icon": "media/store-icon.png",
+  "workspaces": [
+    "packages/*"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -32,6 +35,8 @@
     "onCommand:tensorfleet.openImagePanel",
     "onCommand:tensorfleet.openTeleopsPanel",
     "onCommand:tensorfleet.openMapPanel",
+    "onCommand:tensorfleet.openVacuumControlPanel",
+    "onCommand:tensorfleet.openNav2Panel",
     "onCommand:tensorfleet.openRawMessagesPanel",
     "onCommand:tensorfleet.openFeaturedEntitiesPanel",
     "onCommand:tensorfleet.createNewProject",
@@ -162,6 +167,16 @@
       {
         "command": "tensorfleet.openMapPanel",
         "title": "Open Map Panel",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openVacuumControlPanel",
+        "title": "Open Vacuum Control Panel",
+        "category": "TensorFleet"
+      },
+      {
+        "command": "tensorfleet.openNav2Panel",
+        "title": "Open Nav2 Panel",
         "category": "TensorFleet"
       },
       {
@@ -309,6 +324,7 @@
     "compile:dev": "TENSORFLEET_BUILD=development bun run compile",
     "compile:prod": "TENSORFLEET_BUILD=production bun run compile",
     "watch": "bun run sync:panels-deps && (TENSORFLEET_BUILD=development bun run watch:panels & TENSORFLEET_BUILD=development bun run watch:extension & wait)",
+    "test:vacuum-adapter": "bun scripts/vacuum-adapter-regression.ts",
     "typecheck": "bunx tsc -p ./ --noEmit",
     "lint": "bunx eslint src --ext ts",
     "package": "bunx vsce package",
@@ -320,6 +336,7 @@
     "tensorfleet-mcp": "./dist/mcp-server.js"
   },
   "dependencies": {
+    "tensorfleet-auth": "workspace:*",
     "@foxglove/schemas": "^1.8.0",
     "@foxglove/ws-protocol": "^0.8.0",
     "@lichtblick/message-definition": "^1.0.0",

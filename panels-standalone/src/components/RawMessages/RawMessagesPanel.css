@@ -185,6 +185,97 @@
   flex-wrap: wrap;
 }
 
+.raw-messages-header__pinned {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.raw-messages-header__pinned-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.raw-messages-header__pinned-hint {
+  font-size: 0.78rem;
+  color: #7c8aa5;
+}
+
+.raw-messages-header__pinned-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.raw-messages-header__pinned-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  min-width: 15rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 0.85rem;
+  border: 1px solid #223047;
+  background:
+    linear-gradient(180deg, rgba(11, 17, 28, 0.95), rgba(8, 12, 20, 0.95));
+  color: #dbeafe;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.raw-messages-header__pinned-button:hover:not(:disabled) {
+  border-color: #3b82f6;
+  background:
+    linear-gradient(180deg, rgba(18, 29, 48, 0.98), rgba(10, 17, 29, 0.98));
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.28);
+}
+
+.raw-messages-header__pinned-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.raw-messages-header__pinned-button--selected,
+.raw-messages-header__pinned-button--active {
+  border-color: #60a5fa;
+  background:
+    linear-gradient(180deg, rgba(28, 61, 110, 0.55), rgba(14, 28, 52, 0.95));
+}
+
+.raw-messages-header__pinned-button--expected {
+  border-style: dashed;
+  color: #bfdbfe;
+  opacity: 0.82;
+}
+
+.raw-messages-header__pinned-button-label {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.raw-messages-header__pinned-button-topic {
+  font-size: 0.72rem;
+  color: #8fb7ff;
+  word-break: break-all;
+}
+
+.raw-messages-header__pinned-button-state {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #93c5fd;
+}
+
 .raw-messages-header__form-group {
   display: flex;
   flex-direction: column;

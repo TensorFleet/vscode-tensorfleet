@@ -2514,7 +2514,10 @@ export class Scene {
               }
 
               meshReady(
-                this.colladaLoader.parse(new TextDecoder().decode(mesh), uri),
+                this.colladaLoader.parse(
+                  new TextDecoder().decode(mesh),
+                  uri.substring(0, uri.lastIndexOf("/") + 1),
+                ),
               );
 
               // Mark the mesh as done in the loading manager.
@@ -4527,7 +4530,7 @@ export class Scene {
             : "data:image/png;base64,";
           imageElem.src += window.btoa(binary);
 
-          texture.format = isJPEG ? THREE.RGBFormat : THREE.RGBAFormat;
+          texture.format = THREE.RGBAFormat;
           texture.needsUpdate = true;
           texture.image = imageElem;
 

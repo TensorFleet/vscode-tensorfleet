@@ -17,6 +17,10 @@ import { initializeEnv, isDev, env, registerDevCommand, getMode } from './env';
 
 type PanelKind = 'standard' | 'terminalTabs';
 
+function isRuntimeWorldSwitchAllowed(configId: string | undefined): boolean {
+  return configId !== 'lerobot';
+}
+
 // Menu action types for deterministic option handling
 type MenuAction =
   | 'auth.login'
@@ -178,6 +182,26 @@ const DRONE_VIEWS: DroneViewport[] = [
     htmlTemplate: 'sensor-3d-standalone'
   },
   {
+    id: "tensorfleet-vacuum-control-panel",
+    title: "Vacuum Control",
+    description: "Map-first operator shell for TurtleBot4 navigation with destination staging and run controls.",
+    image: "tensorfleet-icon.svg",
+    command: "tensorfleet.openVacuumControlPanel",
+    actionLabel: "Open Vacuum Control",
+    panelKind: "standard",
+    htmlTemplate: "vacuum-control-standalone"
+  },
+  {
+    id: "tensorfleet-nav2-panel",
+    title: "Nav2 operator",
+    description: "Monitor NavigateToPose status, send simple goals, and inspect TurtleBot4 topic health.",
+    image: 'tensorfleet-icon.svg',
+    command: 'tensorfleet.openNav2Panel',
+    actionLabel: 'Open Nav2 Operator',
+    panelKind: 'standard',
+    htmlTemplate: 'nav2-standalone'
+  },
+  {
     id: "tensorfleet-raw-messages-panel",
     title: 'Raw Messages',
     description: 'Display raw ROS2 messages in real-time - monitor and debug message traffic.',
@@ -299,6 +323,68 @@ async function serverSettingsMessageHandler(message: any, api: {
         break;
       }
 
+      case 'getSimulationWorldData': {
+        if (!vmManagerIntegration) {
+          webview.postMessage({
+            command: 'updateSimulationWorldData',
+            presets: [],
+            selection: { mode: 'default' },
+            available: false,
+            reason: 'VM Manager not available'
+          });
+          return;
+        }
+
+        const currentConfig = vmManagerIntegration.getLastUsedConfig();
+        if (!isRuntimeWorldSwitchAllowed(currentConfig?.id)) {
+          webview.postMessage({
+            command: 'updateSimulationWorldData',
+            presets: [],
+            selection: { mode: 'default' },
+            available: false,
+            reason: 'Simulation world switching is disabled for Lerobot arm VMs'
+          });
+          return;
+        }
+
+        const state = unifiedStatusCoordinator?.getState();
+        const vmRunning = state?.vmState === 'running';
+        if (!vmRunning) {
+          webview.postMessage({
+            command: 'updateSimulationWorldData',
+            presets: [],
+            selection: { mode: 'default' },
+            available: false,
+            reason: 'Start the VM to manage runtime simulation worlds'
+          });
+          return;
+        }
+
+        try {
+          const [presets, selection] = await Promise.all([
+            vmManagerIntegration.listGazeboPresets(),
+            vmManagerIntegration.getGazeboSelection()
+          ]);
+
+          webview.postMessage({
+            command: 'updateSimulationWorldData',
+            presets,
+            selection,
+            available: true
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          webview.postMessage({
+            command: 'updateSimulationWorldData',
+            presets: [],
+            selection: { mode: 'default' },
+            available: false,
+            reason: `Runtime world switching unavailable: ${message}`
+          });
+        }
+        break;
+      }
+
       case 'setRegion': {
         const { regionId } = message;
         if (!regionId) return;
@@ -306,7 +392,6 @@ async function serverSettingsMessageHandler(message: any, api: {
         telemetry?.trackEvent('serverSettings.region.set', { regionId, phase: 'start' });
         await regions.setSelectedRegion(regionId);
 
-        const newRegion = regions.getSelectedRegion();
         telemetry?.trackEvent('serverSettings.region.set', { regionId, phase: 'success' });
 
         // Refresh VM Manager status
@@ -329,6 +414,7 @@ async function serverSettingsMessageHandler(message: any, api: {
 
         // Send updated VM types data
         await serverSettingsMessageHandler({ command: 'getVmTypes' }, api);
+        await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
         break;
       }
 
@@ -398,6 +484,43 @@ async function serverSettingsMessageHandler(message: any, api: {
         break;
       }
 
+      case 'setSimulationWorldPreset': {
+        const { preset } = message;
+        if (!preset || !vmManagerIntegration) return;
+        const currentConfig = vmManagerIntegration.getLastUsedConfig();
+        if (!isRuntimeWorldSwitchAllowed(currentConfig?.id)) {
+          void vscode.window.showInformationMessage('Simulation world switching is disabled for Lerobot arm VMs');
+          await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
+          break;
+        }
+
+        telemetry?.trackEvent('serverSettings.simulationWorld.setPreset', { preset, phase: 'start' });
+        const resultMessage = await vmManagerIntegration.setGazeboPreset(preset);
+        await refreshSimulationViewPanels(api.context);
+        telemetry?.trackEvent('serverSettings.simulationWorld.setPreset', { preset, phase: 'success' });
+        void vscode.window.showInformationMessage(resultMessage);
+        await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
+        break;
+      }
+
+      case 'resetSimulationWorld': {
+        if (!vmManagerIntegration) return;
+        const currentConfig = vmManagerIntegration.getLastUsedConfig();
+        if (!isRuntimeWorldSwitchAllowed(currentConfig?.id)) {
+          void vscode.window.showInformationMessage('Simulation world switching is disabled for Lerobot arm VMs');
+          await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
+          break;
+        }
+
+        telemetry?.trackEvent('serverSettings.simulationWorld.reset', { phase: 'start' });
+        const resultMessage = await vmManagerIntegration.resetGazeboSelection();
+        await refreshSimulationViewPanels(api.context);
+        telemetry?.trackEvent('serverSettings.simulationWorld.reset', { phase: 'success' });
+        void vscode.window.showInformationMessage(resultMessage);
+        await serverSettingsMessageHandler({ command: 'getSimulationWorldData' }, api);
+        break;
+      }
+
       default: {
         console.log('[ServerSettings] Unknown message:', command);
         break;
@@ -406,6 +529,10 @@ async function serverSettingsMessageHandler(message: any, api: {
   } catch (error) {
     telemetry?.captureError(error, { source: 'serverSettingsMessageHandler', command });
     console.error('[ServerSettings] Message handler error:', error);
+    if (!['getStatus', 'getRegions', 'getVmTypes', 'getSimulationWorldData'].includes(command)) {
+      const message = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(`Server settings action failed: ${message}`);
+    }
   }
 }
 
@@ -756,6 +883,61 @@ let unifiedStatusCoordinator: UnifiedStatusCoordinator | null = null;
 
 // Panel registry for unique panels (to enable refresh on auth changes)
 const uniquePanelRegistry = new Map<string, UniqueViewProvider>();
+const dedicatedPanelRegistry = new Map<string, Set<vscode.WebviewPanel>>();
+
+function registerDedicatedPanel(viewId: string, panel: vscode.WebviewPanel) {
+  let panels = dedicatedPanelRegistry.get(viewId);
+  if (!panels) {
+    panels = new Set<vscode.WebviewPanel>();
+    dedicatedPanelRegistry.set(viewId, panels);
+  }
+
+  panels.add(panel);
+  panel.onDidDispose(() => {
+    const existing = dedicatedPanelRegistry.get(viewId);
+    if (!existing) {
+      return;
+    }
+    existing.delete(panel);
+    if (existing.size === 0) {
+      dedicatedPanelRegistry.delete(viewId);
+    }
+  });
+}
+
+async function refreshDedicatedPanels(view: DroneViewport, context: vscode.ExtensionContext): Promise<void> {
+  const panels = dedicatedPanelRegistry.get(view.id);
+  if (!panels || panels.size === 0) {
+    return;
+  }
+
+  for (const panel of panels) {
+    const webview = panel.webview;
+    const imageUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', view.image)).toString();
+    const cspSource = webview.cspSource;
+
+    if (view.panelKind === 'terminalTabs') {
+      webview.html = getTerminalPanelHtml(view, imageUri, cspSource);
+      continue;
+    }
+
+    if (view.htmlTemplate) {
+      webview.html = await getCustomPanelHtml(view, webview, context, cspSource);
+      continue;
+    }
+
+    webview.html = getStandardPanelHtml(view, imageUri, cspSource);
+  }
+}
+
+async function refreshSimulationViewPanels(context: vscode.ExtensionContext): Promise<void> {
+  const simView = DRONE_VIEWS.find((view) => view.id === 'tensorfleet-gzweb-panel');
+  if (!simView) {
+    return;
+  }
+
+  await refreshDedicatedPanels(simView, context);
+}
 
 
 
@@ -1437,15 +1619,6 @@ async function showWelcomePage(context: vscode.ExtensionContext) {
 
   const telemetry = getTelemetry();
 
-  const PANEL_COMMANDS: Record<string, string> = {
-    'tensorfleet-gazebo': 'tensorfleet.openGazeboPanel',
-    'tensorfleet-teleops-panel': 'tensorfleet.openTeleopsPanel',
-    'tensorfleet-map-panel': 'tensorfleet.openMapPanel',
-    'tensorfleet-sensor-3d-panel': 'tensorfleet.openSensor3DPanel',
-    'tensorfleet-raw-messages-panel': 'tensorfleet.openRawMessagesPanel',
-    'tensorfleet-image-panel': 'tensorfleet.openImagePanel'
-  };
-
   const panel = vscode.window.createWebviewPanel(
     'tensorfleet.welcome',
     'Welcome to TensorFleet',
@@ -1523,7 +1696,6 @@ async function showWelcomePage(context: vscode.ExtensionContext) {
       }
 
       case 'welcome.openStarterPanels': {
-        const ids = Array.isArray(msg.panelIds) ? msg.panelIds : [];
         const commandsToRun = new Set<string>();
 
         commandsToRun.add('tensorfleet.openGzWebPanel');
@@ -1664,6 +1836,16 @@ async function openDedicatedPanel(
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
       }
 
+      if (view.htmlTemplate == 'nav2-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+
+      if (view.htmlTemplate == 'vacuum-control-standalone') {
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
+        localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
+      }
+
       if (view.htmlTemplate == 'raw-messages-standalone') {
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist'));
         localResourceRoots.push(vscode.Uri.joinPath(context.extensionUri, 'panels-standalone', 'dist', 'assets'));
@@ -1685,6 +1867,7 @@ async function openDedicatedPanel(
         localResourceRoots
       }
     );
+    registerDedicatedPanel(view.id, panel);
 
     const webview = panel.webview;
     const imageUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', view.image)).toString();
@@ -1789,6 +1972,14 @@ async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, 
     return getStandalonePanelHtml('sensor_view_3d', webview, context, cspSource);
   }
 
+  if (view.htmlTemplate === 'nav2-standalone') {
+    return getStandalonePanelHtml('nav2', webview, context, cspSource);
+  }
+
+  if (view.htmlTemplate === 'vacuum-control-standalone') {
+    return getStandalonePanelHtml('vacuum_control', webview, context, cspSource);
+  }
+
   if (view.htmlTemplate === 'raw-messages-standalone') {
     return getStandalonePanelHtml('raw_messages', webview, context, cspSource);
   }
@@ -1838,7 +2029,7 @@ async function getCustomPanelHtml(view: DroneViewport, webview: vscode.Webview, 
 }
 
 async function getStandalonePanelHtml(
-  panelName: 'teleops' | 'image' | 'mission_control' | 'raw_messages' | 'sensor_view_3d' | 'gzweb' | 'featured_entities',
+  panelName: 'teleops' | 'image' | 'mission_control' | 'vacuum_control' | 'raw_messages' | 'sensor_view_3d' | 'nav2' | 'gzweb' | 'featured_entities',
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
   cspSource: string
@@ -1846,7 +2037,9 @@ async function getStandalonePanelHtml(
   const htmlPath = path.join(__dirname, '..', 'panels-standalone', 'dist', `${panelName}.html`);
 
   if (!fs.existsSync(htmlPath)) {
-    throw new Error(`Standalone panel build not found: ${htmlPath}. Run 'bun run build' inside panels-standalone/`);
+    throw new Error(
+      `Standalone panel build not found: ${htmlPath}. Run 'bun run compile:dev' from the repo root or 'bun run build' inside panels-standalone/.`
+    );
   }
 
   let html = fs.readFileSync(htmlPath, 'utf8');
@@ -1874,12 +2067,20 @@ async function getStandalonePanelHtml(
   const vmManagerUrl = regions.getVmManagerUrl();
   const nodeId = vmManagerIntegration?.snapshot.nodeId ?? '';
   const token = await auth.getToken(context);
+  const currentVmConfig = vmManagerIntegration?.getLastUsedConfig() ?? null;
+  const vmConfigId = currentVmConfig?.id ?? '';
+
+  const serializedVmManagerUrl = JSON.stringify(vmManagerUrl);
+  const serializedVmConfig = JSON.stringify(currentVmConfig ?? null).replace(/</g, '\\u003c');
+  const serializedVmConfigId = JSON.stringify(vmConfigId);
 
   const tfConfigScript = `
   <script>
-    window.TENSORFLEET_VM_MANAGER_URL = "${vmManagerUrl}";
-    ${nodeId ? `window.TENSORFLEET_NODE_ID = "${nodeId}";` : ''}
-    ${token ? `window.TENSORFLEET_JWT = "${token}";` : ''}
+    window.TENSORFLEET_VM_MANAGER_URL = ${serializedVmManagerUrl};
+    window.TENSORFLEET_VM_CONFIG = ${serializedVmConfig};
+    ${nodeId ? `window.TENSORFLEET_NODE_ID = ${JSON.stringify(nodeId)};` : ''}
+    ${token ? `window.TENSORFLEET_JWT = ${JSON.stringify(token)};` : ''}
+    ${vmConfigId ? `window.TENSORFLEET_VM_CONFIG_ID = ${serializedVmConfigId};` : ''}
   </script>
   `;
 
@@ -3527,74 +3728,6 @@ async function updateUnifiedAuthStatus(context: vscode.ExtensionContext) {
   console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
   unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
 }
-
-/**
- * Build menu items with visual grouping (primary actions, separator, secondary actions)
- */
-function buildMenuForState(
-  vmState: 'unknown' | 'stopped' | 'starting' | 'running' | 'stopping' | 'failed' | 'pending',
-  ipAddress?: string
-): vscode.QuickPickItem[] {
-  const items: vscode.QuickPickItem[] = [];
-  const primaryActions: vscode.QuickPickItem[] = [];
-
-  // Build primary actions based on VM state
-  switch (vmState) {
-    case 'running':
-      primaryActions.push({
-        label: '$(debug-stop) Stop VM'
-      });
-      break;
-
-    case 'stopped':
-    case 'pending':
-    case 'unknown':
-      primaryActions.push({
-        label: '$(play) Start VM'
-      });
-      break;
-
-    case 'failed':
-      primaryActions.push({
-        label: '$(refresh) Retry Start'
-      });
-      break;
-
-    case 'starting':
-    case 'stopping':
-      // No primary actions during transitions
-      break;
-  }
-
-  // Add primary actions if any exist
-  if (primaryActions.length > 0) {
-    items.push(...primaryActions);
-
-    // Add separator after primary actions
-    items.push({
-      label: '',
-      kind: vscode.QuickPickItemKind.Separator
-    });
-  }
-
-  // Add secondary actions (always shown)
-  const currentRegion = regions.getSelectedRegion();
-  items.push(
-    {
-      label: '$(refresh) Refresh Status'
-    },
-    {
-      label: `$(globe) Change Region`,
-      detail: `Current: ${currentRegion.name}`
-    },
-    {
-      label: '$(sign-out) Logout'
-    }
-  );
-
-  return items;
-}
-
 
 async function showAccountPanel(context: vscode.ExtensionContext) {
   await vscode.commands.executeCommand('setContext', 'tensorfleet.current_panel', "account");

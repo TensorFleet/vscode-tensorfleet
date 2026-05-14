@@ -3,7 +3,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { DroneController } from "tensorfleet-util/drone/mission-control/drone-controller";
 
 /** Keep this in sync with the UI emitter */
-type MissionAction = "arm" | "disarm" | "takeoff" | "land" | "rtl" | "goto";
+type MissionAction =
+  | "arm"
+  | "disarm"
+  | "takeoff"
+  | "land"
+  | "rtl"
+  | "goto";
 
 interface AppRequestDetail<T = any> {
   category: "mission_control";
@@ -216,14 +222,6 @@ export default function MissionControlBridge({
               typeof detail.payload?.altitude === "number"
                 ? detail.payload.altitude
                 : 2.0;
-            // Optional convenience: if UI set auto=true, best-effort arm first.
-            if (detail.payload?.auto) {
-              try {
-                await controller.arm();
-              } catch {
-                /* likely already armed; ignore */
-              }
-            }
             const yaw =
               typeof detail.payload?.yaw === "number" ? detail.payload.yaw : undefined;
             await controller.takeoff(altitude, yaw);
@@ -231,7 +229,7 @@ export default function MissionControlBridge({
             break;
           }
           case "land": {
-            await controller.land(0);
+            await controller.land();
             ok("Land requested");
             break;
           }

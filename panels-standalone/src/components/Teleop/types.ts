@@ -2,13 +2,29 @@
 // Date: 2025-11-06
 // Modifications: Removed framework-specific imports and types
 
+export type TeleopButtonKey =
+  | 'upButton'
+  | 'downButton'
+  | 'leftButton'
+  | 'rightButton'
+  | 'secondaryUpButton'
+  | 'secondaryDownButton'
+  | 'secondaryLeftButton'
+  | 'secondaryRightButton';
+
+export type TeleopButtonBinding = { field: string; value: number };
+
 export type TeleopConfig = {
   topic: undefined | string;
   publishRate: number;
-  upButton: { field: string; value: number };
-  downButton: { field: string; value: number };
-  leftButton: { field: string; value: number };
-  rightButton: { field: string; value: number };
+  upButton: TeleopButtonBinding;
+  downButton: TeleopButtonBinding;
+  leftButton: TeleopButtonBinding;
+  rightButton: TeleopButtonBinding;
+  secondaryUpButton: TeleopButtonBinding;
+  secondaryDownButton: TeleopButtonBinding;
+  secondaryLeftButton: TeleopButtonBinding;
+  secondaryRightButton: TeleopButtonBinding;
 };
 
 export enum DirectionalPadAction {

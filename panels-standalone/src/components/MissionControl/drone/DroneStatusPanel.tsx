@@ -78,6 +78,26 @@ function landedText(n?: number) {
   }
 }
 
+function autopilotText(name?: string) {
+  if (!name) return NDASH;
+  switch (name) {
+    case "px4":
+      return "PX4";
+    case "ardupilot":
+      return "ArduPilot";
+    default:
+      return "Unknown";
+  }
+}
+
+function isExternalControlActive(state: any) {
+  const mode = String(state?.vehicle?.mode ?? "").toUpperCase();
+  if (mode === "OFFBOARD" || mode === "GUIDED") {
+    return true;
+  }
+  return Boolean(state?.vehicle?.guided);
+}
+
 export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
   const s: any = useDroneState(model);
 
@@ -95,19 +115,19 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
   //   const val = t > 1.5 ? t : t * 100;
   //   return `${Math.round(val)}%`;
   // })();
-  const throttleText = NDASH;
-
   const faults: string[] = s?.status?.faults || [];
   const fcuOk = !!s?.vehicle?.connected;
   const gcsOk = !!(s?.status?.gcs_link ?? s?.vehicle?.connected);
   const armable = s?.status?.armable;
   const armReasons: string[] = s?.status?.arm_reasons || [];
+  const lastFcuMessage = s?.status?.last_fcu_message ?? s?.statustext?.text;
 
   const armableText =
     armable === undefined ? NDASH : armable ? "Yes" : "No";
 
   const armReasonsText =
     armReasons.length ? armReasons.join(", ") : (armable === false ? "Unknown" : NDASH);
+  const externalControlText = isExternalControlActive(s) ? "Enabled" : "Disabled";
 
   return (
     <div className="drone-status">
@@ -121,9 +141,11 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
 
       <div className="dsp-body">
         {/* Vehicle */}
+        <Row label={<span>Flight Stack</span>} value={autopilotText(s?.vehicle?.autopilot)} />
         <Row label={<span>📡 Mode</span>} value={s?.vehicle?.mode ?? NDASH} />
         <Row label={<span>Armed</span>} value={s?.vehicle?.armed ? "Yes" : "No"} />
         <Row label={<span>Guided</span>} value={s?.vehicle?.guided ? "Yes" : "No"} />
+        <Row label={<span>Teleop Control</span>} value={externalControlText} />
         <Row label={<span>Landed State</span>} value={landedText(s?.extended?.landed_state)} />
 
         <hr className="dsp-sep" />
@@ -170,6 +192,7 @@ export function DroneStatusPanel({ model }: { model: DroneStateModel }) {
         <Row label={<span>🛠️ Faults</span>} value={(faults.length ? faults.join(", ") : "None")} />
         <Row label={<span>Armable</span>} value={armableText} />
         <Row label={<span>Arm reasons</span>} value={armReasonsText} />
+        <Row label={<span>FCU message</span>} value={lastFcuMessage || NDASH} />
 
         <hr className="dsp-sep" />
 

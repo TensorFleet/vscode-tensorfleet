@@ -475,6 +475,11 @@ class TensorFleetMCPServer {
             { name: "/fmu/out/vehicle_status", type: "px4_msgs/VehicleStatus" },
             { name: "/fmu/out/sensor_combined", type: "px4_msgs/SensorCombined" },
             { name: "/camera/image_raw", type: "sensor_msgs/Image" },
+            { name: "/drone_camera/image_raw", type: "sensor_msgs/Image" },
+            { name: "/drone_camera/down/image_raw", type: "sensor_msgs/Image" },
+            { name: "/drone_camera/image_annotated", type: "sensor_msgs/Image" },
+            { name: "/drone_camera/follow_annotated", type: "sensor_msgs/Image" },
+            { name: "/drone_camera/down/image_annotated", type: "sensor_msgs/Image" },
             { name: "/mavros/local_position/pose", type: "geometry_msgs/PoseStamped" }
           ]
         },
@@ -534,4 +539,3 @@ class TensorFleetMCPServer {
 // Start the server
 const server = new TensorFleetMCPServer();
 server.run().catch(console.error);
-

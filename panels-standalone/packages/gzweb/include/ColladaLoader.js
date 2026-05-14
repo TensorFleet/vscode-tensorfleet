@@ -29,6 +29,7 @@ import {
   Quaternion,
   QuaternionKeyframeTrack,
   RepeatWrapping,
+  RGBFormat,
   RGBAFormat,
   Scene,
   Skeleton,
@@ -1450,11 +1451,26 @@ class ColladaLoader extends Loader {
                 // onError
                 function (error) {
                   if (scope.findResourceCb) {
-                    // Create the filename to look up.
-                    var filename = [
-                      path.substring(0, path.lastIndexOf("/")),
-                      image,
-                    ].join("/");
+                    // Resolve relative image paths against the mesh directory.
+                    // Websocket asset lookups expect a filesystem-like path,
+                    // not a URL concatenated against the mesh filename.
+                    var basePath = path || "";
+                    if (basePath.length > 0 && !basePath.endsWith("/")) {
+                      basePath = basePath.substring(
+                        0,
+                        basePath.lastIndexOf("/") + 1,
+                      );
+                    }
+
+                    var filename = image;
+                    if (
+                      !image.startsWith("http://") &&
+                      !image.startsWith("https://") &&
+                      !image.startsWith("data:") &&
+                      !image.startsWith("/")
+                    ) {
+                      filename = `${basePath}${image}`;
+                    }
 
                     // Store the texture pointer
                     var scopeTexture = texture;
@@ -1488,7 +1504,7 @@ class ColladaLoader extends Loader {
                         : "data:image/png;base64,";
                       imageElem.src += window.btoa(binary);
 
-                      scopeTexture.format = isJPEG ? RGBFormat : RGBAFormat;
+                      scopeTexture.format = RGBAFormat;
                       scopeTexture.needsUpdate = true;
                       scopeTexture.image = imageElem;
 

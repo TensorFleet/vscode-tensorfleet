@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ros2Bridge, Subscription } from '../ros2-bridge';
+import { ros2Bridge, Subscription } from 'tensorfleet-ros';
 import { type ImageMessage } from 'tensorfleet-util/ros/ros-types';
 import {
   type CameraInfo,
@@ -13,6 +13,9 @@ export const ImagePanel: React.FC = () => {
   const [currentImage, setCurrentImage] = useState<ImageMessage | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [availableSubscriptions, setAvailableSubscriptions] = useState<Subscription[]>([]);
+  const [primaryTopics, setPrimaryTopics] = useState<Subscription[]>([]);
+  const [otherTopics, setOtherTopics] = useState<Subscription[]>([]);
+  const [suggestedTopics, setSuggestedTopics] = useState<Subscription[]>([]);
   const [selectedSubscription, setSelectedSubscription] = useState<Subscription|null>(null);
   // Brightness/Contrast: 50 = neutral (maps to 0 brightness, 1.0 contrast)
   const [brightness, setBrightness] = useState(50);
@@ -40,20 +43,27 @@ export const ImagePanel: React.FC = () => {
   const [cameraModel, setCameraModel] = useState<ICameraModel | null>(null);
   const [show3DAnnotations, setShow3DAnnotations] = useState<boolean>(false);
   const [showImageInfo, setShowImageInfo] = useState<boolean>(false);
+  const [headerCollapsed, setHeaderCollapsed] = useState<boolean>(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const pendingImageRef = useRef<ImageMessage | null>(null);
 
-  // Initialize: Load available topics and refresh periodically, auto-select first one
+  // Initialize: Load available topics and refresh periodically, auto-select first one.
+  // Priority: primary (live + config-matching) > other (live, unexpected) > suggested (not yet seen).
   useEffect(() => {
     const updateImageTopics = () => {
-      const imageSubs = ros2Bridge.getAvailableImageTopics();
-      setAvailableSubscriptions(imageSubs);
+      const { primary, other, suggested } = ros2Bridge.getImageTopicsGrouped();
+      setPrimaryTopics(primary);
+      setOtherTopics(other);
+      setSuggestedTopics(suggested);
+      // Include other topics in the lookup pool even when hidden from the dropdown,
+      // so a manually-selected off-config topic remains valid.
+      setAvailableSubscriptions([...primary, ...suggested, ...other]);
 
-      // Auto-select first topic if none selected yet
-      if (!selectedSubscription && imageSubs.length > 0) {
-        setSelectedSubscription(imageSubs[0]);
+      if (!selectedSubscription) {
+        const first = primary[0] ?? suggested[0] ?? other[0] ?? null;
+        if (first) setSelectedSubscription(first);
       }
     };
 
@@ -535,7 +545,7 @@ export const ImagePanel: React.FC = () => {
       console.log('Connection settings changed:', settings);
       // TODO: Implement reconnection logic if needed
     }}>
-      <div className="image-panel">
+      <div className={`image-panel ${headerCollapsed ? 'header-collapsed' : ''}`}>
         {/* HEADER PANEL */}
         <div className="image-panel-header-panel">
           {/* Layer 1: Title + Status */}
@@ -563,7 +573,7 @@ export const ImagePanel: React.FC = () => {
               </label>
               <select
                 className="setting-input setting-select"
-                value={selectedSubscription?.topic}
+                value={selectedSubscription?.topic ?? ''}
                 onChange={(e) => {
                   const topic = e.target.value;
                   const sub = availableSubscriptions.find(s => s.topic === topic) ?? null;
@@ -574,11 +584,35 @@ export const ImagePanel: React.FC = () => {
                 {availableSubscriptions.length === 0 && (
                   <option value="">No image topics available</option>
                 )}
-                {availableSubscriptions.map(sub => (
-                  <option key={sub.topic} value={sub.topic}>
-                    {sub.topic}
-                  </option>
-                ))}
+                {primaryTopics.length > 0 && (
+                  <optgroup label="● Active">
+                    {primaryTopics.map(sub => (
+                      <option key={sub.topic} value={sub.topic}>
+                        {sub.topic}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {suggestedTopics.length > 0 && (
+                  <optgroup label="Suggested">
+                    {suggestedTopics.map(sub => (
+                      <option key={sub.topic} value={sub.topic}>
+                        {sub.topic}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {/* Only show off-config live topics when no VM config is set,
+                    so unrelated cameras from other configs don't clutter the list. */}
+                {otherTopics.length > 0 && primaryTopics.length === 0 && suggestedTopics.length === 0 && (
+                  <optgroup label="● Live Topics">
+                    {otherTopics.map(sub => (
+                      <option key={sub.topic} value={sub.topic}>
+                        {sub.topic}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
           </div>
@@ -666,6 +700,16 @@ export const ImagePanel: React.FC = () => {
           </div>
         </details>
       </div>
+
+      <button
+        className="header-collapse-toggle"
+        type="button"
+        onClick={() => setHeaderCollapsed(prev => !prev)}
+        title={headerCollapsed ? 'Show controls' : 'Hide controls'}
+        aria-label={headerCollapsed ? 'Show controls' : 'Hide controls'}
+      >
+        <span className="header-collapse-chevron">{headerCollapsed ? '▼' : '▲'}</span>
+      </button>
 
       <div className="canvas-container">
         <canvas ref={canvasRef} onContextMenu={handleContextMenu} />
