@@ -11,7 +11,7 @@ export type ValetudoBackendCapability =
 
 export const VALETUDO_CAPABILITY_MAP: Record<ValetudoBackendCapability, VacuumCapabilityName[]> = {
   BasicControlCapability: ["start_cleaning", "pause", "stop", "return_to_dock"],
-  GoToLocationCapability: ["go_to_location"],
+  GoToLocationCapability: ["start_navigation", "go_to_location"],
   MapSegmentationCapability: ["segment_cleaning"],
   ZoneCleaningCapability: ["zone_cleaning"],
   FanSpeedControlCapability: ["fan_speed"],
@@ -27,6 +27,7 @@ const VALETUDO_BASE_CAPABILITIES: VacuumCapabilityName[] = [
   "dock_state",
   "events",
   "fault_state",
+  "mission_state",
 ];
 
 const VALETUDO_BACKEND_COMMANDS: Partial<Record<VacuumCapabilityName, string[]>> = {
@@ -35,6 +36,7 @@ const VALETUDO_BACKEND_COMMANDS: Partial<Record<VacuumCapabilityName, string[]>>
   stop: ["stop"],
   return_to_dock: ["return_to_dock"],
   go_to_location: ["go_to_location"],
+  start_navigation: ["start_navigation"],
   segment_cleaning: ["segment_cleaning"],
   zone_cleaning: ["zone_cleaning"],
   fan_speed: ["set_fan_speed"],
@@ -98,6 +100,33 @@ export function mapValetudoCapabilities(
   );
   capabilities.auto_mapping = unsupportedCapability(
     "Auto mapping is not implemented for the Valetudo backend stub.",
+  );
+  capabilities.coverage_mission = unsupportedCapability(
+    "Coverage missions must be mapped through zone, segment, or explicit unsupported behavior in the Layer 6 runtime.",
+  );
+  capabilities.start_coverage = unsupportedCapability(
+    "Coverage missions must be mapped through zone, segment, or explicit unsupported behavior in the Layer 6 runtime.",
+  );
+  capabilities.pause_mission = capabilities.pause.supported
+    ? supportedCapability("BasicControlCapability", {
+        commands: ["pause_mission"],
+        notes: "Mapped to backend pause by the Valetudo integration runtime when a mission is active.",
+      })
+    : unsupportedCapability("Valetudo pause support is not available.");
+  capabilities.resume_mission = unsupportedCapability(
+    "Valetudo resume support must be mapped explicitly once the selected robot capability surface is known.",
+  );
+  capabilities.cancel_mission = capabilities.stop.supported
+    ? supportedCapability("BasicControlCapability", {
+        commands: ["cancel_mission"],
+        notes: "Mapped to backend stop by the Valetudo integration runtime when a mission is active.",
+      })
+    : unsupportedCapability("Valetudo stop support is not available.");
+  capabilities.retry_mission_step = unsupportedCapability(
+    "Mission step retry requires runtime-owned recovery semantics.",
+  );
+  capabilities.skip_mission_step = unsupportedCapability(
+    "Mission step skip requires runtime-owned recovery semantics.",
   );
   capabilities.navigation_status = capabilities.go_to_location.supported
     ? supportedCapability("GoToLocationCapability", {

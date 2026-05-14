@@ -25,17 +25,27 @@ export function mapVacuumCommandToValetudoRequest(
       ? { ok: true, command: command.command, request: { type: "basic_control", action: "pause" } }
       : unsupported(command.command, "Valetudo pause support is not available.");
   }
+  if (command.command === "pause_mission") {
+    return capabilities.pause_mission.supported
+      ? { ok: true, command: command.command, request: { type: "basic_control", action: "pause" } }
+      : unsupported(command.command, "Valetudo mission pause support is not available.");
+  }
   if (command.command === "stop") {
     return capabilities.stop.supported
       ? { ok: true, command: command.command, request: { type: "basic_control", action: "stop" } }
       : unsupported(command.command, "Valetudo stop support is not available.");
+  }
+  if (command.command === "cancel_mission") {
+    return capabilities.cancel_mission.supported
+      ? { ok: true, command: command.command, request: { type: "basic_control", action: "stop" } }
+      : unsupported(command.command, "Valetudo mission cancel support is not available.");
   }
   if (command.command === "return_to_dock") {
     return capabilities.return_to_dock.supported
       ? { ok: true, command: command.command, request: { type: "basic_control", action: "home" } }
       : unsupported(command.command, "Valetudo return-to-dock support is not available.");
   }
-  if (command.command === "go_to_location") {
+  if (command.command === "start_navigation" || command.command === "go_to_location") {
     return capabilities.go_to_location.supported
       ? { ok: true, command: command.command, request: { type: "go_to_location", target: command.target } }
       : unsupported(command.command, "Valetudo GoToLocationCapability is not available.");
@@ -66,6 +76,14 @@ export function mapVacuumCommandToValetudoRequest(
     command.command === "load_map"
   ) {
     return unsupported(command.command, "Mapping sessions are not implemented for the Valetudo backend stub.");
+  }
+  if (
+    command.command === "start_coverage" ||
+    command.command === "resume_mission" ||
+    command.command === "retry_mission_step" ||
+    command.command === "skip_mission_step"
+  ) {
+    return unsupported(command.command, "Mission lifecycle commands require a runtime-owned mission executor.");
   }
   return unsupported(command.command, `Command ${command.command} is not mapped for the Valetudo backend stub.`);
 }

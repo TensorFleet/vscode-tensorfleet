@@ -24,6 +24,8 @@ import {
 import {
   MAPPING_SERVICE_NAMES,
   MAPPING_STATUS_TOPIC,
+  MISSION_SERVICE_NAMES,
+  MISSION_STATUS_TOPIC,
   mapTurtleBot4Nav2Capabilities,
 } from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/capabilityMapper";
 import {
@@ -53,8 +55,8 @@ function createRuntime(overrides: Partial<Nav2RuntimeState> = {}): Nav2RuntimeSt
   return {
     connectionStatus: "connected",
     connectedAt: 1,
-    availableTopics: [],
-    availableServices: [SEND_GOAL_SERVICE, CANCEL_GOAL_SERVICE, ...Object.values(MAPPING_SERVICE_NAMES)],
+    availableTopics: [{ topic: MISSION_STATUS_TOPIC, type: "std_msgs/msg/String" }],
+    availableServices: [SEND_GOAL_SERVICE, CANCEL_GOAL_SERVICE, ...Object.values(MAPPING_SERVICE_NAMES), ...Object.values(MISSION_SERVICE_NAMES)],
     messageTimestamps: {},
     odomMessage: null,
     poseMessage: null,
@@ -152,10 +154,43 @@ async function testTurtleBot4Commands(): Promise<void> {
   assert.deepEqual(currentTarget, target);
   assert.equal(initialDistance, 2);
 
-  const cancelResult = await dispatchTurtleBot4Nav2Command(
-    { command: "cancel_navigation" },
+  const serviceCalls: string[] = [];
+  const missionResult = await dispatchTurtleBot4Nav2Command(
+    { command: "start_navigation", target },
     {
-      runtime,
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return name === MISSION_SERVICE_NAMES.setParameters
+            ? { results: [{ successful: true }] }
+            : { success: true, message: name };
+        },
+      },
+      snapshot,
+      setCurrentTarget: (value) => {
+        currentTarget = value;
+      },
+      setInitialDistance: (value) => {
+        initialDistance = value;
+      },
+    },
+  );
+
+  assert.equal(missionResult.ok, true);
+  assert.equal(sentTargets.length, 1);
+  assert.deepEqual(serviceCalls, [MISSION_SERVICE_NAMES.setParameters, MISSION_SERVICE_NAMES.startNavigation]);
+
+  const cancelResult = await dispatchTurtleBot4Nav2Command(
+    { command: "cancel_mission" },
+    {
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return { success: true, message: name };
+        },
+      },
       snapshot,
       setCurrentTarget: () => undefined,
       setInitialDistance: () => undefined,
@@ -163,7 +198,8 @@ async function testTurtleBot4Commands(): Promise<void> {
   );
 
   assert.equal(cancelResult.ok, true);
-  assert.equal(cancelCount, 1);
+  assert.equal(cancelCount, 0);
+  assert.equal(serviceCalls.at(-1), MISSION_SERVICE_NAMES.cancel);
 }
 
 async function testTurtleBot4MappingCommands(): Promise<void> {
@@ -212,6 +248,11 @@ async function testTurtleBot4UnsupportedCommands(): Promise<void> {
   const runtime = createRuntime();
   const snapshot = mapTurtleBot4Nav2State({ runtime, currentTarget: null, initialDistance: null });
   const unsupportedCommands: VacuumCommand[] = [
+    { command: "start_coverage", area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 } },
+    { command: "pause_mission" },
+    { command: "resume_mission" },
+    { command: "retry_mission_step" },
+    { command: "skip_mission_step" },
     { command: "start_cleaning" },
     { command: "pause" },
     { command: "resume" },
@@ -243,6 +284,8 @@ function testCapabilityCoverage(): void {
 
   const supportedNav2 = mapTurtleBot4Nav2Capabilities(createRuntime());
   assert.equal(supportedNav2.go_to_location.supported, true);
+  assert.equal(supportedNav2.start_navigation.supported, true);
+  assert.equal(supportedNav2.cancel_mission.supported, true);
   assert.equal(supportedNav2.cancel_navigation.supported, true);
   assert.equal(supportedNav2.go_to_location.backendCapability, "nav2_msgs/action/NavigateToPose");
   assert.equal(supportedNav2.mapping_session.supported, true);
@@ -255,6 +298,8 @@ function testCapabilityCoverage(): void {
 
   const blockedNav2 = mapTurtleBot4Nav2Capabilities(createRuntime({ availableServices: [] }));
   assert.equal(blockedNav2.go_to_location.supported, false);
+  assert.equal(blockedNav2.start_navigation.supported, false);
+  assert.equal(blockedNav2.cancel_mission.supported, false);
   assert.equal(blockedNav2.cancel_navigation.supported, false);
   assert.equal(blockedNav2.mapping_session.supported, false);
 
@@ -299,9 +344,44 @@ function testStateMapping(): void {
     initialDistance: 5,
   });
   assert.equal(navigating.mission.state, "navigating");
+  assert.equal(navigating.activeMission?.type, "navigation");
+  assert.equal(navigating.activeMission?.status, "running");
+  assert.equal(navigating.activeMission?.requestedCommand, "start_navigation");
+  assert.deepEqual(navigating.missions.active, navigating.activeMission);
   assert.equal(navigating.navigation.active, true);
   assert.deepEqual(navigating.navigation.currentTarget, { x: 3, y: 4, yaw: 0 });
   assert.equal(navigating.navigation.progress.initialDistance, 5);
+
+  const hydratedNavigation = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      id: "navigation-1",
+      type: "navigation",
+      status: "running",
+      backendSource: "turtlebot4_nav2",
+      startedAt: 1,
+      updatedAt: 2,
+      requestedCommand: "start_navigation",
+      phase: "navigating",
+      progress: {
+        percent: 0.5,
+        currentStep: null,
+        totalSteps: null,
+        distanceRemaining: 0.8,
+        areaCoveredSqM: null,
+        areaRemainingSqM: null,
+      },
+      availableActions: ["cancel_mission", "pause_mission"],
+      result: null,
+      error: null,
+      target: { x: 4, y: 5, yaw: 90 },
+    },
+  });
+  assert.equal(hydratedNavigation.mission.state, "navigating");
+  assert.equal(hydratedNavigation.navigation.active, true);
+  assert.equal(hydratedNavigation.navigation.state, "active");
+  assert.deepEqual(hydratedNavigation.navigation.currentTarget, { x: 4, y: 5, yaw: 90 });
+  assert.deepEqual(hydratedNavigation.activeMission?.availableActions, ["cancel_mission"]);
 
   const mapping = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "ready" }),
@@ -320,11 +400,19 @@ function testStateMapping(): void {
       persistence: "session",
       acceptedSessionLevel: false,
       savedMapPath: null,
+      loadedMapPath: null,
       lastSavedAt: null,
       saveError: null,
+      loadError: null,
+      activeMapName: null,
+      savedMaps: [],
     },
   });
   assert.equal(mapping.mission.state, "mapping");
+  assert.equal(mapping.activeMission?.type, "mapping");
+  assert.equal(mapping.activeMission?.status, "running");
+  assert.equal(mapping.activeMission?.progress.percent, 0.25);
+  assert.deepEqual(mapping.activeMission?.availableActions, ["pause_mapping", "finish_mapping", "discard_mapping"]);
   assert.equal(mapping.mapping.frontierCount, 3);
 }
 
@@ -535,6 +623,7 @@ function testPublicContractAndUiBoundary(): void {
 
 function assertCommandNamesHandled(): void {
   const commandNames: VacuumCommandName[] = [
+    "start_navigation",
     "go_to_location",
     "cancel_navigation",
     "manual_control",
@@ -544,6 +633,13 @@ function assertCommandNamesHandled(): void {
     "finish_mapping",
     "discard_mapping",
     "accept_map",
+    "load_map",
+    "start_coverage",
+    "pause_mission",
+    "resume_mission",
+    "cancel_mission",
+    "retry_mission_step",
+    "skip_mission_step",
     "start_cleaning",
     "pause",
     "resume",

@@ -140,6 +140,94 @@ Current working decisions:
 - Simulation should be realistic enough to validate workflow, not just expose
   `cmd_vel`.
 
+## Runtime-Owned Mission Contract
+
+All long-running robot behavior is modeled as a mission. The UI may create
+drafts, submit intent commands, and render snapshots, but it must not own active
+mission execution.
+
+Mission types include:
+
+- `mapping`
+- `navigation`
+- `coverage`
+- `return_to_dock`
+- `room_cleaning`
+- `zone_cleaning`
+- `hardware_cleaning`
+
+Mission statuses are backend-neutral:
+
+- `idle`
+- `preparing`
+- `running`
+- `paused`
+- `canceling`
+- `returning`
+- `charging`
+- `resuming`
+- `needs_assistance`
+- `completed`
+- `failed`
+- `canceled`
+- `unsupported`
+
+The adapter exposes mission state through:
+
+```text
+snapshot.activeMission
+snapshot.missions
+snapshot.mission
+```
+
+`snapshot.mission` is the legacy coarse state used by the current UI.
+`snapshot.activeMission` and `snapshot.missions` are the normalized product
+contract for new runtime-owned work.
+
+Each active mission snapshot carries:
+
+- mission id
+- mission type
+- backend source
+- started / updated timestamps
+- requested command
+- current phase
+- normalized status
+- normalized progress
+- available actions
+- terminal result
+- recoverable error / needs-assistance state
+- target payload
+
+Hydration rule:
+
+```text
+When a webview opens, it must render from adapter/runtime snapshots.
+It must not reconstruct active mission authority from React state.
+```
+
+Ownership rule:
+
+```text
+Before Start: UI may own draft state and local preview.
+After Start: runtime/backend owns confirmed mission state.
+```
+
+Current implementation note:
+
+- Mapping already follows this model most closely because autonomous
+  exploration is VM-owned.
+- Navigation is runtime-owned for TurtleBot4/Nav2 simulation: the UI submits a
+  `start_navigation` intent, the VM mission runtime owns the Nav2 goal, and the
+  adapter hydrates destination/progress/action state from
+  `/vacuum_mission/status` and `/vacuum_mission/get_snapshot`.
+- Terminal navigation destinations can be dismissed in the UI after
+  completed/canceled/failed runs; that is presentation state only and does not
+  clear runtime mission history.
+- Clean Area is still being migrated toward this contract. Its current MVP
+  still owns waypoint sequencing and authoritative coverage progress in the
+  webview.
+
 Current position:
 
 - Layer 0 is validated.
@@ -251,8 +339,10 @@ Current implementation:
 - adapter snapshot exposes availability, identity, pose, map, navigation,
   mapping, mission, battery, readiness, and capabilities
 - `Vacuum Control` consumes the adapter instead of raw Nav2 runtime
-- `go_to_location` and `cancel_navigation` dispatch through
-  `adapter.sendCommand`
+- `start_navigation` and `cancel_mission` dispatch through
+  `adapter.sendCommand`; `cancel_navigation` remains a compatibility fallback
+- TurtleBot4/Nav2 navigation missions hydrate through the runtime-owned
+  `/vacuum_mission/status` topic and `/vacuum_mission/get_snapshot` service
 - command dispatch is extracted into a pure helper for regression tests
 - vacuum-only commands unsupported by TurtleBot4/Nav2 fail explicitly
 - Valetudo backend stub defines capability, state, command, and runtime-boundary
@@ -462,12 +552,15 @@ public contract.
 Public backend-neutral capability names include:
 
 - `start_cleaning`
+- `start_navigation`
 - `pause`
 - `resume`
 - `stop`
 - `return_to_dock`
 - `go_to_location`
+- `cancel_mission`
 - `cancel_navigation`
+- `mission_state`
 - `manual_control`
 - `navigation_status`
 - `mapping_session`

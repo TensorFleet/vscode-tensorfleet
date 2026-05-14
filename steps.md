@@ -12,6 +12,34 @@ files, panels, topics, endpoints, and extension follow-up work.
 
 Current report date: May 14, 2026.
 
+## Runtime-Owned Mission Architecture Progress
+
+Phase 1 has started in `~/vscode-tensorfleet`.
+
+Current contract progress:
+
+- `vacuum_adapter` now defines a normalized mission model for mapping,
+  navigation, coverage, return-to-dock, room cleaning, zone cleaning, and
+  hardware-native cleaning runs.
+- Adapter snapshots now include `snapshot.activeMission` and
+  `snapshot.missions` alongside the legacy `snapshot.mission` field.
+- Mission statuses are backend-neutral:
+  `idle / preparing / running / paused / canceling / returning / charging /
+  resuming / needs_assistance / completed / failed / canceled / unsupported`.
+- Mission snapshots include id, type, backend source, requested command, phase,
+  progress, available actions, terminal result, error, and target payload.
+- TurtleBot4/Nav2 mapping and navigation state are wrapped into
+  `activeMission` snapshots as a contract bridge.
+- Valetudo stub state exposes the same mission snapshot shape.
+- New intent command names are reserved for runtime-owned execution:
+  `start_navigation`, `start_coverage`, `pause_mission`, `resume_mission`,
+  `cancel_mission`, `retry_mission_step`, and `skip_mission_step`.
+
+Important limitation:
+
+- This pass defines and maps the product-facing contract. It does not yet move
+  navigation or Clean Area execution into a durable VM/runtime process.
+
 ## Repositories And Commits
 
 Runtime and extension work landed across three repositories:
@@ -227,8 +255,16 @@ What exists:
 - `useTurtleBot4Nav2Adapter` wraps `useNav2Runtime`.
 - TurtleBot4/Nav2 command dispatch lives in pure
   `backends/turtlebot4-nav2/commandDispatcher.ts`.
-- `go_to_location` maps to Nav2 `NavigateToPose`.
-- `cancel_navigation` maps to Nav2 cancel.
+- `start_navigation` submits a backend-neutral navigation intent.
+- TurtleBot4/Nav2 navigation execution is owned by the VM mission runtime,
+  which maps the intent to Nav2 `NavigateToPose`.
+- `cancel_mission` cancels the active runtime-owned mission;
+  `cancel_navigation` remains a compatibility fallback.
+- Active/terminal navigation state hydrates from normalized mission snapshots
+  through `/vacuum_mission/status` and `/vacuum_mission/get_snapshot`.
+- The UI may dismiss a terminal navigation destination locally after
+  completed/canceled/failed runs, but that does not clear runtime mission
+  history.
 - Vacuum-only commands fail explicitly as unsupported in TurtleBot4/Nav2:
   - `start_cleaning`
   - `pause`

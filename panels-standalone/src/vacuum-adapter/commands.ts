@@ -1,7 +1,21 @@
 import type { VacuumCommandError } from "./errors";
 import type { VacuumGoalCoordinates } from "./state";
 
+export type VacuumCoverageArea =
+  | {
+      shape: "rectangle";
+      minX: number;
+      minY: number;
+      maxX: number;
+      maxY: number;
+    }
+  | {
+      shape: "polygon";
+      points: Array<{ x: number; y: number }>;
+    };
+
 export type VacuumCommandName =
+  | "start_navigation"
   | "go_to_location"
   | "cancel_navigation"
   | "manual_control"
@@ -12,6 +26,12 @@ export type VacuumCommandName =
   | "discard_mapping"
   | "accept_map"
   | "load_map"
+  | "start_coverage"
+  | "pause_mission"
+  | "resume_mission"
+  | "cancel_mission"
+  | "retry_mission_step"
+  | "skip_mission_step"
   | "start_cleaning"
   | "pause"
   | "resume"
@@ -24,6 +44,11 @@ export type VacuumCommandName =
 
 export type VacuumGoToLocationCommand = {
   command: "go_to_location";
+  target: VacuumGoalCoordinates;
+};
+
+export type VacuumStartNavigationCommand = {
+  command: "start_navigation";
   target: VacuumGoalCoordinates;
 };
 
@@ -47,6 +72,12 @@ export type VacuumLoadMapCommand = {
   name: string;
 };
 
+export type VacuumStartCoverageCommand = {
+  command: "start_coverage";
+  area: VacuumCoverageArea;
+  route?: VacuumGoalCoordinates[];
+};
+
 export type VacuumSetFanSpeedCommand = {
   command: "set_fan_speed";
   value: string;
@@ -60,16 +91,26 @@ export type VacuumSetWaterUsageCommand = {
 export type VacuumSimpleCommand = {
   command: Exclude<
     VacuumCommandName,
-    "go_to_location" | "cancel_navigation" | "start_mapping" | "accept_map" | "load_map" | "set_fan_speed" | "set_water_usage"
+    | "start_navigation"
+    | "go_to_location"
+    | "cancel_navigation"
+    | "start_mapping"
+    | "accept_map"
+    | "load_map"
+    | "start_coverage"
+    | "set_fan_speed"
+    | "set_water_usage"
   >;
 };
 
 export type VacuumCommand =
+  | VacuumStartNavigationCommand
   | VacuumGoToLocationCommand
   | VacuumCancelNavigationCommand
   | VacuumStartMappingCommand
   | VacuumAcceptMapCommand
   | VacuumLoadMapCommand
+  | VacuumStartCoverageCommand
   | VacuumSetFanSpeedCommand
   | VacuumSetWaterUsageCommand
   | VacuumSimpleCommand;

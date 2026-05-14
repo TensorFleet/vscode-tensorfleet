@@ -1,4 +1,4 @@
-import type { VacuumAdapterSnapshot, VacuumNavigationStatus } from "../../state";
+import type { VacuumAdapterSnapshot, VacuumMissionSnapshot, VacuumNavigationStatus } from "../../state";
 import { buildVacuumMapMetadata } from "../../mapGrid";
 import { mapValetudoCapabilities } from "./capabilityMapper";
 import type { ValetudoRuntimeBoundary } from "./types";
@@ -21,9 +21,46 @@ const EMPTY_NAVIGATION: VacuumNavigationStatus = {
   },
 };
 
+function buildValetudoActiveMission(runtime: ValetudoRuntimeBoundary): VacuumMissionSnapshot | null {
+  const state = runtime.state;
+  if (!state || state.missionState === "idle") {
+    return null;
+  }
+  const status = state.missionState === "paused"
+    ? "paused"
+    : state.missionState === "returning"
+      ? "returning"
+      : state.missionState === "charging"
+        ? "charging"
+        : "running";
+  return {
+    id: "valetudo:active",
+    type: state.missionState === "returning" ? "return_to_dock" : "hardware_cleaning",
+    status,
+    backendSource: "valetudo",
+    startedAt: null,
+    updatedAt: null,
+    requestedCommand: "runtime_state",
+    phase: state.missionState,
+    progress: {
+      percent: null,
+      currentStep: null,
+      totalSteps: null,
+      distanceRemaining: null,
+      areaCoveredSqM: null,
+      areaRemainingSqM: null,
+    },
+    availableActions: status === "running" ? ["pause_mission", "cancel_mission", "return_to_dock"] : [],
+    result: null,
+    error: null,
+    target: null,
+  };
+}
+
 export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapterSnapshot {
   const connected = runtime.connectionStatus === "online";
   const state = runtime.state;
+  const activeMission = buildValetudoActiveMission(runtime);
   const faults = [...(state?.faults ?? [])];
   if (runtime.lastError) {
     faults.push(runtime.lastError);
@@ -61,6 +98,11 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
       state: state?.missionState ?? "idle",
       detail: state ? `Valetudo mission state: ${state.missionState}.` : "Waiting for Valetudo mission state.",
       lastTerminalNavigation: null,
+    },
+    activeMission,
+    missions: {
+      active: activeMission,
+      recent: [],
     },
     mapping: {
       state: "idle",

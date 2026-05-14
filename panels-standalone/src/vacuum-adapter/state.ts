@@ -25,6 +25,85 @@ export type VacuumMissionState =
   | "returning"
   | "charging";
 
+export type VacuumMissionType =
+  | "mapping"
+  | "navigation"
+  | "coverage"
+  | "return_to_dock"
+  | "room_cleaning"
+  | "zone_cleaning"
+  | "hardware_cleaning";
+
+export type VacuumMissionStatus =
+  | "idle"
+  | "preparing"
+  | "running"
+  | "paused"
+  | "canceling"
+  | "returning"
+  | "charging"
+  | "resuming"
+  | "needs_assistance"
+  | "completed"
+  | "failed"
+  | "canceled"
+  | "unsupported";
+
+export type VacuumMissionAction =
+  | "pause_mapping"
+  | "resume_mapping"
+  | "finish_mapping"
+  | "pause_mission"
+  | "resume_mission"
+  | "cancel_mission"
+  | "retry_mission_step"
+  | "skip_mission_step"
+  | "return_to_dock"
+  | "accept_map"
+  | "discard_mapping";
+
+export type VacuumMissionProgress = {
+  percent: number | null;
+  currentStep: number | null;
+  totalSteps: number | null;
+  distanceRemaining: number | null;
+  areaCoveredSqM: number | null;
+  areaRemainingSqM: number | null;
+};
+
+export type VacuumMissionResult = {
+  status: Extract<VacuumMissionStatus, "completed" | "failed" | "canceled" | "unsupported">;
+  completedAt: number | null;
+  summary?: string;
+};
+
+export type VacuumMissionError = {
+  code: string;
+  message: string;
+  recoverable: boolean;
+};
+
+export type VacuumMissionSnapshot = {
+  id: string;
+  type: VacuumMissionType;
+  status: VacuumMissionStatus;
+  backendSource: VacuumBackendSource;
+  startedAt: number | null;
+  updatedAt: number | null;
+  requestedCommand: string;
+  phase: string;
+  progress: VacuumMissionProgress;
+  availableActions: VacuumMissionAction[];
+  result: VacuumMissionResult | null;
+  error: VacuumMissionError | null;
+  target: unknown;
+};
+
+export type VacuumMissionCollection = {
+  active: VacuumMissionSnapshot | null;
+  recent: VacuumMissionSnapshot[];
+};
+
 export type VacuumPoseCoordinates = {
   x: number;
   y: number;
@@ -122,7 +201,7 @@ export type VacuumNavigationStatus = {
   detail?: string;
 };
 
-export type VacuumMissionStatus = {
+export type VacuumLegacyMissionStatus = {
   state: VacuumMissionState;
   detail?: string;
   lastTerminalNavigation?: VacuumNavigationTerminalState | null;
@@ -199,7 +278,9 @@ export type VacuumAdapterSnapshot = {
   map: VacuumMapState;
   pose: VacuumPoseState;
   navigation: VacuumNavigationStatus;
-  mission: VacuumMissionStatus;
+  mission: VacuumLegacyMissionStatus;
+  activeMission: VacuumMissionSnapshot | null;
+  missions: VacuumMissionCollection;
   mapping: VacuumMappingStatus;
   readiness: VacuumReadinessSummary;
   fault: VacuumFaultState;

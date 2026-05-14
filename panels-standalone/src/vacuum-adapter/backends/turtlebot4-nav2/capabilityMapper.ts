@@ -27,8 +27,21 @@ export const MAPPING_SERVICE_NAMES = {
   loadMap: "/vacuum_mapping/load_map",
   listMaps: "/vacuum_mapping/list_maps",
 } as const;
+export const MISSION_STATUS_TOPIC = "/vacuum_mission/status";
+export const MISSION_SERVICE_NAMES = {
+  startNavigation: "/vacuum_mission/start_navigation",
+  cancel: "/vacuum_mission/cancel",
+  getSnapshot: "/vacuum_mission/get_snapshot",
+  setParameters: "/vacuum_mission_runtime/set_parameters",
+} as const;
 
 const UNSUPPORTED_VACUUM_FEATURES: VacuumCapabilityName[] = [
+  "coverage_mission",
+  "start_coverage",
+  "pause_mission",
+  "resume_mission",
+  "retry_mission_step",
+  "skip_mission_step",
   "start_cleaning",
   "pause",
   "resume",
@@ -45,6 +58,11 @@ const UNSUPPORTED_VACUUM_FEATURES: VacuumCapabilityName[] = [
 ];
 
 export const TURTLEBOT4_NAV2_UNSUPPORTED_COMMANDS: VacuumCommandName[] = [
+  "start_coverage",
+  "pause_mission",
+  "resume_mission",
+  "retry_mission_step",
+  "skip_mission_step",
   "start_cleaning",
   "pause",
   "resume",
@@ -76,6 +94,11 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
   const capabilities = createUnsupportedCapabilities();
   const hasNavigateToPose = runtime.availableServices.includes(SEND_GOAL_SERVICE);
   const hasCancelNavigation = runtime.availableServices.includes(CANCEL_GOAL_SERVICE);
+  const hasMissionStartNavigation = runtime.availableServices.includes(MISSION_SERVICE_NAMES.startNavigation);
+  const hasMissionSetParameters = runtime.availableServices.includes(MISSION_SERVICE_NAMES.setParameters);
+  const hasMissionCancel = runtime.availableServices.includes(MISSION_SERVICE_NAMES.cancel);
+  const hasMissionSnapshot = runtime.availableServices.includes(MISSION_SERVICE_NAMES.getSnapshot);
+  const hasMissionStatus = runtime.availableTopics.some((topic) => topic.topic === MISSION_STATUS_TOPIC);
 
   capabilities.go_to_location = hasNavigateToPose
     ? supportedCapability({
@@ -86,6 +109,19 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
       })
     : unsupportedCapability("NavigateToPose send_goal service is not advertised.");
 
+  capabilities.start_navigation = hasMissionStartNavigation && hasMissionSetParameters
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["start_navigation"],
+        attributes: ["map_frame_target", "yaw", "active_mission_snapshot"],
+        notes: "Product command for a point-navigation mission owned by the VM runtime.",
+      })
+    : unsupportedCapability(
+        hasMissionStartNavigation
+          ? "VM navigation mission runtime parameter service is not advertised."
+          : "VM navigation mission runtime is not advertised.",
+      );
+
   capabilities.cancel_navigation = hasCancelNavigation
     ? supportedCapability({
         backendCapability: "nav2_msgs/action/NavigateToPose cancel_goal",
@@ -93,6 +129,21 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
         notes: "Backed by the Nav2 action cancel service.",
       })
     : unsupportedCapability("NavigateToPose cancel_goal service is not advertised.");
+
+  capabilities.mission_state = supportedCapability({
+    backendCapability: hasMissionStatus || hasMissionSnapshot ? "vacuum_mission_runtime" : "vacuum_adapter mission normalization",
+    attributes: ["activeMission", "missions", "availableActions", "terminalResult"],
+    notes: hasMissionStatus || hasMissionSnapshot
+      ? "The VM runtime publishes or serves backend-neutral mission snapshots for UI hydration."
+      : "The adapter exposes a backend-neutral mission snapshot bridge for UI hydration.",
+  });
+  capabilities.cancel_mission = hasMissionCancel
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["cancel_mission"],
+        notes: "Cancels the active VM-owned mission when supported by that mission.",
+      })
+    : unsupportedCapability("VM mission cancel service is not advertised.");
 
   capabilities.manual_control = supportedCapability({
     backendCapability: "/cmd_vel_raw",

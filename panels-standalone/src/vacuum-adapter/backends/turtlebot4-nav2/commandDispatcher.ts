@@ -3,7 +3,7 @@ import type { VacuumAdapterSnapshot } from "../../state";
 import type { VacuumCommand, VacuumCommandResult } from "../../commands";
 import { unsupportedCommand } from "../../errors";
 import type { VacuumGoalCoordinates } from "../../state";
-import { MAPPING_SERVICE_NAMES, TURTLEBOT4_NAV2_UNSUPPORTED_COMMANDS } from "./capabilityMapper";
+import { MAPPING_SERVICE_NAMES, MISSION_SERVICE_NAMES, TURTLEBOT4_NAV2_UNSUPPORTED_COMMANDS } from "./capabilityMapper";
 
 export type TurtleBot4Nav2CommandRuntime = Pick<
   Nav2RuntimeState,
@@ -49,6 +49,50 @@ export async function dispatchTurtleBot4Nav2Command(
         ok: false,
         command: commandName,
         error: unsupportedCommand(commandName, "Mapping service calls are not available in this runtime."),
+      };
+    }
+    try {
+      const response = await runtime.callService(serviceName, {}, { timeoutMs: 10_000 });
+      const success = response == null || response.success !== false;
+      if (!success) {
+        return {
+          ok: false,
+          command: commandName,
+          error: {
+            code: "backend_error",
+            command: commandName,
+            message: typeof response?.message === "string" ? response.message : `${serviceName} returned failure.`,
+          },
+        };
+      }
+      return {
+        ok: true,
+        command: commandName,
+        message: typeof response?.message === "string" ? response.message : `Dispatched ${commandName}.`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        command: commandName,
+        error: {
+          code: "backend_error",
+          command: commandName,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  async function callTriggerService(
+    serviceName: string,
+    commandName: VacuumCommand["command"],
+    unavailableMessage: string,
+  ): Promise<VacuumCommandResult> {
+    if (!runtime.callService) {
+      return {
+        ok: false,
+        command: commandName,
+        error: unsupportedCommand(commandName, unavailableMessage),
       };
     }
     try {
@@ -141,6 +185,92 @@ export async function dispatchTurtleBot4Nav2Command(
     }
   }
 
+  async function setNavigationRequest(target: VacuumGoalCoordinates): Promise<VacuumCommandResult | null> {
+    if (!runtime.callService) {
+      return {
+        ok: false,
+        command: "start_navigation",
+        error: unsupportedCommand("start_navigation", "Navigation mission service calls are not available in this runtime."),
+      };
+    }
+    try {
+      const response = await runtime.callService(
+        MISSION_SERVICE_NAMES.setParameters,
+        {
+          parameters: [
+            {
+              name: "navigation_request",
+              value: {
+                type: 4,
+                string_value: JSON.stringify({ target }),
+              },
+            },
+          ],
+        },
+        { timeoutMs: 5_000 },
+      );
+      const results = Array.isArray(response?.results) ? response.results : [];
+      const failed = results.find((entry) => entry && typeof entry === "object" && (entry as { successful?: boolean }).successful === false);
+      if (failed) {
+        return {
+          ok: false,
+          command: "start_navigation",
+          error: {
+            code: "backend_error",
+            command: "start_navigation",
+            message:
+              typeof (failed as { reason?: unknown }).reason === "string"
+                ? (failed as { reason: string }).reason
+                : "Navigation request parameter update failed.",
+          },
+        };
+      }
+      return null;
+    } catch (error) {
+      return {
+        ok: false,
+        command: "start_navigation",
+        error: {
+          code: "backend_error",
+          command: "start_navigation",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  if (command.command === "start_navigation") {
+    if (!snapshot.capabilities.start_navigation.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "start_navigation requires the VM navigation mission runtime."),
+      };
+    }
+    if (!snapshot.readiness.ready) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "not_ready",
+          command: command.command,
+          message: `Adapter not ready to dispatch: ${snapshot.readiness.blockingReasons.join(" ")}`,
+        },
+      };
+    }
+    context.setCurrentTarget(command.target);
+    context.setInitialDistance(distanceBetween(runtime.currentMapCoordinates, command.target));
+    const setRequestError = await setNavigationRequest(command.target);
+    if (setRequestError) {
+      return setRequestError;
+    }
+    return await callTriggerService(
+      MISSION_SERVICE_NAMES.startNavigation,
+      command.command,
+      "Navigation mission service calls are not available in this runtime.",
+    );
+  }
+
   if (command.command === "go_to_location") {
     if (!snapshot.capabilities.go_to_location.supported) {
       return {
@@ -183,6 +313,21 @@ export async function dispatchTurtleBot4Nav2Command(
         },
       };
     }
+  }
+
+  if (command.command === "cancel_mission") {
+    if (!snapshot.capabilities.cancel_mission.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "cancel_mission requires the VM mission runtime."),
+      };
+    }
+    return await callTriggerService(
+      MISSION_SERVICE_NAMES.cancel,
+      command.command,
+      "Mission cancel service calls are not available in this runtime.",
+    );
   }
 
   if (command.command === "cancel_navigation") {

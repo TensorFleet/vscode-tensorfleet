@@ -9,7 +9,7 @@ import {
   type VacuumBatteryState,
   type VacuumCapabilities,
   type VacuumMappingStatus,
-  type VacuumMissionStatus,
+  type VacuumLegacyMissionStatus,
   type VacuumNavigationState,
   type VacuumPoseCoordinates,
   type VacuumSavedMapSummary,
@@ -60,6 +60,25 @@ type SavedMapSummary = {
   metadata: MapCanvasMetadata;
   notes: string;
 };
+
+function navigationDestinationDismissKey(
+  target: DraftTarget | null | undefined,
+  missionId: string | null | undefined,
+  missionStatus: string | null | undefined,
+  updatedAt: number | null | undefined,
+): string | null {
+  if (!target) {
+    return null;
+  }
+  return [
+    missionId ?? "navigation",
+    missionStatus ?? "unknown",
+    updatedAt ?? "no-update",
+    target.x.toFixed(3),
+    target.y.toFixed(3),
+    target.yaw.toFixed(3),
+  ].join(":");
+}
 
 function mapAdapterMappingState(state: VacuumMappingStatus["state"]): MappingSessionState {
   if (state === "auto_mapping" || state === "manual_mapping") {
@@ -218,6 +237,9 @@ function getRouteVisualState(
 ): RouteVisualState {
   if (!active && hasDraftTarget) {
     return "staged";
+  }
+  if (!hasTarget) {
+    return "idle";
   }
   if (navigationState === "completed") {
     return "completed";
@@ -967,7 +989,7 @@ function formatBatteryState(battery: VacuumBatteryState): string {
 }
 
 function MissionLifecycleCard(props: {
-  mission: VacuumMissionStatus;
+  mission: VacuumLegacyMissionStatus;
   battery: VacuumBatteryState;
   capabilities: VacuumCapabilities;
   commandError: string | null;
@@ -1047,6 +1069,7 @@ export function VacuumControlPanel() {
   const [cleanAreaCoveredCellKeys, setCleanAreaCoveredCellKeys] = useState<Set<string>>(() => new Set());
   const [cleanAreaMissionTarget, setCleanAreaMissionTarget] = useState<CleanAreaCoverageTarget | null>(null);
   const [activeMode, setActiveMode] = useState<"mapping" | "navigation" | "clean">("navigation");
+  const [dismissedNavigationTargetKey, setDismissedNavigationTargetKey] = useState<string | null>(null);
   const goalStartTimeRef = useRef<number | null>(null);
   const cleanAreaCancelRequestedRef = useRef(false);
   const cleanAreaSawActiveRef = useRef(false);
@@ -1061,7 +1084,9 @@ export function VacuumControlPanel() {
   const isGoalActive = snapshot.navigation.active;
   const isSendingGoal = snapshot.navigation.isSending;
   const isCancelingGoal = snapshot.navigation.isCanceling;
+  const startNavigationSupported = snapshot.capabilities.start_navigation.supported;
   const goToLocationSupported = snapshot.capabilities.go_to_location.supported;
+  const cancelMissionSupported = snapshot.capabilities.cancel_mission.supported;
   const cancelNavigationSupported = snapshot.capabilities.cancel_navigation.supported;
   const mappingStatus = snapshot.mapping;
   const mappingState = mapAdapterMappingState(mappingStatus.state);
@@ -1093,11 +1118,37 @@ export function VacuumControlPanel() {
     [cleanAreaCoverageConfig.cleaningSwathWidthM, cleanAreaCoverageTarget, cleanAreaCoveredCellKeys],
   );
 
-  const displayedTarget = sentTarget ?? draftTarget;
+  const activeMissionType = snapshot.activeMission?.type ?? null;
+  const activeNavigationMission = snapshot.activeMission?.type === "navigation" ? snapshot.activeMission : null;
+  const snapshotNavigationTarget = snapshot.navigation.currentTarget;
+  const isTerminalNavigationSnapshot =
+    navigationState === "completed" || navigationState === "canceled" || navigationState === "failed";
+  const snapshotNavigationDismissKey = navigationDestinationDismissKey(
+    snapshotNavigationTarget,
+    activeNavigationMission?.id,
+    activeNavigationMission?.status ?? navigationState,
+    activeNavigationMission?.updatedAt,
+  );
+  const isSnapshotNavigationTargetDismissed =
+    !isGoalActive &&
+    isTerminalNavigationSnapshot &&
+    snapshotNavigationDismissKey != null &&
+    dismissedNavigationTargetKey === snapshotNavigationDismissKey;
+  const snapshotNavigationTargetVisible =
+    snapshotNavigationTarget != null &&
+    !isSnapshotNavigationTargetDismissed &&
+    (activeMissionType === "navigation" ||
+      isGoalActive ||
+      navigationState === "completed" ||
+      navigationState === "canceled" ||
+      navigationState === "failed");
+  const displayedSentTarget = snapshotNavigationTargetVisible ? snapshotNavigationTarget : sentTarget;
+  const displayedDraftTarget = snapshotNavigationTargetVisible ? null : draftTarget;
+  const displayedTarget = displayedSentTarget ?? displayedDraftTarget;
   const hasTarget = displayedTarget != null;
-  const routeVisualState = getRouteVisualState(navigationState, isGoalActive, draftTarget != null, hasTarget);
+  const routeVisualState = getRouteVisualState(navigationState, isGoalActive, displayedDraftTarget != null, hasTarget);
   const displayedPlanPoints =
-    sentTarget != null && routeVisualState !== "staged" && routeVisualState !== "canceled"
+    displayedSentTarget != null && routeVisualState !== "staged" && routeVisualState !== "canceled"
       ? snapshot.navigation.planPath
       : null;
 
@@ -1163,7 +1214,7 @@ export function VacuumControlPanel() {
   const targetBearingLabel =
     destinationBearing == null ? "n/a" : `${Math.round(((destinationBearing % 360) + 360) % 360)}°`;
   const destinationBadgeLabel = (() => {
-    if (sentTarget != null && isGoalActive) {
+    if (displayedSentTarget != null && isGoalActive) {
       return "Sent";
     }
     if (routeVisualState === "completed") {
@@ -1276,6 +1327,7 @@ export function VacuumControlPanel() {
 
   useEffect(() => {
     if (isGoalActive) {
+      setDismissedNavigationTargetKey(null);
       goalStartTimeRef.current = Date.now();
       setWallClockElapsed(0);
       const interval = setInterval(() => {
@@ -1295,10 +1347,10 @@ export function VacuumControlPanel() {
 
   const isTerminalState =
     routeVisualState === "completed" || routeVisualState === "failed" || routeVisualState === "canceled";
-  const runTarget = draftTarget ?? (isTerminalState ? sentTarget : null);
+  const runTarget = displayedDraftTarget ?? (isTerminalState ? displayedSentTarget : null);
   const canSendRun =
-    Boolean(runTarget) && goToLocationSupported && readinessReady && !isSendingGoal && !isCleanAreaRunning;
-  const canCancelRun = cancelNavigationSupported && !isCancelingGoal;
+    Boolean(runTarget) && startNavigationSupported && readinessReady && !isSendingGoal && !isCleanAreaRunning;
+  const canCancelRun = (cancelMissionSupported || cancelNavigationSupported) && !isCancelingGoal;
   const canStartCleanArea =
     Boolean(cleanAreaRect) &&
     Boolean(cleanAreaValidation?.ok) &&
@@ -1344,17 +1396,21 @@ export function VacuumControlPanel() {
     if (!target) {
       return;
     }
+    setDismissedNavigationTargetKey(null);
     setSentTarget(target);
-    await adapter.sendCommand({ command: "go_to_location", target });
+    await adapter.sendCommand({ command: "start_navigation", target });
   }
 
   async function handleCancel(): Promise<void> {
-    await adapter.sendCommand({ command: "cancel_navigation" });
+    await adapter.sendCommand({ command: cancelMissionSupported ? "cancel_mission" : "cancel_navigation" });
   }
 
   function handleClear(): void {
     if (isGoalActive) {
       return;
+    }
+    if (snapshotNavigationTargetVisible && isTerminalNavigationSnapshot && snapshotNavigationDismissKey) {
+      setDismissedNavigationTargetKey(snapshotNavigationDismissKey);
     }
     setDraftTarget(null);
     setSentTarget(null);
@@ -1730,10 +1786,10 @@ export function VacuumControlPanel() {
       setActiveMode("mapping");
     } else if (isCleanAreaActive || cleanAreaToolActive) {
       setActiveMode("clean");
-    } else if (isGoalActive) {
+    } else if (isGoalActive || activeMissionType === "navigation") {
       setActiveMode("navigation");
     }
-  }, [isMappingWorkflowActive, isCleanAreaActive, cleanAreaToolActive, isGoalActive]);
+  }, [activeMissionType, isMappingWorkflowActive, isCleanAreaActive, cleanAreaToolActive, isGoalActive]);
 
   return (
     <div className="vacuum-shell">
@@ -1816,8 +1872,8 @@ export function VacuumControlPanel() {
           <MapCanvas
             currentPose={currentPose}
             planPoints={displayedPlanPoints}
-            draftTarget={draftTarget}
-            sentTarget={sentTarget}
+            draftTarget={displayedDraftTarget}
+            sentTarget={displayedSentTarget}
             cleanAreaRect={cleanAreaRect}
             cleanAreaPreviewPoints={cleanAreaPreviewPoints}
             cleanAreaCurrentIndex={cleanAreaCurrentIndex}

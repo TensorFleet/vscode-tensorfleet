@@ -433,9 +433,19 @@ VS Code extension / product UI
 Layer 3 extension facts:
 
 - Public `VacuumAdapter` exposes `snapshot` and `sendCommand`.
+- `snapshot.activeMission` and `snapshot.missions` are the normalized
+  runtime-owned mission surfaces for new work.
+- `snapshot.mission` remains as the legacy coarse state used by the current UI.
 - `useTurtleBot4Nav2Adapter` wraps `useNav2Runtime`.
 - `VacuumControlPanel.tsx` consumes `useVacuumAdapter`.
-- `go_to_location` and `cancel_navigation` use `adapter.sendCommand`.
+- `start_navigation` and `cancel_mission` use `adapter.sendCommand`;
+  `cancel_navigation` remains a fallback for older navigation paths.
+- Navigation destination/progress/action state hydrates from the runtime-owned
+  active mission snapshot. For TurtleBot4/Nav2 this currently uses
+  `/vacuum_mission/status` plus `/vacuum_mission/get_snapshot`.
+- Clear destination after a terminal navigation run is UI presentation state:
+  it dismisses the completed/canceled/failed destination locally without
+  clearing runtime mission history.
 - Plan rendering consumes normalized `snapshot.navigation.planPath`.
 - Mission state exposes `idle / navigating / cleaning / paused / returning /
   charging`.

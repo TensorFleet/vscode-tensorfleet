@@ -1,14 +1,23 @@
 export type VacuumBackendSource = "turtlebot4_nav2" | "valetudo" | "mock";
 
 export const VACUUM_CAPABILITY_NAMES = [
+  "mission_state",
+  "start_navigation",
   "go_to_location",
   "cancel_navigation",
   "manual_control",
   "map",
   "mapping_session",
   "auto_mapping",
+  "coverage_mission",
   "pose",
   "navigation_status",
+  "start_coverage",
+  "pause_mission",
+  "resume_mission",
+  "cancel_mission",
+  "retry_mission_step",
+  "skip_mission_step",
   "start_cleaning",
   "pause",
   "resume",
