@@ -172,6 +172,7 @@ export function buildLawnmowerWaypoints(args: {
   rect: CleanAreaRect;
   spacing: number;
   swathWidth: number;
+  boundaryExtensionM?: number;
   goalCompletionTolerance?: number;
   target?: CleanAreaCoverageTarget | null;
 }): CleanAreaWaypoint[] {
@@ -186,7 +187,7 @@ export function buildLawnmowerWaypoints(args: {
     ? buildLaneCenters(args.rect.minY, args.rect.maxY, args.swathWidth, args.spacing)
     : buildLaneCenters(args.rect.minX, args.rect.maxX, args.swathWidth, args.spacing);
   const waypoints: CleanAreaWaypoint[] = [];
-  const goalCompletionTolerance = Math.max(0, args.goalCompletionTolerance ?? 0);
+  const boundaryExtensionM = Math.max(0, args.boundaryExtensionM ?? args.goalCompletionTolerance ?? 0);
 
   lanes.forEach((lane, laneIndex) => {
     const forward = laneIndex % 2 === 0;
@@ -211,11 +212,11 @@ export function buildLawnmowerWaypoints(args: {
       } else {
         appendWaypoint(
           waypoints,
-          makeWaypoint(orientation, lane, compensateGoalTolerance(segment, start, forward, goalCompletionTolerance), yaw),
+          makeWaypoint(orientation, lane, compensateGoalTolerance(segment, start, forward, boundaryExtensionM), yaw),
         );
         appendWaypoint(
           waypoints,
-          makeWaypoint(orientation, lane, compensateGoalTolerance(segment, end, forward, goalCompletionTolerance), yaw),
+          makeWaypoint(orientation, lane, compensateGoalTolerance(segment, end, forward, boundaryExtensionM), yaw),
         );
       }
     }

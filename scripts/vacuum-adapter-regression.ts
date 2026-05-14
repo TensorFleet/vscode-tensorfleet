@@ -43,6 +43,9 @@ import {
 import {
   buildLawnmowerWaypoints,
 } from "../panels-standalone/src/components/VacuumControl/cleanAreaPlanner";
+import {
+  buildCleanAreaCoverageRuntimeConfig,
+} from "../panels-standalone/src/components/VacuumControl/cleanAreaProfile";
 
 const repoRoot = resolve(import.meta.dir, "..");
 
@@ -410,6 +413,78 @@ function testCleanAreaCoverageAndPlanning(): void {
   assert.ok(snapshot.overlayCells.every((cell) => Number.isFinite(cell.minX) && Number.isFinite(cell.maxY)));
 }
 
+function testCoverageProfileAndDecomposition(): void {
+  const runtimeConfig = buildCleanAreaCoverageRuntimeConfig({
+    mapMetadata: {
+      hasMap: true,
+      width: 20,
+      height: 20,
+      resolution: 0.05,
+      freeCells: 300,
+      occupiedCells: 20,
+      unknownCells: 80,
+      knownCells: 320,
+      totalCells: 400,
+      freeRatio: 0.75,
+      occupiedRatio: 0.05,
+      unknownRatio: 0.2,
+      knownRatio: 0.8,
+      knownAreaSqM: 0.8,
+      lastUpdateAt: 1,
+      poseAvailable: true,
+      readiness: "Map active",
+    },
+  });
+  assert.equal(runtimeConfig.cleaningSwathWidthM, 0.3);
+  assert.equal(runtimeConfig.completionThreshold, 0.95);
+  assert.equal(runtimeConfig.laneSpacingM, 0.12);
+  assert.equal(runtimeConfig.boundaryExtensionM, 0.28);
+
+  const data = Array.from({ length: 100 }, () => 100);
+  for (const [x, y] of [
+    [1, 1],
+    [1, 2],
+    [2, 1],
+    [7, 7],
+  ]) {
+    data[x + y * 10] = 0;
+  }
+  data[4 + 4 * 10] = -1;
+  const grid = parseVacuumMapGrid({
+    info: {
+      width: 10,
+      height: 10,
+      resolution: 0.1,
+      origin: { position: { x: 0, y: 0 }, orientation: { w: 1 } },
+    },
+    header: { frame_id: "map" },
+    data,
+  });
+  assert.ok(grid);
+
+  const target = buildCleanAreaCoverageTarget(
+    { minX: 0, minY: 0, maxX: 1, maxY: 1 },
+    grid,
+    { minimumUsefulCleanableRegionSqM: 0.02 },
+  );
+  assert.ok(target);
+  assert.equal(target.cleanableRegions.length, 1);
+  assert.equal(target.skippedSmallRegionCount, 1);
+  assert.equal(target.skippedSmallRegionCells.length, 1);
+  assert.equal(target.unknownCells.length, 1);
+  assert.equal(target.cleanableCells.length, 3);
+
+  const snapshot = buildCleanAreaCoverageSnapshot({
+    target,
+    coveredCellKeys: new Set(),
+    swathWidth: runtimeConfig.cleaningSwathWidthM,
+  });
+  assert.ok(snapshot);
+  assert.equal(snapshot.cleanableRegionCount, 1);
+  assert.equal(snapshot.skippedSmallRegionCount, 1);
+  assert.equal(snapshot.skippedSmallRegionCells, 1);
+}
+
 function testValetudoCommandStub(): void {
   const capabilities = mapValetudoCapabilities([
     "BasicControlCapability",
@@ -488,6 +563,7 @@ async function main(): Promise<void> {
   testStateMapping();
   testMapMetadata();
   testCleanAreaCoverageAndPlanning();
+  testCoverageProfileAndDecomposition();
   testValetudoCommandStub();
   testPublicContractAndUiBoundary();
   testServiceDiscoveryNormalization();

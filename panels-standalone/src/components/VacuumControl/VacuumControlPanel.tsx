@@ -4,8 +4,12 @@ import { ros2Bridge } from "tensorfleet-ros";
 import {
   formatDuration,
   useVacuumAdapter,
+  type CapabilitySupport,
   type VacuumCommandResult,
+  type VacuumBatteryState,
+  type VacuumCapabilities,
   type VacuumMappingStatus,
+  type VacuumMissionStatus,
   type VacuumNavigationState,
   type VacuumPoseCoordinates,
   type VacuumSavedMapSummary,
@@ -29,6 +33,11 @@ import {
   type CleanAreaCoverageSnapshot,
 } from "./cleanAreaCoverage";
 import { buildLawnmowerWaypoints } from "./cleanAreaPlanner";
+import {
+  DEFAULT_CLEAN_AREA_COVERAGE_PROFILE,
+  buildCleanAreaCoverageRuntimeConfig,
+  type CleanAreaCoverageRuntimeConfig,
+} from "./cleanAreaProfile";
 import "./VacuumControlPanel.css";
 
 type DraftTarget = MapCanvasTarget;
@@ -51,11 +60,6 @@ type SavedMapSummary = {
   metadata: MapCanvasMetadata;
   notes: string;
 };
-
-const CLEAN_AREA_SWATH_WIDTH_M = 0.3;
-const CLEAN_AREA_OVERLAP_RATIO = 0.6;
-const CLEAN_AREA_GOAL_TOLERANCE_COMPENSATION_M = 0.28;
-const CLEAN_AREA_COMPLETE_COVERAGE_THRESHOLD = 0.95;
 
 function mapAdapterMappingState(state: VacuumMappingStatus["state"]): MappingSessionState {
   if (state === "auto_mapping" || state === "manual_mapping") {
@@ -173,13 +177,6 @@ function getCleanAreaSize(rect: CleanAreaRect | null): { width: number; height: 
   const width = Math.max(0, rect.maxX - rect.minX);
   const height = Math.max(0, rect.maxY - rect.minY);
   return { width, height, area: width * height };
-}
-
-function getCleanAreaSpacing(mapMetadata: MapCanvasMetadata | null): number {
-  const resolution = mapMetadata?.resolution ?? 0;
-  const overlapSpacing = CLEAN_AREA_SWATH_WIDTH_M * (1 - CLEAN_AREA_OVERLAP_RATIO);
-  const cellAwareSpacing = resolution > 0 ? resolution * 1.5 : 0;
-  return clamp(Math.max(overlapSpacing, cellAwareSpacing), 0.08, CLEAN_AREA_SWATH_WIDTH_M * 0.6);
 }
 
 function getPathDistance(points: Array<{ x: number; y: number }>): number {
@@ -726,6 +723,7 @@ function CleanAreaCard(props: {
   rect: CleanAreaRect | null;
   validation: CleanAreaValidation | null;
   coverage: CleanAreaCoverageSnapshot | null;
+  coverageConfig: CleanAreaCoverageRuntimeConfig;
   waypointCount: number;
   currentWaypointIndex: number;
   passCount: number;
@@ -754,10 +752,27 @@ function CleanAreaCard(props: {
   const coverageProgress = props.coverage?.progress ?? 0;
   const progress = props.coverage ? coverageProgress : waypointProgress;
   const coverageActive = props.coverage != null && props.coverage.targetCells > 0;
+  const selectedAreaLabel = props.coverage
+    ? formatArea(props.coverage.cleanableAreaSqM)
+    : props.rect
+      ? formatArea(size.area)
+      : "n/a";
+  const cleanedAreaLabel = props.coverage ? formatArea(props.coverage.coveredAreaSqM) : "n/a";
+  const remainingAreaLabel = props.coverage ? formatArea(props.coverage.remainingAreaSqM) : "n/a";
+  const skippedAreaLabel = props.coverage ? formatArea(props.coverage.skippedAreaSqM) : "n/a";
+  const routeStepLabel = props.waypointCount > 0
+    ? `${Math.min(props.currentWaypointIndex + 1, props.waypointCount)} of ${props.waypointCount}`
+    : "n/a";
+  const routeSummaryLabel =
+    props.state === "running" || props.state === "preparing" || props.state === "paused" || props.state === "canceling"
+      ? `Step ${routeStepLabel}`
+      : props.passCount > 0
+        ? `${props.passCount} passes`
+        : "Ready";
   const coverageMeetsCompletion =
     !props.coverage ||
     props.coverage.targetCells === 0 ||
-    props.coverage.progress >= CLEAN_AREA_COMPLETE_COVERAGE_THRESHOLD;
+    props.coverage.progress >= props.coverageConfig.completionThreshold;
   const completedWithCoverageGap = props.state === "completed" && !coverageMeetsCompletion;
   const progressBarTone =
     props.state === "completed"
@@ -779,16 +794,16 @@ function CleanAreaCard(props: {
       detail: "Clean Area Preview",
     },
     preparing: {
-      badge: "Preparing",
-      detail: "Preparing first waypoint.",
+      badge: "Starting",
+      detail: "Starting the area clean.",
     },
     running: {
       badge: "Cleaning",
-      detail: `Waypoint ${Math.min(props.currentWaypointIndex + 1, props.waypointCount)} / ${props.waypointCount}.`,
+      detail: "Cleaning the selected area.",
     },
     paused: {
       badge: "Paused",
-      detail: `Paused at waypoint ${Math.min(props.currentWaypointIndex + 1, props.waypointCount)} / ${props.waypointCount}.`,
+      detail: "Cleaning is paused.",
     },
     canceling: {
       badge: "Canceling",
@@ -802,7 +817,7 @@ function CleanAreaCard(props: {
     },
     failed: {
       badge: "Issue",
-      detail: props.commandError ?? `Could not reach waypoint ${Math.min(props.currentWaypointIndex + 1, props.waypointCount)}.`,
+      detail: props.commandError ?? "The robot could not finish this area.",
     },
     canceled: {
       badge: "Stopped",
@@ -825,43 +840,12 @@ function CleanAreaCard(props: {
         </div>
       ) : null}
 
-      <div className="vacuum-clean-area-stats">
-        <div>
-          <span>Size</span>
-          <strong>
-            {props.rect ? `${formatDimension(size.width)} × ${formatDimension(size.height)}` : "No area"}
-          </strong>
-        </div>
-        <div>
-          <span>Area</span>
-          <strong>{props.rect ? formatArea(size.area) : "n/a"}</strong>
-        </div>
-        <div>
-          <span>Cleanable</span>
-          <strong>{props.coverage ? formatArea(props.coverage.cleanableAreaSqM) : props.validation ? formatPercent(props.validation.freeRatio) : "n/a"}</strong>
-        </div>
-        <div>
-          <span>Skipped</span>
-          <strong>{props.coverage ? formatArea(props.coverage.skippedAreaSqM) : "n/a"}</strong>
-        </div>
-        <div>
-          <span>Passes</span>
-          <strong>{props.passCount || "n/a"}</strong>
-        </div>
-        <div>
-          <span>Distance</span>
-          <strong>{props.estimatedDistance > 0 ? formatDistance(props.estimatedDistance) : "n/a"}</strong>
-        </div>
-      </div>
-
       {props.state === "confirmed" ? (
         <div className="vacuum-clean-area-preview">
-          <strong>Estimated passes: {props.passCount || "n/a"}</strong>
-          <span>Estimated distance: {props.estimatedDistance > 0 ? formatDistance(props.estimatedDistance) : "n/a"}</span>
+          <strong>Ready to clean {selectedAreaLabel}</strong>
+          <span>{props.coverage ? `${skippedAreaLabel} cannot be cleaned in this selection.` : "Review the highlighted area before starting."}</span>
           {props.coverage ? (
-            <span>
-              Target cleanable area: {formatArea(props.coverage.cleanableAreaSqM)} · skipped occupied/unknown/out-of-bounds: {formatArea(props.coverage.skippedAreaSqM)}
-            </span>
+            <span>{routeSummaryLabel} · {props.estimatedDistance > 0 ? formatDistance(props.estimatedDistance) : "route ready"}</span>
           ) : null}
         </div>
       ) : null}
@@ -874,37 +858,31 @@ function CleanAreaCard(props: {
               style={{ width: `${progress <= 0 ? (props.state === "preparing" ? 3 : 0) : Math.max(progress * 100, 6)}%` }}
             />
           </div>
-          <div className="vacuum-clean-area-progress-label">
-            Coverage: {Math.round(progress * 100)}%
-            {props.coverage
-              ? ` · ${formatArea(props.coverage.coveredAreaSqM)} covered · ${formatArea(props.coverage.remainingAreaSqM)} remaining`
-              : ` · Distance remaining: ${formatDistance(props.distanceRemaining)}`}
+          <div className="vacuum-clean-area-summary">
+            <strong>{formatPercent(progress)}</strong>
+            <span>
+              {props.coverage
+                ? `${cleanedAreaLabel} cleaned · ${remainingAreaLabel} left`
+                : `Distance left: ${formatDistance(props.distanceRemaining)}`}
+            </span>
           </div>
           {props.coverage ? (
-            <div className="vacuum-clean-area-coverage-grid">
+            <div className="vacuum-clean-area-quick-stats">
               <div>
-                <span>Target cleanable</span>
-                <strong>{formatArea(props.coverage.cleanableAreaSqM)}</strong>
+                <span>Cleaned</span>
+                <strong>{cleanedAreaLabel}</strong>
               </div>
               <div>
-                <span>Covered area</span>
-                <strong>{formatArea(props.coverage.coveredAreaSqM)}</strong>
+                <span>Left</span>
+                <strong>{remainingAreaLabel}</strong>
               </div>
               <div>
-                <span>Remaining area</span>
-                <strong>{formatArea(props.coverage.remainingAreaSqM)}</strong>
+                <span>Skipped</span>
+                <strong>{skippedAreaLabel}</strong>
               </div>
               <div>
-                <span>Skipped cells</span>
-                <strong>{props.coverage.occupiedCells} occupied · {props.coverage.unknownCells} unknown · {props.coverage.outOfBoundsCells} out</strong>
-              </div>
-              <div>
-                <span>Waypoint progress</span>
-                <strong>{Math.min(props.currentWaypointIndex, props.waypointCount)} / {props.waypointCount}</strong>
-              </div>
-              <div>
-                <span>Swath width</span>
-                <strong>{formatDimension(props.coverage.swathWidth)}</strong>
+                <span>Status</span>
+                <strong>{routeSummaryLabel}</strong>
               </div>
             </div>
           ) : null}
@@ -973,6 +951,79 @@ function CleanAreaCard(props: {
   );
 }
 
+function capabilityLabel(capability: CapabilitySupport): string {
+  if (capability.supported) {
+    return "Available";
+  }
+  return capability.notes ?? "Unsupported";
+}
+
+function formatBatteryState(battery: VacuumBatteryState): string {
+  if (battery.percentage == null) {
+    return battery.detail ?? "Battery state unavailable";
+  }
+  const charging = battery.charging == null ? "" : battery.charging ? " · charging" : " · not charging";
+  return `${Math.round(battery.percentage)}%${charging}`;
+}
+
+function MissionLifecycleCard(props: {
+  mission: VacuumMissionStatus;
+  battery: VacuumBatteryState;
+  capabilities: VacuumCapabilities;
+  commandError: string | null;
+  onReturnToDock: () => void;
+}): JSX.Element {
+  const returnToDock = props.capabilities.return_to_dock;
+  const dockState = props.capabilities.dock_state;
+  const battery = props.capabilities.battery;
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--mission-lifecycle">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Mission Lifecycle</p>
+        <span className="vacuum-clean-area-badge">{props.mission.state}</span>
+      </div>
+      <p className="vacuum-clean-area-copy">{props.mission.detail ?? "Adapter mission state is available."}</p>
+
+      {props.commandError ? (
+        <div className="vacuum-mapping-error" role="status">
+          {props.commandError}
+        </div>
+      ) : null}
+
+      <div className="vacuum-clean-area-coverage-grid">
+        <div>
+          <span>Dock state</span>
+          <strong>{capabilityLabel(dockState)}</strong>
+        </div>
+        <div>
+          <span>Return to dock</span>
+          <strong>{capabilityLabel(returnToDock)}</strong>
+        </div>
+        <div>
+          <span>Battery</span>
+          <strong>{battery.supported ? formatBatteryState(props.battery) : capabilityLabel(battery)}</strong>
+        </div>
+        <div>
+          <span>Charging</span>
+          <strong>{props.battery.charging == null ? "n/a" : props.battery.charging ? "Yes" : "No"}</strong>
+        </div>
+      </div>
+
+      <div className="vacuum-actions">
+        <button
+          className="vacuum-action vacuum-action--ghost"
+          type="button"
+          onClick={props.onReturnToDock}
+          disabled={!returnToDock.supported}
+        >
+          Return to dock
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function VacuumControlPanel() {
   const adapter = useVacuumAdapter();
   const snapshot = adapter.snapshot;
@@ -992,6 +1043,7 @@ export function VacuumControlPanel() {
   const [cleanAreaWaypoints, setCleanAreaWaypoints] = useState<DraftTarget[]>([]);
   const [cleanAreaCurrentIndex, setCleanAreaCurrentIndex] = useState(0);
   const [cleanAreaCommandError, setCleanAreaCommandError] = useState<string | null>(null);
+  const [missionCommandError, setMissionCommandError] = useState<string | null>(null);
   const [cleanAreaCoveredCellKeys, setCleanAreaCoveredCellKeys] = useState<Set<string>>(() => new Set());
   const [cleanAreaMissionTarget, setCleanAreaMissionTarget] = useState<CleanAreaCoverageTarget | null>(null);
   const [activeMode, setActiveMode] = useState<"mapping" | "navigation" | "clean">("navigation");
@@ -1015,9 +1067,20 @@ export function VacuumControlPanel() {
   const mappingState = mapAdapterMappingState(mappingStatus.state);
   const autoMappingSupported = snapshot.capabilities.auto_mapping.supported;
   const mappingSessionSupported = snapshot.capabilities.mapping_session.supported;
+  const cleanAreaCoverageConfig = useMemo(
+    () =>
+      buildCleanAreaCoverageRuntimeConfig({
+        profile: DEFAULT_CLEAN_AREA_COVERAGE_PROFILE,
+        mapMetadata,
+      }),
+    [mapMetadata],
+  );
   const liveCleanAreaCoverageTarget = useMemo(
-    () => buildCleanAreaCoverageTarget(cleanAreaRect, snapshot.map.grid),
-    [cleanAreaRect, snapshot.map.grid],
+    () =>
+      buildCleanAreaCoverageTarget(cleanAreaRect, snapshot.map.grid, {
+        minimumUsefulCleanableRegionSqM: cleanAreaCoverageConfig.minimumUsefulCleanableRegionSqM,
+      }),
+    [cleanAreaCoverageConfig.minimumUsefulCleanableRegionSqM, cleanAreaRect, snapshot.map.grid],
   );
   const cleanAreaCoverageTarget = cleanAreaMissionTarget ?? liveCleanAreaCoverageTarget;
   const cleanAreaCoverage = useMemo(
@@ -1025,9 +1088,9 @@ export function VacuumControlPanel() {
       buildCleanAreaCoverageSnapshot({
         target: cleanAreaCoverageTarget,
         coveredCellKeys: cleanAreaCoveredCellKeys,
-        swathWidth: CLEAN_AREA_SWATH_WIDTH_M,
+        swathWidth: cleanAreaCoverageConfig.cleaningSwathWidthM,
       }),
-    [cleanAreaCoverageTarget, cleanAreaCoveredCellKeys],
+    [cleanAreaCoverageConfig.cleaningSwathWidthM, cleanAreaCoverageTarget, cleanAreaCoveredCellKeys],
   );
 
   const displayedTarget = sentTarget ?? draftTarget;
@@ -1171,16 +1234,15 @@ export function VacuumControlPanel() {
   const isCleanAreaActive = isCleanAreaRunning || cleanAreaState === "paused";
   const isCleanAreaModeLocked = isCleanAreaActive || cleanAreaToolActive;
   const cleanAreaVisualState = getCleanAreaVisualState(cleanAreaState, cleanAreaToolActive);
-  const cleanAreaSpacing = getCleanAreaSpacing(mapMetadata);
   const cleanAreaPreviewPoints =
     cleanAreaWaypoints.length > 0
       ? cleanAreaWaypoints
       : cleanAreaRect
         ? buildLawnmowerWaypoints({
             rect: cleanAreaRect,
-            spacing: cleanAreaSpacing,
-            swathWidth: CLEAN_AREA_SWATH_WIDTH_M,
-            goalCompletionTolerance: CLEAN_AREA_GOAL_TOLERANCE_COMPENSATION_M,
+            spacing: cleanAreaCoverageConfig.laneSpacingM,
+            swathWidth: cleanAreaCoverageConfig.cleaningSwathWidthM,
+            boundaryExtensionM: cleanAreaCoverageConfig.boundaryExtensionM,
             target: cleanAreaCoverageTarget,
           })
         : null;
@@ -1206,11 +1268,11 @@ export function VacuumControlPanel() {
         coveredCellKeys: current,
         previousPose,
         currentPose,
-        swathWidth: CLEAN_AREA_SWATH_WIDTH_M,
+        swathWidth: cleanAreaCoverageConfig.cleaningSwathWidthM,
       }),
     );
     previousCoveragePoseRef.current = currentPose;
-  }, [cleanAreaCoverageTarget, cleanAreaState, currentPose]);
+  }, [cleanAreaCoverageConfig.cleaningSwathWidthM, cleanAreaCoverageTarget, cleanAreaState, currentPose]);
 
   useEffect(() => {
     if (isGoalActive) {
@@ -1254,7 +1316,9 @@ export function VacuumControlPanel() {
       return;
     }
 
-    const nextTarget = buildCleanAreaCoverageTarget(rect, snapshot.map.grid);
+    const nextTarget = buildCleanAreaCoverageTarget(rect, snapshot.map.grid, {
+      minimumUsefulCleanableRegionSqM: cleanAreaCoverageConfig.minimumUsefulCleanableRegionSqM,
+    });
     setCleanAreaRect(rect);
     setCleanAreaValidation(validation);
     setCleanAreaMissionTarget(null);
@@ -1262,9 +1326,9 @@ export function VacuumControlPanel() {
       validation.ok
         ? buildLawnmowerWaypoints({
             rect,
-            spacing: getCleanAreaSpacing(mapMetadata),
-            swathWidth: CLEAN_AREA_SWATH_WIDTH_M,
-            goalCompletionTolerance: CLEAN_AREA_GOAL_TOLERANCE_COMPENSATION_M,
+            spacing: cleanAreaCoverageConfig.laneSpacingM,
+            swathWidth: cleanAreaCoverageConfig.cleaningSwathWidthM,
+            boundaryExtensionM: cleanAreaCoverageConfig.boundaryExtensionM,
             target: nextTarget,
           })
         : [],
@@ -1273,7 +1337,7 @@ export function VacuumControlPanel() {
     setCleanAreaState((current) => {
       return current === "idle" || current === "editing" ? "editing" : current;
     });
-  }, [cleanAreaState, cleanAreaToolActive, mapMetadata, snapshot.map.grid]);
+  }, [cleanAreaCoverageConfig, cleanAreaState, cleanAreaToolActive, snapshot.map.grid]);
 
   async function handleSend(overrideTarget?: DraftTarget): Promise<void> {
     const target = overrideTarget ?? runTarget;
@@ -1470,16 +1534,18 @@ export function VacuumControlPanel() {
     if (!cleanAreaRect || !cleanAreaValidation?.ok) {
       return;
     }
-    const target = buildCleanAreaCoverageTarget(cleanAreaRect, snapshot.map.grid);
+    const target = buildCleanAreaCoverageTarget(cleanAreaRect, snapshot.map.grid, {
+      minimumUsefulCleanableRegionSqM: cleanAreaCoverageConfig.minimumUsefulCleanableRegionSqM,
+    });
     if (!target || target.cleanableCells.length === 0) {
       setCleanAreaCommandError("Area has no cleanable cells.");
       return;
     }
     const waypoints = buildLawnmowerWaypoints({
       rect: cleanAreaRect,
-      spacing: cleanAreaSpacing,
-      swathWidth: CLEAN_AREA_SWATH_WIDTH_M,
-      goalCompletionTolerance: CLEAN_AREA_GOAL_TOLERANCE_COMPENSATION_M,
+      spacing: cleanAreaCoverageConfig.laneSpacingM,
+      swathWidth: cleanAreaCoverageConfig.cleaningSwathWidthM,
+      boundaryExtensionM: cleanAreaCoverageConfig.boundaryExtensionM,
       target,
     });
     if (waypoints.length === 0) {
@@ -1584,6 +1650,14 @@ export function VacuumControlPanel() {
     }
     clearCleanAreaNavigationTarget();
     setCleanAreaState("canceled");
+  }
+
+  async function handleReturnToDock(): Promise<void> {
+    setMissionCommandError(null);
+    const result = await adapter.sendCommand({ command: "return_to_dock" });
+    if (!result.ok) {
+      setMissionCommandError(result.error.message);
+    }
   }
 
   function handleRetryCleanAreaWaypoint(): void {
@@ -1973,6 +2047,7 @@ export function VacuumControlPanel() {
                   rect={cleanAreaRect}
                   validation={cleanAreaValidation}
                   coverage={cleanAreaCoverage}
+                  coverageConfig={cleanAreaCoverageConfig}
                   waypointCount={cleanAreaWaypoints.length}
                   currentWaypointIndex={cleanAreaCurrentIndex}
                   passCount={cleanAreaMetrics.passCount}
@@ -1990,6 +2065,13 @@ export function VacuumControlPanel() {
                   onSkip={handleSkipCleanAreaWaypoint}
                   onCancel={() => void handleCancelCleanArea()}
                   onClear={handleClearCleanArea}
+                />
+                <MissionLifecycleCard
+                  mission={snapshot.mission}
+                  battery={snapshot.battery}
+                  capabilities={snapshot.capabilities}
+                  commandError={missionCommandError}
+                  onReturnToDock={() => void handleReturnToDock()}
                 />
                 <TeleopCard
                   disabled={isCleanAreaActive}

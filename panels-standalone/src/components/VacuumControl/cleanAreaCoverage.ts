@@ -1,7 +1,7 @@
 import type { VacuumMapGrid, VacuumPoseCoordinates } from "../../vacuum-adapter";
 import type { CleanAreaRect } from "./MapCanvas";
 
-export type CleanAreaCoverageCellState = "remaining" | "covered" | "occupied" | "unknown" | "out_of_bounds";
+export type CleanAreaCoverageCellState = "remaining" | "covered" | "occupied" | "unknown" | "out_of_bounds" | "too_small";
 
 export type CleanAreaCoverageOverlayCell = {
   key: string;
@@ -22,13 +22,30 @@ export type CleanAreaCoverageTargetCell = {
   centerY: number;
 };
 
+export type CleanAreaCoverageRegion = {
+  id: string;
+  cellCount: number;
+  areaSqM: number;
+  tooSmall: boolean;
+  bounds: CleanAreaRect;
+  centroid: {
+    x: number;
+    y: number;
+  };
+  cells: CleanAreaCoverageTargetCell[];
+};
+
 export type CleanAreaCoverageTarget = {
   signature: string;
   cellAreaSqM: number;
   cleanableCells: CleanAreaCoverageTargetCell[];
+  cleanableRegions: CleanAreaCoverageRegion[];
+  skippedSmallRegionCells: CleanAreaCoverageOverlayCell[];
+  skippedSmallRegionCount: number;
   occupiedCells: CleanAreaCoverageOverlayCell[];
   unknownCells: CleanAreaCoverageOverlayCell[];
   outOfBoundsCells: number;
+  minimumUsefulCleanableRegionSqM: number;
 };
 
 export type CleanAreaCoverageSnapshot = {
@@ -40,6 +57,9 @@ export type CleanAreaCoverageSnapshot = {
   occupiedCells: number;
   unknownCells: number;
   outOfBoundsCells: number;
+  skippedSmallRegionCells: number;
+  cleanableRegionCount: number;
+  skippedSmallRegionCount: number;
   cleanableAreaSqM: number;
   coveredAreaSqM: number;
   remainingAreaSqM: number;
@@ -89,6 +109,83 @@ function makeOverlayCell(
   };
 }
 
+function buildConnectedCleanableRegions(args: {
+  cleanableCells: CleanAreaCoverageTargetCell[];
+  cellAreaSqM: number;
+  minimumUsefulCleanableRegionSqM: number;
+}): CleanAreaCoverageRegion[] {
+  const cellsByKey = new Map(args.cleanableCells.map((cell) => [cell.key, cell]));
+  const visited = new Set<string>();
+  const regions: CleanAreaCoverageRegion[] = [];
+
+  for (const seed of args.cleanableCells) {
+    if (visited.has(seed.key)) {
+      continue;
+    }
+
+    const stack = [seed];
+    const cells: CleanAreaCoverageTargetCell[] = [];
+    visited.add(seed.key);
+
+    while (stack.length > 0) {
+      const cell = stack.pop()!;
+      cells.push(cell);
+      const neighbors = [
+        cellKey(cell.cellX + 1, cell.cellY),
+        cellKey(cell.cellX - 1, cell.cellY),
+        cellKey(cell.cellX, cell.cellY + 1),
+        cellKey(cell.cellX, cell.cellY - 1),
+      ];
+
+      for (const key of neighbors) {
+        if (visited.has(key)) {
+          continue;
+        }
+        const neighbor = cellsByKey.get(key);
+        if (!neighbor) {
+          continue;
+        }
+        visited.add(key);
+        stack.push(neighbor);
+      }
+    }
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    let sumX = 0;
+    let sumY = 0;
+    for (const cell of cells) {
+      minX = Math.min(minX, cell.centerX);
+      minY = Math.min(minY, cell.centerY);
+      maxX = Math.max(maxX, cell.centerX);
+      maxY = Math.max(maxY, cell.centerY);
+      sumX += cell.centerX;
+      sumY += cell.centerY;
+    }
+
+    const areaSqM = cells.length * args.cellAreaSqM;
+    const cellSize = Math.sqrt(args.cellAreaSqM);
+    regions.push({
+      id: `region-${regions.length + 1}`,
+      cellCount: cells.length,
+      areaSqM,
+      tooSmall: args.minimumUsefulCleanableRegionSqM > 0 && areaSqM < args.minimumUsefulCleanableRegionSqM,
+      bounds: {
+        minX: minX - cellSize / 2,
+        minY: minY - cellSize / 2,
+        maxX: maxX + cellSize / 2,
+        maxY: maxY + cellSize / 2,
+      },
+      centroid: { x: sumX / cells.length, y: sumY / cells.length },
+      cells,
+    });
+  }
+
+  return regions.sort((a, b) => b.cellCount - a.cellCount);
+}
+
 function distanceToSegment(point: { x: number; y: number }, start: { x: number; y: number }, end: { x: number; y: number }): number {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
@@ -103,6 +200,9 @@ function distanceToSegment(point: { x: number; y: number }, start: { x: number; 
 export function buildCleanAreaCoverageTarget(
   rect: CleanAreaRect | null,
   map: VacuumMapGrid | null,
+  options?: {
+    minimumUsefulCleanableRegionSqM?: number;
+  },
 ): CleanAreaCoverageTarget | null {
   if (!rect || !map || map.width <= 0 || map.height <= 0 || map.resolution <= 0) {
     return null;
@@ -112,10 +212,11 @@ export function buildCleanAreaCoverageTarget(
   const maxCellX = Math.floor((rect.maxX - map.originX) / map.resolution);
   const minCellY = Math.floor((rect.minY - map.originY) / map.resolution);
   const maxCellY = Math.floor((rect.maxY - map.originY) / map.resolution);
-  const cleanableCells: CleanAreaCoverageTargetCell[] = [];
+  const candidateCleanableCells: CleanAreaCoverageTargetCell[] = [];
   const occupiedCells: CleanAreaCoverageOverlayCell[] = [];
   const unknownCells: CleanAreaCoverageOverlayCell[] = [];
   let outOfBoundsCells = 0;
+  const minimumUsefulCleanableRegionSqM = Math.max(0, options?.minimumUsefulCleanableRegionSqM ?? 0);
 
   for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
@@ -135,20 +236,36 @@ export function buildCleanAreaCoverageTarget(
         unknownCells.push(makeOverlayCell(cellX, cellY, map, "unknown"));
       } else if (value <= FREE_OCCUPANCY_MAX) {
         const key = cellKey(cellX, cellY);
-        cleanableCells.push({ key, cellX, cellY, centerX, centerY });
+        candidateCleanableCells.push({ key, cellX, cellY, centerX, centerY });
       } else {
         occupiedCells.push(makeOverlayCell(cellX, cellY, map, "occupied"));
       }
     }
   }
 
+  const allRegions = buildConnectedCleanableRegions({
+    cleanableCells: candidateCleanableCells,
+    cellAreaSqM: map.resolution * map.resolution,
+    minimumUsefulCleanableRegionSqM,
+  });
+  const cleanableRegions = allRegions.filter((region) => !region.tooSmall);
+  const skippedSmallRegions = allRegions.filter((region) => region.tooSmall);
+  const cleanableCells = cleanableRegions.flatMap((region) => region.cells);
+  const skippedSmallRegionCells = skippedSmallRegions
+    .flatMap((region) => region.cells)
+    .map((cell) => makeOverlayCell(cell.cellX, cell.cellY, map, "too_small"));
+
   return {
-    signature: `${getMapSignature(map)}:${rect.minX.toFixed(3)}:${rect.minY.toFixed(3)}:${rect.maxX.toFixed(3)}:${rect.maxY.toFixed(3)}`,
+    signature: `${getMapSignature(map)}:${rect.minX.toFixed(3)}:${rect.minY.toFixed(3)}:${rect.maxX.toFixed(3)}:${rect.maxY.toFixed(3)}:${minimumUsefulCleanableRegionSqM.toFixed(3)}`,
     cellAreaSqM: map.resolution * map.resolution,
     cleanableCells,
+    cleanableRegions,
+    skippedSmallRegionCells,
+    skippedSmallRegionCount: skippedSmallRegions.length,
     occupiedCells,
     unknownCells,
     outOfBoundsCells,
+    minimumUsefulCleanableRegionSqM,
   };
 }
 
@@ -199,7 +316,8 @@ export function buildCleanAreaCoverageSnapshot(args: {
   const remainingCells = Math.max(0, targetCells - coveredCells);
   const occupiedCells = target.occupiedCells.length;
   const unknownCells = target.unknownCells.length;
-  const skippedCells = occupiedCells + unknownCells + target.outOfBoundsCells;
+  const skippedSmallRegionCells = target.skippedSmallRegionCells.length;
+  const skippedCells = occupiedCells + unknownCells + target.outOfBoundsCells + skippedSmallRegionCells;
   const cellAreaSqM = target.cellAreaSqM;
   const cellSize = Math.sqrt(cellAreaSqM);
 
@@ -212,6 +330,9 @@ export function buildCleanAreaCoverageSnapshot(args: {
     occupiedCells,
     unknownCells,
     outOfBoundsCells: target.outOfBoundsCells,
+    skippedSmallRegionCells,
+    cleanableRegionCount: target.cleanableRegions.length,
+    skippedSmallRegionCount: target.skippedSmallRegionCount,
     cleanableAreaSqM: targetCells * cellAreaSqM,
     coveredAreaSqM: coveredCells * cellAreaSqM,
     remainingAreaSqM: remainingCells * cellAreaSqM,
@@ -230,6 +351,7 @@ export function buildCleanAreaCoverageSnapshot(args: {
       })),
       ...target.occupiedCells,
       ...target.unknownCells,
+      ...target.skippedSmallRegionCells,
     ],
   };
 }
