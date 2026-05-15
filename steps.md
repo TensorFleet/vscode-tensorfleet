@@ -35,10 +35,13 @@ Current contract progress:
   `start_navigation`, `start_coverage`, `pause_mission`, `resume_mission`,
   `cancel_mission`, `retry_mission_step`, and `skip_mission_step`.
 
-Important limitation:
+Current limitation:
 
-- This pass defines and maps the product-facing contract. It does not yet move
-  navigation or Clean Area execution into a durable VM/runtime process.
+- Navigation and Clean Area active execution are runtime-owned for the
+  TurtleBot4/Nav2 simulation path.
+- Clean Area now submits area-only `start_coverage` requests for active runs.
+  The VM mission runtime owns route generation and per-cell coverage overlay
+  snapshots for TurtleBot4/Nav2.
 
 ## Repositories And Commits
 
@@ -83,11 +86,9 @@ Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
                                     Valetudo stub reserved for Layer 6
 Layer 4 prerequisite: Mapping + Whole Map View
                                     implemented for TurtleBot4/Nav2 simulation
-Layer 4 — Coverage                  Clean Area MVP implemented with
-                                    occupancy-clipped waypoints and
-                                    footprint-history progress; production
-                                    coverage, dock, and battery behavior
-                                    pending
+Layer 4 — Coverage                  Clean Area execution, route generation,
+                                    and per-cell progress snapshots are
+                                    runtime-owned for TurtleBot4/Nav2
 Layer 5 — Room / Zone Semantics     planned
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
@@ -107,8 +108,8 @@ What is currently true:
   of reading `useNav2Runtime` directly.
 - The adapter exposes normalized map, navigation, readiness, mission, command,
   capability, and mapping state.
-- The current Clean Area MVP lives above the adapter boundary and executes
-  generated waypoints through `go_to_location`.
+- Clean Area submits `start_coverage` through the adapter; the VM mission
+  runtime owns Nav2 waypoint sequencing, lifecycle actions, and progress.
 
 ## Implemented: Extension Side
 
@@ -343,10 +344,11 @@ VM mapping surfaces:
 - `/vacuum_mapping/load_map`
 - `/vacuum_mapping/list_maps`
 
-## Implemented: Clean Area MVP
+## Implemented: Clean Area Runtime Mission
 
-Clean Area is the current Layer 4 MVP. It is implemented above the adapter
-boundary as a rectangular lawnmower waypoint workflow.
+Clean Area is the current Layer 4 runtime-owned mission path. The UI owns
+rectangle drafting and local preview before start; the VM mission runtime owns
+active execution after `start_coverage`.
 
 Current behavior:
 
@@ -366,17 +368,16 @@ Current behavior:
   sweeping full-width rows through blocked or unknown cells.
 - Boundary pass goals extend by tolerance plus boundary margin so close-enough
   Nav2 completion does not advance before the robot crosses the clean-area edge.
-- `VacuumControlPanel.tsx` executes the route by sending adapter
-  `go_to_location` commands.
+- `VacuumControlPanel.tsx` submits `start_coverage` through the adapter.
+- The VM mission runtime executes coverage by privately sequencing Nav2 goals.
 - `cleanAreaCoverage.ts` classifies selected map cells as cleanable, occupied,
   unknown, out-of-bounds, remaining, covered, or too small.
 - Cleanable cells are decomposed into connected regions.
 - Tiny disconnected regions are skipped rather than planned as pointless
   waypoints.
-- Confirmed clean-area runs freeze the coverage target so live map updates do
-  not erase covered cells during a run.
-- Active clean-area runs use map-frame robot pose history and configured swath
-  width to mark cleanable cells covered.
+- Active clean-area runs hydrate from `snapshot.activeMission`.
+- Runtime coverage progress uses map-frame robot pose history and configured
+  swath width to mark cleanable cells covered.
 - `MapCanvas` renders remaining cells, covered cells, excluded
   occupied/unknown cells, skipped cells, and current robot footprint.
 - `CleanAreaCard` reports coverage percentage, cleaned area, remaining area,
@@ -391,8 +392,9 @@ Current behavior:
 
 Current limits:
 
-- Execution is still the current waypoint runner.
-- Coverage progress is first-pass footprint-history accounting, not
+- Runtime route generation is row-level occupancy-clipped; stronger
+  obstacle-adjacent and component-level planning remains pending.
+- Runtime coverage progress is first-pass footprint-history accounting, not
   production-complete coverage.
 - Clipping is lane-level; connected-region accounting exists, but route
   generation is not yet component-level area planning.

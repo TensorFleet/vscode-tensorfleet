@@ -155,6 +155,41 @@ function terminalResultFromStatus(
   return { status, completedAt: updatedAt, summary };
 }
 
+function isRuntimeMissionActive(status: VacuumMissionStatus): boolean {
+  return [
+    "preparing",
+    "running",
+    "paused",
+    "canceling",
+    "returning",
+    "charging",
+    "resuming",
+    "needs_assistance",
+  ].includes(status);
+}
+
+function isMappingMissionActive(mappingState: VacuumMappingStatus["state"]): boolean {
+  return mappingState === "auto_mapping" || mappingState === "manual_mapping" || mappingState === "paused" || mappingState === "needs_assistance" || mappingState === "review";
+}
+
+function normalizeRuntimeMissionActions(
+  mission: VacuumMissionSnapshot,
+  hasCancelMission: boolean,
+): VacuumMissionSnapshot {
+  return {
+    ...mission,
+    availableActions: mission.availableActions.filter((action) => {
+      if (action === "cancel_mission") {
+        return hasCancelMission;
+      }
+      if (mission.type === "navigation") {
+        return action !== "pause_mission" && action !== "resume_mission" && action !== "retry_mission_step" && action !== "skip_mission_step";
+      }
+      return true;
+    }),
+  };
+}
+
 function deriveAvailableMissionActions(
   status: VacuumMissionStatus,
   type: VacuumMissionSnapshot["type"],
@@ -193,8 +228,12 @@ function buildActiveMission(input: {
   hasCancelMission: boolean;
   runtimeMission: VacuumMissionSnapshot | null | undefined;
 }): VacuumMissionSnapshot | null {
+  if (input.runtimeMission && input.runtimeMission.status !== "idle" && isRuntimeMissionActive(input.runtimeMission.status)) {
+    return normalizeRuntimeMissionActions(input.runtimeMission, input.hasCancelMission);
+  }
+
   const mappingStatus = mapMappingMissionStatus(input.mapping.state);
-  if (mappingStatus !== "idle") {
+  if (mappingStatus !== "idle" && isMappingMissionActive(input.mapping.state)) {
     return {
       id: "turtlebot4-nav2:mapping",
       type: "mapping",
@@ -222,15 +261,7 @@ function buildActiveMission(input: {
   }
 
   if (input.runtimeMission && input.runtimeMission.status !== "idle") {
-    return {
-      ...input.runtimeMission,
-      availableActions: input.runtimeMission.availableActions.filter((action) => {
-        if (action === "cancel_mission") {
-          return input.hasCancelMission;
-        }
-        return action !== "pause_mission" && action !== "resume_mission" && action !== "retry_mission_step" && action !== "skip_mission_step";
-      }),
-    };
+    return normalizeRuntimeMissionActions(input.runtimeMission, input.hasCancelMission);
   }
 
   const navigationStatus = mapNavigationMissionStatus(input.runtime.goalState);
@@ -458,9 +489,15 @@ export function mapTurtleBot4Nav2State(
           : null
     : null;
   const navigationMissionActive = navigationMission ? ["preparing", "running", "canceling"].includes(navigationMission.status) : false;
-  const missionState = activeMission?.type === "navigation" && navigationMissionActive
-    ? "navigating"
-    : deriveMissionState(active, normalizedMapping.state);
+  const activeMissionRunning = activeMission ? ["preparing", "running", "canceling", "resuming", "paused", "needs_assistance"].includes(activeMission.status) : false;
+  const missionState =
+    activeMission?.type === "navigation" && navigationMissionActive
+      ? "navigating"
+      : activeMission?.type === "coverage" && activeMissionRunning
+        ? activeMission.status === "paused" || activeMission.status === "needs_assistance"
+          ? "paused"
+          : "cleaning"
+        : deriveMissionState(active, normalizedMapping.state);
 
   return {
     identity: {
@@ -515,6 +552,10 @@ export function mapTurtleBot4Nav2State(
           ? normalizedMapping.stateReason
           : missionState === "navigating"
             ? "Robot is navigating to a selected location."
+            : missionState === "cleaning"
+              ? "Robot is cleaning a selected area."
+              : missionState === "paused" && activeMission?.type === "coverage"
+                ? activeMission.error?.message ?? "Area cleaning is paused."
             : (terminalFromMission ?? terminalState)
               ? `Last navigation ${terminalFromMission ?? terminalState}.`
               : "Robot is idle.",

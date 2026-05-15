@@ -224,9 +224,13 @@ Current implementation note:
 - Terminal navigation destinations can be dismissed in the UI after
   completed/canceled/failed runs; that is presentation state only and does not
   clear runtime mission history.
-- Clean Area is still being migrated toward this contract. Its current MVP
-  still owns waypoint sequencing and authoritative coverage progress in the
-  webview.
+- Clean Area active execution is now runtime-owned for TurtleBot4/Nav2:
+  the UI submits `start_coverage`, the VM mission runtime owns Nav2 waypoint
+  sequencing and progress, and the adapter hydrates coverage mission state from
+  `/vacuum_mission/status` and `/vacuum_mission/get_snapshot`.
+- Coverage route generation and per-cell overlay/progress details are now
+  runtime snapshot data for TurtleBot4/Nav2. The UI keeps only draft selection
+  and local preview before start.
 
 Current position:
 
@@ -248,11 +252,9 @@ Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
                                     Valetudo stub reserved for Layer 6
 Layer 4 prerequisite: Mapping + Whole Map View
                                     implemented for TurtleBot4/Nav2 simulation
-Layer 4 — Coverage                  Clean Area MVP implemented with
-                                    occupancy-clipped waypoints and
-                                    footprint-history progress; production
-                                    coverage, dock, and battery behavior
-                                    pending
+Layer 4 — Coverage                  Clean Area execution, route generation,
+                                    and per-cell progress snapshots are
+                                    runtime-owned for TurtleBot4/Nav2
 Layer 5 — Room / Zone Semantics     planned
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
@@ -411,10 +413,9 @@ Boundary rule:
 
 ## Layer 4: Coverage
 
-Status: Clean Area MVP implemented with adapter-backed waypoint execution,
-occupancy-grid lane clipping, footprint-history progress, profile-backed
-coverage configuration, connected-region accounting, and a 95% covered-cell
-completion threshold.
+Status: Clean Area execution is runtime-owned for TurtleBot4/Nav2. The UI owns
+draft selection and preview before start; the VM mission runtime owns active
+coverage execution, lifecycle actions, progress, and terminal snapshots.
 
 Purpose:
 
@@ -437,15 +438,15 @@ Current Clean Area MVP:
 - the planner chooses the longer axis for passes
 - sampled lanes are clipped to known free occupancy-grid cells
 - boundary pass endpoints are extended to compensate for Nav2 goal tolerance
-- the run executes each waypoint through
-  `adapter.sendCommand({ command: "go_to_location", target })`
+- the run starts with `adapter.sendCommand({ command: "start_coverage", ... })`
+- the VM mission runtime privately sequences Nav2 goals for TurtleBot4/Nav2
 - `cleanAreaCoverage.ts` classifies cells as cleanable, occupied, unknown,
   out-of-bounds, too small, remaining, or covered
 - cleanable cells are decomposed into connected regions
 - tiny disconnected regions are skipped
-- progress is covered square meters from robot footprint history in map frame
-- confirmed runs freeze coverage targets so live map updates do not erase
-  covered cells
+- active progress hydrates from `snapshot.activeMission`
+- runtime progress is covered square meters from robot footprint history in map
+  frame
 - `MapCanvas` renders remaining, covered, excluded, skipped, and footprint
   overlays
 - `CleanAreaCard` reports percentage, cleaned area, remaining area, skipped
@@ -827,8 +828,8 @@ Extension-specific implementation details are documented in `extension.md`.
 
 ### Simulation-Complete Slice: Layers 4-5
 
-- Clean Area MVP executes selected rectangular lawnmower waypoint sequences
-  through the adapter
+- Clean Area starts selected rectangular coverage missions through the adapter
+  and the VM runtime owns active execution
 - row-level waypoint generation clips sampled rows to known free cells
 - production coverage accounts for footprint history, configurable swath,
   overlap, edge/corner handling, and full obstacle/unknown decomposition
@@ -874,8 +875,8 @@ Completed exit validation:
 
 Scope:
 
-- harden current Clean Area MVP beyond waypoint-runner behavior
-- production coverage planning
+- harden runtime coverage route generation beyond row-level clipping
+- add richer runtime mission summaries for uncovered/skipped cells
 - dock / undock awareness in adapter state/commands
 - battery-aware execution and resume
 - "clean this area" flow end-to-end in simulation
@@ -883,9 +884,9 @@ Scope:
 Constraints:
 
 - planner consumes normalized map and pose
-- coverage succeeds/fails through adapter navigation and mission state
+- coverage succeeds/fails through normalized runtime mission state
 - UI selection belongs above the contract
-- backend-specific code must not own coverage semantics
+- backend-specific code must keep execution details private behind the adapter
 
 ### Layer 5 Milestone: Planned
 

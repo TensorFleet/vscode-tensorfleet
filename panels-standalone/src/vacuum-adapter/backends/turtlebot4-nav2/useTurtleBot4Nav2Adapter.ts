@@ -275,6 +275,38 @@ function buildOptimisticNavigationMission(
   };
 }
 
+function buildOptimisticCoverageMission(
+  command: Extract<VacuumCommand, { command: "start_coverage" }>,
+  canCancelMission: boolean,
+): VacuumMissionSnapshot {
+  const now = Date.now();
+  return {
+    id: `pending-coverage-${now}`,
+    type: "coverage",
+    status: "preparing",
+    backendSource: "turtlebot4_nav2",
+    startedAt: now,
+    updatedAt: now,
+    requestedCommand: "start_coverage",
+    phase: "dispatching",
+    progress: {
+      percent: null,
+      currentStep: null,
+      totalSteps: null,
+      distanceRemaining: null,
+      areaCoveredSqM: null,
+      areaRemainingSqM: null,
+    },
+    availableActions: canCancelMission ? ["cancel_mission"] : [],
+    result: null,
+    error: null,
+    target: {
+      area: command.area,
+      route: null,
+    },
+  };
+}
+
 export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   const runtime = useNav2Runtime();
   const [currentTarget, setCurrentTarget] = useState<VacuumGoalCoordinates | null>(null);
@@ -338,6 +370,24 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
     void fetchMissionSnapshot();
   }, [fetchMissionSnapshot, runtime.availableServices]);
 
+  useEffect(() => {
+    if (!runtime.availableServices.includes(MISSION_SERVICE_NAMES.getSnapshot)) {
+      return undefined;
+    }
+    let canceled = false;
+    const poll = () => {
+      if (!canceled) {
+        void fetchMissionSnapshot();
+      }
+    };
+    poll();
+    const interval = window.setInterval(poll, 1_000);
+    return () => {
+      canceled = true;
+      window.clearInterval(interval);
+    };
+  }, [fetchMissionSnapshot, runtime.availableServices]);
+
   const mapMetadata = useMemo(() => buildVacuumMapMetadata(mapGrid, mapLastUpdateAt), [mapGrid, mapLastUpdateAt]);
 
   const snapshot = useMemo(
@@ -368,7 +418,19 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
       if (result.ok && command.command === "start_navigation") {
         setMissionStatus(buildOptimisticNavigationMission(command.target, snapshot.capabilities.cancel_mission.supported));
         void fetchMissionSnapshot();
-      } else if (result.ok && command.command === "cancel_mission") {
+      } else if (result.ok && command.command === "start_coverage") {
+        setMissionStatus(buildOptimisticCoverageMission(command, snapshot.capabilities.cancel_mission.supported));
+        void fetchMissionSnapshot();
+      } else if (
+        result.ok &&
+        (
+          command.command === "cancel_mission" ||
+          command.command === "pause_mission" ||
+          command.command === "resume_mission" ||
+          command.command === "retry_mission_step" ||
+          command.command === "skip_mission_step"
+        )
+      ) {
         void fetchMissionSnapshot();
       }
       return result;

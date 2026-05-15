@@ -33,9 +33,10 @@ The extension should:
 3. Show live map, lidar, odom/TF, costmap, camera, navigation, and mapping state
    where the current panels support those message types.
 4. Expose enough Nav2 action visibility to validate goal execution.
-5. Treat Clean Area as the current Layer 4 MVP: rectangular selection,
-   occupancy-clipped lawnmower waypoint preview, adapter-backed waypoint
-   execution, and footprint-history progress.
+5. Treat Clean Area as the current Layer 4 runtime-owned mission path:
+   rectangular draft selection and local preview before start, then
+   adapter-backed `start_coverage` execution and snapshot hydration after
+   start.
 6. Record panel gaps as extension follow-up work, not as blockers for the
    already-closed Layer 2/Layer 3 simulation slice.
 
@@ -181,7 +182,7 @@ Panel responsibilities:
 - `NavigateToPose` send/cancel through `vacuum_adapter`
 - adapter-backed mapping controls
 - saved-map inventory and loading
-- Clean Area MVP controls and visualization
+- Clean Area controls and visualization
 - teleop and camera PiP inside the operator workflow
 
 Current expectations:
@@ -352,7 +353,8 @@ Extension boundary:
 
 ## Clean Area UI
 
-Clean Area is the current Layer 4 MVP hosted inside `Vacuum Control`.
+Clean Area is the current Layer 4 runtime-owned mission path hosted inside
+`Vacuum Control`.
 
 Files:
 
@@ -373,11 +375,12 @@ Current behavior:
 - Sampled lanes are clipped to known free occupancy-grid cells.
 - Boundary pass endpoints are extended so Nav2's close-enough goal completion
   does not leave clean-area edges uncovered.
-- Execution dispatches each waypoint through
-  `adapter.sendCommand({ command: "go_to_location", target })`.
+- Execution submits one area-only runtime-owned mission through
+  `adapter.sendCommand({ command: "start_coverage", ... })`.
 - Coverage target is built from adapter-normalized map cells.
 - Occupied, unknown, out-of-bounds, and too-small cells are excluded/skipped.
-- Active coverage progress uses map-frame pose history and configured swath.
+- Active route, coverage cells, and coverage progress come from the runtime
+  mission snapshot.
 - Confirmed runs freeze the coverage target so map updates do not erase
   covered cells.
 - Map overlay renders remaining, covered, excluded, skipped, and footprint
@@ -391,8 +394,8 @@ Current behavior:
 
 Current MVP limits:
 
-- Execution is still the current waypoint runner.
-- Coverage progress is first-pass footprint-history accounting.
+- Runtime route generation is row-level occupancy-clipped.
+- Runtime coverage progress is first-pass footprint-history accounting.
 - Route generation is not yet component-level area planning.
 - Strong edge/corner, obstacle-adjacent, dock/undock, and battery-aware
   behavior remain future Layer 4 work.

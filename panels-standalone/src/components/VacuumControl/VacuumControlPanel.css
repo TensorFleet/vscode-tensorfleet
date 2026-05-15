@@ -911,7 +911,7 @@ body {
 }
 
 .vacuum-map-stage__overlay--plan {
-  z-index: 5;
+  z-index: 6;
 }
 
 .vacuum-map-stage__overlay-canvas {
@@ -999,13 +999,13 @@ body {
 
 .vacuum-map-clean-path-casing {
   stroke: rgba(12, 16, 20, 0.38);
-  stroke-width: 0.8;
+  stroke-width: 4;
 }
 
 .vacuum-map-clean-path {
   stroke: rgba(67, 224, 197, 0.82);
-  stroke-width: 0.36;
-  stroke-dasharray: 1.1 0.72;
+  stroke-width: 2.2;
+  stroke-dasharray: 8 5;
   opacity: 0.9;
   filter: drop-shadow(0 0 4px rgba(56, 200, 176, 0.2));
 }
@@ -1044,7 +1044,7 @@ body {
 
 .vacuum-map-clean-path--current {
   stroke: #ffffff;
-  stroke-width: 0.5;
+  stroke-width: 3;
   stroke-dasharray: none;
   opacity: 0.96;
   filter:

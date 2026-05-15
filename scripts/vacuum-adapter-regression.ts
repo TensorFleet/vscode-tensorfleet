@@ -200,6 +200,51 @@ async function testTurtleBot4Commands(): Promise<void> {
   assert.equal(cancelResult.ok, true);
   assert.equal(cancelCount, 0);
   assert.equal(serviceCalls.at(-1), MISSION_SERVICE_NAMES.cancel);
+
+  const coverageResult = await dispatchTurtleBot4Nav2Command(
+    {
+      command: "start_coverage",
+      area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+    },
+    {
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return name === MISSION_SERVICE_NAMES.setParameters
+            ? { results: [{ successful: true }] }
+            : { success: true, message: name };
+        },
+      },
+      snapshot,
+      setCurrentTarget: () => undefined,
+      setInitialDistance: () => undefined,
+    },
+  );
+
+  assert.equal(coverageResult.ok, true);
+  assert.deepEqual(serviceCalls.slice(-2), [MISSION_SERVICE_NAMES.setParameters, MISSION_SERVICE_NAMES.startCoverage]);
+
+  for (const command of [
+    { command: "pause_mission" },
+    { command: "resume_mission" },
+    { command: "retry_mission_step" },
+    { command: "skip_mission_step" },
+  ] satisfies VacuumCommand[]) {
+    const result = await dispatchTurtleBot4Nav2Command(command, {
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return { success: true, message: name };
+        },
+      },
+      snapshot,
+      setCurrentTarget: () => undefined,
+      setInitialDistance: () => undefined,
+    });
+    assert.equal(result.ok, true, `${command.command} should dispatch`);
+  }
 }
 
 async function testTurtleBot4MappingCommands(): Promise<void> {
@@ -248,11 +293,6 @@ async function testTurtleBot4UnsupportedCommands(): Promise<void> {
   const runtime = createRuntime();
   const snapshot = mapTurtleBot4Nav2State({ runtime, currentTarget: null, initialDistance: null });
   const unsupportedCommands: VacuumCommand[] = [
-    { command: "start_coverage", area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 } },
-    { command: "pause_mission" },
-    { command: "resume_mission" },
-    { command: "retry_mission_step" },
-    { command: "skip_mission_step" },
     { command: "start_cleaning" },
     { command: "pause" },
     { command: "resume" },
@@ -290,6 +330,12 @@ function testCapabilityCoverage(): void {
   assert.equal(supportedNav2.go_to_location.backendCapability, "nav2_msgs/action/NavigateToPose");
   assert.equal(supportedNav2.mapping_session.supported, true);
   assert.equal(supportedNav2.auto_mapping.supported, false);
+  assert.equal(supportedNav2.coverage_mission.supported, true);
+  assert.equal(supportedNav2.start_coverage.supported, true);
+  assert.equal(supportedNav2.pause_mission.supported, true);
+  assert.equal(supportedNav2.resume_mission.supported, true);
+  assert.equal(supportedNav2.retry_mission_step.supported, true);
+  assert.equal(supportedNav2.skip_mission_step.supported, true);
 
   const mappingNav2 = mapTurtleBot4Nav2Capabilities(
     createRuntime({ availableTopics: [{ topic: MAPPING_STATUS_TOPIC, type: "std_msgs/msg/String" }] }),
@@ -302,6 +348,7 @@ function testCapabilityCoverage(): void {
   assert.equal(blockedNav2.cancel_mission.supported, false);
   assert.equal(blockedNav2.cancel_navigation.supported, false);
   assert.equal(blockedNav2.mapping_session.supported, false);
+  assert.equal(blockedNav2.start_coverage.supported, false);
 
   const valetudo = mapValetudoCapabilities([
     "BasicControlCapability",
@@ -382,6 +429,78 @@ function testStateMapping(): void {
   assert.equal(hydratedNavigation.navigation.state, "active");
   assert.deepEqual(hydratedNavigation.navigation.currentTarget, { x: 4, y: 5, yaw: 90 });
   assert.deepEqual(hydratedNavigation.activeMission?.availableActions, ["cancel_mission"]);
+
+  const hydratedCoverage = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      id: "coverage-1",
+      type: "coverage",
+      status: "running",
+      backendSource: "turtlebot4_nav2",
+      startedAt: 1,
+      updatedAt: 2,
+      requestedCommand: "start_coverage",
+      phase: "navigating_step",
+      progress: {
+        percent: 0.25,
+        currentStep: 2,
+        totalSteps: 8,
+        distanceRemaining: 1.1,
+        areaCoveredSqM: 0.5,
+        areaRemainingSqM: 1.5,
+      },
+      availableActions: ["pause_mission", "cancel_mission", "retry_mission_step", "skip_mission_step"],
+      result: null,
+      error: null,
+      target: {
+        area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+        route: [{ x: 0.5, y: 0.5, yaw: 0 }],
+      },
+    },
+  });
+  assert.equal(hydratedCoverage.mission.state, "cleaning");
+  assert.equal(hydratedCoverage.activeMission?.type, "coverage");
+  assert.equal(hydratedCoverage.activeMission?.status, "running");
+  assert.deepEqual(hydratedCoverage.activeMission?.availableActions, [
+    "pause_mission",
+    "cancel_mission",
+    "retry_mission_step",
+    "skip_mission_step",
+  ]);
+
+  const hydratedCoverageWithAcceptedMap = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mapping: {
+      state: "accepted",
+      mode: "auto",
+      stateReason: "Map accepted.",
+      knownRatio: 1,
+      unknownRatio: 0,
+      frontierCount: 0,
+      visitedGoalCount: 4,
+      failedGoalCount: 0,
+      activeGoal: null,
+      lastError: null,
+      updatedAt: 30,
+      persistence: "session",
+      acceptedSessionLevel: true,
+      savedMapPath: null,
+      loadedMapPath: null,
+      lastSavedAt: null,
+      saveError: null,
+      loadError: null,
+      activeMapName: null,
+      savedMaps: [],
+    },
+    mission: {
+      ...hydratedCoverage.activeMission!,
+      id: "coverage-accepted-map",
+      status: "running",
+      result: null,
+    },
+  });
+  assert.equal(hydratedCoverageWithAcceptedMap.mission.state, "cleaning");
+  assert.equal(hydratedCoverageWithAcceptedMap.activeMission?.type, "coverage");
 
   const mapping = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "ready" }),

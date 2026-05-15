@@ -10,6 +10,7 @@ import {
   type VacuumCapabilities,
   type VacuumMappingStatus,
   type VacuumLegacyMissionStatus,
+  type VacuumMissionSnapshot,
   type VacuumNavigationState,
   type VacuumPoseCoordinates,
   type VacuumSavedMapSummary,
@@ -29,6 +30,7 @@ import {
   buildCleanAreaCoverageSnapshot,
   buildCleanAreaCoverageTarget,
   markCleanAreaCoveredCells,
+  type CleanAreaCoverageOverlayCell,
   type CleanAreaCoverageTarget,
   type CleanAreaCoverageSnapshot,
 } from "./cleanAreaCoverage";
@@ -227,6 +229,183 @@ function getCleanAreaVisualState(state: CleanAreaMissionState, toolActive: boole
     return "editing";
   }
   return state;
+}
+
+function cleanAreaRectToCoverageArea(rect: CleanAreaRect) {
+  return {
+    shape: "rectangle" as const,
+    minX: rect.minX,
+    minY: rect.minY,
+    maxX: rect.maxX,
+    maxY: rect.maxY,
+  };
+}
+
+function isTerminalMissionStatus(status: VacuumMissionSnapshot["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "canceled" || status === "unsupported";
+}
+
+function mapCoverageMissionState(mission: VacuumMissionSnapshot | null): CleanAreaMissionState | null {
+  if (!mission) {
+    return null;
+  }
+  if (mission.status === "preparing" || mission.status === "resuming") {
+    return "preparing";
+  }
+  if (mission.status === "running") {
+    return "running";
+  }
+  if (mission.status === "paused") {
+    return "paused";
+  }
+  if (mission.status === "needs_assistance") {
+    return "failed";
+  }
+  if (mission.status === "canceling") {
+    return "canceling";
+  }
+  if (mission.status === "completed") {
+    return "completed";
+  }
+  if (mission.status === "canceled") {
+    return "canceled";
+  }
+  if (mission.status === "failed" || mission.status === "unsupported") {
+    return "failed";
+  }
+  return null;
+}
+
+function missionTargetRecord(mission: VacuumMissionSnapshot | null): Record<string, unknown> | null {
+  return mission?.target && typeof mission.target === "object" ? (mission.target as Record<string, unknown>) : null;
+}
+
+function coverageMissionArea(mission: VacuumMissionSnapshot | null): CleanAreaRect | null {
+  const target = missionTargetRecord(mission);
+  const rawArea = target?.area && typeof target.area === "object" ? (target.area as Record<string, unknown>) : target;
+  if (!rawArea || rawArea.shape !== "rectangle") {
+    return null;
+  }
+  const minX = toFiniteNumber(rawArea.minX);
+  const minY = toFiniteNumber(rawArea.minY);
+  const maxX = toFiniteNumber(rawArea.maxX);
+  const maxY = toFiniteNumber(rawArea.maxY);
+  if (minX == null || minY == null || maxX == null || maxY == null) {
+    return null;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+function coverageMissionRoute(mission: VacuumMissionSnapshot | null): DraftTarget[] {
+  const target = missionTargetRecord(mission);
+  const route = Array.isArray(target?.route) ? target.route : [];
+  return route.flatMap((entry): DraftTarget[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const x = toFiniteNumber(record.x);
+    const y = toFiniteNumber(record.y);
+    const yaw = toFiniteNumber(record.yaw) ?? 0;
+    return x == null || y == null ? [] : [{ x, y, yaw }];
+  });
+}
+
+function coverageMissionCoverageRecord(mission: VacuumMissionSnapshot | null): Record<string, unknown> | null {
+  const target = missionTargetRecord(mission);
+  return target?.coverage && typeof target.coverage === "object" ? (target.coverage as Record<string, unknown>) : null;
+}
+
+function coverageMissionOverlayCells(mission: VacuumMissionSnapshot | null): CleanAreaCoverageOverlayCell[] {
+  const coverage = coverageMissionCoverageRecord(mission);
+  const overlayCells = Array.isArray(coverage?.overlayCells) ? coverage.overlayCells : [];
+  return overlayCells.flatMap((entry): CleanAreaCoverageOverlayCell[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const key = typeof record.key === "string" ? record.key : null;
+    const cellX = toFiniteNumber(record.cellX);
+    const cellY = toFiniteNumber(record.cellY);
+    const minX = toFiniteNumber(record.minX);
+    const minY = toFiniteNumber(record.minY);
+    const maxX = toFiniteNumber(record.maxX);
+    const maxY = toFiniteNumber(record.maxY);
+    const state = typeof record.state === "string" ? record.state : null;
+    if (
+      !key ||
+      cellX == null ||
+      cellY == null ||
+      minX == null ||
+      minY == null ||
+      maxX == null ||
+      maxY == null ||
+      !["remaining", "covered", "occupied", "unknown", "out_of_bounds", "too_small"].includes(state ?? "")
+    ) {
+      return [];
+    }
+    return [
+      {
+        key,
+        cellX,
+        cellY,
+        minX,
+        minY,
+        maxX,
+        maxY,
+        state: state as CleanAreaCoverageOverlayCell["state"],
+      },
+    ];
+  });
+}
+
+function buildRuntimeCoverageSnapshot(args: {
+  mission: VacuumMissionSnapshot | null;
+  target: CleanAreaCoverageTarget | null;
+  swathWidth: number;
+}): CleanAreaCoverageSnapshot | null {
+  if (!args.mission) {
+    return null;
+  }
+  const coverage = coverageMissionCoverageRecord(args.mission);
+  if (!coverage || !args.target) {
+    return null;
+  }
+  const base = buildCleanAreaCoverageSnapshot({
+    target: args.target,
+    coveredCellKeys: new Set(),
+    swathWidth: args.swathWidth,
+  });
+  if (!base) {
+    return null;
+  }
+  const overlayCells = coverageMissionOverlayCells(args.mission);
+  const targetCells = toFiniteNumber(coverage.targetCells) ?? base.targetCells;
+  const coveredCells = toFiniteNumber(coverage.coveredCells) ?? base.coveredCells;
+  const remainingCells = toFiniteNumber(coverage.remainingCells) ?? Math.max(0, targetCells - coveredCells);
+  const cleanableAreaSqM = toFiniteNumber(coverage.cleanableAreaSqM) ?? base.cleanableAreaSqM;
+  const coveredAreaSqM = toFiniteNumber(coverage.coveredAreaSqM) ?? args.mission.progress.areaCoveredSqM ?? base.coveredAreaSqM;
+  const remainingAreaSqM =
+    toFiniteNumber(coverage.remainingAreaSqM) ??
+    args.mission.progress.areaRemainingSqM ??
+    Math.max(0, cleanableAreaSqM - coveredAreaSqM);
+  const skippedAreaSqM = toFiniteNumber(coverage.skippedAreaSqM) ?? base.skippedAreaSqM;
+  const progress = args.mission.progress.percent == null ? base.progress : clamp(args.mission.progress.percent, 0, 1);
+  const swathWidth = toFiniteNumber(coverage.swathWidth) ?? args.swathWidth;
+
+  return {
+    ...base,
+    swathWidth,
+    targetCells,
+    coveredCells,
+    remainingCells,
+    cleanableAreaSqM,
+    coveredAreaSqM,
+    remainingAreaSqM,
+    skippedAreaSqM,
+    progress,
+    overlayCells: overlayCells.length > 0 ? overlayCells : base.overlayCells,
+  };
 }
 
 function getRouteVisualState(
@@ -1070,9 +1249,8 @@ export function VacuumControlPanel() {
   const [cleanAreaMissionTarget, setCleanAreaMissionTarget] = useState<CleanAreaCoverageTarget | null>(null);
   const [activeMode, setActiveMode] = useState<"mapping" | "navigation" | "clean">("navigation");
   const [dismissedNavigationTargetKey, setDismissedNavigationTargetKey] = useState<string | null>(null);
+  const [dismissedCoverageMissionId, setDismissedCoverageMissionId] = useState<string | null>(null);
   const goalStartTimeRef = useRef<number | null>(null);
-  const cleanAreaCancelRequestedRef = useRef(false);
-  const cleanAreaSawActiveRef = useRef(false);
   const previousCoveragePoseRef = useRef<VacuumPoseCoordinates | null>(null);
 
   const currentPose = snapshot.pose.coordinates;
@@ -1085,9 +1263,13 @@ export function VacuumControlPanel() {
   const isSendingGoal = snapshot.navigation.isSending;
   const isCancelingGoal = snapshot.navigation.isCanceling;
   const startNavigationSupported = snapshot.capabilities.start_navigation.supported;
-  const goToLocationSupported = snapshot.capabilities.go_to_location.supported;
+  const startCoverageSupported = snapshot.capabilities.start_coverage.supported;
   const cancelMissionSupported = snapshot.capabilities.cancel_mission.supported;
   const cancelNavigationSupported = snapshot.capabilities.cancel_navigation.supported;
+  const pauseMissionSupported = snapshot.capabilities.pause_mission.supported;
+  const resumeMissionSupported = snapshot.capabilities.resume_mission.supported;
+  const retryMissionStepSupported = snapshot.capabilities.retry_mission_step.supported;
+  const skipMissionStepSupported = snapshot.capabilities.skip_mission_step.supported;
   const mappingStatus = snapshot.mapping;
   const mappingState = mapAdapterMappingState(mappingStatus.state);
   const autoMappingSupported = snapshot.capabilities.auto_mapping.supported;
@@ -1120,6 +1302,33 @@ export function VacuumControlPanel() {
 
   const activeMissionType = snapshot.activeMission?.type ?? null;
   const activeNavigationMission = snapshot.activeMission?.type === "navigation" ? snapshot.activeMission : null;
+  const isRuntimeNavigationActive =
+    activeNavigationMission != null && ["preparing", "running", "canceling"].includes(activeNavigationMission.status);
+  const rawActiveCoverageMission = snapshot.activeMission?.type === "coverage" ? snapshot.activeMission : null;
+  const rawCoverageMissionTerminal = rawActiveCoverageMission ? isTerminalMissionStatus(rawActiveCoverageMission.status) : false;
+  const activeCoverageMission =
+    rawActiveCoverageMission && !(rawCoverageMissionTerminal && rawActiveCoverageMission.id === dismissedCoverageMissionId)
+      ? rawActiveCoverageMission
+      : null;
+  const activeCoverageMissionState = mapCoverageMissionState(activeCoverageMission);
+  const activeCoverageArea = coverageMissionArea(activeCoverageMission);
+  const activeCoverageRoute = coverageMissionRoute(activeCoverageMission);
+  const activeCoverageTarget = useMemo(
+    () =>
+      buildCleanAreaCoverageTarget(activeCoverageArea, snapshot.map.grid, {
+        minimumUsefulCleanableRegionSqM: cleanAreaCoverageConfig.minimumUsefulCleanableRegionSqM,
+      }),
+    [activeCoverageArea, cleanAreaCoverageConfig.minimumUsefulCleanableRegionSqM, snapshot.map.grid],
+  );
+  const activeCoverageSnapshot = useMemo(() => {
+    return buildRuntimeCoverageSnapshot({
+      mission: activeCoverageMission,
+      target: activeCoverageTarget,
+      swathWidth: cleanAreaCoverageConfig.cleaningSwathWidthM,
+    });
+  }, [activeCoverageMission, activeCoverageTarget, cleanAreaCoverageConfig.cleaningSwathWidthM]);
+  const displayedCleanAreaCoverage = activeCoverageMission ? activeCoverageSnapshot : cleanAreaCoverage;
+  const displayedCleanAreaCoverageTarget = activeCoverageTarget ?? cleanAreaCoverageTarget;
   const snapshotNavigationTarget = snapshot.navigation.currentTarget;
   const isTerminalNavigationSnapshot =
     navigationState === "completed" || navigationState === "canceled" || navigationState === "failed";
@@ -1280,31 +1489,54 @@ export function VacuumControlPanel() {
 
   const isMappingWorkflowActive =
     mappingState === "mapping" || mappingState === "paused" || mappingState === "review";
+  const isRuntimeCoverageActive =
+    activeCoverageMission != null &&
+    ["preparing", "running", "paused", "canceling", "resuming", "needs_assistance"].includes(activeCoverageMission.status);
+  const displayedCleanAreaState = activeCoverageMissionState ?? cleanAreaState;
+  const displayedCleanAreaRect = activeCoverageArea ?? cleanAreaRect;
+  const displayedCleanAreaWaypoints = activeCoverageRoute.length > 0 ? activeCoverageRoute : cleanAreaWaypoints;
+  const displayedCleanAreaCurrentIndex = activeCoverageMission?.progress.currentStep != null
+    ? Math.max(0, activeCoverageMission.progress.currentStep - 1)
+    : cleanAreaCurrentIndex;
+  const displayedCleanAreaCommandError =
+    activeCoverageMission?.status === "needs_assistance" ||
+    activeCoverageMission?.status === "failed" ||
+    activeCoverageMission?.status === "unsupported"
+      ? activeCoverageMission.error?.message ?? cleanAreaCommandError
+      : cleanAreaCommandError;
   const isCleanAreaRunning =
-    cleanAreaState === "preparing" || cleanAreaState === "running" || cleanAreaState === "canceling";
-  const isCleanAreaActive = isCleanAreaRunning || cleanAreaState === "paused";
+    displayedCleanAreaState === "preparing" || displayedCleanAreaState === "running" || displayedCleanAreaState === "canceling";
+  const isCleanAreaActive = isRuntimeCoverageActive || isCleanAreaRunning || displayedCleanAreaState === "paused";
+  const hasCleanAreaDraft = Boolean(displayedCleanAreaRect) && displayedCleanAreaState !== "idle";
   const isCleanAreaModeLocked = isCleanAreaActive || cleanAreaToolActive;
-  const cleanAreaVisualState = getCleanAreaVisualState(cleanAreaState, cleanAreaToolActive);
+  const cleanAreaVisualState = getCleanAreaVisualState(displayedCleanAreaState, cleanAreaToolActive);
   const cleanAreaPreviewPoints =
-    cleanAreaWaypoints.length > 0
-      ? cleanAreaWaypoints
-      : cleanAreaRect
+    displayedCleanAreaWaypoints.length > 0
+      ? displayedCleanAreaWaypoints
+      : displayedCleanAreaRect
         ? buildLawnmowerWaypoints({
-            rect: cleanAreaRect,
+            rect: displayedCleanAreaRect,
             spacing: cleanAreaCoverageConfig.laneSpacingM,
             swathWidth: cleanAreaCoverageConfig.cleaningSwathWidthM,
             boundaryExtensionM: cleanAreaCoverageConfig.boundaryExtensionM,
-            target: cleanAreaCoverageTarget,
+            target: displayedCleanAreaCoverageTarget,
           })
         : null;
-  const cleanAreaMetrics = getCleanAreaMetrics(cleanAreaPreviewPoints ?? [], cleanAreaCurrentIndex);
+  const cleanAreaMetrics = getCleanAreaMetrics(cleanAreaPreviewPoints ?? [], displayedCleanAreaCurrentIndex);
 
   useEffect(() => {
+    if (activeCoverageMission) {
+      return;
+    }
     setCleanAreaCoveredCellKeys(new Set());
     previousCoveragePoseRef.current = null;
-  }, [cleanAreaCoverageTarget?.signature]);
+  }, [activeCoverageMission, cleanAreaCoverageTarget?.signature]);
 
   useEffect(() => {
+    if (activeCoverageMission) {
+      previousCoveragePoseRef.current = null;
+      return;
+    }
     const shouldTrackCoverage =
       cleanAreaState === "preparing" || cleanAreaState === "running" || cleanAreaState === "canceling";
     if (!shouldTrackCoverage || !currentPose || !cleanAreaCoverageTarget) {
@@ -1323,7 +1555,7 @@ export function VacuumControlPanel() {
       }),
     );
     previousCoveragePoseRef.current = currentPose;
-  }, [cleanAreaCoverageConfig.cleaningSwathWidthM, cleanAreaCoverageTarget, cleanAreaState, currentPose]);
+  }, [activeCoverageMission, cleanAreaCoverageConfig.cleaningSwathWidthM, cleanAreaCoverageTarget, cleanAreaState, currentPose]);
 
   useEffect(() => {
     if (isGoalActive) {
@@ -1352,15 +1584,18 @@ export function VacuumControlPanel() {
     Boolean(runTarget) && startNavigationSupported && readinessReady && !isSendingGoal && !isCleanAreaRunning;
   const canCancelRun = (cancelMissionSupported || cancelNavigationSupported) && !isCancelingGoal;
   const canStartCleanArea =
-    Boolean(cleanAreaRect) &&
-    Boolean(cleanAreaValidation?.ok) &&
-    Boolean(cleanAreaCoverageTarget && cleanAreaCoverageTarget.cleanableCells.length > 0) &&
-    cleanAreaWaypoints.length > 0 &&
-    goToLocationSupported &&
-    readinessReady &&
-    !isSendingGoal &&
-    !isGoalActive &&
-    !isMappingWorkflowActive;
+    displayedCleanAreaState === "paused" && activeCoverageMission
+      ? resumeMissionSupported
+      : Boolean(displayedCleanAreaRect) &&
+        Boolean(activeCoverageMission || cleanAreaValidation?.ok) &&
+        Boolean(displayedCleanAreaCoverageTarget && displayedCleanAreaCoverageTarget.cleanableCells.length > 0) &&
+        startCoverageSupported &&
+        readinessReady &&
+        !isSendingGoal &&
+        !isGoalActive &&
+        !isMappingWorkflowActive;
+  const canPauseCleanArea = Boolean(activeCoverageMission?.availableActions.includes("pause_mission")) && pauseMissionSupported;
+  const canCancelCleanArea = Boolean(activeCoverageMission?.availableActions.includes("cancel_mission")) && cancelMissionSupported;
 
   const handleCleanAreaChange = useCallback((rect: CleanAreaRect, validation: CleanAreaValidation): void => {
     if (!cleanAreaToolActive && cleanAreaState !== "idle" && cleanAreaState !== "editing") {
@@ -1604,10 +1839,6 @@ export function VacuumControlPanel() {
       boundaryExtensionM: cleanAreaCoverageConfig.boundaryExtensionM,
       target,
     });
-    if (waypoints.length === 0) {
-      setCleanAreaCommandError("No reachable clean-area waypoints could be planned.");
-      return;
-    }
     setCleanAreaToolActive(false);
     setCleanAreaMissionTarget(target);
     setCleanAreaWaypoints(waypoints);
@@ -1616,14 +1847,12 @@ export function VacuumControlPanel() {
     setCleanAreaState("confirmed");
   }
 
-  function clearCleanAreaNavigationTarget(): void {
-    setDraftTarget(null);
-    setSentTarget(null);
-  }
-
   function handleClearCleanArea(): void {
     if (isCleanAreaActive) {
       return;
+    }
+    if (activeCoverageMission && isTerminalMissionStatus(activeCoverageMission.status)) {
+      setDismissedCoverageMissionId(activeCoverageMission.id);
     }
     setCleanAreaToolActive(false);
     setCleanAreaRect(null);
@@ -1637,75 +1866,54 @@ export function VacuumControlPanel() {
     setCleanAreaState("idle");
   }
 
-  async function dispatchCleanAreaWaypoint(index: number): Promise<void> {
-    const target = cleanAreaWaypoints[index];
-    if (!target) {
-      clearCleanAreaNavigationTarget();
-      setCleanAreaState("completed");
-      return;
-    }
-    cleanAreaSawActiveRef.current = false;
-    setCleanAreaCurrentIndex(index);
-    setDraftTarget(null);
-    setSentTarget(target);
-    const result = await adapter.sendCommand({ command: "go_to_location", target });
-    if (!result.ok) {
-      setCleanAreaCommandError(result.error.message);
-      setCleanAreaState("failed");
-      return;
-    }
-    setCleanAreaState("running");
-  }
-
-  function handleStartCleanArea(): void {
+  async function handleStartCleanArea(): Promise<void> {
     if (!canStartCleanArea) {
       return;
     }
-    const isResuming = cleanAreaState === "paused";
-    const startIndex = isResuming ? cleanAreaCurrentIndex : 0;
-    cleanAreaCancelRequestedRef.current = false;
-    cleanAreaSawActiveRef.current = false;
-    if (!isResuming) {
-      setCleanAreaCoveredCellKeys(new Set());
-      previousCoveragePoseRef.current = null;
-    }
-    setCleanAreaToolActive(false);
     setCleanAreaCommandError(null);
-    setCleanAreaCurrentIndex(startIndex);
+    if (activeCoverageMission && displayedCleanAreaState === "paused") {
+      const result = await adapter.sendCommand({ command: "resume_mission" });
+      if (!result.ok) {
+        setCleanAreaCommandError(result.error.message);
+      }
+      return;
+    }
+    if (!displayedCleanAreaRect) {
+      return;
+    }
+    setDismissedCoverageMissionId(null);
+    setCleanAreaCoveredCellKeys(new Set());
+    previousCoveragePoseRef.current = null;
+    setCleanAreaToolActive(false);
     setCleanAreaState("preparing");
-    void dispatchCleanAreaWaypoint(startIndex);
+    const result = await adapter.sendCommand({
+      command: "start_coverage",
+      area: cleanAreaRectToCoverageArea(displayedCleanAreaRect),
+    });
+    if (!result.ok) {
+      setCleanAreaCommandError(result.error.message);
+      setCleanAreaState("failed");
+    }
   }
 
   async function handlePauseCleanArea(): Promise<void> {
-    if (cleanAreaState !== "running" && cleanAreaState !== "preparing") {
+    if (!activeCoverageMission || !pauseMissionSupported) {
       return;
     }
-    cleanAreaCancelRequestedRef.current = false;
-    if (isGoalActive || navigationState === "active" || navigationState === "sending") {
-      const result = await adapter.sendCommand({ command: "cancel_navigation" });
-      if (!result.ok) {
-        setCleanAreaCommandError(result.error.message);
-        setCleanAreaState("failed");
-        return;
-      }
+    const result = await adapter.sendCommand({ command: "pause_mission" });
+    if (!result.ok) {
+      setCleanAreaCommandError(result.error.message);
     }
-    clearCleanAreaNavigationTarget();
-    setCleanAreaState("paused");
   }
 
   async function handleCancelCleanArea(): Promise<void> {
-    cleanAreaCancelRequestedRef.current = true;
-    setCleanAreaState("canceling");
-    if (isGoalActive || navigationState === "active" || navigationState === "sending") {
-      const result = await adapter.sendCommand({ command: "cancel_navigation" });
-      if (!result.ok) {
-        setCleanAreaCommandError(result.error.message);
-        setCleanAreaState("failed");
-      }
+    if (!activeCoverageMission || !cancelMissionSupported) {
       return;
     }
-    clearCleanAreaNavigationTarget();
-    setCleanAreaState("canceled");
+    const result = await adapter.sendCommand({ command: "cancel_mission" });
+    if (!result.ok) {
+      setCleanAreaCommandError(result.error.message);
+    }
   }
 
   async function handleReturnToDock(): Promise<void> {
@@ -1716,80 +1924,49 @@ export function VacuumControlPanel() {
     }
   }
 
-  function handleRetryCleanAreaWaypoint(): void {
-    if (!canStartCleanArea) {
+  async function handleRetryCleanAreaWaypoint(): Promise<void> {
+    if (!activeCoverageMission || !retryMissionStepSupported) {
       return;
     }
-    cleanAreaCancelRequestedRef.current = false;
     setCleanAreaCommandError(null);
-    setCleanAreaState("preparing");
-    void dispatchCleanAreaWaypoint(cleanAreaCurrentIndex);
+    const result = await adapter.sendCommand({ command: "retry_mission_step" });
+    if (!result.ok) {
+      setCleanAreaCommandError(result.error.message);
+    }
   }
 
-  function handleSkipCleanAreaWaypoint(): void {
-    const nextIndex = cleanAreaCurrentIndex + 1;
-    cleanAreaCancelRequestedRef.current = false;
+  async function handleSkipCleanAreaWaypoint(): Promise<void> {
+    if (!activeCoverageMission || !skipMissionStepSupported) {
+      return;
+    }
     setCleanAreaCommandError(null);
-    if (nextIndex >= cleanAreaWaypoints.length) {
-      setCleanAreaCurrentIndex(cleanAreaWaypoints.length);
-      clearCleanAreaNavigationTarget();
-      setCleanAreaState("completed");
-      return;
+    const result = await adapter.sendCommand({ command: "skip_mission_step" });
+    if (!result.ok) {
+      setCleanAreaCommandError(result.error.message);
     }
-    setCleanAreaState("preparing");
-    void dispatchCleanAreaWaypoint(nextIndex);
   }
-
-  useEffect(() => {
-    if (cleanAreaState !== "running" && cleanAreaState !== "canceling") {
-      return;
-    }
-    if (isGoalActive || navigationState === "active" || navigationState === "sending" || navigationState === "canceling") {
-      cleanAreaSawActiveRef.current = true;
-      return;
-    }
-    if (!cleanAreaSawActiveRef.current) {
-      return;
-    }
-    if (navigationState === "completed") {
-      const nextIndex = cleanAreaCurrentIndex + 1;
-      if (nextIndex >= cleanAreaWaypoints.length) {
-        setCleanAreaCurrentIndex(cleanAreaWaypoints.length);
-        clearCleanAreaNavigationTarget();
-        setCleanAreaState("completed");
-        return;
-      }
-      void dispatchCleanAreaWaypoint(nextIndex);
-      return;
-    }
-    if (navigationState === "canceled") {
-      if (cleanAreaCancelRequestedRef.current || cleanAreaState === "canceling") {
-        clearCleanAreaNavigationTarget();
-        setCleanAreaState("canceled");
-        setCleanAreaCommandError(null);
-        return;
-      }
-      clearCleanAreaNavigationTarget();
-      setCleanAreaState("failed");
-      setCleanAreaCommandError("Clean area run was canceled outside the area workflow.");
-      return;
-    }
-    if (navigationState === "failed" || navigationState === "blocked" || navigationState === "unknown") {
-      clearCleanAreaNavigationTarget();
-      setCleanAreaState("failed");
-      setCleanAreaCommandError(snapshot.navigation.detail ?? "Navigation failed while cleaning the selected area.");
-    }
-  }, [cleanAreaCurrentIndex, cleanAreaState, cleanAreaWaypoints.length, isGoalActive, navigationState, snapshot.navigation.detail]);
 
   useEffect(() => {
     if (isMappingWorkflowActive) {
       setActiveMode("mapping");
-    } else if (isCleanAreaActive || cleanAreaToolActive) {
+    } else if (isCleanAreaActive || cleanAreaToolActive || activeCoverageMission) {
       setActiveMode("clean");
-    } else if (isGoalActive || activeMissionType === "navigation") {
+    } else if (activeMode === "clean" && hasCleanAreaDraft) {
+      return;
+    } else if (isGoalActive || isRuntimeNavigationActive) {
       setActiveMode("navigation");
     }
-  }, [activeMissionType, isMappingWorkflowActive, isCleanAreaActive, cleanAreaToolActive, isGoalActive]);
+  }, [
+    activeMissionType,
+    activeCoverageMission,
+    activeMode,
+    hasCleanAreaDraft,
+    isRuntimeNavigationActive,
+    isMappingWorkflowActive,
+    isCleanAreaActive,
+    cleanAreaToolActive,
+    isGoalActive,
+  ]);
 
   return (
     <div className="vacuum-shell">
@@ -1874,10 +2051,10 @@ export function VacuumControlPanel() {
             planPoints={displayedPlanPoints}
             draftTarget={displayedDraftTarget}
             sentTarget={displayedSentTarget}
-            cleanAreaRect={cleanAreaRect}
+            cleanAreaRect={displayedCleanAreaRect}
             cleanAreaPreviewPoints={cleanAreaPreviewPoints}
-            cleanAreaCurrentIndex={cleanAreaCurrentIndex}
-            cleanAreaCoverage={cleanAreaCoverage}
+            cleanAreaCurrentIndex={displayedCleanAreaCurrentIndex}
+            cleanAreaCoverage={displayedCleanAreaCoverage}
             cleanAreaToolActive={cleanAreaToolActive}
             cleanAreaVisualState={cleanAreaVisualState}
             interactionMode={activeMode}
@@ -2098,21 +2275,21 @@ export function VacuumControlPanel() {
             {activeMode === "clean" && (
               <div className="vacuum-mode-content">
                 <CleanAreaCard
-                  state={cleanAreaState}
+                  state={displayedCleanAreaState}
                   toolActive={cleanAreaToolActive}
-                  rect={cleanAreaRect}
+                  rect={displayedCleanAreaRect}
                   validation={cleanAreaValidation}
-                  coverage={cleanAreaCoverage}
+                  coverage={displayedCleanAreaCoverage}
                   coverageConfig={cleanAreaCoverageConfig}
-                  waypointCount={cleanAreaWaypoints.length}
-                  currentWaypointIndex={cleanAreaCurrentIndex}
+                  waypointCount={displayedCleanAreaWaypoints.length}
+                  currentWaypointIndex={displayedCleanAreaCurrentIndex}
                   passCount={cleanAreaMetrics.passCount}
                   estimatedDistance={cleanAreaMetrics.totalDistance}
                   distanceRemaining={cleanAreaMetrics.remainingDistance}
-                  commandError={cleanAreaCommandError}
+                  commandError={displayedCleanAreaCommandError}
                   canStart={canStartCleanArea}
-                  canCancel={cancelNavigationSupported && !isCancelingGoal}
-                  canPause={cancelNavigationSupported && !isCancelingGoal}
+                  canCancel={canCancelCleanArea && !isCancelingGoal}
+                  canPause={canPauseCleanArea && !isCancelingGoal}
                   onActivateTool={handleActivateCleanAreaTool}
                   onConfirm={handleConfirmCleanArea}
                   onStart={handleStartCleanArea}

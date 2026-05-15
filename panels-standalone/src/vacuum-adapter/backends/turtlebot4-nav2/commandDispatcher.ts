@@ -239,6 +239,64 @@ export async function dispatchTurtleBot4Nav2Command(
     }
   }
 
+  async function setCoverageRequest(command: Extract<VacuumCommand, { command: "start_coverage" }>): Promise<VacuumCommandResult | null> {
+    if (!runtime.callService) {
+      return {
+        ok: false,
+        command: "start_coverage",
+        error: unsupportedCommand("start_coverage", "Coverage mission service calls are not available in this runtime."),
+      };
+    }
+    try {
+      const payload: Record<string, unknown> = { area: command.area };
+      if (command.route && command.route.length > 0) {
+        payload.route = command.route;
+      }
+      const response = await runtime.callService(
+        MISSION_SERVICE_NAMES.setParameters,
+        {
+          parameters: [
+            {
+              name: "coverage_request",
+              value: {
+                type: 4,
+                string_value: JSON.stringify(payload),
+              },
+            },
+          ],
+        },
+        { timeoutMs: 5_000 },
+      );
+      const results = Array.isArray(response?.results) ? response.results : [];
+      const failed = results.find((entry) => entry && typeof entry === "object" && (entry as { successful?: boolean }).successful === false);
+      if (failed) {
+        return {
+          ok: false,
+          command: "start_coverage",
+          error: {
+            code: "backend_error",
+            command: "start_coverage",
+            message:
+              typeof (failed as { reason?: unknown }).reason === "string"
+                ? (failed as { reason: string }).reason
+                : "Coverage request parameter update failed.",
+          },
+        };
+      }
+      return null;
+    } catch (error) {
+      return {
+        ok: false,
+        command: "start_coverage",
+        error: {
+          code: "backend_error",
+          command: "start_coverage",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
   if (command.command === "start_navigation") {
     if (!snapshot.capabilities.start_navigation.supported) {
       return {
@@ -268,6 +326,36 @@ export async function dispatchTurtleBot4Nav2Command(
       MISSION_SERVICE_NAMES.startNavigation,
       command.command,
       "Navigation mission service calls are not available in this runtime.",
+    );
+  }
+
+  if (command.command === "start_coverage") {
+    if (!snapshot.capabilities.start_coverage.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "start_coverage requires the VM coverage mission runtime."),
+      };
+    }
+    if (!snapshot.readiness.ready) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "not_ready",
+          command: command.command,
+          message: `Adapter not ready to dispatch: ${snapshot.readiness.blockingReasons.join(" ")}`,
+        },
+      };
+    }
+    const setRequestError = await setCoverageRequest(command);
+    if (setRequestError) {
+      return setRequestError;
+    }
+    return await callTriggerService(
+      MISSION_SERVICE_NAMES.startCoverage,
+      command.command,
+      "Coverage mission service calls are not available in this runtime.",
     );
   }
 
@@ -327,6 +415,38 @@ export async function dispatchTurtleBot4Nav2Command(
       MISSION_SERVICE_NAMES.cancel,
       command.command,
       "Mission cancel service calls are not available in this runtime.",
+    );
+  }
+
+  if (
+    command.command === "pause_mission" ||
+    command.command === "resume_mission" ||
+    command.command === "retry_mission_step" ||
+    command.command === "skip_mission_step"
+  ) {
+    const capabilityByCommand = {
+      pause_mission: snapshot.capabilities.pause_mission,
+      resume_mission: snapshot.capabilities.resume_mission,
+      retry_mission_step: snapshot.capabilities.retry_mission_step,
+      skip_mission_step: snapshot.capabilities.skip_mission_step,
+    } as const;
+    if (!capabilityByCommand[command.command].supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, `${command.command} requires the VM mission runtime.`),
+      };
+    }
+    const serviceByCommand = {
+      pause_mission: MISSION_SERVICE_NAMES.pause,
+      resume_mission: MISSION_SERVICE_NAMES.resume,
+      retry_mission_step: MISSION_SERVICE_NAMES.retryStep,
+      skip_mission_step: MISSION_SERVICE_NAMES.skipStep,
+    } as const;
+    return await callTriggerService(
+      serviceByCommand[command.command],
+      command.command,
+      "Mission lifecycle service calls are not available in this runtime.",
     );
   }
 
