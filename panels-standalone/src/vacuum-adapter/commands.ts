@@ -76,6 +76,12 @@ export type VacuumStartCoverageCommand = {
   command: "start_coverage";
   area: VacuumCoverageArea;
   route?: VacuumGoalCoordinates[];
+  coverage?: {
+    swathWidth?: number;
+    laneSpacing?: number;
+    completionThreshold?: number;
+    boundaryExtension?: number;
+  };
 };
 
 export type VacuumSetFanSpeedCommand = {

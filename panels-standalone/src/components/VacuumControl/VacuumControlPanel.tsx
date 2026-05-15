@@ -934,6 +934,8 @@ function CleanAreaCard(props: {
   canStart: boolean;
   canCancel: boolean;
   canPause: boolean;
+  canRetry: boolean;
+  canSkip: boolean;
   onActivateTool: () => void;
   onConfirm: () => void;
   onStart: () => void;
@@ -1093,10 +1095,10 @@ function CleanAreaCard(props: {
       {props.state === "failed" ? (
         <div className="vacuum-clean-area-failure-actions">
           <span>Options</span>
-          <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onRetry} disabled={!props.canStart}>
+          <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onRetry} disabled={!props.canRetry}>
             Retry waypoint
           </button>
-          <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onSkip}>
+          <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onSkip} disabled={!props.canSkip}>
             Skip waypoint
           </button>
           <button className="vacuum-action vacuum-action--danger" type="button" onClick={props.onCancel}>
@@ -1889,6 +1891,12 @@ export function VacuumControlPanel() {
     const result = await adapter.sendCommand({
       command: "start_coverage",
       area: cleanAreaRectToCoverageArea(displayedCleanAreaRect),
+      coverage: {
+        swathWidth: cleanAreaCoverageConfig.cleaningSwathWidthM,
+        laneSpacing: cleanAreaCoverageConfig.laneSpacingM,
+        completionThreshold: cleanAreaCoverageConfig.completionThreshold,
+        boundaryExtension: cleanAreaCoverageConfig.boundaryExtensionM,
+      },
     });
     if (!result.ok) {
       setCleanAreaCommandError(result.error.message);
@@ -2290,6 +2298,8 @@ export function VacuumControlPanel() {
                   canStart={canStartCleanArea}
                   canCancel={canCancelCleanArea && !isCancelingGoal}
                   canPause={canPauseCleanArea && !isCancelingGoal}
+                  canRetry={Boolean(activeCoverageMission?.availableActions.includes("retry_mission_step")) && retryMissionStepSupported}
+                  canSkip={Boolean(activeCoverageMission?.availableActions.includes("skip_mission_step")) && skipMissionStepSupported}
                   onActivateTool={handleActivateCleanAreaTool}
                   onConfirm={handleConfirmCleanArea}
                   onStart={handleStartCleanArea}

@@ -302,6 +302,7 @@ function buildOptimisticCoverageMission(
     error: null,
     target: {
       area: command.area,
+      coverage: command.coverage ?? null,
       route: null,
     },
   };

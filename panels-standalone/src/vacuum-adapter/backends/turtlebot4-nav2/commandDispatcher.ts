@@ -252,6 +252,9 @@ export async function dispatchTurtleBot4Nav2Command(
       if (command.route && command.route.length > 0) {
         payload.route = command.route;
       }
+      if (command.coverage) {
+        payload.coverage = command.coverage;
+      }
       const response = await runtime.callService(
         MISSION_SERVICE_NAMES.setParameters,
         {
