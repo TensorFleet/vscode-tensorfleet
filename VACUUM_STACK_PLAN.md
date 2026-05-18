@@ -329,8 +329,9 @@ Purpose:
 - normalize TurtleBot4/Nav2 runtime behavior into a `vacuum_adapter` contract
 - make the extension talk to vacuum concepts, not raw ROS topics
 - introduce explicit capabilities, normalized state, and command results
-- carry a mission state machine:
-  `idle / navigating / cleaning / paused / returning / charging`
+- expose the normalized runtime-owned mission model:
+  `idle / preparing / running / paused / canceling / returning / charging /
+  resuming / needs_assistance / completed / failed / canceled / unsupported`
 - support TurtleBot4/Nav2 first and Valetudo later
 
 Current implementation:
@@ -554,6 +555,7 @@ Public backend-neutral capability names include:
 
 - `start_cleaning`
 - `start_navigation`
+- `start_coverage`
 - `pause`
 - `resume`
 - `stop`
@@ -561,6 +563,11 @@ Public backend-neutral capability names include:
 - `go_to_location`
 - `cancel_mission`
 - `cancel_navigation`
+- `pause_mission`
+- `resume_mission`
+- `retry_mission_step`
+- `skip_mission_step`
+- `coverage_mission`
 - `mission_state`
 - `manual_control`
 - `navigation_status`
@@ -718,6 +725,13 @@ Current public command names include:
 - `go_to_location`
 - `cancel_navigation`
 - `manual_control`
+- `start_navigation`
+- `start_coverage`
+- `pause_mission`
+- `resume_mission`
+- `cancel_mission`
+- `retry_mission_step`
+- `skip_mission_step`
 - `start_mapping`
 - `pause_mapping`
 - `resume_mapping`
@@ -738,6 +752,10 @@ Current public command names include:
 Payload rules:
 
 - `go_to_location` carries a backend-neutral target pose
+- `start_navigation` carries a backend-neutral navigation intent and is the
+  preferred runtime-owned navigation command
+- `start_coverage` carries a backend-neutral area target; backend route
+  generation and progress snapshots remain runtime-owned after start
 - mapping commands carry mode/name where needed
 - setter commands carry selected values explicitly
 - unsupported commands fail predictably
@@ -821,8 +839,9 @@ Extension-specific implementation details are documented in `extension.md`.
 - extension operates the robot through `vacuum_adapter`
 - TurtleBot4/Nav2 backend normalizes into vacuum state and commands
 - unsupported vacuum capabilities are advertised as unsupported
-- mission state machine explicitly carries `idle / navigating / cleaning /
-  paused / returning / charging`
+- normalized mission snapshots explicitly carry runtime-owned statuses:
+  `idle / preparing / running / paused / canceling / returning / charging /
+  resuming / needs_assistance / completed / failed / canceled / unsupported`
 - public contract files do not import backend-specific runtime or panel types
 - adapter boundary has regression coverage
 

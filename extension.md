@@ -192,6 +192,9 @@ Current expectations:
   mode switcher.
 - Mode switching prevents mapping, point navigation, and clean-area runs from
   conflicting.
+- Active navigation missions may auto-select Navigate mode. Terminal navigation
+  snapshots are presentation context only and must not prevent switching back
+  to Mapping or Clean Area.
 - `VacuumControlPanel.tsx` consumes `useVacuumAdapter`, not raw
   `useNav2Runtime`, for product-facing behavior.
 - Navigation state, readiness evidence, capability gating, plan path rendering,
@@ -231,6 +234,8 @@ Current behavior:
 - Base map, costmaps, plan path, lidar/depth overlays, robot marker, target
   marker, clean-area rectangle, route preview, and coverage cells share one
   world-to-screen transform.
+- Clean Area route preview and active route overlays render above coverage
+  cells so the route remains visible during review and runtime progress.
 - Unknown cells render as muted map space and the map boundary is outlined so a
   partial map is not confused with the panel background.
 - The floating `Layers` control toggles Map, Global costmap, Local costmap,
@@ -375,6 +380,8 @@ Current behavior:
 - Sampled lanes are clipped to known free occupancy-grid cells.
 - Boundary pass endpoints are extended so Nav2's close-enough goal completion
   does not leave clean-area edges uncovered.
+- Preview and active route overlays are intentionally drawn above coverage
+  cells.
 - Execution submits one area-only runtime-owned mission through
   `adapter.sendCommand({ command: "start_coverage", ... })`.
 - Coverage target is built from adapter-normalized map cells.
@@ -450,8 +457,9 @@ Layer 3 extension facts:
   it dismisses the completed/canceled/failed destination locally without
   clearing runtime mission history.
 - Plan rendering consumes normalized `snapshot.navigation.planPath`.
-- Mission state exposes `idle / navigating / cleaning / paused / returning /
-  charging`.
+- Mission state exposes legacy coarse state for the current UI, while
+  `snapshot.activeMission` and `snapshot.missions` expose normalized
+  runtime-owned statuses.
 - TurtleBot4/Nav2 reports unsupported vacuum-only operations explicitly.
 - Valetudo backend stubs exist but do not implement hardware connectivity yet.
 

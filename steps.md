@@ -10,7 +10,7 @@ It is not the architecture source of truth. Use `VACUUM_STACK_PLAN.md` for the
 stack architecture and layer plan. Use `extension.md` for VS Code extension
 files, panels, topics, endpoints, and extension follow-up work.
 
-Current report date: May 14, 2026.
+Current report date: May 18, 2026.
 
 ## Runtime-Owned Mission Architecture Progress
 
@@ -110,6 +110,10 @@ What is currently true:
   capability, and mapping state.
 - Clean Area submits `start_coverage` through the adapter; the VM mission
   runtime owns Nav2 waypoint sequencing, lifecycle actions, and progress.
+- Clean Area route preview and active route overlays are visible above coverage
+  cells.
+- Terminal navigation snapshots no longer force the panel back into Navigate
+  mode after the mission is completed, canceled, or failed.
 
 ## Implemented: Extension Side
 
@@ -212,6 +216,9 @@ Right-column behavior:
 - Run-again reuses the last sent destination.
 - Mode locking prevents mapping, point navigation, and clean-area runs from
   competing with each other.
+- Active navigation missions auto-select Navigate mode, but terminal navigation
+  snapshots are presentation context only and do not trap the operator in that
+  mode.
 
 ## Implemented: VM Runtime
 
@@ -277,9 +284,11 @@ What exists:
   - `set_water_usage`
 - `manual_control` is explicitly rejected by `sendCommand` because teleop is a
   streaming publisher through `TeleopCard`, not a one-shot command.
-- Mission state carries `idle / navigating / cleaning / paused / returning /
-  charging`; TurtleBot4/Nav2 currently reports the states it can actually
-  support.
+- Mission snapshots carry backend-neutral runtime statuses:
+  `idle / preparing / running / paused / canceling / returning / charging /
+  resuming / needs_assistance / completed / failed / canceled / unsupported`.
+  The legacy coarse `snapshot.mission` field remains for current UI
+  compatibility.
 - `Vacuum Control` branches on capabilities and normalized state, not backend
   names.
 - The Valetudo stub defines capability, state, command, and runtime-boundary
@@ -380,6 +389,8 @@ Current behavior:
   swath width to mark cleanable cells covered.
 - `MapCanvas` renders remaining cells, covered cells, excluded
   occupied/unknown cells, skipped cells, and current robot footprint.
+- Clean Area route preview and runtime route overlays render above coverage
+  cells so the planned path remains visible while reviewing or running an area.
 - `CleanAreaCard` reports coverage percentage, cleaned area, remaining area,
   skipped area, route status, pass count, distance, and waypoint progress.
 - Clean Area mode shows adapter-driven mission lifecycle state for dock,
@@ -494,6 +505,8 @@ Practical consequence:
 Near-term validation:
 
 - live-validate Clean Area MVP against the VM
+- visually retest Clean Area preview/execution route overlays in the webview
+- retest mode switching after canceled/completed/failed navigation missions
 - validate pause, cancel, retry, skip, failure handling, and mode locking during
   Clean Area runs
 - keep `RawMessagesPanel.tsx` and `SensorView3DPanel.tsx` useful as supporting

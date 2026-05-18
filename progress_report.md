@@ -1,76 +1,81 @@
 # Runtime-Owned Vacuum Mission Architecture
 
-## Progress Report — Runtime-Owned Mission Architecture
+## Progress Report — May 18, 2026
 
-### 1. What changed
+### Current status
 
-Fixed two runtime-test regressions in the Vacuum Control webview.
+The TurtleBot4/Nav2 simulation path now has runtime-owned mission execution for
+mapping, navigation, and Clean Area coverage.
 
-- Clean Area route preview is now visually prominent on the map.
-- The Clean Area route overlay now renders above coverage cells instead of being hidden under them.
-- A canceled/terminal navigation mission no longer forces the panel back into Navigate mode after the run is no longer active.
+- Mapping auto-exploration is VM-owned and hydrates through adapter/runtime
+  snapshots.
+- Navigation starts through `start_navigation`; the VM mission runtime owns the
+  Nav2 goal and publishes mission state.
+- Clean Area starts through `start_coverage`; the VM mission runtime owns route
+  generation, Nav2 waypoint sequencing, lifecycle actions, progress, and
+  terminal snapshots.
+- The webview owns draft UI state before start: selected mode, target draft,
+  clean-area rectangle, and local preview.
+- After start, the webview renders `snapshot.activeMission` and
+  `snapshot.missions`; it does not own active mission authority.
 
-### 2. Which mode this affects
+### Latest documentation-relevant change
 
-- Mapping: mode switching back to Mapping is no longer overridden by a terminal navigation snapshot.
-- Navigation: active navigation still auto-selects Navigate; canceled/completed/failed navigation does not trap the operator in Navigate.
-- Clean Area: preview route visualization is visible while drawing/reviewing an area and during runtime coverage display.
-- Shared adapter/runtime architecture: unchanged command boundary; this pass only changes UI rendering and mode-selection rules.
+The latest UI regression pass fixed two operator-facing issues without changing
+the adapter contract.
 
-### 3. Ownership check
+- Clean Area route preview is visually prominent on the map.
+- Clean Area route overlays render above coverage cells during preview and
+  runtime coverage display.
+- Terminal navigation snapshots no longer force the panel back into Navigate
+  mode after a run is completed, canceled, or failed.
 
-- Is this still owned by React/webview state?
-  - Clean Area draft and preview visualization are still local UI state before start.
-  - Mode selection is UI presentation state.
-- Is this now owned by the runtime/backend?
-  - Active navigation and coverage execution remain runtime/backend-owned.
-- What state is the UI only rendering?
-  - Clean Area draft route preview before `start_coverage`.
-  - Runtime `snapshot.activeMission` route/progress once a coverage mission is active.
-  - Terminal navigation snapshots without treating them as active blockers.
-- What command does the UI submit?
-  - `Preview Path` submits no runtime command.
-  - `Start Cleaning` submits `start_coverage`.
-  - Navigation start/cancel behavior is unchanged.
+### Ownership check
 
-### 4. Webview close/reopen behavior
+- Local UI state: clean-area draft, preview visualization, selected tab/mode,
+  and dismissed terminal navigation presentation.
+- Runtime/backend state: active mapping, navigation, and coverage execution.
+- Adapter-rendered state: active mission, mission history, destination/progress
+  snapshots, route/progress overlays, and terminal mission results.
+- Runtime commands: `start_navigation`, `start_coverage`, `pause_mission`,
+  `resume_mission`, `cancel_mission`, `retry_mission_step`, and
+  `skip_mission_step`.
 
-- mapping
-  - Mapping continues in the VM runtime and hydrates from adapter/runtime state.
-- navigation
-  - Active navigation continues in the VM runtime and hydrates as Navigate.
-  - Terminal navigation remains visible when in Navigate, but it no longer prevents switching modes.
-- clean area
-  - Pre-start preview is local webview state.
-  - Started Clean Area missions continue in the VM runtime and hydrate from `snapshot.activeMission`.
-  - Runtime route/progress visualization remains UI-rendered from the adapter snapshot.
+### Webview close/reopen behavior
 
-### 5. Real hardware compatibility check
+- Mapping continues in the VM runtime and hydrates from adapter/runtime state.
+- Active navigation continues in the VM runtime and hydrates as Navigate.
+- Terminal navigation remains visible as context in Navigate mode but no longer
+  blocks switching to Mapping or Clean Area.
+- Pre-start Clean Area preview is local webview state and is not durable.
+- Started Clean Area missions continue in the VM runtime and hydrate from
+  `snapshot.activeMission`.
 
-- Does this expose TurtleBot4/Nav2 specifics to product UI?
-  - No.
-- Does this require Nav2 waypoint sequencing as a public concept?
-  - No.
-- Can the same adapter shape be implemented by Valetudo later?
-  - Yes; adapter command/state shapes did not change in this pass.
-- What capability flags decide whether controls are shown/enabled?
-  - Existing flags remain: `start_coverage`, `coverage_mission`, `pause_mission`, `resume_mission`, `cancel_mission`, `retry_mission_step`, and `skip_mission_step`.
-- What operations are explicitly unsupported?
-  - Unchanged; unsupported operations still flow through adapter capabilities and command errors.
+### Real hardware compatibility check
 
-### 6. Files changed
+- TurtleBot4/Nav2 specifics remain private to the TurtleBot4 backend adapter.
+- Nav2 waypoint sequencing is not a public product concept.
+- Valetudo can implement the same adapter command/state shape later.
+- Capability flags continue to decide visible/enabled controls:
+  `start_coverage`, `coverage_mission`, `pause_mission`, `resume_mission`,
+  `cancel_mission`, `retry_mission_step`, and `skip_mission_step`.
+- Unsupported operations still flow through adapter capabilities and command
+  errors.
+
+### Files changed in the latest pass
 
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
-  - Added an active-navigation-only mode auto-switch check so terminal navigation snapshots do not trap the mode switcher.
+  added an active-navigation-only auto-switch check so terminal navigation
+  snapshots do not trap the mode switcher.
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.css`
-  - Raised the plan overlay above coverage cells.
-  - Increased Clean Area path stroke widths and dash spacing so route preview is visible.
-- `progress_report.md`
-  - Updated this progress report.
+  raised the plan overlay above coverage cells and increased Clean Area route
+  stroke visibility.
+- `VACUUM_STACK_PLAN.md`, `steps.md`, `extension.md`, and this file now reflect
+  the current runtime-owned mission boundary.
 
-### 7. Tests / validation run
+### Validation
 
-Passed:
+Passed in the latest code pass:
 
 ```sh
 bun run test:vacuum-adapter
@@ -78,7 +83,7 @@ bun run --cwd panels-standalone build
 git diff --check
 ```
 
-Failed due to existing unrelated repository errors:
+Known unrelated typecheck failure:
 
 ```sh
 bun run typecheck
@@ -89,12 +94,20 @@ packages/tensorfleet-auth/src/oauth-core.ts(178,13): error TS6133: 'callbackBase
 packages/tensorfleet-auth/src/oauth-core.ts(202,13): error TS6133: 'actualPort' is declared but its value is never read.
 ```
 
-### 8. Remaining risks
+### Remaining risks
 
-- I did not perform a live webview visual check, so the exact route stroke weight may need one more polish pass after seeing it in the map.
-- Terminal navigation still remains available in Navigate mode for operator context, but it should no longer auto-force the mode.
-- Pre-start Clean Area preview remains non-durable by design; durability starts after `start_coverage`.
+- Clean Area preview/execution route visibility still needs a live webview
+  visual retest.
+- Clean Area pause, cancel, retry, skip, failure handling, and mode locking need
+  live VM validation.
+- Runtime coverage remains first-pass footprint-history accounting, not
+  production-complete coverage.
+- Dock/undock and battery-aware return/resume remain future Layer 4 work.
 
-### 9. Next recommended step
+### Next recommended validation
 
-Retest the two reported flows in the webview: `Preview Path` should show a visible Clean Area route, and after canceling a Navigate run the Mapping and Clean Area tabs should stay selectable.
+Retest the two recently reported flows in the webview:
+
+1. `Preview Path` should show a visible Clean Area route.
+2. After canceling a Navigate run, Mapping and Clean Area should remain
+   selectable.
