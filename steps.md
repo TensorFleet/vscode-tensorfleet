@@ -89,8 +89,8 @@ Layer 4 prerequisite: Mapping + Whole Map View
 Layer 4 — Coverage                  Clean Area execution, route generation,
                                     and per-cell progress snapshots are
                                     runtime-owned for TurtleBot4/Nav2
-Layer 5 — Room / Zone Semantics     Milestone 1 implemented:
-                                    manual room/zone annotations
+Layer 5 — Room / Zone Semantics     Milestone 2 implemented:
+                                    manual annotations plus target preview
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
 
@@ -114,7 +114,8 @@ What is currently true:
 - Clean Area route preview and active route overlays are visible above coverage
   cells.
 - Rooms / Zones mode now supports manual rectangular room/zone drafts, naming,
-  save/select/delete, and map overlays through `snapshot.map.annotations`.
+  save/select/delete, map overlays through `snapshot.map.annotations`, and
+  selected room/zone cleaning-target preview.
 - Terminal navigation snapshots no longer force the panel back into Navigate
   mode after the mission is completed, canceled, or failed.
 
@@ -447,6 +448,30 @@ Current limits:
 - Room/zone geometry is rectangle-only.
 - Room/zone cleanability preview and cleaning execution are not implemented
   until later Layer 5 milestones.
+
+## Implemented: Room / Zone Semantics Milestone 2
+
+Milestone 2 adds pre-start target selection and preview for saved rooms/zones.
+It still does not start room/zone cleaning missions.
+
+Current behavior:
+
+- Selecting a saved room/zone highlights the saved area as the active target.
+- The selected room/zone is converted into a coverage target using the existing
+  Clean Area coverage target and lawnmower preview path.
+- The map shows the selected room/zone preview route and cleanable/skipped cell
+  overlay.
+- The side panel reports cleanable, partially cleanable, or invalid target
+  state.
+- The selected target remains product-level room/zone state from
+  `snapshot.map.annotations`; no Nav2 waypoint concept is exposed as public UI
+  state.
+
+Current limits:
+
+- Selection and preview are pre-start UI presentation state.
+- No `room_cleaning` or `zone_cleaning` mission is submitted yet.
+- Polygon annotations are not previewed yet.
 
 ## Runtime Validation
 

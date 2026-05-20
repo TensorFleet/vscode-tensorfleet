@@ -255,8 +255,8 @@ Layer 4 prerequisite: Mapping + Whole Map View
 Layer 4 — Coverage                  Clean Area execution, route generation,
                                     and per-cell progress snapshots are
                                     runtime-owned for TurtleBot4/Nav2
-Layer 5 — Room / Zone Semantics     Milestone 1 implemented:
-                                    manual room/zone annotations
+Layer 5 — Room / Zone Semantics     Milestone 2 implemented:
+                                    manual annotations plus target preview
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
 
@@ -473,7 +473,7 @@ Layer 4 must stay above `vacuum_adapter`.
 
 ## Layer 5: Room / Zone Semantics
 
-Status: Milestone 1 implemented.
+Status: Milestone 2 implemented.
 
 Purpose:
 
@@ -489,7 +489,7 @@ Constraints:
   zones later, but the public shape must be backend-neutral
 - Layer 5 should be demonstrable in simulation before Layer 6 begins
 
-Current Milestone 1 prototype:
+Current prototype:
 
 - `Vacuum Control` has a `Rooms / Zones` mode.
 - Operators can draw a rectangular room/zone draft on the map using the shared
@@ -497,6 +497,12 @@ Current Milestone 1 prototype:
 - Operators can name the draft, choose `Room` or `Zone`, save it, select it
   later, and delete it.
 - Saved annotations are exposed as `snapshot.map.annotations`.
+- Selecting a saved room/zone converts its product-level annotation into the
+  same coverage target preview used by Clean Area.
+- The selected target is highlighted on the map with route and per-cell
+  cleanability preview.
+- The side panel reports whether the selected target is cleanable, partially
+  cleanable, or invalid.
 - TurtleBot4/Nav2 persists annotations in webview storage keyed to the active
   map identity when available.
 - Valetudo annotation/room/zone semantics remain explicitly unsupported until
@@ -504,7 +510,6 @@ Current Milestone 1 prototype:
 
 Still pending for Layer 5:
 
-- selected room/zone cleanability preview
 - `start_room_cleaning` / `start_zone_cleaning` intent commands
 - runtime-owned room/zone cleaning execution through the existing coverage path
 - VM/runtime-owned annotation durability

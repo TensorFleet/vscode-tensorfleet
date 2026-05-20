@@ -134,3 +134,115 @@ Product-flow checks covered by implementation review:
 Milestone 2: allow selecting a saved room/zone as a cleaning target preview,
 including cleanable/partially cleanable/invalid status, without starting an
 active mission yet.
+
+## Progress Report — Room / Zone Semantics Prototype, Milestone 2
+
+### 1. What changed
+
+The operator can now select a saved room or zone and preview it as a cleaning
+target before starting any mission.
+
+The selected room/zone is converted into the existing Clean Area coverage target
+model, shown on the map with route and per-cell cleanability overlays, and
+classified as cleanable, partially cleanable, or invalid.
+
+### 2. Which mode this affects
+
+- Mapping: unchanged.
+- Navigation: unchanged.
+- Clean Area: unchanged execution path; its coverage target and route preview
+  logic is reused.
+- Rooms / Zones: selected saved annotations now show target preview and
+  cleanability state.
+- Shared adapter/runtime architecture: no new runtime execution command yet;
+  preview uses product-facing `snapshot.map.annotations`.
+
+### 3. Ownership check
+
+- React/webview state owns only pre-start selected annotation id and preview
+  presentation.
+- Runtime/backend still owns no room/zone cleaning mission in this milestone.
+- UI renders saved room/zone state from `snapshot.map.annotations`.
+- UI submits no cleaning command for room/zone preview.
+
+### 4. Webview close/reopen behavior
+
+- Mapping, navigation, and Clean Area active missions hydrate as before.
+- Room/zone editing drafts remain local and are not durable.
+- Saved rooms/zones hydrate from adapter annotation state after reopen.
+- Selected room/zone id is local presentation state; after reopen the operator
+  can reselect any saved room/zone and the preview is recomputed from snapshot
+  state.
+- Room/zone cleaning is still not implemented.
+
+### 5. Real hardware compatibility check
+
+- Product UI does not expose TurtleBot4/Nav2 specifics.
+- Nav2 waypoint sequencing is not a public concept; route preview is local
+  pre-start presentation.
+- Valetudo can implement the same annotation/target shape later through
+  capabilities.
+- Controls remain gated by `map_annotations`, `room_semantics`, and
+  `zone_semantics`; execution will later require room/zone cleaning
+  capabilities.
+- Valetudo remains explicitly unsupported for current annotation semantics.
+
+### 6. Feature behavior changed
+
+- User can select a saved room/zone as a cleaning target preview.
+- Selected target highlights on the map.
+- Selected target shows route preview.
+- Selected target shows cleanable/skipped cell overlay.
+- Side panel reports cleanable, partially cleanable, or invalid status.
+
+### 7. Files changed
+
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
+  - Converts selected saved annotations into Clean Area coverage targets and
+    route previews.
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.css`
+  - Adds target-status styling for the Rooms / Zones panel.
+- `VACUUM_STACK_PLAN.md`, `steps.md`, `extension.md`, and this file
+  - Record Milestone 2 status and remaining Layer 5 scope.
+
+### 8. Tests / validation run
+
+Passed:
+
+```sh
+npm run build:panels
+npm run test:vacuum-adapter
+git diff --check
+```
+
+Blocked by existing unrelated TypeScript errors:
+
+```sh
+npx tsc --noEmit
+```
+
+The repo-wide typecheck currently fails on unused variables in
+`packages/tensorfleet-auth/src/oauth-core.ts`, outside the room/zone feature
+path.
+
+Implementation review checks:
+
+- Select room
+- Select zone
+- Preview cleanable target
+- Preview partially cleanable target
+- Confirm no room/zone cleaning command is submitted
+- Confirm no backend-name branching was added to product UI
+
+### 9. Remaining risks
+
+- Room/zone cleaning execution is still not implemented.
+- Selected target id is not durable presentation state.
+- Annotation durability is still prototype webview storage.
+- Polygon target preview is not implemented.
+- Preview still uses coverage as the temporary implementation strategy.
+
+### 10. Next recommended step
+
+Milestone 3: add product-facing room/zone cleaning intent commands and map them
+to the existing runtime-owned coverage mission path.

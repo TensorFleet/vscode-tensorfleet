@@ -57,6 +57,7 @@ type CleanAreaMissionState =
   | "completed"
   | "failed"
   | "canceled";
+type RoomZoneTargetStatus = "none" | "cleanable" | "partial" | "invalid";
 
 type StatusChipTone = "success" | "active" | "inactive";
 type SavedMapSummary = {
@@ -246,6 +247,18 @@ function cleanAreaRectToCoverageArea(rect: CleanAreaRect) {
 
 function cleanAreaRectToAnnotationArea(rect: CleanAreaRect): VacuumMapAnnotation["area"] {
   return cleanAreaRectToCoverageArea(rect);
+}
+
+function annotationAreaToCleanAreaRect(area: VacuumMapAnnotation["area"]): CleanAreaRect | null {
+  if (area.shape === "rectangle") {
+    return {
+      minX: area.minX,
+      minY: area.minY,
+      maxX: area.maxX,
+      maxY: area.maxY,
+    };
+  }
+  return null;
 }
 
 function currentMapAnnotationId(snapshot: { mapping: VacuumMappingStatus; map: { grid: unknown } }): string | null {
@@ -1179,6 +1192,13 @@ function CleanAreaCard(props: {
 function RoomZonesCard(props: {
   annotations: VacuumMapAnnotation[];
   selectedAnnotation: VacuumMapAnnotation | null;
+  targetStatus: RoomZoneTargetStatus;
+  targetStatusLabel: string;
+  targetDetail: string;
+  targetCoverage: CleanAreaCoverageSnapshot | null;
+  waypointCount: number;
+  passCount: number;
+  estimatedDistance: number;
   toolActive: boolean;
   draftKind: VacuumMapAnnotationKind;
   draftName: string;
@@ -1199,6 +1219,7 @@ function RoomZonesCard(props: {
   const selected = props.selectedAnnotation;
   const rect = props.draftRect ?? (selected?.area.shape === "rectangle" ? selected.area : null);
   const size = getCleanAreaSize(rect);
+  const targetCoverage = props.targetCoverage;
   const selectedTitle = selected
     ? `${selected.name} (${selected.kind})`
     : props.draftRect
@@ -1260,7 +1281,7 @@ function RoomZonesCard(props: {
           <strong>{selectedTitle}</strong>
         </div>
         <div>
-          <span>Status</span>
+          <span>Draft</span>
           <strong>{props.validation?.message ?? (selected ? "Saved annotation." : "Waiting")}</strong>
         </div>
         <div>
@@ -1272,6 +1293,39 @@ function RoomZonesCard(props: {
           <strong>{props.annotations.length}</strong>
         </div>
       </div>
+
+      {selected ? (
+        <div className={`vacuum-room-zone-target vacuum-room-zone-target--${props.targetStatus}`}>
+          <div className="vacuum-room-zone-target__head">
+            <strong>{props.targetStatusLabel}</strong>
+            <span>{selected.kind === "room" ? "Room target" : "Zone target"}</span>
+          </div>
+          <p>{props.targetDetail}</p>
+          {targetCoverage ? (
+            <div className="vacuum-clean-area-quick-stats">
+              <div>
+                <span>Cleanable</span>
+                <strong>{formatArea(targetCoverage.cleanableAreaSqM)}</strong>
+              </div>
+              <div>
+                <span>Skipped</span>
+                <strong>{formatArea(targetCoverage.skippedAreaSqM)}</strong>
+              </div>
+              <div>
+                <span>Route</span>
+                <strong>{props.passCount > 0 ? `${props.passCount} passes` : "n/a"}</strong>
+              </div>
+              <div>
+                <span>Distance</span>
+                <strong>{props.estimatedDistance > 0 ? formatDistance(props.estimatedDistance) : "n/a"}</strong>
+              </div>
+            </div>
+          ) : null}
+          {props.waypointCount > 0 ? (
+            <span className="vacuum-room-zone-target__route">{props.waypointCount} preview waypoints</span>
+          ) : null}
+        </div>
+      ) : null}
 
       {props.annotations.length > 0 ? (
         <div className="vacuum-room-zone-list">
@@ -1467,6 +1521,84 @@ export function VacuumControlPanel() {
   );
   const roomZoneAnnotations = snapshot.map.annotations;
   const selectedRoomZone = roomZoneAnnotations.find((annotation) => annotation.id === selectedRoomZoneId) ?? null;
+  const selectedRoomZoneRect = selectedRoomZone ? annotationAreaToCleanAreaRect(selectedRoomZone.area) : null;
+  const selectedRoomZoneCoverageTarget = useMemo(
+    () =>
+      buildCleanAreaCoverageTarget(selectedRoomZoneRect, snapshot.map.grid, {
+        minimumUsefulCleanableRegionSqM: cleanAreaCoverageConfig.minimumUsefulCleanableRegionSqM,
+      }),
+    [cleanAreaCoverageConfig.minimumUsefulCleanableRegionSqM, selectedRoomZoneRect, snapshot.map.grid],
+  );
+  const selectedRoomZoneCoverage = useMemo(
+    () =>
+      buildCleanAreaCoverageSnapshot({
+        target: selectedRoomZoneCoverageTarget,
+        coveredCellKeys: new Set(),
+        swathWidth: cleanAreaCoverageConfig.cleaningSwathWidthM,
+      }),
+    [cleanAreaCoverageConfig.cleaningSwathWidthM, selectedRoomZoneCoverageTarget],
+  );
+  const selectedRoomZoneWaypoints = useMemo(
+    () =>
+      selectedRoomZoneRect
+        ? buildLawnmowerWaypoints({
+            rect: selectedRoomZoneRect,
+            spacing: cleanAreaCoverageConfig.laneSpacingM,
+            swathWidth: cleanAreaCoverageConfig.cleaningSwathWidthM,
+            boundaryExtensionM: cleanAreaCoverageConfig.boundaryExtensionM,
+            target: selectedRoomZoneCoverageTarget,
+          })
+        : [],
+    [cleanAreaCoverageConfig, selectedRoomZoneCoverageTarget, selectedRoomZoneRect],
+  );
+  const selectedRoomZoneMetrics = getCleanAreaMetrics(selectedRoomZoneWaypoints, 0);
+  const selectedRoomZoneTargetStatus: RoomZoneTargetStatus = (() => {
+    if (!selectedRoomZone) {
+      return "none";
+    }
+    if (!selectedRoomZoneRect || !selectedRoomZoneCoverage || selectedRoomZoneCoverage.targetCells === 0) {
+      return "invalid";
+    }
+    if (
+      selectedRoomZoneCoverage.occupiedCells > 0 ||
+      selectedRoomZoneCoverage.unknownCells > 0 ||
+      selectedRoomZoneCoverage.outOfBoundsCells > 0 ||
+      selectedRoomZoneCoverage.skippedSmallRegionCells > 0
+    ) {
+      return "partial";
+    }
+    return "cleanable";
+  })();
+  const selectedRoomZoneTargetLabel = (() => {
+    if (selectedRoomZoneTargetStatus === "cleanable") {
+      return "Cleanable";
+    }
+    if (selectedRoomZoneTargetStatus === "partial") {
+      return "Partially cleanable";
+    }
+    if (selectedRoomZoneTargetStatus === "invalid") {
+      return "Invalid target";
+    }
+    return "No target";
+  })();
+  const selectedRoomZoneTargetDetail = (() => {
+    if (!selectedRoomZone) {
+      return "Select a saved room or zone to preview it as a cleaning target.";
+    }
+    if (!selectedRoomZoneRect) {
+      return "This saved area shape is not supported by the prototype preview yet.";
+    }
+    if (!snapshot.map.grid) {
+      return "Map data is unavailable, so this target cannot be evaluated.";
+    }
+    if (!selectedRoomZoneCoverage || selectedRoomZoneCoverage.targetCells === 0) {
+      return "No cleanable free-space cells were found in this target.";
+    }
+    if (selectedRoomZoneTargetStatus === "partial") {
+      return "Some cells are occupied, unknown, out of bounds, or too small; the preview uses the cleanable portion.";
+    }
+    return "This saved area can be expressed as a coverage target.";
+  })();
 
   const activeMissionType = snapshot.activeMission?.type ?? null;
   const activeNavigationMission = snapshot.activeMission?.type === "navigation" ? snapshot.activeMission : null;
@@ -1820,11 +1952,14 @@ export function VacuumControlPanel() {
 
   const handleMapAreaChange = useCallback((rect: CleanAreaRect, validation: CleanAreaValidation): void => {
     if (activeMode === "rooms") {
+      if (!roomZoneToolActive) {
+        return;
+      }
       handleRoomZoneChange(rect, validation);
       return;
     }
     handleCleanAreaChange(rect, validation);
-  }, [activeMode, handleCleanAreaChange, handleRoomZoneChange]);
+  }, [activeMode, handleCleanAreaChange, handleRoomZoneChange, roomZoneToolActive]);
 
   async function handleSend(overrideTarget?: DraftTarget): Promise<void> {
     const target = overrideTarget ?? runTarget;
@@ -2252,14 +2387,15 @@ export function VacuumControlPanel() {
     isGoalActive,
   ]);
 
-  const mapCleanAreaRect = activeMode === "rooms" ? roomZoneDraftRect : displayedCleanAreaRect;
-  const mapCleanAreaCoverage = activeMode === "rooms" ? null : displayedCleanAreaCoverage;
+  const mapRoomZonePreviewRect = roomZoneDraftRect ?? selectedRoomZoneRect;
+  const mapCleanAreaRect = activeMode === "rooms" ? mapRoomZonePreviewRect : displayedCleanAreaRect;
+  const mapCleanAreaCoverage = activeMode === "rooms" ? selectedRoomZoneCoverage : displayedCleanAreaCoverage;
   const mapCleanAreaToolActive = activeMode === "rooms" ? roomZoneToolActive : cleanAreaToolActive;
   const mapCleanAreaEditable = activeMode === "rooms" ? roomZoneToolActive : cleanAreaToolActive;
   const mapCleanAreaVisualState = activeMode === "rooms"
-    ? roomZoneToolActive ? "editing" : roomZoneDraftRect ? "confirmed" : "idle"
+    ? roomZoneToolActive ? "editing" : mapRoomZonePreviewRect ? "confirmed" : "idle"
     : cleanAreaVisualState;
-  const mapCleanAreaPreviewPoints = activeMode === "rooms" ? null : cleanAreaPreviewPoints;
+  const mapCleanAreaPreviewPoints = activeMode === "rooms" ? selectedRoomZoneWaypoints : cleanAreaPreviewPoints;
 
   return (
     <div className="vacuum-shell">
@@ -2351,7 +2487,7 @@ export function VacuumControlPanel() {
             cleanAreaToolActive={mapCleanAreaToolActive}
             cleanAreaEditable={mapCleanAreaEditable}
             cleanAreaVisualState={mapCleanAreaVisualState}
-            mapAnnotations={activeMode === "rooms" && !roomZoneToolActive ? roomZoneAnnotations : []}
+            mapAnnotations={activeMode === "rooms" ? roomZoneAnnotations : []}
             selectedMapAnnotationId={selectedRoomZoneId}
             interactionMode={activeMode}
             routeVisualState={routeVisualState}
@@ -2628,6 +2764,13 @@ export function VacuumControlPanel() {
                 <RoomZonesCard
                   annotations={roomZoneAnnotations}
                   selectedAnnotation={selectedRoomZone}
+                  targetStatus={selectedRoomZoneTargetStatus}
+                  targetStatusLabel={selectedRoomZoneTargetLabel}
+                  targetDetail={selectedRoomZoneTargetDetail}
+                  targetCoverage={selectedRoomZoneCoverage}
+                  waypointCount={selectedRoomZoneWaypoints.length}
+                  passCount={selectedRoomZoneMetrics.passCount}
+                  estimatedDistance={selectedRoomZoneMetrics.totalDistance}
                   toolActive={roomZoneToolActive}
                   draftKind={roomZoneDraftKind}
                   draftName={roomZoneDraftName}

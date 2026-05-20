@@ -37,7 +37,10 @@ The extension should:
    rectangular draft selection and local preview before start, then
    adapter-backed `start_coverage` execution and snapshot hydration after
    start.
-6. Record panel gaps as extension follow-up work, not as blockers for the
+6. Treat Rooms / Zones as the current Layer 5 prototype path: saved
+   annotations come from `snapshot.map.annotations`, and selected annotations
+   can be previewed as coverage targets before execution exists.
+7. Record panel gaps as extension follow-up work, not as blockers for the
    already-closed Layer 2/Layer 3 simulation slice.
 
 ## Repository
@@ -184,6 +187,7 @@ Panel responsibilities:
 - saved-map inventory and loading
 - Clean Area controls and visualization
 - Rooms / Zones controls and manual annotation visualization
+- selected room/zone cleaning-target preview
 - teleop and camera PiP inside the operator workflow
 
 Current expectations:
@@ -411,7 +415,7 @@ Current MVP limits:
 
 ## Rooms / Zones UI
 
-Rooms / Zones is the current Layer 5 Milestone 1 prototype inside
+Rooms / Zones is the current Layer 5 Milestone 2 prototype inside
 `Vacuum Control`.
 
 Files:
@@ -431,6 +435,11 @@ Current behavior:
 - Operators can name, save, select, and delete saved annotations.
 - Saved annotations render as map overlays and side-panel list entries.
 - Saved annotations hydrate from `snapshot.map.annotations`.
+- Selecting a saved annotation previews it as a cleaning target.
+- The preview reuses Clean Area coverage-target evaluation, per-cell
+  cleanability overlay, and lawnmower route generation.
+- The side panel reports whether the selected target is cleanable, partially
+  cleanable, or invalid.
 - TurtleBot4/Nav2 stores prototype annotations in webview storage keyed to the
   active map identity where available.
 - Controls are capability-gated through `map_annotations`, `room_semantics`,
@@ -438,7 +447,7 @@ Current behavior:
 
 Current MVP limits:
 
-- No room/zone cleaning execution is implemented in Milestone 1.
+- No room/zone cleaning execution is implemented in Milestone 2.
 - Unsaved drafts are local React/webview state and are not durable.
 - Annotation durability is not VM/runtime-owned yet.
 - Geometry is rectangle-only.

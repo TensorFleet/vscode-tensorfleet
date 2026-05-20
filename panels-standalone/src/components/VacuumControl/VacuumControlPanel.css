@@ -1147,6 +1147,11 @@ body {
     0 0 18px rgba(255, 255, 255, 0.18);
 }
 
+.vacuum-map-annotation--reference {
+  cursor: default;
+  pointer-events: none;
+}
+
 .vacuum-map-annotation span {
   position: absolute;
   left: 6px;
@@ -1849,6 +1854,64 @@ body {
 .vacuum-room-zone-list {
   display: grid;
   gap: 6px;
+}
+
+.vacuum-room-zone-target {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(232, 226, 214, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.vacuum-room-zone-target--cleanable {
+  border-color: rgba(88, 211, 141, 0.22);
+  background: rgba(88, 211, 141, 0.08);
+}
+
+.vacuum-room-zone-target--partial {
+  border-color: rgba(255, 206, 113, 0.24);
+  background: rgba(255, 206, 113, 0.08);
+}
+
+.vacuum-room-zone-target--invalid {
+  border-color: rgba(246, 93, 93, 0.24);
+  background: rgba(246, 93, 93, 0.08);
+}
+
+.vacuum-room-zone-target__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vacuum-room-zone-target__head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vacuum-text);
+  font-size: 12px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-room-zone-target__head span,
+.vacuum-room-zone-target__route {
+  color: var(--vacuum-text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.vacuum-room-zone-target p {
+  margin: 0;
+  color: var(--vacuum-text-soft);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 .vacuum-room-zone-list__item {

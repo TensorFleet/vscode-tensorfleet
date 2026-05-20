@@ -2095,7 +2095,7 @@ export function MapCanvas(props: MapCanvasProps) {
               <button
                 key={annotation.id}
                 type="button"
-                className={`vacuum-map-annotation vacuum-map-annotation--${annotation.kind}${selected ? " vacuum-map-annotation--selected" : ""}`}
+                className={`vacuum-map-annotation vacuum-map-annotation--${annotation.kind}${selected ? " vacuum-map-annotation--selected" : ""}${props.cleanAreaToolActive ? " vacuum-map-annotation--reference" : ""}`}
                 style={getCleanAreaScreenRect(annotation.area, bounds, viewport)}
                 onPointerDown={(event) => {
                   event.stopPropagation();
