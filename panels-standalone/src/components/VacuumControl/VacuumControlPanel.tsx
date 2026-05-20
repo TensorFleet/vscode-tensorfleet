@@ -1209,6 +1209,7 @@ function RoomZonesCard(props: {
   zoneSemanticsSupported: boolean;
   canStartCleaning: boolean;
   canPauseCleaning: boolean;
+  canResumeCleaning: boolean;
   canCancelCleaning: boolean;
   cleaningActive: boolean;
   cleaningState: CleanAreaMissionState | null;
@@ -1219,6 +1220,7 @@ function RoomZonesCard(props: {
   onSave: () => void;
   onStartCleaning: () => void;
   onPauseCleaning: () => void;
+  onResumeCleaning: () => void;
   onCancelCleaning: () => void;
   onSelect: (id: string) => void;
   onDelete: () => void;
@@ -1359,9 +1361,15 @@ function RoomZonesCard(props: {
         {selected ? (
           props.cleaningActive ? (
             <>
-              <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onPauseCleaning} disabled={!props.canPauseCleaning}>
-                Pause
-              </button>
+              {props.cleaningState === "paused" ? (
+                <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onResumeCleaning} disabled={!props.canResumeCleaning}>
+                  Resume
+                </button>
+              ) : (
+                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onPauseCleaning} disabled={!props.canPauseCleaning}>
+                  Pause
+                </button>
+              )}
               <button className="vacuum-action vacuum-action--danger" type="button" onClick={props.onCancelCleaning} disabled={!props.canCancelCleaning}>
                 Cancel
               </button>
@@ -1999,6 +2007,8 @@ export function VacuumControlPanel() {
     !isCleanAreaActive;
   const canPauseRoomZoneCleaning =
     Boolean(activeRoomZoneMission?.availableActions.includes("pause_mission")) && pauseMissionSupported;
+  const canResumeRoomZoneCleaning =
+    Boolean(activeRoomZoneMission?.availableActions.includes("resume_mission")) && resumeMissionSupported;
   const canCancelRoomZoneCleaning =
     Boolean(activeRoomZoneMission?.availableActions.includes("cancel_mission")) && cancelMissionSupported;
 
@@ -2345,6 +2355,16 @@ export function VacuumControlPanel() {
       return;
     }
     const result = await adapter.sendCommand({ command: "pause_mission" });
+    if (!result.ok) {
+      setRoomZoneCommandError(result.error.message);
+    }
+  }
+
+  async function handleResumeRoomZoneCleaning(): Promise<void> {
+    if (!activeRoomZoneMission || !resumeMissionSupported) {
+      return;
+    }
+    const result = await adapter.sendCommand({ command: "resume_mission" });
     if (!result.ok) {
       setRoomZoneCommandError(result.error.message);
     }
@@ -2913,6 +2933,7 @@ export function VacuumControlPanel() {
                   zoneSemanticsSupported={zoneSemanticsSupported}
                   canStartCleaning={canStartSelectedRoomZone}
                   canPauseCleaning={canPauseRoomZoneCleaning}
+                  canResumeCleaning={canResumeRoomZoneCleaning}
                   canCancelCleaning={canCancelRoomZoneCleaning}
                   cleaningActive={Boolean(activeRoomZoneMission)}
                   cleaningState={activeCoverageMissionState}
@@ -2923,6 +2944,7 @@ export function VacuumControlPanel() {
                   onSave={() => void handleSaveRoomZone()}
                   onStartCleaning={() => void handleStartRoomZoneCleaning()}
                   onPauseCleaning={() => void handlePauseRoomZoneCleaning()}
+                  onResumeCleaning={() => void handleResumeRoomZoneCleaning()}
                   onCancelCleaning={() => void handleCancelRoomZoneCleaning()}
                   onSelect={handleSelectRoomZone}
                   onDelete={() => void handleDeleteRoomZone()}
