@@ -1818,13 +1818,13 @@ export function VacuumControlPanel() {
     setSelectedRoomZoneId(null);
   }, []);
 
-  function handleMapAreaChange(rect: CleanAreaRect, validation: CleanAreaValidation): void {
+  const handleMapAreaChange = useCallback((rect: CleanAreaRect, validation: CleanAreaValidation): void => {
     if (activeMode === "rooms") {
       handleRoomZoneChange(rect, validation);
       return;
     }
     handleCleanAreaChange(rect, validation);
-  }
+  }, [activeMode, handleCleanAreaChange, handleRoomZoneChange]);
 
   async function handleSend(overrideTarget?: DraftTarget): Promise<void> {
     const target = overrideTarget ?? runTarget;
