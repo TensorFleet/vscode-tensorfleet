@@ -1540,7 +1540,7 @@ export function VacuumControlPanel() {
   );
   const selectedRoomZoneWaypoints = useMemo(
     () =>
-      selectedRoomZoneRect
+      selectedRoomZoneRect && selectedRoomZoneCoverageTarget && selectedRoomZoneCoverageTarget.cleanableCells.length > 0
         ? buildLawnmowerWaypoints({
             rect: selectedRoomZoneRect,
             spacing: cleanAreaCoverageConfig.laneSpacingM,
