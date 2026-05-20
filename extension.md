@@ -183,13 +183,16 @@ Panel responsibilities:
 - adapter-backed mapping controls
 - saved-map inventory and loading
 - Clean Area controls and visualization
+- Rooms / Zones controls and manual annotation visualization
 - teleop and camera PiP inside the operator workflow
 
 Current expectations:
 
 - `Header` and `StatusStrip` remain inline in `VacuumControlPanel.tsx`.
-- `VacuumControlPanel.tsx` owns the `Mapping`, `Navigate`, and `Clean Area`
-  mode switcher.
+- `VacuumControlPanel.tsx` owns the `Mapping`, `Navigate`, `Clean Area`, and
+  `Rooms / Zones` mode switcher.
+- Saved room/zone annotation state comes from `snapshot.map.annotations`; the
+  UI owns only unsaved draft rectangle/name/kind state.
 - Mode switching prevents mapping, point navigation, and clean-area runs from
   conflicting.
 - Active navigation missions may auto-select Navigate mode. Terminal navigation
@@ -215,7 +218,8 @@ Responsibilities:
 - keep direct `/map` rendering available as diagnostic/fallback visualization
 - render `/global_costmap/costmap` and `/local_costmap/costmap`
 - render route overlays, staged preview lines, robot marker, destination marker,
-  clean-area selection, clean-area path preview, and coverage overlays
+  clean-area selection, clean-area path preview, room/zone annotation overlays,
+  and coverage overlays
 - support pan, zoom, Fit Map, Follow Robot, map fit, manual view, and panel
   resize
 - draw, move, and resize rectangular clean-area selections
@@ -404,6 +408,40 @@ Current MVP limits:
 - Runtime route generation is row-level occupancy-clipped.
 - Runtime coverage progress is first-pass footprint-history accounting.
 - Route generation is not yet component-level area planning.
+
+## Rooms / Zones UI
+
+Rooms / Zones is the current Layer 5 Milestone 1 prototype inside
+`Vacuum Control`.
+
+Files:
+
+- `VacuumControlPanel.tsx`
+- `MapCanvas.tsx`
+- `vacuum-adapter/state.ts`
+- `vacuum-adapter/commands.ts`
+- `vacuum-adapter/capabilities.ts`
+- `vacuum-adapter/backends/turtlebot4-nav2/useTurtleBot4Nav2Adapter.ts`
+
+Current behavior:
+
+- Operators can draw a rectangular room/zone draft using the shared editable
+  rectangle behavior from Clean Area.
+- Operators can set the draft kind to `Room` or `Zone`.
+- Operators can name, save, select, and delete saved annotations.
+- Saved annotations render as map overlays and side-panel list entries.
+- Saved annotations hydrate from `snapshot.map.annotations`.
+- TurtleBot4/Nav2 stores prototype annotations in webview storage keyed to the
+  active map identity where available.
+- Controls are capability-gated through `map_annotations`, `room_semantics`,
+  and `zone_semantics`.
+
+Current MVP limits:
+
+- No room/zone cleaning execution is implemented in Milestone 1.
+- Unsaved drafts are local React/webview state and are not durable.
+- Annotation durability is not VM/runtime-owned yet.
+- Geometry is rectangle-only.
 - Strong edge/corner, obstacle-adjacent, dock/undock, and battery-aware
   behavior remain future Layer 4 work.
 

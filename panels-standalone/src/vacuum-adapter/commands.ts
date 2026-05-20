@@ -1,5 +1,5 @@
 import type { VacuumCommandError } from "./errors";
-import type { VacuumGoalCoordinates } from "./state";
+import type { VacuumGoalCoordinates, VacuumMapAnnotation } from "./state";
 
 export type VacuumCoverageArea =
   | {
@@ -26,6 +26,8 @@ export type VacuumCommandName =
   | "discard_mapping"
   | "accept_map"
   | "load_map"
+  | "save_map_annotation"
+  | "delete_map_annotation"
   | "start_coverage"
   | "pause_mission"
   | "resume_mission"
@@ -72,6 +74,19 @@ export type VacuumLoadMapCommand = {
   name: string;
 };
 
+export type VacuumSaveMapAnnotationCommand = {
+  command: "save_map_annotation";
+  annotation: Omit<VacuumMapAnnotation, "createdAt" | "updatedAt"> & {
+    createdAt?: number;
+    updatedAt?: number;
+  };
+};
+
+export type VacuumDeleteMapAnnotationCommand = {
+  command: "delete_map_annotation";
+  id: string;
+};
+
 export type VacuumStartCoverageCommand = {
   command: "start_coverage";
   area: VacuumCoverageArea;
@@ -103,6 +118,8 @@ export type VacuumSimpleCommand = {
     | "start_mapping"
     | "accept_map"
     | "load_map"
+    | "save_map_annotation"
+    | "delete_map_annotation"
     | "start_coverage"
     | "set_fan_speed"
     | "set_water_usage"
@@ -116,6 +133,8 @@ export type VacuumCommand =
   | VacuumStartMappingCommand
   | VacuumAcceptMapCommand
   | VacuumLoadMapCommand
+  | VacuumSaveMapAnnotationCommand
+  | VacuumDeleteMapAnnotationCommand
   | VacuumStartCoverageCommand
   | VacuumSetFanSpeedCommand
   | VacuumSetWaterUsageCommand

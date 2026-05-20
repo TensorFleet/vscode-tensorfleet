@@ -66,6 +66,9 @@ export function mapVacuumCommandToValetudoRequest(
   if (command.command === "zone_cleaning") {
     return unsupported(command.command, "zone_cleaning requires explicit zone geometry in a later command payload.");
   }
+  if (command.command === "save_map_annotation" || command.command === "delete_map_annotation") {
+    return unsupported(command.command, "Map annotation sessions are not implemented for the Valetudo backend stub.");
+  }
   if (
     command.command === "start_mapping" ||
     command.command === "pause_mapping" ||

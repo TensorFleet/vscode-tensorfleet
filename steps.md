@@ -89,7 +89,8 @@ Layer 4 prerequisite: Mapping + Whole Map View
 Layer 4 — Coverage                  Clean Area execution, route generation,
                                     and per-cell progress snapshots are
                                     runtime-owned for TurtleBot4/Nav2
-Layer 5 — Room / Zone Semantics     planned
+Layer 5 — Room / Zone Semantics     Milestone 1 implemented:
+                                    manual room/zone annotations
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
 
@@ -112,6 +113,8 @@ What is currently true:
   runtime owns Nav2 waypoint sequencing, lifecycle actions, and progress.
 - Clean Area route preview and active route overlays are visible above coverage
   cells.
+- Rooms / Zones mode now supports manual rectangular room/zone drafts, naming,
+  save/select/delete, and map overlays through `snapshot.map.annotations`.
 - Terminal navigation snapshots no longer force the panel back into Navigate
   mode after the mission is completed, canceled, or failed.
 
@@ -167,9 +170,10 @@ Current visible shell components:
 - floating `Layers` checklist for Map, Global costmap, Local costmap, Plan,
   Lidar, and Depth obstacles
 - `CameraOverlay` floating PiP window inside the map canvas
-- mode switcher for `Mapping`, `Navigate`, and `Clean Area`
+- mode switcher for `Mapping`, `Navigate`, `Clean Area`, and `Rooms / Zones`
 - `MappingCard`
 - `CleanAreaCard`
+- `RoomZonesCard`
 - selected destination card
 - navigation progress card
 - action buttons for connection, start, stop, clear, retry, and rerun
@@ -361,7 +365,8 @@ active execution after `start_coverage`.
 
 Current behavior:
 
-- `Vacuum Control` has `Mapping`, `Navigate`, and `Clean Area` modes.
+- `Vacuum Control` has `Mapping`, `Navigate`, `Clean Area`, and
+  `Rooms / Zones` modes.
 - `MapCanvas` supports rectangular clean-area selection with draw, move, and
   resize interactions.
 - Selection is validated against map bounds and occupancy data.
@@ -415,6 +420,33 @@ Current limits:
 - Battery-aware return/resume is pending.
 - UI treats 95% covered cleanable cells as complete and can report route-done
   when uncovered cleanable cells remain.
+
+## Implemented: Room / Zone Semantics Milestone 1
+
+Rooms / Zones is the current Layer 5 prototype path. Milestone 1 adds manual
+annotation state only; it does not start room/zone cleaning missions yet.
+
+Current behavior:
+
+- `Vacuum Control` has a `Rooms / Zones` mode.
+- `MapCanvas` reuses the editable rectangle behavior from Clean Area for a
+  room/zone draft.
+- Operators can choose `Room` or `Zone`, enter a name, save the draft, select a
+  saved annotation, and delete it.
+- Saved annotations render as map overlays and side-panel list entries.
+- Adapter snapshots expose saved annotations through `snapshot.map.annotations`.
+- TurtleBot4/Nav2 persists prototype annotations in webview storage keyed to
+  the active map identity where one is known.
+- Valetudo currently reports map annotations and room/zone semantics as
+  unsupported.
+
+Current limits:
+
+- Unsaved room/zone drafts are local webview state.
+- Saved annotation persistence is not VM/runtime-owned yet.
+- Room/zone geometry is rectangle-only.
+- Room/zone cleanability preview and cleaning execution are not implemented
+  until later Layer 5 milestones.
 
 ## Runtime Validation
 

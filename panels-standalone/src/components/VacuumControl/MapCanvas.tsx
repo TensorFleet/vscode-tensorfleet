@@ -5,6 +5,7 @@ import {
   normalizeRosMessage,
   type VacuumMapGrid,
   type VacuumMapMetadata,
+  type VacuumMapAnnotation,
   type VacuumPoseCoordinates,
 } from "../../vacuum-adapter";
 import {
@@ -136,6 +137,8 @@ type CleanAreaHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 type CleanAreaInteractionState = {
   pointerId: number;
+  startClientX: number;
+  startClientY: number;
   mode: "draw" | "move" | "resize";
   handle: CleanAreaHandle | null;
   startWorld: MapPoint;
@@ -143,7 +146,7 @@ type CleanAreaInteractionState = {
 };
 
 export type RouteVisualState = "idle" | "staged" | "active" | "completed" | "failed" | "canceled";
-export type MapInteractionMode = "mapping" | "navigation" | "clean";
+export type MapInteractionMode = "mapping" | "navigation" | "clean" | "rooms";
 
 type RasterLayerKey = "map" | "globalCostmap" | "localCostmap";
 type RasterLayerMode = "map" | "global-costmap" | "local-costmap";
@@ -170,7 +173,10 @@ export type MapCanvasProps = {
   cleanAreaCurrentIndex?: number;
   cleanAreaCoverage?: CleanAreaCoverageSnapshot | null;
   cleanAreaToolActive?: boolean;
+  cleanAreaEditable?: boolean;
   cleanAreaVisualState?: CleanAreaVisualState;
+  mapAnnotations?: VacuumMapAnnotation[];
+  selectedMapAnnotationId?: string | null;
   interactionMode?: MapInteractionMode;
   routeVisualState: RouteVisualState;
   isGoalActive: boolean;
@@ -182,6 +188,7 @@ export type MapCanvasProps = {
   onTargetStart: (target: MapCanvasTarget) => void;
   onTargetRotate: (yaw: number) => void;
   onCleanAreaChange?: (rect: CleanAreaRect, validation: CleanAreaValidation) => void;
+  onMapAnnotationSelect?: (id: string) => void;
   onMapMetadataChange?: (metadata: MapCanvasMetadata) => void;
 };
 
@@ -193,6 +200,7 @@ const FIT_PADDING_PX = 42;
 const MIN_ZOOM_RATIO = 0.5;
 const MAX_ZOOM_RATIO = 8;
 const POINTER_PAN_THRESHOLD_PX = 5;
+const CLEAN_AREA_DRAW_THRESHOLD_PX = 8;
 const CLEAN_AREA_MIN_SIZE_M = 0.2;
 const CLEAN_AREA_MAX_UNKNOWN_RATIO = 0.25;
 const CLEAN_AREA_MAX_OCCUPIED_RATIO = 0.1;
@@ -561,6 +569,23 @@ function normalizeCleanAreaRect(a: MapPoint, b: MapPoint): CleanAreaRect {
   };
 }
 
+function makeStarterCleanAreaRect(center: MapPoint, bounds: MapBounds): CleanAreaRect {
+  const starterSize = Math.min(
+    1,
+    Math.max(CLEAN_AREA_MIN_SIZE_M * 2, Math.min(bounds.width, bounds.height) * 0.18),
+  );
+  const halfSize = starterSize / 2;
+  return clampCleanAreaRect(
+    {
+      minX: center.x - halfSize,
+      minY: center.y - halfSize,
+      maxX: center.x + halfSize,
+      maxY: center.y + halfSize,
+    },
+    bounds,
+  );
+}
+
 function clampPointToBounds(point: MapPoint, bounds: MapBounds): MapPoint {
   return {
     x: clamp(point.x, bounds.minX, bounds.maxX),
@@ -812,6 +837,12 @@ function getMapPrompt(args: {
 }): string {
   if (args.interactionMode === "mapping") {
     return args.mappingState === "saved" ? "Current map ready" : "Mapping";
+  }
+  if (args.interactionMode === "rooms" && args.cleanAreaToolActive) {
+    return args.hasCleanArea ? "Edit room / zone draft" : "Draw room / zone";
+  }
+  if (args.interactionMode === "rooms") {
+    return args.hasCleanArea ? "Room / zone draft" : "Rooms / Zones";
   }
   if (args.cleanAreaVisualState === "preparing") {
     return "Preparing clean area";
@@ -1143,6 +1174,7 @@ export function MapCanvas(props: MapCanvasProps) {
   const layerPopoverRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<PointerDragState | null>(null);
   const cleanAreaInteractionRef = useRef<CleanAreaInteractionState | null>(null);
+  const cleanAreaWindowCleanupRef = useRef<(() => void) | null>(null);
   const hasFitInitialMapRef = useRef(false);
   const previousMappingStateRef = useRef<MappingSessionState>(props.mappingState);
   const [stageSize, setStageSize] = useState<CanvasSize>({ width: 1, height: 1 });
@@ -1219,6 +1251,23 @@ export function MapCanvas(props: MapCanvasProps) {
   useEffect(() => {
     props.onMapMetadataChange?.(mapMetadata);
   }, [mapMetadata, props.onMapMetadataChange]);
+
+  useEffect(() => {
+    if (props.cleanAreaRect) {
+      return;
+    }
+    cleanAreaInteractionRef.current = null;
+    cleanAreaWindowCleanupRef.current?.();
+    cleanAreaWindowCleanupRef.current = null;
+  }, [props.cleanAreaRect]);
+
+  useEffect(() => {
+    return () => {
+      cleanAreaWindowCleanupRef.current?.();
+      cleanAreaWindowCleanupRef.current = null;
+      cleanAreaInteractionRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!stageRef.current) {
@@ -1404,6 +1453,7 @@ export function MapCanvas(props: MapCanvasProps) {
     [bounds, routePoints, viewport],
   );
   const cleanAreaVisualState = props.cleanAreaVisualState ?? "idle";
+  const cleanAreaEditable = Boolean(props.cleanAreaEditable ?? props.cleanAreaToolActive);
   const cleanAreaPreviewSegments = useMemo(() => {
     const points = (props.cleanAreaPreviewPoints ?? []).filter((point): point is MapPoint => (
       Number.isFinite(point.x) && Number.isFinite(point.y)
@@ -1583,6 +1633,82 @@ export function MapCanvas(props: MapCanvasProps) {
     props.onCleanAreaChange?.(clamped, getCleanAreaValidation(clamped, occupancyMap, bounds));
   }
 
+  function clearCleanAreaWindowListeners(): void {
+    const cleanup = cleanAreaWindowCleanupRef.current;
+    cleanAreaWindowCleanupRef.current = null;
+    cleanup?.();
+  }
+
+  function finishCleanAreaInteraction(pointerId: number): boolean {
+    const cleanAreaInteraction = cleanAreaInteractionRef.current;
+    if (!cleanAreaInteraction || cleanAreaInteraction.pointerId !== pointerId) {
+      return false;
+    }
+    cleanAreaInteractionRef.current = null;
+    clearCleanAreaWindowListeners();
+    return true;
+  }
+
+  function processCleanAreaPointerMove(pointerId: number, clientX: number, clientY: number): boolean {
+    const cleanAreaInteraction = cleanAreaInteractionRef.current;
+    if (!cleanAreaInteraction || cleanAreaInteraction.pointerId !== pointerId) {
+      return false;
+    }
+
+    const worldPoint = worldPointFromPointer(clientX, clientY);
+    if (!worldPoint) {
+      return true;
+    }
+
+    if (cleanAreaInteraction.mode === "draw") {
+      const screenDistance = Math.hypot(
+        clientX - cleanAreaInteraction.startClientX,
+        clientY - cleanAreaInteraction.startClientY,
+      );
+      if (screenDistance < CLEAN_AREA_DRAW_THRESHOLD_PX) {
+        return true;
+      }
+      updateCleanAreaRect(normalizeCleanAreaRect(cleanAreaInteraction.startWorld, worldPoint));
+    } else if (cleanAreaInteraction.mode === "move" && cleanAreaInteraction.startRect) {
+      updateCleanAreaRect(
+        moveCleanAreaRect(
+          cleanAreaInteraction.startRect,
+          {
+            x: worldPoint.x - cleanAreaInteraction.startWorld.x,
+            y: worldPoint.y - cleanAreaInteraction.startWorld.y,
+          },
+          bounds,
+        ),
+      );
+    } else if (cleanAreaInteraction.mode === "resize" && cleanAreaInteraction.startRect && cleanAreaInteraction.handle) {
+      updateCleanAreaRect(resizeCleanAreaRect(cleanAreaInteraction.startRect, cleanAreaInteraction.handle, worldPoint, bounds));
+    }
+
+    return true;
+  }
+
+  function installCleanAreaWindowListeners(): void {
+    clearCleanAreaWindowListeners();
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (processCleanAreaPointerMove(event.pointerId, event.clientX, event.clientY)) {
+        event.preventDefault();
+      }
+    };
+    const handlePointerEnd = (event: PointerEvent) => {
+      finishCleanAreaInteraction(event.pointerId);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+    cleanAreaWindowCleanupRef.current = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }
+
   function startCleanAreaInteraction(
     event: React.PointerEvent<HTMLElement>,
     mode: CleanAreaInteractionState["mode"],
@@ -1590,7 +1716,7 @@ export function MapCanvas(props: MapCanvasProps) {
   ): void {
     event.stopPropagation();
     event.preventDefault();
-    if (!props.cleanAreaToolActive || props.isGoalActive) {
+    if ((!props.cleanAreaToolActive && (mode === "draw" || !cleanAreaEditable)) || props.isGoalActive) {
       return;
     }
     const worldPoint = worldPointFromPointer(event.clientX, event.clientY);
@@ -1599,14 +1725,17 @@ export function MapCanvas(props: MapCanvasProps) {
     }
     cleanAreaInteractionRef.current = {
       pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
       mode,
       handle,
       startWorld: worldPoint,
       startRect: props.cleanAreaRect ?? null,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
+    installCleanAreaWindowListeners();
     if (mode === "draw") {
-      updateCleanAreaRect(normalizeCleanAreaRect(worldPoint, worldPoint));
+      updateCleanAreaRect(makeStarterCleanAreaRect(worldPoint, bounds));
     }
   }
 
@@ -1630,28 +1759,7 @@ export function MapCanvas(props: MapCanvasProps) {
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>): void {
-    const cleanAreaInteraction = cleanAreaInteractionRef.current;
-    if (cleanAreaInteraction && cleanAreaInteraction.pointerId === event.pointerId) {
-      const worldPoint = worldPointFromPointer(event.clientX, event.clientY);
-      if (!worldPoint) {
-        return;
-      }
-      if (cleanAreaInteraction.mode === "draw") {
-        updateCleanAreaRect(normalizeCleanAreaRect(cleanAreaInteraction.startWorld, worldPoint));
-      } else if (cleanAreaInteraction.mode === "move" && cleanAreaInteraction.startRect) {
-        updateCleanAreaRect(
-          moveCleanAreaRect(
-            cleanAreaInteraction.startRect,
-            {
-              x: worldPoint.x - cleanAreaInteraction.startWorld.x,
-              y: worldPoint.y - cleanAreaInteraction.startWorld.y,
-            },
-            bounds,
-          ),
-        );
-      } else if (cleanAreaInteraction.mode === "resize" && cleanAreaInteraction.startRect && cleanAreaInteraction.handle) {
-        updateCleanAreaRect(resizeCleanAreaRect(cleanAreaInteraction.startRect, cleanAreaInteraction.handle, worldPoint, bounds));
-      }
+    if (processCleanAreaPointerMove(event.pointerId, event.clientX, event.clientY)) {
       return;
     }
 
@@ -1678,9 +1786,7 @@ export function MapCanvas(props: MapCanvasProps) {
   }
 
   function onPointerEnd(event: React.PointerEvent<HTMLDivElement>): void {
-    const cleanAreaInteraction = cleanAreaInteractionRef.current;
-    if (cleanAreaInteraction && cleanAreaInteraction.pointerId === event.pointerId) {
-      cleanAreaInteractionRef.current = null;
+    if (finishCleanAreaInteraction(event.pointerId)) {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
@@ -1980,6 +2086,31 @@ export function MapCanvas(props: MapCanvasProps) {
             </div>
           ) : null}
 
+          {(props.mapAnnotations ?? []).map((annotation) => {
+            if (annotation.area.shape !== "rectangle") {
+              return null;
+            }
+            const selected = annotation.id === props.selectedMapAnnotationId;
+            return (
+              <button
+                key={annotation.id}
+                type="button"
+                className={`vacuum-map-annotation vacuum-map-annotation--${annotation.kind}${selected ? " vacuum-map-annotation--selected" : ""}`}
+                style={getCleanAreaScreenRect(annotation.area, bounds, viewport)}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onMapAnnotationSelect?.(annotation.id);
+                }}
+                title={annotation.name}
+              >
+                <span>{annotation.name}</span>
+              </button>
+            );
+          })}
+
           {props.cleanAreaCoverage && displayedRobotPose ? (
             <span
               className="vacuum-clean-area-footprint"
@@ -1990,12 +2121,12 @@ export function MapCanvas(props: MapCanvasProps) {
 
           {props.cleanAreaRect && cleanAreaScreenStyle ? (
             <div
-              className={`vacuum-clean-area vacuum-clean-area--${cleanAreaVisualState} ${cleanAreaValidation?.ok ? "vacuum-clean-area--valid" : "vacuum-clean-area--invalid"}`}
+              className={`vacuum-clean-area vacuum-clean-area--${cleanAreaVisualState} ${cleanAreaEditable ? "" : "vacuum-clean-area--readonly"} ${cleanAreaValidation?.ok ? "vacuum-clean-area--valid" : "vacuum-clean-area--invalid"}`}
               style={cleanAreaScreenStyle}
-              onPointerDown={(event) => startCleanAreaInteraction(event, "move", null)}
+              onPointerDown={cleanAreaEditable ? (event) => startCleanAreaInteraction(event, "move", null) : undefined}
             >
               <div className="vacuum-clean-area__fill" />
-              {props.cleanAreaToolActive
+              {cleanAreaEditable
                 ? CLEAN_AREA_HANDLES.map((handle) => (
                     <button
                       key={handle}

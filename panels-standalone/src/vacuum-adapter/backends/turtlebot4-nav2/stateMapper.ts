@@ -9,6 +9,7 @@ import type {
   VacuumGoalCoordinates,
   VacuumMapGrid,
   VacuumMapMetadata,
+  VacuumMapAnnotation,
   VacuumMappingStatus,
   VacuumMissionAction,
   VacuumMissionSnapshot,
@@ -32,6 +33,7 @@ export type TurtleBot4Nav2StateMapperInput = {
   mapMetadata?: VacuumMapMetadata | null;
   mapping?: VacuumMappingStatus | null;
   mission?: VacuumMissionSnapshot | null;
+  annotations?: VacuumMapAnnotation[];
 };
 
 function getTopicStatus(runtime: Nav2RuntimeState, topic: string): TopicHealth["status"] | null {
@@ -410,7 +412,7 @@ export function mapTurtleBot4Nav2State(
   input: TurtleBot4Nav2StateMapperInput | Nav2RuntimeState,
   legacyCurrentTarget?: VacuumGoalCoordinates | null,
 ): VacuumAdapterSnapshot {
-  const { runtime, currentTarget, initialDistance, mapGrid, mapMetadata, mapping, mission } = isMapperInput(input)
+  const { runtime, currentTarget, initialDistance, mapGrid, mapMetadata, mapping, mission, annotations } = isMapperInput(input)
     ? input
     : {
         runtime: input,
@@ -420,6 +422,7 @@ export function mapTurtleBot4Nav2State(
         mapMetadata: null,
         mapping: null,
         mission: null,
+        annotations: [],
       };
 
   const mapStatus = getTopicStatus(runtime, "/map");
@@ -519,6 +522,7 @@ export function mapTurtleBot4Nav2State(
       detail: mapStatus === "receiving" || normalizedMapMetadata.hasMap ? "Map is receiving." : "Waiting for live occupancy-grid data.",
       grid: mapGrid ?? null,
       metadata: normalizedMapMetadata,
+      annotations: annotations ?? [],
     },
     pose: {
       readiness: poseReadiness,

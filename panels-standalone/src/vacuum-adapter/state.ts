@@ -157,6 +157,29 @@ export type VacuumMapMetadata = {
   lastUpdateAt: number | null;
 };
 
+export type VacuumMapAnnotationKind = "room" | "zone";
+
+export type VacuumMapAnnotation = {
+  id: string;
+  kind: VacuumMapAnnotationKind;
+  name: string;
+  area:
+    | {
+        shape: "rectangle";
+        minX: number;
+        minY: number;
+        maxX: number;
+        maxY: number;
+      }
+    | {
+        shape: "polygon";
+        points: Array<{ x: number; y: number }>;
+      };
+  mapId: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type VacuumAvailability = {
   status: VacuumAvailabilityStatus;
   connected: boolean;
@@ -170,6 +193,7 @@ export type VacuumMapState = {
   detail?: string;
   grid: VacuumMapGrid | null;
   metadata: VacuumMapMetadata;
+  annotations: VacuumMapAnnotation[];
 };
 
 export type VacuumPoseState = {

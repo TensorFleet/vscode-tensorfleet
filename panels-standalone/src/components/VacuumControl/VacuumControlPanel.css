@@ -1069,6 +1069,11 @@ body {
   pointer-events: auto;
 }
 
+.vacuum-clean-area--readonly {
+  cursor: default;
+  pointer-events: none;
+}
+
 .vacuum-clean-area-coverage {
   position: absolute;
   inset: 0;
@@ -1112,6 +1117,53 @@ body {
   transform: translate(-50%, -50%);
 }
 
+.vacuum-map-annotation {
+  position: absolute;
+  z-index: 5;
+  min-width: 10px;
+  min-height: 10px;
+  padding: 0;
+  border: 1px solid rgba(115, 182, 242, 0.78);
+  border-radius: 2px;
+  background: rgba(115, 182, 242, 0.12);
+  color: #e6f5ff;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 0 12px rgba(115, 182, 242, 0.12);
+}
+
+.vacuum-map-annotation--room {
+  border-color: rgba(88, 211, 141, 0.78);
+  background: rgba(88, 211, 141, 0.12);
+  color: #e7ffef;
+}
+
+.vacuum-map-annotation--selected {
+  border-color: rgba(255, 255, 255, 0.88);
+  box-shadow:
+    0 0 0 1px rgba(6, 12, 16, 0.72),
+    0 0 18px rgba(255, 255, 255, 0.18);
+}
+
+.vacuum-map-annotation span {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(10, 16, 18, 0.76);
+  color: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .vacuum-clean-area--invalid {
   --clean-area-accent: 255, 179, 92;
   --clean-area-shadow: 35, 18, 4;
@@ -1150,8 +1202,8 @@ body {
 
 .vacuum-clean-area__handle {
   position: absolute;
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   padding: 0;
   border-radius: 999px;
   border: 1px solid rgba(5, 16, 16, 0.76);
@@ -1172,32 +1224,32 @@ body {
 .vacuum-clean-area__handle--nw,
 .vacuum-clean-area__handle--w,
 .vacuum-clean-area__handle--sw {
-  left: -5px;
+  left: -7px;
 }
 
 .vacuum-clean-area__handle--ne,
 .vacuum-clean-area__handle--e,
 .vacuum-clean-area__handle--se {
-  right: -5px;
+  right: -7px;
 }
 
 .vacuum-clean-area__handle--n,
 .vacuum-clean-area__handle--nw,
 .vacuum-clean-area__handle--ne {
-  top: -5px;
+  top: -7px;
 }
 
 .vacuum-clean-area__handle--s,
 .vacuum-clean-area__handle--sw,
 .vacuum-clean-area__handle--se {
-  bottom: -5px;
+  bottom: -7px;
 }
 
 .vacuum-clean-area__handle--n,
 .vacuum-clean-area__handle--s {
   left: 50%;
-  width: 26px;
-  height: 6px;
+  width: 34px;
+  height: 9px;
   transform: translateX(-50%);
   cursor: ns-resize;
 }
@@ -1205,8 +1257,8 @@ body {
 .vacuum-clean-area__handle--e,
 .vacuum-clean-area__handle--w {
   top: 50%;
-  width: 6px;
-  height: 26px;
+  width: 9px;
+  height: 34px;
   transform: translateY(-50%);
   cursor: ew-resize;
 }
@@ -1689,6 +1741,11 @@ body {
   gap: 13px;
 }
 
+.vacuum-panel-card--room-zones {
+  gap: 13px;
+  border-color: rgba(88, 211, 141, 0.16);
+}
+
 .vacuum-panel-card--clean-area-editing,
 .vacuum-panel-card--clean-area-confirmed {
   border-color: rgba(56, 200, 176, 0.2);
@@ -1751,6 +1808,92 @@ body {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
+}
+
+.vacuum-room-zone-form {
+  display: grid;
+  gap: 8px;
+}
+
+.vacuum-room-zone-kind {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid rgba(232, 226, 214, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.vacuum-room-zone-kind__button {
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--vacuum-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.vacuum-room-zone-kind__button--active {
+  border-color: rgba(88, 211, 141, 0.22);
+  background: rgba(88, 211, 141, 0.12);
+  color: var(--vacuum-success);
+}
+
+.vacuum-room-zone-kind__button:disabled {
+  opacity: 0.42;
+}
+
+.vacuum-room-zone-list {
+  display: grid;
+  gap: 6px;
+}
+
+.vacuum-room-zone-list__item {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(232, 226, 214, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--vacuum-text-soft);
+  text-align: left;
+}
+
+.vacuum-room-zone-list__item:hover {
+  border-color: rgba(88, 211, 141, 0.2);
+  background: rgba(88, 211, 141, 0.075);
+  color: var(--vacuum-text);
+}
+
+.vacuum-room-zone-list__item--active {
+  border-color: rgba(88, 211, 141, 0.32);
+  background: rgba(88, 211, 141, 0.12);
+  color: #e7ffef;
+}
+
+.vacuum-room-zone-list__item span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-room-zone-list__item small {
+  flex-shrink: 0;
+  color: var(--vacuum-text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .vacuum-clean-area-stats {
@@ -3334,7 +3477,7 @@ body {
 
 .vacuum-mode-switcher__tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px;
   padding: 4px;
   border-radius: 18px;
@@ -3398,6 +3541,12 @@ body {
   color: #c084fc;
   background: rgba(192, 132, 252, 0.14);
   border-color: rgba(192, 132, 252, 0.24);
+}
+
+.vacuum-mode-tab--rooms.vacuum-mode-tab--active {
+  color: var(--vacuum-success);
+  background: rgba(88, 211, 141, 0.14);
+  border-color: rgba(88, 211, 141, 0.24);
 }
 
 /* ────────────────────────────────────────────

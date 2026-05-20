@@ -155,6 +155,24 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
           ? "VM coverage mission runtime parameter service is not advertised."
           : "VM coverage mission runtime is not advertised.",
       );
+  capabilities.map_annotations = supportedCapability({
+    backendCapability: "vacuum_adapter map annotations",
+    commands: ["save_map_annotation", "delete_map_annotation"],
+    attributes: ["map_annotations", "room_annotations", "zone_annotations"],
+    notes: "Manual room/zone annotations are product-level map state persisted by the adapter.",
+  });
+  capabilities.room_semantics = supportedCapability({
+    backendCapability: "vacuum_adapter map annotations",
+    commands: ["save_map_annotation", "delete_map_annotation"],
+    attributes: ["map_annotation", "room"],
+    notes: "Manual room boundaries can be created and selected on the current map.",
+  });
+  capabilities.zone_semantics = supportedCapability({
+    backendCapability: "vacuum_adapter map annotations",
+    commands: ["save_map_annotation", "delete_map_annotation"],
+    attributes: ["map_annotation", "zone"],
+    notes: "Manual zone boundaries can be created and selected on the current map.",
+  });
   capabilities.start_coverage = hasMissionStartCoverage && hasMissionSetParameters
     ? supportedCapability({
         backendCapability: "vacuum_mission_runtime",

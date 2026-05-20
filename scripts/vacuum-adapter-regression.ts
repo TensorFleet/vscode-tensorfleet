@@ -331,6 +331,9 @@ function testCapabilityCoverage(): void {
   assert.equal(supportedNav2.mapping_session.supported, true);
   assert.equal(supportedNav2.auto_mapping.supported, false);
   assert.equal(supportedNav2.coverage_mission.supported, true);
+  assert.equal(supportedNav2.map_annotations.supported, true);
+  assert.equal(supportedNav2.room_semantics.supported, true);
+  assert.equal(supportedNav2.zone_semantics.supported, true);
   assert.equal(supportedNav2.start_coverage.supported, true);
   assert.equal(supportedNav2.pause_mission.supported, true);
   assert.equal(supportedNav2.resume_mission.supported, true);
@@ -360,6 +363,9 @@ function testCapabilityCoverage(): void {
   assert.equal(valetudo.go_to_location.supported, true);
   assert.equal(valetudo.fan_speed.supported, true);
   assert.equal(valetudo.zone_cleaning.supported, false);
+  assert.equal(valetudo.map_annotations.supported, false);
+  assert.equal(valetudo.room_semantics.supported, false);
+  assert.equal(valetudo.zone_semantics.supported, false);
   assert.equal(valetudo.resume.supported, false);
   assert.equal(valetudo.auto_mapping.supported, false);
 }
@@ -384,6 +390,23 @@ function testStateMapping(): void {
     { x: 1, y: 2 },
     { x: 3, y: 4 },
   ]);
+  assert.deepEqual(idle.map.annotations, []);
+
+  const annotated = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    annotations: [
+      {
+        id: "room-1",
+        kind: "room",
+        name: "Kitchen",
+        area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+        mapId: "live-map",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+  });
+  assert.equal(annotated.map.annotations[0]?.name, "Kitchen");
 
   const navigating = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "executing" }),
@@ -719,6 +742,17 @@ function testValetudoCommandStub(): void {
   });
   const zoneResult = mapVacuumCommandToValetudoRequest({ command: "zone_cleaning" }, capabilities);
   assert.equal(zoneResult.ok, false);
+  const annotationResult = mapVacuumCommandToValetudoRequest({
+    command: "save_map_annotation",
+    annotation: {
+      id: "room-1",
+      kind: "room",
+      name: "Kitchen",
+      area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+      mapId: null,
+    },
+  }, capabilities);
+  assert.equal(annotationResult.ok, false);
   const mappingResult = mapVacuumCommandToValetudoRequest({ command: "start_mapping", mode: "auto" }, capabilities);
   assert.equal(mappingResult.ok, false);
 }
@@ -753,6 +787,8 @@ function assertCommandNamesHandled(): void {
     "discard_mapping",
     "accept_map",
     "load_map",
+    "save_map_annotation",
+    "delete_map_annotation",
     "start_coverage",
     "pause_mission",
     "resume_mission",

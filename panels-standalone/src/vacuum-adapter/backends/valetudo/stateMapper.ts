@@ -85,6 +85,7 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
       detail: state?.mapAvailable ? "Map is available." : "Waiting for Valetudo map state.",
       grid: null,
       metadata: buildVacuumMapMetadata(null, null),
+      annotations: [],
     },
     pose: {
       readiness: state?.pose ? "ready" : connected ? "waiting" : "unavailable",

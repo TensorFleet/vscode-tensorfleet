@@ -8,6 +8,8 @@ import {
   type VacuumCommandResult,
   type VacuumBatteryState,
   type VacuumCapabilities,
+  type VacuumMapAnnotation,
+  type VacuumMapAnnotationKind,
   type VacuumMappingStatus,
   type VacuumLegacyMissionStatus,
   type VacuumMissionSnapshot,
@@ -43,6 +45,7 @@ import {
 import "./VacuumControlPanel.css";
 
 type DraftTarget = MapCanvasTarget;
+type VacuumControlMode = "mapping" | "navigation" | "clean" | "rooms";
 type CleanAreaMissionState =
   | "idle"
   | "editing"
@@ -239,6 +242,14 @@ function cleanAreaRectToCoverageArea(rect: CleanAreaRect) {
     maxX: rect.maxX,
     maxY: rect.maxY,
   };
+}
+
+function cleanAreaRectToAnnotationArea(rect: CleanAreaRect): VacuumMapAnnotation["area"] {
+  return cleanAreaRectToCoverageArea(rect);
+}
+
+function currentMapAnnotationId(snapshot: { mapping: VacuumMappingStatus; map: { grid: unknown } }): string | null {
+  return snapshot.mapping.activeMapName ?? snapshot.mapping.loadedMapPath ?? snapshot.mapping.savedMapPath ?? (snapshot.map.grid ? "live-map" : null);
 }
 
 function isTerminalMissionStatus(status: VacuumMissionSnapshot["status"]): boolean {
@@ -632,6 +643,17 @@ function CleanModeIcon(props: { className?: string }) {
       <path d="M7 8h10" />
       <path d="M7 12h10" />
       <path d="M7 16h6" />
+    </svg>
+  );
+}
+
+function RoomsModeIcon(props: { className?: string }) {
+  return (
+    <svg aria-hidden="true" className={props.className} viewBox="0 0 24 24">
+      <path d="M4 5h16v14H4z" />
+      <path d="M12 5v14" />
+      <path d="M4 12h8" />
+      <path d="M12 10h8" />
     </svg>
   );
 }
@@ -1154,6 +1176,139 @@ function CleanAreaCard(props: {
   );
 }
 
+function RoomZonesCard(props: {
+  annotations: VacuumMapAnnotation[];
+  selectedAnnotation: VacuumMapAnnotation | null;
+  toolActive: boolean;
+  draftKind: VacuumMapAnnotationKind;
+  draftName: string;
+  draftRect: CleanAreaRect | null;
+  validation: CleanAreaValidation | null;
+  commandError: string | null;
+  roomSemanticsSupported: boolean;
+  zoneSemanticsSupported: boolean;
+  canSave: boolean;
+  onDraftKindChange: (kind: VacuumMapAnnotationKind) => void;
+  onDraftNameChange: (name: string) => void;
+  onActivateTool: () => void;
+  onSave: () => void;
+  onSelect: (id: string) => void;
+  onDelete: () => void;
+  onClearDraft: () => void;
+}): JSX.Element {
+  const selected = props.selectedAnnotation;
+  const rect = props.draftRect ?? (selected?.area.shape === "rectangle" ? selected.area : null);
+  const size = getCleanAreaSize(rect);
+  const selectedTitle = selected
+    ? `${selected.name} (${selected.kind})`
+    : props.draftRect
+      ? `${props.draftKind === "room" ? "Room" : "Zone"} draft`
+      : "No room or zone selected";
+  const statusLabel = props.toolActive
+    ? "Editing draft"
+    : props.draftRect
+      ? "Draft ready"
+      : selected
+        ? "Saved selected"
+        : "No draft";
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--room-zones">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Rooms / Zones</p>
+        <span className="vacuum-clean-area-badge">{statusLabel}</span>
+      </div>
+
+      {props.commandError ? (
+        <div className="vacuum-mapping-error" role="status">
+          {props.commandError}
+        </div>
+      ) : null}
+
+      <div className="vacuum-room-zone-form">
+        <div className="vacuum-room-zone-kind" role="group" aria-label="Annotation type">
+          <button
+            type="button"
+            className={props.draftKind === "room" ? "vacuum-room-zone-kind__button vacuum-room-zone-kind__button--active" : "vacuum-room-zone-kind__button"}
+            onClick={() => props.onDraftKindChange("room")}
+            disabled={!props.roomSemanticsSupported}
+          >
+            Room
+          </button>
+          <button
+            type="button"
+            className={props.draftKind === "zone" ? "vacuum-room-zone-kind__button vacuum-room-zone-kind__button--active" : "vacuum-room-zone-kind__button"}
+            onClick={() => props.onDraftKindChange("zone")}
+            disabled={!props.zoneSemanticsSupported}
+          >
+            Zone
+          </button>
+        </div>
+        <label className="vacuum-map-name-field">
+          <span>Name</span>
+          <input
+            value={props.draftName}
+            onChange={(event) => props.onDraftNameChange(event.target.value)}
+            placeholder={props.draftKind === "room" ? "Kitchen" : "Under dining table"}
+          />
+        </label>
+      </div>
+
+      <div className="vacuum-clean-area-coverage-grid">
+        <div>
+          <span>Selection</span>
+          <strong>{selectedTitle}</strong>
+        </div>
+        <div>
+          <span>Status</span>
+          <strong>{props.validation?.message ?? (selected ? "Saved annotation." : "Waiting")}</strong>
+        </div>
+        <div>
+          <span>Size</span>
+          <strong>{formatDimension(size.width)} x {formatDimension(size.height)}</strong>
+        </div>
+        <div>
+          <span>Saved</span>
+          <strong>{props.annotations.length}</strong>
+        </div>
+      </div>
+
+      {props.annotations.length > 0 ? (
+        <div className="vacuum-room-zone-list">
+          {props.annotations.map((annotation) => (
+            <button
+              key={annotation.id}
+              type="button"
+              className={`vacuum-room-zone-list__item${annotation.id === selected?.id ? " vacuum-room-zone-list__item--active" : ""}`}
+              onClick={() => props.onSelect(annotation.id)}
+            >
+              <span>{annotation.name}</span>
+              <small>{annotation.kind}</small>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="vacuum-clean-area-copy">No saved rooms or zones on this map.</p>
+      )}
+
+      <div className="vacuum-actions">
+        <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onActivateTool}>
+          {props.toolActive ? "Done drawing" : props.draftRect ? "Edit draft" : "Draw area"}
+        </button>
+        <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onSave} disabled={!props.canSave}>
+          Save
+        </button>
+        <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDelete} disabled={!selected}>
+          Delete
+        </button>
+        <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onClearDraft} disabled={!props.draftRect && !selected && !props.toolActive}>
+          Clear
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function capabilityLabel(capability: CapabilitySupport): string {
   if (capability.supported) {
     return "Available";
@@ -1249,7 +1404,14 @@ export function VacuumControlPanel() {
   const [missionCommandError, setMissionCommandError] = useState<string | null>(null);
   const [cleanAreaCoveredCellKeys, setCleanAreaCoveredCellKeys] = useState<Set<string>>(() => new Set());
   const [cleanAreaMissionTarget, setCleanAreaMissionTarget] = useState<CleanAreaCoverageTarget | null>(null);
-  const [activeMode, setActiveMode] = useState<"mapping" | "navigation" | "clean">("navigation");
+  const [roomZoneToolActive, setRoomZoneToolActive] = useState(false);
+  const [roomZoneDraftKind, setRoomZoneDraftKind] = useState<VacuumMapAnnotationKind>("room");
+  const [roomZoneDraftName, setRoomZoneDraftName] = useState("Kitchen");
+  const [roomZoneDraftRect, setRoomZoneDraftRect] = useState<CleanAreaRect | null>(null);
+  const [roomZoneValidation, setRoomZoneValidation] = useState<CleanAreaValidation | null>(null);
+  const [selectedRoomZoneId, setSelectedRoomZoneId] = useState<string | null>(null);
+  const [roomZoneCommandError, setRoomZoneCommandError] = useState<string | null>(null);
+  const [activeMode, setActiveMode] = useState<VacuumControlMode>("navigation");
   const [dismissedNavigationTargetKey, setDismissedNavigationTargetKey] = useState<string | null>(null);
   const [dismissedCoverageMissionId, setDismissedCoverageMissionId] = useState<string | null>(null);
   const goalStartTimeRef = useRef<number | null>(null);
@@ -1272,6 +1434,8 @@ export function VacuumControlPanel() {
   const resumeMissionSupported = snapshot.capabilities.resume_mission.supported;
   const retryMissionStepSupported = snapshot.capabilities.retry_mission_step.supported;
   const skipMissionStepSupported = snapshot.capabilities.skip_mission_step.supported;
+  const roomSemanticsSupported = snapshot.capabilities.room_semantics.supported;
+  const zoneSemanticsSupported = snapshot.capabilities.zone_semantics.supported;
   const mappingStatus = snapshot.mapping;
   const mappingState = mapAdapterMappingState(mappingStatus.state);
   const autoMappingSupported = snapshot.capabilities.auto_mapping.supported;
@@ -1301,6 +1465,8 @@ export function VacuumControlPanel() {
       }),
     [cleanAreaCoverageConfig.cleaningSwathWidthM, cleanAreaCoverageTarget, cleanAreaCoveredCellKeys],
   );
+  const roomZoneAnnotations = snapshot.map.annotations;
+  const selectedRoomZone = roomZoneAnnotations.find((annotation) => annotation.id === selectedRoomZoneId) ?? null;
 
   const activeMissionType = snapshot.activeMission?.type ?? null;
   const activeNavigationMission = snapshot.activeMission?.type === "navigation" ? snapshot.activeMission : null;
@@ -1487,7 +1653,13 @@ export function VacuumControlPanel() {
   const recoveryLabel = formatRecoveries(recoveryCount);
   const recoveryWarning = recoveryCount != null && recoveryCount > 0;
   const modeBreadcrumb =
-    activeMode === "mapping" ? "Mapping" : activeMode === "clean" ? "Clean Area" : "Navigate";
+    activeMode === "mapping"
+      ? "Mapping"
+      : activeMode === "clean"
+        ? "Clean Area"
+        : activeMode === "rooms"
+          ? "Rooms / Zones"
+          : "Navigate";
 
   const isMappingWorkflowActive =
     mappingState === "mapping" || mappingState === "paused" || mappingState === "review";
@@ -1511,6 +1683,7 @@ export function VacuumControlPanel() {
   const isCleanAreaActive = isRuntimeCoverageActive || isCleanAreaRunning || displayedCleanAreaState === "paused";
   const hasCleanAreaDraft = Boolean(displayedCleanAreaRect) && displayedCleanAreaState !== "idle";
   const isCleanAreaModeLocked = isCleanAreaActive || cleanAreaToolActive;
+  const isRoomZoneModeLocked = roomZoneToolActive;
   const cleanAreaVisualState = getCleanAreaVisualState(displayedCleanAreaState, cleanAreaToolActive);
   const cleanAreaPreviewPoints =
     displayedCleanAreaWaypoints.length > 0
@@ -1579,6 +1752,12 @@ export function VacuumControlPanel() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (selectedRoomZoneId && !roomZoneAnnotations.some((annotation) => annotation.id === selectedRoomZoneId)) {
+      setSelectedRoomZoneId(null);
+    }
+  }, [roomZoneAnnotations, selectedRoomZoneId]);
+
   const isTerminalState =
     routeVisualState === "completed" || routeVisualState === "failed" || routeVisualState === "canceled";
   const runTarget = displayedDraftTarget ?? (isTerminalState ? displayedSentTarget : null);
@@ -1598,6 +1777,10 @@ export function VacuumControlPanel() {
         !isMappingWorkflowActive;
   const canPauseCleanArea = Boolean(activeCoverageMission?.availableActions.includes("pause_mission")) && pauseMissionSupported;
   const canCancelCleanArea = Boolean(activeCoverageMission?.availableActions.includes("cancel_mission")) && cancelMissionSupported;
+  const canSaveRoomZone =
+    Boolean(roomZoneDraftRect) &&
+    Boolean(roomZoneValidation?.ok) &&
+    (roomZoneDraftKind === "room" ? roomSemanticsSupported : zoneSemanticsSupported);
 
   const handleCleanAreaChange = useCallback((rect: CleanAreaRect, validation: CleanAreaValidation): void => {
     if (!cleanAreaToolActive && cleanAreaState !== "idle" && cleanAreaState !== "editing") {
@@ -1628,6 +1811,21 @@ export function VacuumControlPanel() {
     });
   }, [cleanAreaCoverageConfig, cleanAreaState, cleanAreaToolActive, snapshot.map.grid]);
 
+  const handleRoomZoneChange = useCallback((rect: CleanAreaRect, validation: CleanAreaValidation): void => {
+    setRoomZoneDraftRect(rect);
+    setRoomZoneValidation(validation);
+    setRoomZoneCommandError(validation.ok ? null : validation.message);
+    setSelectedRoomZoneId(null);
+  }, []);
+
+  function handleMapAreaChange(rect: CleanAreaRect, validation: CleanAreaValidation): void {
+    if (activeMode === "rooms") {
+      handleRoomZoneChange(rect, validation);
+      return;
+    }
+    handleCleanAreaChange(rect, validation);
+  }
+
   async function handleSend(overrideTarget?: DraftTarget): Promise<void> {
     const target = overrideTarget ?? runTarget;
     if (!target) {
@@ -1654,7 +1852,7 @@ export function VacuumControlPanel() {
   }
 
   function handleTargetStart(target: DraftTarget): void {
-    if (isMappingWorkflowActive || cleanAreaToolActive || isCleanAreaActive) {
+    if (isMappingWorkflowActive || cleanAreaToolActive || roomZoneToolActive || isCleanAreaActive) {
       return;
     }
     setSentTarget(null);
@@ -1662,7 +1860,7 @@ export function VacuumControlPanel() {
   }
 
   function handleTargetRotate(yaw: number): void {
-    if (isMappingWorkflowActive || cleanAreaToolActive || isCleanAreaActive) {
+    if (isMappingWorkflowActive || cleanAreaToolActive || roomZoneToolActive || isCleanAreaActive) {
       return;
     }
     setDraftTarget((current) => {
@@ -1823,6 +2021,81 @@ export function VacuumControlPanel() {
     setSentTarget(null);
   }
 
+  function handleActivateRoomZoneTool(): void {
+    if (isGoalActive || isMappingWorkflowActive || isCleanAreaActive) {
+      return;
+    }
+    if (roomZoneToolActive) {
+      setRoomZoneToolActive(false);
+      return;
+    }
+    setActiveMode("rooms");
+    setRoomZoneToolActive(true);
+    setRoomZoneCommandError(null);
+    setSelectedRoomZoneId(null);
+    setDraftTarget(null);
+    setSentTarget(null);
+  }
+
+  async function handleSaveRoomZone(): Promise<void> {
+    if (!canSaveRoomZone || !roomZoneDraftRect) {
+      return;
+    }
+    const now = Date.now();
+    const trimmedName = roomZoneDraftName.trim();
+    const annotation: Omit<VacuumMapAnnotation, "createdAt" | "updatedAt"> = {
+      id: `${roomZoneDraftKind}-${now}`,
+      kind: roomZoneDraftKind,
+      name: trimmedName || (roomZoneDraftKind === "room" ? "Room" : "Zone"),
+      area: cleanAreaRectToAnnotationArea(roomZoneDraftRect),
+      mapId: currentMapAnnotationId(snapshot),
+    };
+    setRoomZoneCommandError(null);
+    const result = await adapter.sendCommand({ command: "save_map_annotation", annotation });
+    if (!result.ok) {
+      setRoomZoneCommandError(result.error.message);
+      return;
+    }
+    setSelectedRoomZoneId(annotation.id);
+    setRoomZoneDraftRect(null);
+    setRoomZoneValidation(null);
+    setRoomZoneToolActive(false);
+  }
+
+  function handleSelectRoomZone(id: string): void {
+    const annotation = roomZoneAnnotations.find((entry) => entry.id === id);
+    setSelectedRoomZoneId(id);
+    setRoomZoneDraftRect(null);
+    setRoomZoneValidation(null);
+    setRoomZoneToolActive(false);
+    setRoomZoneCommandError(null);
+    if (annotation) {
+      setRoomZoneDraftKind(annotation.kind);
+      setRoomZoneDraftName(annotation.name);
+    }
+  }
+
+  async function handleDeleteRoomZone(): Promise<void> {
+    if (!selectedRoomZone) {
+      return;
+    }
+    setRoomZoneCommandError(null);
+    const result = await adapter.sendCommand({ command: "delete_map_annotation", id: selectedRoomZone.id });
+    if (!result.ok) {
+      setRoomZoneCommandError(result.error.message);
+      return;
+    }
+    setSelectedRoomZoneId(null);
+  }
+
+  function handleClearRoomZoneDraft(): void {
+    setSelectedRoomZoneId(null);
+    setRoomZoneDraftRect(null);
+    setRoomZoneValidation(null);
+    setRoomZoneToolActive(false);
+    setRoomZoneCommandError(null);
+  }
+
   function handleConfirmCleanArea(): void {
     if (!cleanAreaRect || !cleanAreaValidation?.ok) {
       return;
@@ -1957,6 +2230,8 @@ export function VacuumControlPanel() {
   useEffect(() => {
     if (isMappingWorkflowActive) {
       setActiveMode("mapping");
+    } else if (roomZoneToolActive) {
+      setActiveMode("rooms");
     } else if (isCleanAreaActive || cleanAreaToolActive || activeCoverageMission) {
       setActiveMode("clean");
     } else if (activeMode === "clean" && hasCleanAreaDraft) {
@@ -1973,8 +2248,18 @@ export function VacuumControlPanel() {
     isMappingWorkflowActive,
     isCleanAreaActive,
     cleanAreaToolActive,
+    roomZoneToolActive,
     isGoalActive,
   ]);
+
+  const mapCleanAreaRect = activeMode === "rooms" ? roomZoneDraftRect : displayedCleanAreaRect;
+  const mapCleanAreaCoverage = activeMode === "rooms" ? null : displayedCleanAreaCoverage;
+  const mapCleanAreaToolActive = activeMode === "rooms" ? roomZoneToolActive : cleanAreaToolActive;
+  const mapCleanAreaEditable = activeMode === "rooms" ? roomZoneToolActive : cleanAreaToolActive;
+  const mapCleanAreaVisualState = activeMode === "rooms"
+    ? roomZoneToolActive ? "editing" : roomZoneDraftRect ? "confirmed" : "idle"
+    : cleanAreaVisualState;
+  const mapCleanAreaPreviewPoints = activeMode === "rooms" ? null : cleanAreaPreviewPoints;
 
   return (
     <div className="vacuum-shell">
@@ -2059,23 +2344,27 @@ export function VacuumControlPanel() {
             planPoints={displayedPlanPoints}
             draftTarget={displayedDraftTarget}
             sentTarget={displayedSentTarget}
-            cleanAreaRect={displayedCleanAreaRect}
-            cleanAreaPreviewPoints={cleanAreaPreviewPoints}
+            cleanAreaRect={mapCleanAreaRect}
+            cleanAreaPreviewPoints={mapCleanAreaPreviewPoints}
             cleanAreaCurrentIndex={displayedCleanAreaCurrentIndex}
-            cleanAreaCoverage={displayedCleanAreaCoverage}
-            cleanAreaToolActive={cleanAreaToolActive}
-            cleanAreaVisualState={cleanAreaVisualState}
+            cleanAreaCoverage={mapCleanAreaCoverage}
+            cleanAreaToolActive={mapCleanAreaToolActive}
+            cleanAreaEditable={mapCleanAreaEditable}
+            cleanAreaVisualState={mapCleanAreaVisualState}
+            mapAnnotations={activeMode === "rooms" && !roomZoneToolActive ? roomZoneAnnotations : []}
+            selectedMapAnnotationId={selectedRoomZoneId}
             interactionMode={activeMode}
             routeVisualState={routeVisualState}
             isGoalActive={isGoalActive}
             mappingState={mappingState}
-            disableTargetSelection={activeMode !== "navigation" || isMappingWorkflowActive || cleanAreaToolActive || isCleanAreaActive}
+            disableTargetSelection={activeMode !== "navigation" || isMappingWorkflowActive || cleanAreaToolActive || roomZoneToolActive || isCleanAreaActive}
             targetDistance={destinationDistance}
             adapterMapGrid={snapshot.map.grid}
             adapterMapMetadata={snapshot.map.metadata}
             onTargetStart={handleTargetStart}
             onTargetRotate={handleTargetRotate}
-            onCleanAreaChange={handleCleanAreaChange}
+            onCleanAreaChange={handleMapAreaChange}
+            onMapAnnotationSelect={handleSelectRoomZone}
             onMapMetadataChange={setMapMetadata}
           />
 
@@ -2089,8 +2378,8 @@ export function VacuumControlPanel() {
                   type="button"
                   className={`vacuum-mode-tab vacuum-mode-tab--mapping${activeMode === "mapping" ? " vacuum-mode-tab--active" : ""}`}
                   onClick={() => { setActiveMode("mapping"); }}
-                  disabled={isCleanAreaModeLocked || (isGoalActive && !isMappingWorkflowActive)}
-                  title={isCleanAreaModeLocked ? "Finish clean area first" : isGoalActive && !isMappingWorkflowActive ? "Stop navigation first" : "Mapping"}
+                  disabled={isCleanAreaModeLocked || isRoomZoneModeLocked || (isGoalActive && !isMappingWorkflowActive)}
+                  title={isCleanAreaModeLocked ? "Finish clean area first" : isRoomZoneModeLocked ? "Finish room or zone editing first" : isGoalActive && !isMappingWorkflowActive ? "Stop navigation first" : "Mapping"}
                 >
                   <MappingModeIcon className="vacuum-mode-tab__icon" />
                   <span>Mapping</span>
@@ -2099,8 +2388,8 @@ export function VacuumControlPanel() {
                   type="button"
                   className={`vacuum-mode-tab vacuum-mode-tab--navigation${activeMode === "navigation" ? " vacuum-mode-tab--active" : ""}`}
                   onClick={() => { setActiveMode("navigation"); }}
-                  disabled={isMappingWorkflowActive || isCleanAreaModeLocked}
-                  title={isMappingWorkflowActive ? "Finish mapping first" : isCleanAreaModeLocked ? "Finish clean area first" : "Navigate"}
+                  disabled={isMappingWorkflowActive || isCleanAreaModeLocked || isRoomZoneModeLocked}
+                  title={isMappingWorkflowActive ? "Finish mapping first" : isCleanAreaModeLocked ? "Finish clean area first" : isRoomZoneModeLocked ? "Finish room or zone editing first" : "Navigate"}
                 >
                   <NavigateModeIcon className="vacuum-mode-tab__icon" />
                   <span>Navigate</span>
@@ -2109,11 +2398,21 @@ export function VacuumControlPanel() {
                   type="button"
                   className={`vacuum-mode-tab vacuum-mode-tab--clean${activeMode === "clean" ? " vacuum-mode-tab--active" : ""}`}
                   onClick={() => { setActiveMode("clean"); }}
-                  disabled={isMappingWorkflowActive || (isGoalActive && !isCleanAreaActive)}
-                  title={isMappingWorkflowActive ? "Finish mapping first" : isGoalActive && !isCleanAreaActive ? "Stop navigation first" : "Clean area"}
+                  disabled={isMappingWorkflowActive || isRoomZoneModeLocked || (isGoalActive && !isCleanAreaActive)}
+                  title={isMappingWorkflowActive ? "Finish mapping first" : isRoomZoneModeLocked ? "Finish room or zone editing first" : isGoalActive && !isCleanAreaActive ? "Stop navigation first" : "Clean area"}
                 >
                   <CleanModeIcon className="vacuum-mode-tab__icon" />
                   <span>Clean area</span>
+                </button>
+                <button
+                  type="button"
+                  className={`vacuum-mode-tab vacuum-mode-tab--rooms${activeMode === "rooms" ? " vacuum-mode-tab--active" : ""}`}
+                  onClick={() => { setActiveMode("rooms"); }}
+                  disabled={isMappingWorkflowActive || isCleanAreaModeLocked || (isGoalActive && !isCleanAreaActive)}
+                  title={isMappingWorkflowActive ? "Finish mapping first" : isCleanAreaModeLocked ? "Finish clean area first" : isGoalActive && !isCleanAreaActive ? "Stop navigation first" : "Rooms and zones"}
+                >
+                  <RoomsModeIcon className="vacuum-mode-tab__icon" />
+                  <span>Rooms</span>
                 </button>
               </div>
             </div>
@@ -2320,6 +2619,33 @@ export function VacuumControlPanel() {
                   disabled={isCleanAreaActive}
                   disabledReason="Stop the cleaning run before using manual control."
                 />
+              </div>
+            )}
+
+            {/* ── Rooms / Zones mode ── */}
+            {activeMode === "rooms" && (
+              <div className="vacuum-mode-content">
+                <RoomZonesCard
+                  annotations={roomZoneAnnotations}
+                  selectedAnnotation={selectedRoomZone}
+                  toolActive={roomZoneToolActive}
+                  draftKind={roomZoneDraftKind}
+                  draftName={roomZoneDraftName}
+                  draftRect={roomZoneDraftRect}
+                  validation={roomZoneValidation}
+                  commandError={roomZoneCommandError}
+                  roomSemanticsSupported={roomSemanticsSupported}
+                  zoneSemanticsSupported={zoneSemanticsSupported}
+                  canSave={canSaveRoomZone}
+                  onDraftKindChange={setRoomZoneDraftKind}
+                  onDraftNameChange={setRoomZoneDraftName}
+                  onActivateTool={handleActivateRoomZoneTool}
+                  onSave={() => void handleSaveRoomZone()}
+                  onSelect={handleSelectRoomZone}
+                  onDelete={() => void handleDeleteRoomZone()}
+                  onClearDraft={handleClearRoomZoneDraft}
+                />
+                <TeleopCard disabled={isCleanAreaActive} disabledReason="Stop the active mission before using manual control." />
               </div>
             )}
 

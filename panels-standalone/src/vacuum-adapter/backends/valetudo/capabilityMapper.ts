@@ -104,6 +104,15 @@ export function mapValetudoCapabilities(
   capabilities.coverage_mission = unsupportedCapability(
     "Coverage missions must be mapped through zone, segment, or explicit unsupported behavior in the Layer 6 runtime.",
   );
+  capabilities.map_annotations = unsupportedCapability(
+    "Map annotation persistence must be implemented by the Valetudo integration runtime before use.",
+  );
+  capabilities.room_semantics = unsupportedCapability(
+    "Valetudo room semantics must be mapped from vendor segments or adapter-owned annotations in Layer 6.",
+  );
+  capabilities.zone_semantics = unsupportedCapability(
+    "Valetudo zone semantics must be mapped from vendor zones or adapter-owned annotations in Layer 6.",
+  );
   capabilities.start_coverage = unsupportedCapability(
     "Coverage missions must be mapped through zone, segment, or explicit unsupported behavior in the Layer 6 runtime.",
   );

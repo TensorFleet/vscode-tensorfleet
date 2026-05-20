@@ -5,7 +5,7 @@ import { useNav2Runtime } from "../../../components/Nav2/runtime/useNav2Runtime"
 import type { VacuumAdapter } from "../../adapter";
 import type { VacuumCommand, VacuumCommandResult } from "../../commands";
 import { buildVacuumMapMetadata, parseVacuumMapGrid } from "../../mapGrid";
-import type { VacuumGoalCoordinates, VacuumMapGrid, VacuumMappingStatus, VacuumMissionSnapshot, VacuumSavedMapSummary } from "../../state";
+import type { VacuumGoalCoordinates, VacuumMapAnnotation, VacuumMapGrid, VacuumMappingStatus, VacuumMissionSnapshot, VacuumSavedMapSummary } from "../../state";
 import { MAPPING_STATUS_TOPIC, MISSION_SERVICE_NAMES, MISSION_STATUS_TOPIC } from "./capabilityMapper";
 import { dispatchTurtleBot4Nav2Command } from "./commandDispatcher";
 import { mapTurtleBot4Nav2State } from "./stateMapper";
@@ -13,6 +13,61 @@ import { mapTurtleBot4Nav2State } from "./stateMapper";
 function toFiniteNumber(value: unknown): number | null {
   const numeric = typeof value === "string" ? Number(value) : value;
   return typeof numeric === "number" && Number.isFinite(numeric) ? numeric : null;
+}
+
+function readStoredAnnotations(storageKey: string): VacuumMapAnnotation[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.flatMap((entry): VacuumMapAnnotation[] => {
+      if (!entry || typeof entry !== "object") {
+        return [];
+      }
+      const record = entry as Partial<VacuumMapAnnotation>;
+      if (
+        typeof record.id !== "string" ||
+        (record.kind !== "room" && record.kind !== "zone") ||
+        typeof record.name !== "string" ||
+        !record.area ||
+        typeof record.area !== "object"
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: record.id,
+          kind: record.kind,
+          name: record.name,
+          area: record.area as VacuumMapAnnotation["area"],
+          mapId: typeof record.mapId === "string" ? record.mapId : null,
+          createdAt: toFiniteNumber(record.createdAt) ?? Date.now(),
+          updatedAt: toFiniteNumber(record.updatedAt) ?? Date.now(),
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredAnnotations(storageKey: string, annotations: VacuumMapAnnotation[]): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(annotations));
+  } catch {
+    // Annotation durability is best-effort until VM-owned persistence lands.
+  }
 }
 
 function parseMappingStatus(message: Record<string, unknown> | null): VacuumMappingStatus | null {
@@ -316,6 +371,7 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   const [mapLastUpdateAt, setMapLastUpdateAt] = useState<number | null>(null);
   const [mappingStatus, setMappingStatus] = useState<VacuumMappingStatus | null>(null);
   const [missionStatus, setMissionStatus] = useState<VacuumMissionSnapshot | null>(null);
+  const [annotations, setAnnotations] = useState<VacuumMapAnnotation[]>([]);
   const runtimeRef = useRef(runtime);
   runtimeRef.current = runtime;
 
@@ -390,6 +446,14 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   }, [fetchMissionSnapshot, runtime.availableServices]);
 
   const mapMetadata = useMemo(() => buildVacuumMapMetadata(mapGrid, mapLastUpdateAt), [mapGrid, mapLastUpdateAt]);
+  const annotationStorageKey = useMemo(
+    () => `tensorfleet:vacuums:turtlebot4-nav2:map-annotations:${mappingStatus?.activeMapName ?? mappingStatus?.loadedMapPath ?? mappingStatus?.savedMapPath ?? "live-map"}`,
+    [mappingStatus?.activeMapName, mappingStatus?.loadedMapPath, mappingStatus?.savedMapPath],
+  );
+
+  useEffect(() => {
+    setAnnotations(readStoredAnnotations(annotationStorageKey));
+  }, [annotationStorageKey]);
 
   const snapshot = useMemo(
     () =>
@@ -401,12 +465,52 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
         mapMetadata,
         mapping: mappingStatus,
         mission: missionStatus,
+        annotations,
       }),
-    [currentTarget, initialDistance, mapGrid, mapMetadata, mappingStatus, missionStatus, runtime],
+    [annotations, currentTarget, initialDistance, mapGrid, mapMetadata, mappingStatus, missionStatus, runtime],
   );
 
   const sendCommand = useCallback(
     async (command: VacuumCommand): Promise<VacuumCommandResult> => {
+      if (command.command === "save_map_annotation") {
+        if (!snapshot.capabilities.map_annotations.supported) {
+          return {
+            ok: false,
+            command: command.command,
+            error: {
+              code: "unsupported",
+              command: command.command,
+              message: "Map annotations are not supported by this backend.",
+            },
+          };
+        }
+        const now = Date.now();
+        const annotation: VacuumMapAnnotation = {
+          ...command.annotation,
+          name: command.annotation.name.trim() || (command.annotation.kind === "room" ? "Room" : "Zone"),
+          createdAt: command.annotation.createdAt ?? now,
+          updatedAt: now,
+        };
+        setAnnotations((current) => {
+          const existing = current.find((entry) => entry.id === annotation.id);
+          const nextAnnotation = existing ? { ...annotation, createdAt: existing.createdAt } : annotation;
+          const next = [...current.filter((entry) => entry.id !== annotation.id), nextAnnotation]
+            .sort((a, b) => a.name.localeCompare(b.name));
+          writeStoredAnnotations(annotationStorageKey, next);
+          return next;
+        });
+        return { ok: true, command: command.command, message: "Saved map annotation." };
+      }
+
+      if (command.command === "delete_map_annotation") {
+        setAnnotations((current) => {
+          const next = current.filter((entry) => entry.id !== command.id);
+          writeStoredAnnotations(annotationStorageKey, next);
+          return next;
+        });
+        return { ok: true, command: command.command, message: "Deleted map annotation." };
+      }
+
       const result = await dispatchTurtleBot4Nav2Command(command, {
         runtime: {
           ...runtimeRef.current,
@@ -436,7 +540,7 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
       }
       return result;
     },
-    [fetchMissionSnapshot, snapshot.capabilities, snapshot.readiness],
+    [annotationStorageKey, fetchMissionSnapshot, snapshot.capabilities, snapshot.readiness],
   );
 
   return {
