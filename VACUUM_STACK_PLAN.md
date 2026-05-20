@@ -473,7 +473,7 @@ Layer 4 must stay above `vacuum_adapter`.
 
 ## Layer 5: Room / Zone Semantics
 
-Status: Milestone 2 implemented.
+Status: Milestone 3 implemented for the TurtleBot4/Nav2 simulation path.
 
 Purpose:
 
@@ -503,6 +503,14 @@ Current prototype:
   cleanability preview.
 - The side panel reports whether the selected target is cleanable, partially
   cleanable, or invalid.
+- Selecting a saved room/zone can start a product-facing
+  `start_room_cleaning` or `start_zone_cleaning` intent.
+- The TurtleBot4/Nav2 adapter translates that intent into the existing
+  runtime-owned coverage mission request while preserving the room/zone label
+  and mission intent in the request payload and optimistic mission snapshot.
+- Active room/zone cleaning hydrates from `snapshot.activeMission`; the UI
+  renders lifecycle/progress state and routes pause/cancel through mission
+  actions.
 - TurtleBot4/Nav2 persists annotations in webview storage keyed to the active
   map identity when available.
 - Valetudo annotation/room/zone semantics remain explicitly unsupported until
@@ -510,8 +518,7 @@ Current prototype:
 
 Still pending for Layer 5:
 
-- `start_room_cleaning` / `start_zone_cleaning` intent commands
-- runtime-owned room/zone cleaning execution through the existing coverage path
+- harden terminal room/zone recent mission summaries across runtime snapshots
 - VM/runtime-owned annotation durability
 
 ## Layer 6: Real Hardware (Valetudo)

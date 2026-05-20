@@ -48,7 +48,6 @@ const UNSUPPORTED_VACUUM_FEATURES: VacuumCapabilityName[] = [
   "return_to_dock",
   "dock_state",
   "segment_cleaning",
-  "zone_cleaning",
   "fan_speed",
   "water_usage",
   "battery",
@@ -63,7 +62,6 @@ export const TURTLEBOT4_NAV2_UNSUPPORTED_COMMANDS: VacuumCommandName[] = [
   "stop",
   "return_to_dock",
   "segment_cleaning",
-  "zone_cleaning",
   "set_fan_speed",
   "set_water_usage",
 ];
@@ -173,6 +171,30 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
     attributes: ["map_annotation", "zone"],
     notes: "Manual zone boundaries can be created and selected on the current map.",
   });
+  capabilities.room_cleaning = hasMissionStartCoverage && hasMissionSetParameters
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["start_room_cleaning", "cancel_mission", "pause_mission", "resume_mission", "retry_mission_step", "skip_mission_step"],
+        attributes: ["room_annotation", "coverage_area", "runtime_route", "active_mission_snapshot"],
+        notes: "Starts a room-oriented product mission that is executed by the VM coverage runtime.",
+      })
+    : unsupportedCapability(
+        hasMissionStartCoverage
+          ? "VM coverage mission runtime parameter service is not advertised."
+          : "VM coverage mission runtime is not advertised.",
+      );
+  capabilities.zone_cleaning = hasMissionStartCoverage && hasMissionSetParameters
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["start_zone_cleaning", "cancel_mission", "pause_mission", "resume_mission", "retry_mission_step", "skip_mission_step"],
+        attributes: ["zone_annotation", "coverage_area", "runtime_route", "active_mission_snapshot"],
+        notes: "Starts a zone-oriented product mission that is executed by the VM coverage runtime.",
+      })
+    : unsupportedCapability(
+        hasMissionStartCoverage
+          ? "VM coverage mission runtime parameter service is not advertised."
+          : "VM coverage mission runtime is not advertised.",
+      );
   capabilities.start_coverage = hasMissionStartCoverage && hasMissionSetParameters
     ? supportedCapability({
         backendCapability: "vacuum_mission_runtime",

@@ -64,7 +64,7 @@ function writeStoredAnnotations(storageKey: string, annotations: VacuumMapAnnota
     return;
   }
   try {
-    window.localStorage.setItem(storageKey, JSON.stringify(annotations));
+    window.localStorage.setItem(storageKey, JSON.stringify(annotations) ?? "[]");
   } catch {
     // Annotation durability is best-effort until VM-owned persistence lands.
   }
@@ -363,6 +363,46 @@ function buildOptimisticCoverageMission(
   };
 }
 
+function buildOptimisticRoomZoneMission(
+  command: Extract<VacuumCommand, { command: "start_room_cleaning" | "start_zone_cleaning" }>,
+  canCancelMission: boolean,
+): VacuumMissionSnapshot {
+  const now = Date.now();
+  const type = command.annotation.kind === "room" ? "room_cleaning" : "zone_cleaning";
+  return {
+    id: `pending-${command.annotation.kind}-cleaning-${now}`,
+    type,
+    status: "preparing",
+    backendSource: "turtlebot4_nav2",
+    startedAt: now,
+    updatedAt: now,
+    requestedCommand: command.command,
+    phase: "dispatching",
+    progress: {
+      percent: null,
+      currentStep: null,
+      totalSteps: null,
+      distanceRemaining: null,
+      areaCoveredSqM: null,
+      areaRemainingSqM: null,
+    },
+    availableActions: canCancelMission ? ["cancel_mission"] : [],
+    result: null,
+    error: null,
+    target: {
+      area: command.annotation.area,
+      annotation: {
+        id: command.annotation.id,
+        kind: command.annotation.kind,
+        name: command.annotation.name,
+        mapId: command.annotation.mapId,
+      },
+      coverage: command.coverage ?? null,
+      route: null,
+    },
+  };
+}
+
 export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   const runtime = useNav2Runtime();
   const [currentTarget, setCurrentTarget] = useState<VacuumGoalCoordinates | null>(null);
@@ -525,6 +565,9 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
         void fetchMissionSnapshot();
       } else if (result.ok && command.command === "start_coverage") {
         setMissionStatus(buildOptimisticCoverageMission(command, snapshot.capabilities.cancel_mission.supported));
+        void fetchMissionSnapshot();
+      } else if (result.ok && (command.command === "start_room_cleaning" || command.command === "start_zone_cleaning")) {
+        setMissionStatus(buildOptimisticRoomZoneMission(command, snapshot.capabilities.cancel_mission.supported));
         void fetchMissionSnapshot();
       } else if (
         result.ok &&

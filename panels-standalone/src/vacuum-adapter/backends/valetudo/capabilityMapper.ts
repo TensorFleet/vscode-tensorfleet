@@ -38,7 +38,7 @@ const VALETUDO_BACKEND_COMMANDS: Partial<Record<VacuumCapabilityName, string[]>>
   go_to_location: ["go_to_location"],
   start_navigation: ["start_navigation"],
   segment_cleaning: ["segment_cleaning"],
-  zone_cleaning: ["zone_cleaning"],
+  zone_cleaning: ["start_zone_cleaning"],
   fan_speed: ["set_fan_speed"],
   water_usage: ["set_water_usage"],
 };
@@ -112,6 +112,12 @@ export function mapValetudoCapabilities(
   );
   capabilities.zone_semantics = unsupportedCapability(
     "Valetudo zone semantics must be mapped from vendor zones or adapter-owned annotations in Layer 6.",
+  );
+  capabilities.room_cleaning = unsupportedCapability(
+    "Valetudo room cleaning must be mapped from vendor segments or adapter-owned annotations in Layer 6.",
+  );
+  capabilities.zone_cleaning = unsupportedCapability(
+    "Valetudo zone cleaning requires explicit Layer 6 geometry mapping before product room/zone commands are enabled.",
   );
   capabilities.start_coverage = unsupportedCapability(
     "Coverage missions must be mapped through zone, segment, or explicit unsupported behavior in the Layer 6 runtime.",

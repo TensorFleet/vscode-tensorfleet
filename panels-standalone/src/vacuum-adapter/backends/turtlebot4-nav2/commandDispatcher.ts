@@ -300,6 +300,79 @@ export async function dispatchTurtleBot4Nav2Command(
     }
   }
 
+  async function setRoomZoneCleaningRequest(
+    command: Extract<VacuumCommand, { command: "start_room_cleaning" | "start_zone_cleaning" }>,
+  ): Promise<VacuumCommandResult | null> {
+    if (!runtime.callService) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "Room/zone cleaning service calls are not available in this runtime."),
+      };
+    }
+    try {
+      const payload: Record<string, unknown> = {
+        area: command.annotation.area,
+        missionType: command.annotation.kind === "room" ? "room_cleaning" : "zone_cleaning",
+        requestedCommand: command.command,
+        annotation: {
+          id: command.annotation.id,
+          kind: command.annotation.kind,
+          name: command.annotation.name,
+          mapId: command.annotation.mapId,
+        },
+      };
+      if (command.route && command.route.length > 0) {
+        payload.route = command.route;
+      }
+      if (command.coverage) {
+        payload.coverage = command.coverage;
+      }
+      const response = await runtime.callService(
+        MISSION_SERVICE_NAMES.setParameters,
+        {
+          parameters: [
+            {
+              name: "coverage_request",
+              value: {
+                type: 4,
+                string_value: JSON.stringify(payload),
+              },
+            },
+          ],
+        },
+        { timeoutMs: 5_000 },
+      );
+      const results = Array.isArray(response?.results) ? response.results : [];
+      const failed = results.find((entry) => entry && typeof entry === "object" && (entry as { successful?: boolean }).successful === false);
+      if (failed) {
+        return {
+          ok: false,
+          command: command.command,
+          error: {
+            code: "backend_error",
+            command: command.command,
+            message:
+              typeof (failed as { reason?: unknown }).reason === "string"
+                ? (failed as { reason: string }).reason
+                : "Room/zone cleaning request parameter update failed.",
+          },
+        };
+      }
+      return null;
+    } catch (error) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "backend_error",
+          command: command.command,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
   if (command.command === "start_navigation") {
     if (!snapshot.capabilities.start_navigation.supported) {
       return {
@@ -352,6 +425,49 @@ export async function dispatchTurtleBot4Nav2Command(
       };
     }
     const setRequestError = await setCoverageRequest(command);
+    if (setRequestError) {
+      return setRequestError;
+    }
+    return await callTriggerService(
+      MISSION_SERVICE_NAMES.startCoverage,
+      command.command,
+      "Coverage mission service calls are not available in this runtime.",
+    );
+  }
+
+  if (command.command === "start_room_cleaning" || command.command === "start_zone_cleaning") {
+    const capability = command.command === "start_room_cleaning" ? snapshot.capabilities.room_cleaning : snapshot.capabilities.zone_cleaning;
+    if (!capability.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, `${command.command} requires the VM coverage mission runtime.`),
+      };
+    }
+    if (!snapshot.readiness.ready) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "not_ready",
+          command: command.command,
+          message: `Adapter not ready to dispatch: ${snapshot.readiness.blockingReasons.join(" ")}`,
+        },
+      };
+    }
+    const expectedKind = command.command === "start_room_cleaning" ? "room" : "zone";
+    if (command.annotation.kind !== expectedKind) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "invalid_request",
+          command: command.command,
+          message: `${command.command} requires a saved ${expectedKind} annotation.`,
+        },
+      };
+    }
+    const setRequestError = await setRoomZoneCleaningRequest(command);
     if (setRequestError) {
       return setRequestError;
     }

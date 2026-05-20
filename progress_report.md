@@ -246,3 +246,123 @@ Implementation review checks:
 
 Milestone 3: add product-facing room/zone cleaning intent commands and map them
 to the existing runtime-owned coverage mission path.
+
+## Progress Report — Room / Zone Semantics Prototype, Milestone 3
+
+### 1. What changed
+
+The operator can now select a saved room or zone and start cleaning it from
+Rooms / Zones mode.
+
+Room/zone cleaning uses product-facing `start_room_cleaning` and
+`start_zone_cleaning` commands. The TurtleBot4/Nav2 adapter translates those
+commands into the existing VM-owned coverage mission path, while preserving the
+selected annotation id, name, kind, and requested mission intent.
+
+### 2. Which mode this affects
+
+- Mapping: unchanged.
+- Navigation: unchanged.
+- Clean Area: unchanged execution machinery; its runtime coverage path is reused.
+- Rooms / Zones: selected saved rooms/zones can now start, pause, and cancel
+  cleaning.
+- Shared adapter/runtime architecture: new room/zone intent commands and
+  capabilities were added without exposing Nav2 concepts to product UI.
+
+### 3. Ownership check
+
+- React/webview state still owns only room/zone draft, selected annotation, and
+  pre-start preview state.
+- Runtime/backend owns active room/zone cleaning after start.
+- UI renders active/terminal cleaning state from `snapshot.activeMission` and
+  `snapshot.mission`.
+- UI submits `start_room_cleaning` or `start_zone_cleaning`; pause/cancel use
+  `pause_mission` and `cancel_mission`.
+
+### 4. Webview close/reopen behavior
+
+- Mapping hydrates from mapping runtime snapshots as before.
+- Navigation hydrates from adapter/runtime mission snapshots as before.
+- Clean Area hydrates from `snapshot.activeMission` as before.
+- Room/zone editing drafts remain local and are not durable.
+- Saved rooms/zones hydrate from adapter annotation state.
+- Active room/zone cleaning hydrates from `snapshot.activeMission`; if the VM
+  runtime reports the mission as coverage but preserves the requested command or
+  annotation target, the UI still treats it as the Rooms / Zones workflow.
+
+State still not durable: in-progress edit drafts and VM-owned annotation
+persistence.
+
+### 5. Real hardware compatibility check
+
+- Product UI does not expose TurtleBot4/Nav2 specifics.
+- Nav2 waypoint sequencing remains private to the TurtleBot4/Nav2 runtime.
+- The same command shape can be implemented by Valetudo later through
+  `room_cleaning` and `zone_cleaning` capabilities.
+- Controls are gated by `room_semantics`, `zone_semantics`, `room_cleaning`,
+  `zone_cleaning`, `mission_state`, `pause_mission`, and `cancel_mission`.
+- Valetudo room/zone cleaning remains explicitly unsupported until Layer 6 maps
+  vendor segments/zones or adapter-owned annotations.
+
+### 6. Feature behavior changed
+
+- User can clean a selected saved room.
+- User can clean a selected saved zone.
+- Room/zone cleaning shows active mission state in Rooms / Zones mode.
+- Pause/cancel controls follow mission action capabilities.
+- Reopened UI can restore active room/zone cleaning from runtime snapshots.
+
+### 7. Files changed
+
+- `panels-standalone/src/vacuum-adapter/commands.ts`
+  - Adds product-facing room/zone cleaning commands.
+- `panels-standalone/src/vacuum-adapter/capabilities.ts`
+  - Adds `room_cleaning` alongside `zone_cleaning`.
+- `panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/*`
+  - Maps room/zone cleaning capabilities and dispatches the new commands
+    through the existing coverage mission runtime.
+- `panels-standalone/src/vacuum-adapter/backends/valetudo/*`
+  - Keeps room/zone cleaning explicitly unsupported for the stub backend.
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
+  - Adds Clean Room/Zone actions and hydrates room/zone active missions.
+- `scripts/vacuum-adapter-regression.ts`
+  - Covers the new command and capability contract.
+- `VACUUM_STACK_PLAN.md`, `steps.md`, `extension.md`, and this file
+  - Record Milestone 3 status.
+
+### 8. Tests / validation run
+
+Passed:
+
+```sh
+npm run test:vacuum-adapter
+npm run build:panels
+```
+
+Also run:
+
+```sh
+npx tsc --noEmit
+npx tsc -p panels-standalone/tsconfig.json --noEmit
+```
+
+Both TypeScript checks are still blocked by existing unrelated workspace issues,
+including unused variables in `packages/tensorfleet-auth/src/oauth-core.ts`,
+missing `tensorfleet-ros` type resolution in standalone panel typecheck, and
+older gzweb/SensorView3D type errors.
+
+### 9. Remaining risks
+
+- VM runtime support for preserving `room_cleaning` / `zone_cleaning` as the
+  confirmed mission type may need hardening; UI currently tolerates runtime
+  snapshots that report coverage with a room/zone requested command.
+- `snapshot.missions.recent` still needs richer room/zone terminal summaries.
+- Annotation durability is still prototype webview storage.
+- Polygon editing/cleaning is not production-ready.
+- Room/zone execution still intentionally uses coverage as the temporary
+  implementation strategy.
+
+### 10. Next recommended step
+
+Milestone 4: harden hydration and recent mission summaries so terminal
+room/zone results remain clearly labeled after webview reopen.

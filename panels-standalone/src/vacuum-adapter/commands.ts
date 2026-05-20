@@ -29,6 +29,8 @@ export type VacuumCommandName =
   | "save_map_annotation"
   | "delete_map_annotation"
   | "start_coverage"
+  | "start_room_cleaning"
+  | "start_zone_cleaning"
   | "pause_mission"
   | "resume_mission"
   | "cancel_mission"
@@ -99,6 +101,18 @@ export type VacuumStartCoverageCommand = {
   };
 };
 
+export type VacuumStartRoomZoneCleaningCommand = {
+  command: "start_room_cleaning" | "start_zone_cleaning";
+  annotation: VacuumMapAnnotation;
+  route?: VacuumGoalCoordinates[];
+  coverage?: {
+    swathWidth?: number;
+    laneSpacing?: number;
+    completionThreshold?: number;
+    boundaryExtension?: number;
+  };
+};
+
 export type VacuumSetFanSpeedCommand = {
   command: "set_fan_speed";
   value: string;
@@ -121,6 +135,8 @@ export type VacuumSimpleCommand = {
     | "save_map_annotation"
     | "delete_map_annotation"
     | "start_coverage"
+    | "start_room_cleaning"
+    | "start_zone_cleaning"
     | "set_fan_speed"
     | "set_water_usage"
   >;
@@ -136,6 +152,7 @@ export type VacuumCommand =
   | VacuumSaveMapAnnotationCommand
   | VacuumDeleteMapAnnotationCommand
   | VacuumStartCoverageCommand
+  | VacuumStartRoomZoneCleaningCommand
   | VacuumSetFanSpeedCommand
   | VacuumSetWaterUsageCommand
   | VacuumSimpleCommand;

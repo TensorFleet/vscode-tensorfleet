@@ -63,8 +63,11 @@ export function mapVacuumCommandToValetudoRequest(
   if (command.command === "segment_cleaning") {
     return unsupported(command.command, "segment_cleaning requires explicit segment ids in a later command payload.");
   }
-  if (command.command === "zone_cleaning") {
-    return unsupported(command.command, "zone_cleaning requires explicit zone geometry in a later command payload.");
+  if (command.command === "start_room_cleaning") {
+    return unsupported(command.command, "Room cleaning requires explicit Valetudo segment or annotation mapping in Layer 6.");
+  }
+  if (command.command === "start_zone_cleaning" || command.command === "zone_cleaning") {
+    return unsupported(command.command, "Zone cleaning requires explicit Valetudo zone geometry mapping in Layer 6.");
   }
   if (command.command === "save_map_annotation" || command.command === "delete_map_annotation") {
     return unsupported(command.command, "Map annotation sessions are not implemented for the Valetudo backend stub.");

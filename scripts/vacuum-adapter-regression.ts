@@ -225,6 +225,38 @@ async function testTurtleBot4Commands(): Promise<void> {
   assert.equal(coverageResult.ok, true);
   assert.deepEqual(serviceCalls.slice(-2), [MISSION_SERVICE_NAMES.setParameters, MISSION_SERVICE_NAMES.startCoverage]);
 
+  const roomCleaningResult = await dispatchTurtleBot4Nav2Command(
+    {
+      command: "start_room_cleaning",
+      annotation: {
+        id: "room-1",
+        kind: "room",
+        name: "Kitchen",
+        area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+        mapId: "lab-map",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    },
+    {
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return name === MISSION_SERVICE_NAMES.setParameters
+            ? { results: [{ successful: true }] }
+            : { success: true, message: name };
+        },
+      },
+      snapshot,
+      setCurrentTarget: () => undefined,
+      setInitialDistance: () => undefined,
+    },
+  );
+
+  assert.equal(roomCleaningResult.ok, true);
+  assert.deepEqual(serviceCalls.slice(-2), [MISSION_SERVICE_NAMES.setParameters, MISSION_SERVICE_NAMES.startCoverage]);
+
   for (const command of [
     { command: "pause_mission" },
     { command: "resume_mission" },
@@ -334,6 +366,8 @@ function testCapabilityCoverage(): void {
   assert.equal(supportedNav2.map_annotations.supported, true);
   assert.equal(supportedNav2.room_semantics.supported, true);
   assert.equal(supportedNav2.zone_semantics.supported, true);
+  assert.equal(supportedNav2.room_cleaning.supported, true);
+  assert.equal(supportedNav2.zone_cleaning.supported, true);
   assert.equal(supportedNav2.start_coverage.supported, true);
   assert.equal(supportedNav2.pause_mission.supported, true);
   assert.equal(supportedNav2.resume_mission.supported, true);
@@ -352,6 +386,8 @@ function testCapabilityCoverage(): void {
   assert.equal(blockedNav2.cancel_navigation.supported, false);
   assert.equal(blockedNav2.mapping_session.supported, false);
   assert.equal(blockedNav2.start_coverage.supported, false);
+  assert.equal(blockedNav2.room_cleaning.supported, false);
+  assert.equal(blockedNav2.zone_cleaning.supported, false);
 
   const valetudo = mapValetudoCapabilities([
     "BasicControlCapability",
@@ -363,6 +399,7 @@ function testCapabilityCoverage(): void {
   assert.equal(valetudo.go_to_location.supported, true);
   assert.equal(valetudo.fan_speed.supported, true);
   assert.equal(valetudo.zone_cleaning.supported, false);
+  assert.equal(valetudo.room_cleaning.supported, false);
   assert.equal(valetudo.map_annotations.supported, false);
   assert.equal(valetudo.room_semantics.supported, false);
   assert.equal(valetudo.zone_semantics.supported, false);
@@ -740,7 +777,18 @@ function testValetudoCommandStub(): void {
     command: "set_water_usage",
     request: { type: "set_water_usage", value: "medium" },
   });
-  const zoneResult = mapVacuumCommandToValetudoRequest({ command: "zone_cleaning" }, capabilities);
+  const zoneResult = mapVacuumCommandToValetudoRequest({
+    command: "start_zone_cleaning",
+    annotation: {
+      id: "zone-1",
+      kind: "zone",
+      name: "Entryway",
+      area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+      mapId: null,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  }, capabilities);
   assert.equal(zoneResult.ok, false);
   const annotationResult = mapVacuumCommandToValetudoRequest({
     command: "save_map_annotation",
@@ -790,6 +838,8 @@ function assertCommandNamesHandled(): void {
     "save_map_annotation",
     "delete_map_annotation",
     "start_coverage",
+    "start_room_cleaning",
+    "start_zone_cleaning",
     "pause_mission",
     "resume_mission",
     "cancel_mission",

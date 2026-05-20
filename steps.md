@@ -116,6 +116,11 @@ What is currently true:
 - Rooms / Zones mode now supports manual rectangular room/zone drafts, naming,
   save/select/delete, map overlays through `snapshot.map.annotations`, and
   selected room/zone cleaning-target preview.
+- Rooms / Zones mode can start a selected saved room or zone through
+  product-facing `start_room_cleaning` / `start_zone_cleaning` commands. The
+  TurtleBot4/Nav2 adapter maps those intents to the existing VM-owned coverage
+  mission runtime while the UI hydrates active state from
+  `snapshot.activeMission`.
 - Terminal navigation snapshots no longer force the panel back into Navigate
   mode after the mission is completed, canceled, or failed.
 

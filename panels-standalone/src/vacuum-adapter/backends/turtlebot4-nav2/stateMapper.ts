@@ -493,10 +493,12 @@ export function mapTurtleBot4Nav2State(
     : null;
   const navigationMissionActive = navigationMission ? ["preparing", "running", "canceling"].includes(navigationMission.status) : false;
   const activeMissionRunning = activeMission ? ["preparing", "running", "canceling", "resuming", "paused", "needs_assistance"].includes(activeMission.status) : false;
+  const activeCleaningMission =
+    activeMission?.type === "coverage" || activeMission?.type === "room_cleaning" || activeMission?.type === "zone_cleaning";
   const missionState =
     activeMission?.type === "navigation" && navigationMissionActive
       ? "navigating"
-      : activeMission?.type === "coverage" && activeMissionRunning
+      : activeCleaningMission && activeMissionRunning
         ? activeMission.status === "paused" || activeMission.status === "needs_assistance"
           ? "paused"
           : "cleaning"
@@ -557,9 +559,13 @@ export function mapTurtleBot4Nav2State(
           : missionState === "navigating"
             ? "Robot is navigating to a selected location."
             : missionState === "cleaning"
-              ? "Robot is cleaning a selected area."
-              : missionState === "paused" && activeMission?.type === "coverage"
-                ? activeMission.error?.message ?? "Area cleaning is paused."
+              ? activeMission?.type === "room_cleaning"
+                ? "Robot is cleaning a selected room."
+                : activeMission?.type === "zone_cleaning"
+                  ? "Robot is cleaning a selected zone."
+                  : "Robot is cleaning a selected area."
+              : missionState === "paused" && activeCleaningMission
+                ? activeMission?.error?.message ?? "Cleaning is paused."
             : (terminalFromMission ?? terminalState)
               ? `Last navigation ${terminalFromMission ?? terminalState}.`
               : "Robot is idle.",

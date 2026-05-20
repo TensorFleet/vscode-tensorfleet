@@ -700,6 +700,9 @@ Live extension validation should cover:
 - second goal after cancel works without reload.
 - mapping controls reflect VM-owned mapping state.
 - Clean Area preview and execution state render correctly.
+- Rooms / Zones create/select/delete flows render from adapter annotations.
+- selected room/zone cleaning starts through the adapter and restores active
+  state from `snapshot.activeMission` after reopening.
 - supporting debug panels can inspect `/scan`, `/odom`, `/tf`, `/tf_static`,
   `/map`, and costmaps.
 
@@ -707,8 +710,6 @@ Live extension validation should cover:
 
 Do not make these the next extension milestone:
 
-- room cleaning UI
-- zone cleaning UI
 - docking workflow UI
 - simulated battery/charging behavior
 - consumables UI
