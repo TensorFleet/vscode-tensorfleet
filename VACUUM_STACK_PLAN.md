@@ -599,6 +599,11 @@ Public backend-neutral capability names include:
 - `start_cleaning`
 - `start_navigation`
 - `start_coverage`
+- `map_annotations`
+- `room_semantics`
+- `zone_semantics`
+- `room_cleaning`
+- `zone_cleaning`
 - `pause`
 - `resume`
 - `stop`
@@ -617,7 +622,6 @@ Public backend-neutral capability names include:
 - `mapping_session`
 - `auto_mapping`
 - `segment_cleaning`
-- `zone_cleaning`
 - `fan_speed`
 - `water_usage`
 - `consumables`
@@ -782,7 +786,11 @@ Current public command names include:
 - `discard_mapping`
 - `accept_map`
 - `load_map`
+- `save_map_annotation`
+- `delete_map_annotation`
 - `start_cleaning`
+- `start_room_cleaning`
+- `start_zone_cleaning`
 - `pause`
 - `resume`
 - `stop`
@@ -799,6 +807,11 @@ Payload rules:
   preferred runtime-owned navigation command
 - `start_coverage` carries a backend-neutral area target; backend route
   generation and progress snapshots remain runtime-owned after start
+- `save_map_annotation` and `delete_map_annotation` carry product-level map
+  annotation state, not backend room/segment identifiers
+- `start_room_cleaning` and `start_zone_cleaning` carry saved map annotations;
+  backend route generation and mission progress remain runtime-owned after
+  start
 - mapping commands carry mode/name where needed
 - setter commands carry selected values explicitly
 - unsupported commands fail predictably
@@ -819,17 +832,28 @@ Initial TurtleBot4/Nav2 supported capabilities can include:
 - map
 - pose
 - `go_to_location`
+- `start_navigation`
+- `start_coverage`
 - `cancel_navigation`
+- `cancel_mission`
+- `pause_mission`
+- `resume_mission`
+- `retry_mission_step`
+- `skip_mission_step`
 - `manual_control`
 - `navigation_status`
 - `mapping_session`
 - `auto_mapping`
+- `map_annotations`
+- `room_semantics`
+- `zone_semantics`
+- `room_cleaning`
+- `zone_cleaning`
 
 Initial TurtleBot4/Nav2 unsupported capabilities include:
 
 - `start_cleaning`
 - `segment_cleaning`
-- `zone_cleaning`
 - `fan_speed`
 - `water_usage`
 - `consumables`
@@ -937,11 +961,11 @@ Completed exit validation:
 
 Scope:
 
+- maintain the current runtime-owned Clean Area simulation flow
 - harden runtime coverage route generation beyond row-level clipping
 - add richer runtime mission summaries for uncovered/skipped cells
 - dock / undock awareness in adapter state/commands
 - battery-aware execution and resume
-- "clean this area" flow end-to-end in simulation
 
 Constraints:
 
@@ -979,8 +1003,9 @@ Scope:
 - exact reproduction of a commercial vacuum UI
 - hardware procurement decisions
 - forcing OpenClaw to be the foundation before the robot stack is stable
-- room cleaning UI before coverage is production-ready
-- zone editor before coverage and segmentation boundaries are clear
+- production-grade room cleaning UI before coverage is production-ready
+- production-grade zone editor before coverage and segmentation boundaries are
+  clear
 - scheduling and consumables before the core mission lifecycle is stable
 
 ## Why TurtleBot4

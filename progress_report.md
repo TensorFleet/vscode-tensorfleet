@@ -1,5 +1,21 @@
 # Runtime-Owned Vacuum Mission Architecture
 
+Current report date: May 21, 2026.
+
+Latest status:
+
+- Layer 5 room/zone semantics is implemented as a TurtleBot4/Nav2 simulation
+  prototype.
+- Saved room/zone annotations hydrate through `snapshot.map.annotations`.
+- Room/zone target preview reuses Clean Area coverage target evaluation and
+  route preview.
+- `start_room_cleaning` and `start_zone_cleaning` dispatch product-facing
+  intents through the runtime-owned coverage mission path.
+- Active room/zone cleaning hydrates from `snapshot.activeMission`; terminal
+  room/zone summaries hydrate from `snapshot.missions.recent`.
+- Remaining durability gaps are VM-owned map annotation persistence and durable
+  mission history.
+
 ## Progress Report — Room / Zone Semantics Prototype, Milestone 1
 
 ### 1. What changed

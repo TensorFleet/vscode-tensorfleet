@@ -139,6 +139,16 @@ Current topics and services used by the panel/runtime:
 - `/vacuum_mapping/save_map`
 - `/vacuum_mapping/load_map`
 - `/vacuum_mapping/list_maps`
+- `/vacuum_mission/status`
+- `/vacuum_mission/start_navigation`
+- `/vacuum_mission/start_coverage`
+- `/vacuum_mission/cancel`
+- `/vacuum_mission/pause`
+- `/vacuum_mission/resume`
+- `/vacuum_mission/retry_step`
+- `/vacuum_mission/skip_step`
+- `/vacuum_mission/get_snapshot`
+- `/vacuum_mission_runtime/set_parameters`
 - `/navigate_to_pose/_action/send_goal`
 - `/navigate_to_pose/_action/get_result`
 - `/navigate_to_pose/_action/cancel_goal`
@@ -152,6 +162,9 @@ Current bridge behavior that extension work can rely on:
 - Foxglove service discovery is available through the extension bridge.
 - Foxglove service-call support tolerates missing request schemas for common
   ROS 2 action service shapes.
+- Mission runtime snapshots hydrate through `/vacuum_mission/status` and
+  `/vacuum_mission/get_snapshot`; mission starts use runtime set-parameters
+  before dispatching the start service.
 - `ros2-bridge.ts` caches the latest message per topic and replays it
   immediately to a new subscriber.
 - `ros2-bridge.ts` accumulates static TF transforms per unique edge and replays

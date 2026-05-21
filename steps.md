@@ -10,7 +10,7 @@ It is not the architecture source of truth. Use `VACUUM_STACK_PLAN.md` for the
 stack architecture and layer plan. Use `extension.md` for VS Code extension
 files, panels, topics, endpoints, and extension follow-up work.
 
-Current report date: May 18, 2026.
+Current report date: May 21, 2026.
 
 ## Runtime-Owned Mission Architecture Progress
 
@@ -62,6 +62,13 @@ Code-only commits in `~/vscode-tensorfleet`:
 - `b87855e` `Polish vacuum operator controls`
 - `d664024` `Refactor VacuumControlPanel and related components`
 - `cc48301` `Add TeleopCard and CameraOverlay to Vacuum Control panel`
+- `e6600d3` `WIP room zone annotations and editable area stabilization`
+- `4a6104a` `Fix clean area callback stability`
+- `ec3e0aa` `Add room zone target preview`
+- `6992671` `Avoid invalid room zone route previews`
+- `be2cddf` `Add room and zone cleaning prototype`
+- `721876f` `Fix room zone resume control`
+- `3fd3e9a` `Add room zone mission summaries`
 
 Code-only commits in `~/firecracker-vm`:
 
@@ -434,8 +441,9 @@ Current limits:
 
 ## Implemented: Room / Zone Semantics Milestone 1
 
-Rooms / Zones is the current Layer 5 prototype path. Milestone 1 adds manual
-annotation state only; it does not start room/zone cleaning missions yet.
+Rooms / Zones is the current Layer 5 prototype path. Milestone 1 added manual
+annotation state only; later milestones added target preview, room/zone
+cleaning commands, active hydration, and recent mission summaries.
 
 Current behavior:
 
@@ -456,13 +464,14 @@ Current limits:
 - Unsaved room/zone drafts are local webview state.
 - Saved annotation persistence is not VM/runtime-owned yet.
 - Room/zone geometry is rectangle-only.
-- Room/zone cleanability preview and cleaning execution are not implemented
-  until later Layer 5 milestones.
+- Room/zone cleanability preview and cleaning execution are implemented by
+  later Layer 5 milestones.
 
 ## Implemented: Room / Zone Semantics Milestone 2
 
 Milestone 2 adds pre-start target selection and preview for saved rooms/zones.
-It still does not start room/zone cleaning missions.
+It did not start room/zone cleaning missions; that execution path is covered by
+Milestones 3 and 4.
 
 Current behavior:
 
@@ -480,7 +489,7 @@ Current behavior:
 Current limits:
 
 - Selection and preview are pre-start UI presentation state.
-- No `room_cleaning` or `zone_cleaning` mission is submitted yet.
+- Cleaning mission submission is handled by Milestones 3 and 4.
 - Polygon annotations are not previewed yet.
 
 ## Implemented: Room / Zone Semantics Milestones 3 and 4
@@ -617,7 +626,6 @@ Production coverage follow-up:
 
 Later layers:
 
-- room / zone semantics
 - Valetudo integration runtime in the VM
 - real hardware validation
 - consumables and scheduling UI
@@ -651,8 +659,6 @@ slice.
 
 Do not make these the immediate milestone:
 
-- room cleaning UI
-- zone cleaning UI
 - docking workflow UI
 - simulated battery/charging behavior
 - consumables UI
