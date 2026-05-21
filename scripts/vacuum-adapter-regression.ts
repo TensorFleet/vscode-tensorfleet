@@ -23,6 +23,7 @@ import {
 } from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/commandDispatcher";
 import {
   MAPPING_SERVICE_NAMES,
+  MAP_ANNOTATION_SERVICE_NAMES,
   MAPPING_STATUS_TOPIC,
   MISSION_SERVICE_NAMES,
   MISSION_STATUS_TOPIC,
@@ -56,7 +57,13 @@ function createRuntime(overrides: Partial<Nav2RuntimeState> = {}): Nav2RuntimeSt
     connectionStatus: "connected",
     connectedAt: 1,
     availableTopics: [{ topic: MISSION_STATUS_TOPIC, type: "std_msgs/msg/String" }],
-    availableServices: [SEND_GOAL_SERVICE, CANCEL_GOAL_SERVICE, ...Object.values(MAPPING_SERVICE_NAMES), ...Object.values(MISSION_SERVICE_NAMES)],
+    availableServices: [
+      SEND_GOAL_SERVICE,
+      CANCEL_GOAL_SERVICE,
+      ...Object.values(MAPPING_SERVICE_NAMES),
+      ...Object.values(MISSION_SERVICE_NAMES),
+      ...Object.values(MAP_ANNOTATION_SERVICE_NAMES),
+    ],
     messageTimestamps: {},
     odomMessage: null,
     poseMessage: null,
@@ -386,6 +393,9 @@ function testCapabilityCoverage(): void {
   assert.equal(blockedNav2.cancel_navigation.supported, false);
   assert.equal(blockedNav2.mapping_session.supported, false);
   assert.equal(blockedNav2.start_coverage.supported, false);
+  assert.equal(blockedNav2.map_annotations.supported, false);
+  assert.equal(blockedNav2.room_semantics.supported, false);
+  assert.equal(blockedNav2.zone_semantics.supported, false);
   assert.equal(blockedNav2.room_cleaning.supported, false);
   assert.equal(blockedNav2.zone_cleaning.supported, false);
 

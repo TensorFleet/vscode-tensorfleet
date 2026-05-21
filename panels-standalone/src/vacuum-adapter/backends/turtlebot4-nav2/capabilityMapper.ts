@@ -39,6 +39,11 @@ export const MISSION_SERVICE_NAMES = {
   getSnapshot: "/vacuum_mission/get_snapshot",
   setParameters: "/vacuum_mission_runtime/set_parameters",
 } as const;
+export const MAP_ANNOTATION_SERVICE_NAMES = {
+  getSnapshot: "/vacuum_map_annotations/get_snapshot",
+  save: "/vacuum_map_annotations/save",
+  delete: "/vacuum_map_annotations/delete",
+} as const;
 
 const UNSUPPORTED_VACUUM_FEATURES: VacuumCapabilityName[] = [
   "start_cleaning",
@@ -95,6 +100,9 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
   const hasMissionRetryStep = runtime.availableServices.includes(MISSION_SERVICE_NAMES.retryStep);
   const hasMissionSkipStep = runtime.availableServices.includes(MISSION_SERVICE_NAMES.skipStep);
   const hasMissionSnapshot = runtime.availableServices.includes(MISSION_SERVICE_NAMES.getSnapshot);
+  const hasMapAnnotationGetSnapshot = runtime.availableServices.includes(MAP_ANNOTATION_SERVICE_NAMES.getSnapshot);
+  const hasMapAnnotationSave = runtime.availableServices.includes(MAP_ANNOTATION_SERVICE_NAMES.save);
+  const hasMapAnnotationDelete = runtime.availableServices.includes(MAP_ANNOTATION_SERVICE_NAMES.delete);
   const hasMissionStatus = runtime.availableTopics.some((topic) => topic.topic === MISSION_STATUS_TOPIC);
 
   capabilities.go_to_location = hasNavigateToPose
@@ -153,24 +161,31 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
           ? "VM coverage mission runtime parameter service is not advertised."
           : "VM coverage mission runtime is not advertised.",
       );
-  capabilities.map_annotations = supportedCapability({
-    backendCapability: "vacuum_adapter map annotations",
-    commands: ["save_map_annotation", "delete_map_annotation"],
-    attributes: ["map_annotations", "room_annotations", "zone_annotations"],
-    notes: "Manual room/zone annotations are product-level map state persisted by the adapter.",
-  });
-  capabilities.room_semantics = supportedCapability({
-    backendCapability: "vacuum_adapter map annotations",
-    commands: ["save_map_annotation", "delete_map_annotation"],
-    attributes: ["map_annotation", "room"],
-    notes: "Manual room boundaries can be created and selected on the current map.",
-  });
-  capabilities.zone_semantics = supportedCapability({
-    backendCapability: "vacuum_adapter map annotations",
-    commands: ["save_map_annotation", "delete_map_annotation"],
-    attributes: ["map_annotation", "zone"],
-    notes: "Manual zone boundaries can be created and selected on the current map.",
-  });
+  const hasMapAnnotations = hasMissionSetParameters && hasMapAnnotationGetSnapshot && hasMapAnnotationSave && hasMapAnnotationDelete;
+  capabilities.map_annotations = hasMapAnnotations
+    ? supportedCapability({
+        backendCapability: "vacuum_map_annotations runtime",
+        commands: ["save_map_annotation", "delete_map_annotation"],
+        attributes: ["map_annotations", "room_annotations", "zone_annotations", "map_identity"],
+        notes: "Manual room/zone annotations are product-level map state persisted by the VM runtime.",
+      })
+    : unsupportedCapability("VM map annotation persistence services are not advertised.");
+  capabilities.room_semantics = hasMapAnnotations
+    ? supportedCapability({
+        backendCapability: "vacuum_map_annotations runtime",
+        commands: ["save_map_annotation", "delete_map_annotation"],
+        attributes: ["map_annotation", "room"],
+        notes: "Manual room boundaries can be created and selected on the current map.",
+      })
+    : unsupportedCapability("VM room annotation persistence services are not advertised.");
+  capabilities.zone_semantics = hasMapAnnotations
+    ? supportedCapability({
+        backendCapability: "vacuum_map_annotations runtime",
+        commands: ["save_map_annotation", "delete_map_annotation"],
+        attributes: ["map_annotation", "zone"],
+        notes: "Manual zone boundaries can be created and selected on the current map.",
+      })
+    : unsupportedCapability("VM zone annotation persistence services are not advertised.");
   capabilities.room_cleaning = hasMissionStartCoverage && hasMissionSetParameters
     ? supportedCapability({
         backendCapability: "vacuum_mission_runtime",

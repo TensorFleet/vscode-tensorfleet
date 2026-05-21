@@ -6,7 +6,7 @@ import type { VacuumAdapter } from "../../adapter";
 import type { VacuumCommand, VacuumCommandResult } from "../../commands";
 import { buildVacuumMapMetadata, parseVacuumMapGrid } from "../../mapGrid";
 import type { VacuumGoalCoordinates, VacuumMapAnnotation, VacuumMapGrid, VacuumMappingStatus, VacuumMissionSnapshot, VacuumSavedMapSummary } from "../../state";
-import { MAPPING_STATUS_TOPIC, MISSION_SERVICE_NAMES, MISSION_STATUS_TOPIC } from "./capabilityMapper";
+import { MAP_ANNOTATION_SERVICE_NAMES, MAPPING_STATUS_TOPIC, MISSION_SERVICE_NAMES, MISSION_STATUS_TOPIC } from "./capabilityMapper";
 import { dispatchTurtleBot4Nav2Command } from "./commandDispatcher";
 import { mapTurtleBot4Nav2State } from "./stateMapper";
 
@@ -15,63 +15,56 @@ function toFiniteNumber(value: unknown): number | null {
   return typeof numeric === "number" && Number.isFinite(numeric) ? numeric : null;
 }
 
-function readStoredAnnotations(storageKey: string): VacuumMapAnnotation[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.flatMap((entry): VacuumMapAnnotation[] => {
-      if (!entry || typeof entry !== "object") {
-        return [];
-      }
-      const record = entry as Partial<VacuumMapAnnotation>;
-      if (
-        typeof record.id !== "string" ||
-        (record.kind !== "room" && record.kind !== "zone") ||
-        typeof record.name !== "string" ||
-        !record.area ||
-        typeof record.area !== "object"
-      ) {
-        return [];
-      }
-      return [
-        {
-          id: record.id,
-          kind: record.kind,
-          name: record.name,
-          area: record.area as VacuumMapAnnotation["area"],
-          mapId: typeof record.mapId === "string" ? record.mapId : null,
-          createdAt: toFiniteNumber(record.createdAt) ?? Date.now(),
-          updatedAt: toFiniteNumber(record.updatedAt) ?? Date.now(),
-        },
-      ];
-    });
-  } catch {
-    return [];
-  }
-}
-
-function writeStoredAnnotations(storageKey: string, annotations: VacuumMapAnnotation[]): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(storageKey, JSON.stringify(annotations) ?? "[]");
-  } catch {
-    // Annotation durability is best-effort until VM-owned persistence lands.
-  }
-}
-
 function isTerminalMissionStatus(status: VacuumMissionSnapshot["status"]): boolean {
   return status === "completed" || status === "failed" || status === "canceled" || status === "unsupported";
+}
+
+function parseMapAnnotation(value: unknown): VacuumMapAnnotation | null {
+  const record = value && typeof value === "object" ? (value as Partial<VacuumMapAnnotation>) : null;
+  if (
+    !record ||
+    typeof record.id !== "string" ||
+    (record.kind !== "room" && record.kind !== "zone") ||
+    typeof record.name !== "string" ||
+    !record.area ||
+    typeof record.area !== "object"
+  ) {
+    return null;
+  }
+  return {
+    id: record.id,
+    kind: record.kind,
+    name: record.name,
+    area: record.area as VacuumMapAnnotation["area"],
+    mapId: typeof record.mapId === "string" ? record.mapId : null,
+    createdAt: toFiniteNumber(record.createdAt) ?? Date.now(),
+    updatedAt: toFiniteNumber(record.updatedAt) ?? Date.now(),
+  };
+}
+
+function parseMapAnnotationServiceResponse(response: Record<string, unknown> | null): VacuumMapAnnotation[] | null {
+  const rawData = response?.message ?? response?.data;
+  if (typeof rawData !== "string") {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(rawData) as Record<string, unknown>;
+    if (!Array.isArray(parsed.annotations)) {
+      return null;
+    }
+    return parsed.annotations.flatMap((entry) => {
+      const annotation = parseMapAnnotation(entry);
+      return annotation ? [annotation] : [];
+    });
+  } catch {
+    return null;
+  }
+}
+
+function assertMapAnnotationServiceSuccess(response: Record<string, unknown> | null, serviceName: string): void {
+  if (response?.success === false) {
+    throw new Error(typeof response.message === "string" ? response.message : `${serviceName} returned failure.`);
+  }
 }
 
 function missionSortTime(mission: VacuumMissionSnapshot): number {
@@ -504,6 +497,11 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   const runtimeRef = useRef(runtime);
   runtimeRef.current = runtime;
 
+  const activeMapId = useMemo(
+    () => mappingStatus?.activeMapName ?? mappingStatus?.loadedMapPath ?? mappingStatus?.savedMapPath ?? "live-map",
+    [mappingStatus?.activeMapName, mappingStatus?.loadedMapPath, mappingStatus?.savedMapPath],
+  );
+
   const fetchMissionSnapshot = useCallback(async (): Promise<void> => {
     if (!ros2Bridge.isConnected()) {
       return;
@@ -521,6 +519,55 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
       // Older runtimes may only publish /vacuum_mission/status.
     }
   }, []);
+
+  const setRuntimeAnnotationRequest = useCallback(async (payload: Record<string, unknown>): Promise<void> => {
+    const response = await ros2Bridge.callService<Record<string, unknown>>(
+      MISSION_SERVICE_NAMES.setParameters,
+      {
+        parameters: [
+          {
+            name: "map_annotation_request",
+            value: {
+              type: 4,
+              string_value: JSON.stringify(payload),
+            },
+          },
+        ],
+      },
+      { timeoutMs: 5_000 },
+    );
+    const results = Array.isArray(response?.results) ? response.results : [];
+    const failed = results.find((entry) => entry && typeof entry === "object" && (entry as { successful?: boolean }).successful === false);
+    if (failed) {
+      throw new Error(
+        typeof (failed as { reason?: unknown }).reason === "string"
+          ? (failed as { reason: string }).reason
+          : "Map annotation request parameter update failed.",
+      );
+    }
+  }, []);
+
+  const fetchRuntimeAnnotations = useCallback(async (mapId: string): Promise<void> => {
+    if (
+      !ros2Bridge.isConnected() ||
+      !runtimeRef.current.availableServices.includes(MISSION_SERVICE_NAMES.setParameters) ||
+      !runtimeRef.current.availableServices.includes(MAP_ANNOTATION_SERVICE_NAMES.getSnapshot)
+    ) {
+      setAnnotations([]);
+      return;
+    }
+    try {
+      await setRuntimeAnnotationRequest({ mapId });
+      const response = await ros2Bridge.callService<Record<string, unknown>>(
+        MAP_ANNOTATION_SERVICE_NAMES.getSnapshot,
+        {},
+        { timeoutMs: 5_000 },
+      );
+      setAnnotations(parseMapAnnotationServiceResponse(response ?? null) ?? []);
+    } catch {
+      setAnnotations([]);
+    }
+  }, [setRuntimeAnnotationRequest]);
 
   useEffect(() => {
     const unsubscribe = ros2Bridge.subscribe({ topic: "/map", type: "nav_msgs/msg/OccupancyGrid" }, (message) => {
@@ -582,14 +629,11 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   }, [fetchMissionSnapshot, runtime.availableServices]);
 
   const mapMetadata = useMemo(() => buildVacuumMapMetadata(mapGrid, mapLastUpdateAt), [mapGrid, mapLastUpdateAt]);
-  const annotationStorageKey = useMemo(
-    () => `tensorfleet:vacuums:turtlebot4-nav2:map-annotations:${mappingStatus?.activeMapName ?? mappingStatus?.loadedMapPath ?? mappingStatus?.savedMapPath ?? "live-map"}`,
-    [mappingStatus?.activeMapName, mappingStatus?.loadedMapPath, mappingStatus?.savedMapPath],
-  );
 
   useEffect(() => {
-    setAnnotations(readStoredAnnotations(annotationStorageKey));
-  }, [annotationStorageKey]);
+    setAnnotations([]);
+    void fetchRuntimeAnnotations(activeMapId);
+  }, [activeMapId, fetchRuntimeAnnotations, runtime.availableServices]);
 
   const snapshot = useMemo(
     () =>
@@ -624,28 +668,66 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
         const now = Date.now();
         const annotation: VacuumMapAnnotation = {
           ...command.annotation,
+          mapId: activeMapId,
           name: command.annotation.name.trim() || (command.annotation.kind === "room" ? "Room" : "Zone"),
           createdAt: command.annotation.createdAt ?? now,
           updatedAt: now,
         };
-        setAnnotations((current) => {
-          const existing = current.find((entry) => entry.id === annotation.id);
-          const nextAnnotation = existing ? { ...annotation, createdAt: existing.createdAt } : annotation;
-          const next = [...current.filter((entry) => entry.id !== annotation.id), nextAnnotation]
-            .sort((a, b) => a.name.localeCompare(b.name));
-          writeStoredAnnotations(annotationStorageKey, next);
-          return next;
-        });
-        return { ok: true, command: command.command, message: "Saved map annotation." };
+        try {
+          await setRuntimeAnnotationRequest({ mapId: activeMapId, annotation });
+          const response = await ros2Bridge.callService<Record<string, unknown>>(
+            MAP_ANNOTATION_SERVICE_NAMES.save,
+            {},
+            { timeoutMs: 5_000 },
+          );
+          assertMapAnnotationServiceSuccess(response ?? null, MAP_ANNOTATION_SERVICE_NAMES.save);
+          const nextAnnotations = parseMapAnnotationServiceResponse(response ?? null);
+          if (nextAnnotations) {
+            setAnnotations(nextAnnotations);
+          } else {
+            await fetchRuntimeAnnotations(activeMapId);
+          }
+          return { ok: true, command: command.command, message: "Saved map annotation." };
+        } catch (error) {
+          return {
+            ok: false,
+            command: command.command,
+            error: {
+              code: "backend_error",
+              command: command.command,
+              message: error instanceof Error ? error.message : String(error),
+            },
+          };
+        }
       }
 
       if (command.command === "delete_map_annotation") {
-        setAnnotations((current) => {
-          const next = current.filter((entry) => entry.id !== command.id);
-          writeStoredAnnotations(annotationStorageKey, next);
-          return next;
-        });
-        return { ok: true, command: command.command, message: "Deleted map annotation." };
+        try {
+          await setRuntimeAnnotationRequest({ mapId: activeMapId, id: command.id });
+          const response = await ros2Bridge.callService<Record<string, unknown>>(
+            MAP_ANNOTATION_SERVICE_NAMES.delete,
+            {},
+            { timeoutMs: 5_000 },
+          );
+          assertMapAnnotationServiceSuccess(response ?? null, MAP_ANNOTATION_SERVICE_NAMES.delete);
+          const nextAnnotations = parseMapAnnotationServiceResponse(response ?? null);
+          if (nextAnnotations) {
+            setAnnotations(nextAnnotations);
+          } else {
+            await fetchRuntimeAnnotations(activeMapId);
+          }
+          return { ok: true, command: command.command, message: "Deleted map annotation." };
+        } catch (error) {
+          return {
+            ok: false,
+            command: command.command,
+            error: {
+              code: "backend_error",
+              command: command.command,
+              message: error instanceof Error ? error.message : String(error),
+            },
+          };
+        }
       }
 
       const result = await dispatchTurtleBot4Nav2Command(command, {
@@ -680,7 +762,7 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
       }
       return result;
     },
-    [annotationStorageKey, fetchMissionSnapshot, snapshot.capabilities, snapshot.readiness],
+    [activeMapId, fetchMissionSnapshot, fetchRuntimeAnnotations, setRuntimeAnnotationRequest, snapshot, snapshot.capabilities, snapshot.readiness],
   );
 
   return {
