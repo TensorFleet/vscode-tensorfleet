@@ -1751,6 +1751,11 @@ body {
   border-color: rgba(88, 211, 141, 0.16);
 }
 
+.vacuum-panel-card--recent-missions {
+  gap: 13px;
+  border-color: rgba(115, 182, 242, 0.16);
+}
+
 .vacuum-panel-card--clean-area-editing,
 .vacuum-panel-card--clean-area-confirmed {
   border-color: rgba(56, 200, 176, 0.2);
@@ -1912,6 +1917,69 @@ body {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
+}
+
+.vacuum-recent-mission-list {
+  display: grid;
+  gap: 8px;
+}
+
+.vacuum-recent-mission {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(232, 226, 214, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.vacuum-recent-mission--completed {
+  border-color: rgba(88, 211, 141, 0.18);
+}
+
+.vacuum-recent-mission--failed,
+.vacuum-recent-mission--canceled,
+.vacuum-recent-mission--unsupported {
+  border-color: rgba(255, 179, 92, 0.18);
+}
+
+.vacuum-recent-mission__main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.vacuum-recent-mission__main strong,
+.vacuum-recent-mission__main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-recent-mission__main strong {
+  color: var(--vacuum-text);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.vacuum-recent-mission__main span,
+.vacuum-recent-mission__meta {
+  color: var(--vacuum-text-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.vacuum-recent-mission__meta {
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .vacuum-room-zone-list__item {

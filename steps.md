@@ -89,8 +89,10 @@ Layer 4 prerequisite: Mapping + Whole Map View
 Layer 4 — Coverage                  Clean Area execution, route generation,
                                     and per-cell progress snapshots are
                                     runtime-owned for TurtleBot4/Nav2
-Layer 5 — Room / Zone Semantics     Milestone 2 implemented:
-                                    manual annotations plus target preview
+Layer 5 — Room / Zone Semantics     prototype implemented:
+                                    manual annotations, target preview,
+                                    room/zone cleaning, hydration, and recent
+                                    summaries
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
 
@@ -121,6 +123,9 @@ What is currently true:
   TurtleBot4/Nav2 adapter maps those intents to the existing VM-owned coverage
   mission runtime while the UI hydrates active state from
   `snapshot.activeMission`.
+- Terminal room/zone cleaning summaries hydrate through
+  `snapshot.missions.recent` and remain visible in Recent Missions after
+  webview reopen.
 - Terminal navigation snapshots no longer force the panel back into Navigate
   mode after the mission is completed, canceled, or failed.
 
@@ -477,6 +482,34 @@ Current limits:
 - Selection and preview are pre-start UI presentation state.
 - No `room_cleaning` or `zone_cleaning` mission is submitted yet.
 - Polygon annotations are not previewed yet.
+
+## Implemented: Room / Zone Semantics Milestones 3 and 4
+
+Milestone 3 adds product-facing room/zone cleaning commands. Milestone 4
+hardens active and terminal room/zone hydration.
+
+Current behavior:
+
+- Selecting a saved room/zone can start `start_room_cleaning` or
+  `start_zone_cleaning`.
+- The TurtleBot4/Nav2 adapter maps room/zone cleaning intents to the existing
+  runtime-owned coverage mission path.
+- The UI renders active room/zone cleaning from `snapshot.activeMission`.
+- Pause, resume, and cancel controls follow mission action capabilities.
+- Terminal room/zone results appear in `snapshot.missions.recent` and render in
+  the Recent Missions card.
+- Recent room/zone summaries preserve annotation labels when the runtime target
+  payload includes them.
+
+Current limits:
+
+- Recent mission persistence is prototype webview storage when the VM runtime
+  does not provide durable mission history.
+- Annotation durability is not VM/runtime-owned yet.
+- Room/zone execution still uses coverage as the temporary implementation
+  strategy.
+- Valetudo support remains explicitly unsupported until Layer 6 maps vendor
+  segments/zones or adapter-owned annotations.
 
 ## Runtime Validation
 

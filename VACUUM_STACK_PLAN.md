@@ -231,6 +231,11 @@ Current implementation note:
 - Coverage route generation and per-cell overlay/progress details are now
   runtime snapshot data for TurtleBot4/Nav2. The UI keeps only draft selection
   and local preview before start.
+- Room/zone cleaning uses the same runtime-owned mission path: the UI submits
+  `start_room_cleaning` or `start_zone_cleaning`, the TurtleBot4/Nav2 backend
+  maps the selected annotation to a coverage target privately, and the UI
+  hydrates active and terminal summaries from `snapshot.activeMission` and
+  `snapshot.missions.recent`.
 
 Current position:
 
@@ -240,7 +245,8 @@ Current position:
 - Layer 3 is closed for TurtleBot4/Nav2 simulation.
 - The Layer 4 prerequisite, Mapping + Whole Map View, is implemented.
 - Layer 4 Clean Area MVP exists above the adapter.
-- Layer 5 and Layer 6 are planned.
+- Layer 5 Room / Zone Semantics prototype is implemented.
+- Layer 6 is planned.
 
 ## Current Layer Structure
 
@@ -255,8 +261,10 @@ Layer 4 prerequisite: Mapping + Whole Map View
 Layer 4 — Coverage                  Clean Area execution, route generation,
                                     and per-cell progress snapshots are
                                     runtime-owned for TurtleBot4/Nav2
-Layer 5 — Room / Zone Semantics     Milestone 2 implemented:
-                                    manual annotations plus target preview
+Layer 5 — Room / Zone Semantics     prototype implemented:
+                                    manual annotations, target preview,
+                                    room/zone cleaning, hydration, and recent
+                                    summaries
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
 
@@ -473,7 +481,7 @@ Layer 4 must stay above `vacuum_adapter`.
 
 ## Layer 5: Room / Zone Semantics
 
-Status: Milestone 3 implemented for the TurtleBot4/Nav2 simulation path.
+Status: prototype implemented for the TurtleBot4/Nav2 simulation path.
 
 Purpose:
 
@@ -511,15 +519,17 @@ Current prototype:
 - Active room/zone cleaning hydrates from `snapshot.activeMission`; the UI
   renders lifecycle/progress state and routes pause/cancel through mission
   actions.
+- Terminal room/zone results hydrate through `snapshot.missions.recent` and
+  render as recent mission summaries after webview reopen.
 - TurtleBot4/Nav2 persists annotations in webview storage keyed to the active
   map identity when available.
 - Valetudo annotation/room/zone semantics remain explicitly unsupported until
   the Layer 6 backend maps them.
 
-Still pending for Layer 5:
+Still pending after the prototype:
 
-- harden terminal room/zone recent mission summaries across runtime snapshots
 - VM/runtime-owned annotation durability
+- VM/runtime-owned durable mission history
 
 ## Layer 6: Real Hardware (Valetudo)
 
@@ -940,13 +950,15 @@ Constraints:
 - UI selection belongs above the contract
 - backend-specific code must keep execution details private behind the adapter
 
-### Layer 5 Milestone: Planned
+### Layer 5 Prototype: Implemented
 
 Scope:
 
 - named rooms/zones
-- room/zone editor or import path
+- manual room/zone editor
+- room/zone target preview
 - translate room/zone requests into Layer 4 coverage goals
+- hydrate active and terminal room/zone missions from adapter snapshots
 - keep public shape backend-neutral even if backend input helps segmentation
 
 ### Layer 6 Milestone: Planned

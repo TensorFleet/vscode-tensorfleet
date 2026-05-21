@@ -366,3 +366,133 @@ older gzweb/SensorView3D type errors.
 
 Milestone 4: harden hydration and recent mission summaries so terminal
 room/zone results remain clearly labeled after webview reopen.
+
+## Progress Report — Room / Zone Semantics Prototype, Milestone 4
+
+### 1. What changed
+
+The operator can now reopen the Vacuum Control webview after a room/zone clean
+and still see the runtime-owned active mission or a recent terminal mission
+summary with the room/zone label.
+
+The TurtleBot4/Nav2 adapter now parses `snapshot.missions.recent` from VM
+mission snapshots when available, keeps terminal mission summaries across
+webview reloads for the prototype path, and exposes them through the normalized
+adapter snapshot.
+
+### 2. Which mode this affects
+
+- Mapping: unchanged.
+- Navigation: unchanged except shared recent mission hydration can preserve
+  terminal mission entries.
+- Clean Area: terminal coverage summaries can appear in recent missions.
+- Rooms / Zones: active and terminal room/zone cleaning state is restored from
+  adapter/runtime snapshots and recent mission history.
+- Shared adapter/runtime architecture: `snapshot.missions.recent` is now used
+  as the product-facing recent mission surface.
+
+### 3. Ownership check
+
+- React/webview state owns only room/zone draft/editing state, selected
+  annotation id, and dismissal/presentation state.
+- Runtime/backend owns active room/zone cleaning after start.
+- UI renders active state from `snapshot.activeMission`.
+- UI renders terminal/recent summaries from `snapshot.missions.recent`.
+- UI submits `start_room_cleaning` or `start_zone_cleaning`; lifecycle actions
+  still use `pause_mission`, `resume_mission`, and `cancel_mission`.
+
+### 4. Webview close/reopen behavior
+
+- Mapping hydrates from adapter/runtime mapping snapshots.
+- Navigation hydrates from adapter/runtime mission snapshots.
+- Clean Area active missions hydrate from `snapshot.activeMission`; terminal
+  coverage entries can appear in recent missions.
+- Room/zone editing drafts remain local and are not durable.
+- Room/zone cleaning hydrates from `snapshot.activeMission` while active and
+  from `snapshot.missions.recent` after terminal completion/failure/cancel.
+
+Still not durable: unsaved room/zone drafts and final VM-owned persistent
+mission history. The TurtleBot4/Nav2 prototype keeps terminal summaries in
+webview storage when the runtime does not provide a durable recent list.
+
+### 5. Real hardware compatibility check
+
+- Product UI does not expose TurtleBot4/Nav2 specifics.
+- Nav2 waypoint sequencing remains private to the TurtleBot4/Nav2 runtime.
+- The same adapter shape can be implemented by Valetudo later by returning
+  normalized active/recent mission snapshots.
+- Controls remain gated by `room_semantics`, `zone_semantics`,
+  `room_cleaning`, `zone_cleaning`, `mission_state`, `pause_mission`,
+  `resume_mission`, and `cancel_mission`.
+- Valetudo room/zone execution remains explicitly unsupported until Layer 6
+  maps vendor segments/zones or adapter-owned annotations.
+
+### 6. Feature behavior changed
+
+- Active room/zone cleaning hydrates after reopening the webview.
+- Terminal room/zone cleaning summaries appear in Recent Missions.
+- Recent mission entries preserve room/zone annotation labels when provided by
+  the runtime target payload.
+- Terminal mission summaries are deduplicated and ordered newest-first.
+
+### 7. Files changed
+
+- `panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/useTurtleBot4Nav2Adapter.ts`
+  - Parses active and recent mission snapshots, merges terminal history, and
+    persists recent terminal summaries for prototype reload hydration.
+- `panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/stateMapper.ts`
+  - Carries recent mission snapshots into `snapshot.missions.recent`.
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
+  - Adds a Recent Missions card for terminal mission summaries.
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.css`
+  - Styles recent mission summary rows.
+- `scripts/vacuum-adapter-regression.ts`
+  - Adds regression coverage for hydrated recent room-cleaning summaries.
+- `VACUUM_STACK_PLAN.md`, `steps.md`, `extension.md`, and this file
+  - Record Layer 5 completion status and remaining risks.
+
+### 8. Tests / validation run
+
+Passed:
+
+```sh
+npm run test:vacuum-adapter
+npm run build:panels
+git diff --check
+```
+
+Blocked by existing unrelated TypeScript errors:
+
+```sh
+npx tsc --noEmit
+```
+
+The repo-wide typecheck still fails on unused variables in
+`packages/tensorfleet-auth/src/oauth-core.ts`, outside the room/zone feature
+path.
+
+Also checked:
+
+```sh
+npm run build
+```
+
+The root package has no `build` script; `build:panels` is the available panel
+build command.
+
+### 9. Remaining risks
+
+- Recent mission persistence is prototype webview storage when the VM runtime
+  does not provide durable `missions.recent`.
+- Unsaved room/zone drafts are still frontend-owned and not durable.
+- Annotation durability is still adapter/webview storage, not VM-owned map
+  annotation persistence.
+- Room/zone execution still intentionally uses coverage as the temporary
+  implementation strategy.
+- Valetudo support remains an explicit unsupported stub.
+
+### 10. Next recommended step
+
+Move the prototype durability boundary into the VM runtime: persist map
+annotations and recent mission summaries with the accepted/loaded map instead
+of relying on webview storage.

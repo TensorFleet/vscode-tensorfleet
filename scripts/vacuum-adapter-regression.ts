@@ -562,6 +562,45 @@ function testStateMapping(): void {
   assert.equal(hydratedCoverageWithAcceptedMap.mission.state, "cleaning");
   assert.equal(hydratedCoverageWithAcceptedMap.activeMission?.type, "coverage");
 
+  const hydratedRecentRoomCleaning = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    recentMissions: [
+      {
+        id: "room-cleaning-1",
+        type: "room_cleaning",
+        status: "completed",
+        backendSource: "turtlebot4_nav2",
+        startedAt: 100,
+        updatedAt: 200,
+        requestedCommand: "start_room_cleaning",
+        phase: "completed",
+        progress: {
+          percent: 1,
+          currentStep: 4,
+          totalSteps: 4,
+          distanceRemaining: 0,
+          areaCoveredSqM: 3,
+          areaRemainingSqM: 0,
+        },
+        availableActions: [],
+        result: {
+          status: "completed",
+          completedAt: 200,
+          summary: "Kitchen completed.",
+        },
+        error: null,
+        target: {
+          area: { shape: "rectangle", minX: 0, minY: 0, maxX: 2, maxY: 2 },
+          annotation: { id: "room-1", kind: "room", name: "Kitchen", mapId: "lab-map" },
+        },
+      },
+    ],
+  });
+  assert.equal(hydratedRecentRoomCleaning.activeMission, null);
+  assert.equal(hydratedRecentRoomCleaning.missions.recent.length, 1);
+  assert.equal(hydratedRecentRoomCleaning.missions.recent[0]?.type, "room_cleaning");
+  assert.equal(hydratedRecentRoomCleaning.missions.recent[0]?.result?.summary, "Kitchen completed.");
+
   const mapping = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "ready" }),
     mapping: {

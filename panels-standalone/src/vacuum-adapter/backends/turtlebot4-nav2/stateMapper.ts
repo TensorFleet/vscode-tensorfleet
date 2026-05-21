@@ -33,6 +33,7 @@ export type TurtleBot4Nav2StateMapperInput = {
   mapMetadata?: VacuumMapMetadata | null;
   mapping?: VacuumMappingStatus | null;
   mission?: VacuumMissionSnapshot | null;
+  recentMissions?: VacuumMissionSnapshot[];
   annotations?: VacuumMapAnnotation[];
 };
 
@@ -190,6 +191,26 @@ function normalizeRuntimeMissionActions(
       return true;
     }),
   };
+}
+
+function missionSortTime(mission: VacuumMissionSnapshot): number {
+  return mission.result?.completedAt ?? mission.updatedAt ?? mission.startedAt ?? 0;
+}
+
+function mergeRecentMissions(missions: VacuumMissionSnapshot[]): VacuumMissionSnapshot[] {
+  const byId = new Map<string, VacuumMissionSnapshot>();
+  for (const mission of missions) {
+    if (mission.status === "idle") {
+      continue;
+    }
+    const existing = byId.get(mission.id);
+    if (!existing || missionSortTime(mission) >= missionSortTime(existing)) {
+      byId.set(mission.id, mission);
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => missionSortTime(b) - missionSortTime(a))
+    .slice(0, 10);
 }
 
 function deriveAvailableMissionActions(
@@ -412,7 +433,7 @@ export function mapTurtleBot4Nav2State(
   input: TurtleBot4Nav2StateMapperInput | Nav2RuntimeState,
   legacyCurrentTarget?: VacuumGoalCoordinates | null,
 ): VacuumAdapterSnapshot {
-  const { runtime, currentTarget, initialDistance, mapGrid, mapMetadata, mapping, mission, annotations } = isMapperInput(input)
+  const { runtime, currentTarget, initialDistance, mapGrid, mapMetadata, mapping, mission, recentMissions, annotations } = isMapperInput(input)
     ? input
     : {
         runtime: input,
@@ -422,6 +443,7 @@ export function mapTurtleBot4Nav2State(
         mapMetadata: null,
         mapping: null,
         mission: null,
+        recentMissions: [],
         annotations: [],
       };
 
@@ -574,7 +596,7 @@ export function mapTurtleBot4Nav2State(
     activeMission,
     missions: {
       active: activeMission,
-      recent: activeMission?.result ? [activeMission] : [],
+      recent: mergeRecentMissions(activeMission?.result ? [activeMission, ...(recentMissions ?? [])] : recentMissions ?? []),
     },
     mapping: normalizedMapping,
     readiness: {

@@ -38,8 +38,10 @@ The extension should:
    adapter-backed `start_coverage` execution and snapshot hydration after
    start.
 6. Treat Rooms / Zones as the current Layer 5 prototype path: saved
-   annotations come from `snapshot.map.annotations`, and selected annotations
-   can be previewed as coverage targets before execution exists.
+   annotations come from `snapshot.map.annotations`, selected annotations can
+   be previewed as coverage targets, active room/zone cleaning hydrates from
+   `snapshot.activeMission`, and terminal summaries hydrate from
+   `snapshot.missions.recent`.
 7. Record panel gaps as extension follow-up work, not as blockers for the
    already-closed Layer 2/Layer 3 simulation slice.
 
@@ -188,6 +190,7 @@ Panel responsibilities:
 - Clean Area controls and visualization
 - Rooms / Zones controls and manual annotation visualization
 - selected room/zone cleaning-target preview
+- selected room/zone cleaning execution and recent summaries
 - teleop and camera PiP inside the operator workflow
 
 Current expectations:
@@ -197,6 +200,8 @@ Current expectations:
   `Rooms / Zones` mode switcher.
 - Saved room/zone annotation state comes from `snapshot.map.annotations`; the
   UI owns only unsaved draft rectangle/name/kind state.
+- Active room/zone cleaning state comes from `snapshot.activeMission`.
+- Terminal room/zone cleaning summaries come from `snapshot.missions.recent`.
 - Mode switching prevents mapping, point navigation, and clean-area runs from
   conflicting.
 - Active navigation missions may auto-select Navigate mode. Terminal navigation
@@ -415,7 +420,7 @@ Current MVP limits:
 
 ## Rooms / Zones UI
 
-Rooms / Zones is the current Layer 5 Milestone 2 prototype inside
+Rooms / Zones is the current Layer 5 prototype inside
 `Vacuum Control`.
 
 Files:
@@ -440,14 +445,21 @@ Current behavior:
   cleanability overlay, and lawnmower route generation.
 - The side panel reports whether the selected target is cleanable, partially
   cleanable, or invalid.
+- Selecting a saved room/zone can start `start_room_cleaning` or
+  `start_zone_cleaning` through the adapter.
+- Active room/zone cleaning hydrates from `snapshot.activeMission`.
+- Terminal room/zone cleaning summaries hydrate from `snapshot.missions.recent`
+  and render in Recent Missions.
 - TurtleBot4/Nav2 stores prototype annotations in webview storage keyed to the
   active map identity where available.
 - Controls are capability-gated through `map_annotations`, `room_semantics`,
-  and `zone_semantics`.
+  `zone_semantics`, `room_cleaning`, `zone_cleaning`, and mission lifecycle
+  capabilities.
 
 Current MVP limits:
 
-- No room/zone cleaning execution is implemented in Milestone 2.
+- Recent mission persistence is prototype webview storage when the VM runtime
+  does not provide durable mission history.
 - Unsaved drafts are local React/webview state and are not durable.
 - Annotation durability is not VM/runtime-owned yet.
 - Geometry is rectangle-only.

@@ -165,6 +165,55 @@ function formatSavedMapTime(timestamp: number | null): string {
   return new Date(timestamp).toLocaleString();
 }
 
+function formatMissionTime(timestamp: number | null): string {
+  if (timestamp == null) {
+    return "unknown";
+  }
+  return new Date(timestamp).toLocaleString();
+}
+
+function getMissionDisplayName(mission: VacuumMissionSnapshot): string {
+  const target = missionTargetRecord(mission);
+  const annotation = target?.annotation && typeof target.annotation === "object" ? (target.annotation as Record<string, unknown>) : null;
+  const annotationName = typeof annotation?.name === "string" ? annotation.name : null;
+  if (annotationName) {
+    return annotationName;
+  }
+  if (mission.type === "room_cleaning" || mission.requestedCommand === "start_room_cleaning") {
+    return "Room cleaning";
+  }
+  if (mission.type === "zone_cleaning" || mission.requestedCommand === "start_zone_cleaning") {
+    return "Zone cleaning";
+  }
+  if (mission.type === "coverage") {
+    return "Area cleaning";
+  }
+  if (mission.type === "navigation") {
+    return "Navigation";
+  }
+  if (mission.type === "mapping") {
+    return "Mapping";
+  }
+  return mission.type.replaceAll("_", " ");
+}
+
+function getMissionResultLabel(mission: VacuumMissionSnapshot): string {
+  const resultStatus = mission.result?.status ?? (isTerminalMissionStatus(mission.status) ? mission.status : null);
+  if (resultStatus === "completed") {
+    return "Completed";
+  }
+  if (resultStatus === "failed") {
+    return "Failed";
+  }
+  if (resultStatus === "canceled") {
+    return "Canceled";
+  }
+  if (resultStatus === "unsupported") {
+    return "Unsupported";
+  }
+  return mission.status;
+}
+
 function formatRecoveries(value: number | null): string {
   return value == null ? "0" : String(Math.max(0, Math.round(value)));
 }
@@ -1465,6 +1514,42 @@ function MissionLifecycleCard(props: {
         >
           Return to dock
         </button>
+      </div>
+    </section>
+  );
+}
+
+function RecentMissionsCard(props: { missions: VacuumMissionSnapshot[] }): JSX.Element | null {
+  const missions = props.missions.filter((mission) => isTerminalMissionStatus(mission.status)).slice(0, 4);
+  if (missions.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--recent-missions">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Recent Missions</p>
+        <span className="vacuum-clean-area-badge">{missions.length}</span>
+      </div>
+      <div className="vacuum-recent-mission-list">
+        {missions.map((mission) => {
+          const completedAt = mission.result?.completedAt ?? mission.updatedAt ?? mission.startedAt;
+          const progress = mission.progress.percent == null ? null : formatPercent(mission.progress.percent);
+          const area = mission.progress.areaCoveredSqM == null ? null : formatArea(mission.progress.areaCoveredSqM);
+          const resultLabel = getMissionResultLabel(mission);
+          return (
+            <div key={mission.id} className={`vacuum-recent-mission vacuum-recent-mission--${resultLabel.toLowerCase()}`}>
+              <div className="vacuum-recent-mission__main">
+                <strong>{getMissionDisplayName(mission)}</strong>
+                <span>{mission.result?.summary ?? mission.phase}</span>
+              </div>
+              <div className="vacuum-recent-mission__meta">
+                <span>{resultLabel}</span>
+                <span>{progress ?? area ?? formatMissionTime(completedAt)}</span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </section>
   );
@@ -2903,6 +2988,7 @@ export function VacuumControlPanel() {
                   commandError={missionCommandError}
                   onReturnToDock={() => void handleReturnToDock()}
                 />
+                <RecentMissionsCard missions={snapshot.missions.recent} />
                 <TeleopCard
                   disabled={isCleanAreaActive}
                   disabledReason="Stop the cleaning run before using manual control."
@@ -2957,6 +3043,7 @@ export function VacuumControlPanel() {
                   commandError={missionCommandError}
                   onReturnToDock={() => void handleReturnToDock()}
                 />
+                <RecentMissionsCard missions={snapshot.missions.recent} />
                 <TeleopCard disabled={isCleanAreaActive} disabledReason="Stop the active mission before using manual control." />
               </div>
             )}

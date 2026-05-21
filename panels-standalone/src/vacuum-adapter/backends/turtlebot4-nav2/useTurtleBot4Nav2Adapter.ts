@@ -70,6 +70,63 @@ function writeStoredAnnotations(storageKey: string, annotations: VacuumMapAnnota
   }
 }
 
+function isTerminalMissionStatus(status: VacuumMissionSnapshot["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "canceled" || status === "unsupported";
+}
+
+function missionSortTime(mission: VacuumMissionSnapshot): number {
+  return mission.result?.completedAt ?? mission.updatedAt ?? mission.startedAt ?? 0;
+}
+
+function mergeRecentMissions(...missionLists: VacuumMissionSnapshot[][]): VacuumMissionSnapshot[] {
+  const byId = new Map<string, VacuumMissionSnapshot>();
+  for (const mission of missionLists.flat()) {
+    if (!isTerminalMissionStatus(mission.status)) {
+      continue;
+    }
+    const existing = byId.get(mission.id);
+    if (!existing || missionSortTime(mission) >= missionSortTime(existing)) {
+      byId.set(mission.id, mission);
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => missionSortTime(b) - missionSortTime(a))
+    .slice(0, 10);
+}
+
+function readStoredRecentMissions(storageKey: string): VacuumMissionSnapshot[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return mergeRecentMissions(parsed.flatMap((entry) => {
+      const mission = parseMissionSnapshot(entry);
+      return mission ? [mission] : [];
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredRecentMissions(storageKey: string, missions: VacuumMissionSnapshot[]): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(mergeRecentMissions(missions)) ?? "[]");
+  } catch {
+    // Recent mission summaries are best-effort until VM-owned persistence lands.
+  }
+}
+
 function parseMappingStatus(message: Record<string, unknown> | null): VacuumMappingStatus | null {
   const rawData = message?.data;
   if (typeof rawData !== "string") {
@@ -223,81 +280,110 @@ function toMissionProgress(value: unknown): VacuumMissionSnapshot["progress"] {
   };
 }
 
-function parseMissionStatusPayload(rawData: unknown): VacuumMissionSnapshot | null {
-  if (typeof rawData !== "string") {
+type ParsedMissionPayload = {
+  activeMission: VacuumMissionSnapshot | null;
+  recentMissions: VacuumMissionSnapshot[];
+};
+
+function parseMissionSnapshot(value: unknown): VacuumMissionSnapshot | null {
+  const mission = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  if (!mission) {
     return null;
+  }
+  const status = isMissionStatus(mission.status) ? mission.status : "failed";
+  const result = mission.result && typeof mission.result === "object"
+    ? (mission.result as Record<string, unknown>)
+    : null;
+  const error = mission.error && typeof mission.error === "object"
+    ? (mission.error as Record<string, unknown>)
+    : null;
+  const availableActions = Array.isArray(mission.availableActions)
+    ? mission.availableActions.filter((action): action is VacuumMissionSnapshot["availableActions"][number] =>
+        [
+          "pause_mission",
+          "resume_mission",
+          "cancel_mission",
+          "retry_mission_step",
+          "skip_mission_step",
+          "return_to_dock",
+          "pause_mapping",
+          "resume_mapping",
+          "finish_mapping",
+          "accept_map",
+          "discard_mapping",
+        ].includes(String(action)),
+      )
+    : [];
+  const startedAt = toFiniteNumber(mission.startedAt);
+  const updatedAt = toFiniteNumber(mission.updatedAt);
+  return {
+    id: typeof mission.id === "string" ? mission.id : `turtlebot4-nav2:mission:${updatedAt ?? startedAt ?? "unknown"}`,
+    type: isMissionType(mission.type) ? mission.type : "navigation",
+    status,
+    backendSource: "turtlebot4_nav2",
+    startedAt,
+    updatedAt,
+    requestedCommand: typeof mission.requestedCommand === "string" ? mission.requestedCommand : "start_navigation",
+    phase: typeof mission.phase === "string" ? mission.phase : status,
+    progress: toMissionProgress(mission.progress),
+    availableActions,
+    result:
+      result && isMissionStatus(result.status) && ["completed", "failed", "canceled", "unsupported"].includes(result.status)
+        ? {
+            status: result.status as "completed" | "failed" | "canceled" | "unsupported",
+            completedAt: toFiniteNumber(result.completedAt),
+            summary: typeof result.summary === "string" ? result.summary : undefined,
+          }
+        : isTerminalMissionStatus(status)
+          ? {
+              status,
+              completedAt: updatedAt,
+              summary: typeof mission.phase === "string" ? mission.phase : undefined,
+            }
+          : null,
+    error:
+      error && typeof error.message === "string"
+        ? {
+            code: typeof error.code === "string" ? error.code : "mission_error",
+            message: error.message,
+            recoverable: Boolean(error.recoverable),
+          }
+        : null,
+    target: mission.target ?? null,
+  };
+}
+
+function parseMissionStatusPayload(rawData: unknown): ParsedMissionPayload {
+  if (typeof rawData !== "string") {
+    return { activeMission: null, recentMissions: [] };
   }
   try {
     const parsed = JSON.parse(rawData) as Record<string, unknown>;
-    const mission = parsed.activeMission && typeof parsed.activeMission === "object"
-      ? (parsed.activeMission as Record<string, unknown>)
-      : null;
-    if (!mission) {
-      return null;
-    }
-    const status = isMissionStatus(mission.status) ? mission.status : "failed";
-    const result = mission.result && typeof mission.result === "object"
-      ? (mission.result as Record<string, unknown>)
-      : null;
-    const error = mission.error && typeof mission.error === "object"
-      ? (mission.error as Record<string, unknown>)
-      : null;
-    const availableActions = Array.isArray(mission.availableActions)
-      ? mission.availableActions.filter((action): action is VacuumMissionSnapshot["availableActions"][number] =>
-          [
-            "pause_mission",
-            "resume_mission",
-            "cancel_mission",
-            "retry_mission_step",
-            "skip_mission_step",
-            "return_to_dock",
-            "pause_mapping",
-            "resume_mapping",
-            "finish_mapping",
-            "accept_map",
-            "discard_mapping",
-          ].includes(String(action)),
-        )
-      : [];
-    return {
-      id: typeof mission.id === "string" ? mission.id : "turtlebot4-nav2:navigation",
-      type: isMissionType(mission.type) ? mission.type : "navigation",
-      status,
-      backendSource: "turtlebot4_nav2",
-      startedAt: toFiniteNumber(mission.startedAt),
-      updatedAt: toFiniteNumber(mission.updatedAt),
-      requestedCommand: typeof mission.requestedCommand === "string" ? mission.requestedCommand : "start_navigation",
-      phase: typeof mission.phase === "string" ? mission.phase : status,
-      progress: toMissionProgress(mission.progress),
-      availableActions,
-      result:
-        result && isMissionStatus(result.status) && ["completed", "failed", "canceled", "unsupported"].includes(result.status)
-          ? {
-              status: result.status as "completed" | "failed" | "canceled" | "unsupported",
-              completedAt: toFiniteNumber(result.completedAt),
-              summary: typeof result.summary === "string" ? result.summary : undefined,
-            }
-          : null,
-      error:
-        error && typeof error.message === "string"
-          ? {
-              code: typeof error.code === "string" ? error.code : "mission_error",
-              message: error.message,
-              recoverable: Boolean(error.recoverable),
-            }
-          : null,
-      target: mission.target ?? null,
-    };
+    const activeMission = parseMissionSnapshot(parsed.activeMission);
+    const missionsRecord = parsed.missions && typeof parsed.missions === "object" ? (parsed.missions as Record<string, unknown>) : null;
+    const rawRecent = Array.isArray(missionsRecord?.recent)
+      ? missionsRecord.recent
+      : Array.isArray(parsed.recentMissions)
+        ? parsed.recentMissions
+        : [];
+    const recentMissions = mergeRecentMissions(
+      rawRecent.flatMap((entry) => {
+        const mission = parseMissionSnapshot(entry);
+        return mission ? [mission] : [];
+      }),
+      activeMission ? [activeMission] : [],
+    );
+    return { activeMission, recentMissions };
   } catch {
-    return null;
+    return { activeMission: null, recentMissions: [] };
   }
 }
 
-function parseMissionStatus(message: Record<string, unknown> | null): VacuumMissionSnapshot | null {
+function parseMissionStatus(message: Record<string, unknown> | null): ParsedMissionPayload {
   return parseMissionStatusPayload(message?.data);
 }
 
-function parseMissionServiceResponse(response: Record<string, unknown> | null): VacuumMissionSnapshot | null {
+function parseMissionServiceResponse(response: Record<string, unknown> | null): ParsedMissionPayload {
   return parseMissionStatusPayload(response?.message ?? response?.data);
 }
 
@@ -411,6 +497,9 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   const [mapLastUpdateAt, setMapLastUpdateAt] = useState<number | null>(null);
   const [mappingStatus, setMappingStatus] = useState<VacuumMappingStatus | null>(null);
   const [missionStatus, setMissionStatus] = useState<VacuumMissionSnapshot | null>(null);
+  const [recentMissions, setRecentMissions] = useState<VacuumMissionSnapshot[]>(() =>
+    readStoredRecentMissions("tensorfleet:vacuums:turtlebot4-nav2:recent-missions"),
+  );
   const [annotations, setAnnotations] = useState<VacuumMapAnnotation[]>([]);
   const runtimeRef = useRef(runtime);
   runtimeRef.current = runtime;
@@ -425,8 +514,9 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
         {},
         { timeoutMs: 5_000 },
       );
-      const mission = parseMissionServiceResponse(response ?? null);
-      setMissionStatus(mission);
+      const missions = parseMissionServiceResponse(response ?? null);
+      setMissionStatus(missions.activeMission);
+      setRecentMissions((current) => mergeRecentMissions(missions.recentMissions, current));
     } catch {
       // Older runtimes may only publish /vacuum_mission/status.
     }
@@ -455,10 +545,16 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   useEffect(() => {
     const unsubscribe = ros2Bridge.subscribe({ topic: MISSION_STATUS_TOPIC, type: "std_msgs/msg/String" }, (message) => {
       const normalized = normalizeRosMessage(message);
-      setMissionStatus(parseMissionStatus(normalized));
+      const missions = parseMissionStatus(normalized);
+      setMissionStatus(missions.activeMission);
+      setRecentMissions((current) => mergeRecentMissions(missions.recentMissions, current));
     });
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    writeStoredRecentMissions("tensorfleet:vacuums:turtlebot4-nav2:recent-missions", recentMissions);
+  }, [recentMissions]);
 
   useEffect(() => {
     if (!runtime.availableServices.includes(MISSION_SERVICE_NAMES.getSnapshot)) {
@@ -505,9 +601,10 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
         mapMetadata,
         mapping: mappingStatus,
         mission: missionStatus,
+        recentMissions,
         annotations,
       }),
-    [annotations, currentTarget, initialDistance, mapGrid, mapMetadata, mappingStatus, missionStatus, runtime],
+    [annotations, currentTarget, initialDistance, mapGrid, mapMetadata, mappingStatus, missionStatus, recentMissions, runtime],
   );
 
   const sendCommand = useCallback(
