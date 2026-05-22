@@ -33,6 +33,10 @@ import {
   mapTurtleBot4Nav2State,
 } from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/stateMapper";
 import {
+  hasMigratedLocalPrototypeMapAnnotations,
+  readLocalPrototypeMapAnnotations,
+} from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/localAnnotationMigration";
+import {
   mapVacuumCommandToValetudoRequest,
 } from "../panels-standalone/src/vacuum-adapter/backends/valetudo/commandMapper";
 import {
@@ -51,6 +55,25 @@ import {
 } from "../panels-standalone/src/components/VacuumControl/cleanAreaProfile";
 
 const repoRoot = resolve(import.meta.dir, "..");
+
+function installMockLocalStorage(): Map<string, string> {
+  const storage = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          storage.set(key, value);
+        },
+        removeItem: (key: string) => {
+          storage.delete(key);
+        },
+      },
+    },
+  });
+  return storage;
+}
 
 function createRuntime(overrides: Partial<Nav2RuntimeState> = {}): Nav2RuntimeState {
   return {
@@ -644,6 +667,60 @@ function testStateMapping(): void {
   assert.equal(mapping.mapping.frontierCount, 3);
 }
 
+function testLocalPrototypeAnnotationMigrationParsing(): void {
+  const storage = installMockLocalStorage();
+  storage.set(
+    "tensorfleet:vacuums:turtlebot4-nav2:map-annotations:lab-map",
+    JSON.stringify({
+      annotations: [
+        {
+          id: "room-1",
+          kind: "room",
+          name: "Kitchen",
+          area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+          mapId: "lab-map",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+        {
+          id: "wrong-map-room",
+          kind: "room",
+          name: "Wrong map",
+          area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+          mapId: "other-map",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    }),
+  );
+  assert.equal(readLocalPrototypeMapAnnotations("lab-map").length, 1);
+  assert.equal(readLocalPrototypeMapAnnotations("lab-map")[0]?.name, "Kitchen");
+  assert.equal(readLocalPrototypeMapAnnotations("other-map").length, 0);
+
+  storage.set(
+    "tensorfleet:vacuums:turtlebot4-nav2:map-annotations:legacy-array-map",
+    JSON.stringify([
+      {
+        id: "zone-1",
+        kind: "zone",
+        name: "Entry",
+        area: { shape: "rectangle", minX: 1, minY: 1, maxX: 2, maxY: 2 },
+        mapId: null,
+        createdAt: 3,
+        updatedAt: 4,
+      },
+    ]),
+  );
+  const legacyArrayAnnotations = readLocalPrototypeMapAnnotations("legacy-array-map");
+  assert.equal(legacyArrayAnnotations.length, 1);
+  assert.equal(legacyArrayAnnotations[0]?.mapId, "legacy-array-map");
+
+  assert.equal(hasMigratedLocalPrototypeMapAnnotations("lab-map"), false);
+  storage.set("tensorfleet:vacuums:turtlebot4-nav2:map-annotations-migrated:lab-map", "true");
+  assert.equal(hasMigratedLocalPrototypeMapAnnotations("lab-map"), true);
+}
+
 function testMapMetadata(): void {
   const grid = parseVacuumMapGrid({
     info: {
@@ -911,6 +988,7 @@ async function main(): Promise<void> {
   assertCommandNamesHandled();
   testCapabilityCoverage();
   testStateMapping();
+  testLocalPrototypeAnnotationMigrationParsing();
   testMapMetadata();
   testCleanAreaCoverageAndPlanning();
   testCoverageProfileAndDecomposition();

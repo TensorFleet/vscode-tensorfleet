@@ -8,7 +8,14 @@ import { buildVacuumMapMetadata, parseVacuumMapGrid } from "../../mapGrid";
 import type { VacuumGoalCoordinates, VacuumMapAnnotation, VacuumMapGrid, VacuumMappingStatus, VacuumMissionSnapshot, VacuumSavedMapSummary } from "../../state";
 import { MAP_ANNOTATION_SERVICE_NAMES, MAPPING_STATUS_TOPIC, MISSION_SERVICE_NAMES, MISSION_STATUS_TOPIC } from "./capabilityMapper";
 import { dispatchTurtleBot4Nav2Command } from "./commandDispatcher";
+import {
+  hasMigratedLocalPrototypeMapAnnotations,
+  markLocalPrototypeMapAnnotationsMigrated,
+  readLocalPrototypeMapAnnotations,
+} from "./localAnnotationMigration";
 import { mapTurtleBot4Nav2State } from "./stateMapper";
+
+const RECENT_MISSIONS_STORAGE_KEY = "tensorfleet:vacuums:turtlebot4-nav2:recent-missions";
 
 function toFiniteNumber(value: unknown): number | null {
   const numeric = typeof value === "string" ? Number(value) : value;
@@ -59,6 +66,15 @@ function parseMapAnnotationServiceResponse(response: Record<string, unknown> | n
   } catch {
     return null;
   }
+}
+
+function filterMapAnnotationsForMap(annotations: VacuumMapAnnotation[], mapId: string): VacuumMapAnnotation[] {
+  return annotations.flatMap((annotation) => {
+    if (annotation.mapId != null && annotation.mapId !== mapId) {
+      return [];
+    }
+    return [{ ...annotation, mapId: annotation.mapId ?? mapId }];
+  });
 }
 
 function assertMapAnnotationServiceSuccess(response: Record<string, unknown> | null, serviceName: string): void {
@@ -491,7 +507,7 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   const [mappingStatus, setMappingStatus] = useState<VacuumMappingStatus | null>(null);
   const [missionStatus, setMissionStatus] = useState<VacuumMissionSnapshot | null>(null);
   const [recentMissions, setRecentMissions] = useState<VacuumMissionSnapshot[]>(() =>
-    readStoredRecentMissions("tensorfleet:vacuums:turtlebot4-nav2:recent-missions"),
+    readStoredRecentMissions(RECENT_MISSIONS_STORAGE_KEY),
   );
   const [annotations, setAnnotations] = useState<VacuumMapAnnotation[]>([]);
   const runtimeRef = useRef(runtime);
@@ -500,6 +516,25 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   const activeMapId = useMemo(
     () => mappingStatus?.activeMapName ?? mappingStatus?.loadedMapPath ?? mappingStatus?.savedMapPath ?? "live-map",
     [mappingStatus?.activeMapName, mappingStatus?.loadedMapPath, mappingStatus?.savedMapPath],
+  );
+  const activeMapIdRef = useRef(activeMapId);
+  const annotationRequestIdRef = useRef(0);
+  activeMapIdRef.current = activeMapId;
+
+  const beginAnnotationRequest = useCallback((): number => {
+    annotationRequestIdRef.current += 1;
+    return annotationRequestIdRef.current;
+  }, []);
+
+  const commitAnnotationsForRequest = useCallback(
+    (requestId: number, mapId: string, nextAnnotations: VacuumMapAnnotation[]): boolean => {
+      if (annotationRequestIdRef.current !== requestId || activeMapIdRef.current !== mapId) {
+        return false;
+      }
+      setAnnotations(filterMapAnnotationsForMap(nextAnnotations, mapId));
+      return true;
+    },
+    [],
   );
 
   const fetchMissionSnapshot = useCallback(async (): Promise<void> => {
@@ -547,14 +582,18 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
     }
   }, []);
 
-  const fetchRuntimeAnnotations = useCallback(async (mapId: string): Promise<void> => {
+  const fetchRuntimeAnnotations = useCallback(async (mapId: string): Promise<VacuumMapAnnotation[]> => {
+    const requestId = beginAnnotationRequest();
+    const commitAnnotations = (nextAnnotations: VacuumMapAnnotation[]): boolean =>
+      commitAnnotationsForRequest(requestId, mapId, nextAnnotations);
+
+    commitAnnotations([]);
     if (
       !ros2Bridge.isConnected() ||
       !runtimeRef.current.availableServices.includes(MISSION_SERVICE_NAMES.setParameters) ||
       !runtimeRef.current.availableServices.includes(MAP_ANNOTATION_SERVICE_NAMES.getSnapshot)
     ) {
-      setAnnotations([]);
-      return;
+      return [];
     }
     try {
       await setRuntimeAnnotationRequest({ mapId });
@@ -563,11 +602,45 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
         {},
         { timeoutMs: 5_000 },
       );
-      setAnnotations(parseMapAnnotationServiceResponse(response ?? null) ?? []);
+      const runtimeAnnotations = filterMapAnnotationsForMap(parseMapAnnotationServiceResponse(response ?? null) ?? [], mapId);
+      if (runtimeAnnotations.length > 0) {
+        markLocalPrototypeMapAnnotationsMigrated(mapId);
+        commitAnnotations(runtimeAnnotations);
+        return runtimeAnnotations;
+      }
+      if (hasMigratedLocalPrototypeMapAnnotations(mapId)) {
+        commitAnnotations(runtimeAnnotations);
+        return runtimeAnnotations;
+      }
+
+      const localAnnotations = readLocalPrototypeMapAnnotations(mapId);
+      if (localAnnotations.length === 0) {
+        markLocalPrototypeMapAnnotationsMigrated(mapId);
+        commitAnnotations(runtimeAnnotations);
+        return runtimeAnnotations;
+      }
+
+      let nextAnnotations: VacuumMapAnnotation[] | null = null;
+      for (const annotation of localAnnotations) {
+        await setRuntimeAnnotationRequest({ mapId, annotation });
+        const saveResponse = await ros2Bridge.callService<Record<string, unknown>>(
+          MAP_ANNOTATION_SERVICE_NAMES.save,
+          {},
+          { timeoutMs: 5_000 },
+        );
+        assertMapAnnotationServiceSuccess(saveResponse ?? null, MAP_ANNOTATION_SERVICE_NAMES.save);
+        const saveAnnotations = parseMapAnnotationServiceResponse(saveResponse ?? null);
+        nextAnnotations = saveAnnotations ? filterMapAnnotationsForMap(saveAnnotations, mapId) : nextAnnotations;
+      }
+      markLocalPrototypeMapAnnotationsMigrated(mapId);
+      const migratedAnnotations = nextAnnotations ?? localAnnotations;
+      commitAnnotations(migratedAnnotations);
+      return migratedAnnotations;
     } catch {
-      setAnnotations([]);
+      commitAnnotations([]);
+      return [];
     }
-  }, [setRuntimeAnnotationRequest]);
+  }, [beginAnnotationRequest, commitAnnotationsForRequest, setRuntimeAnnotationRequest]);
 
   useEffect(() => {
     const unsubscribe = ros2Bridge.subscribe({ topic: "/map", type: "nav_msgs/msg/OccupancyGrid" }, (message) => {
@@ -600,7 +673,7 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   }, []);
 
   useEffect(() => {
-    writeStoredRecentMissions("tensorfleet:vacuums:turtlebot4-nav2:recent-missions", recentMissions);
+    writeStoredRecentMissions(RECENT_MISSIONS_STORAGE_KEY, recentMissions);
   }, [recentMissions]);
 
   useEffect(() => {
@@ -631,7 +704,6 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   const mapMetadata = useMemo(() => buildVacuumMapMetadata(mapGrid, mapLastUpdateAt), [mapGrid, mapLastUpdateAt]);
 
   useEffect(() => {
-    setAnnotations([]);
     void fetchRuntimeAnnotations(activeMapId);
   }, [activeMapId, fetchRuntimeAnnotations, runtime.availableServices]);
 
@@ -674,6 +746,7 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
           updatedAt: now,
         };
         try {
+          const requestId = beginAnnotationRequest();
           await setRuntimeAnnotationRequest({ mapId: activeMapId, annotation });
           const response = await ros2Bridge.callService<Record<string, unknown>>(
             MAP_ANNOTATION_SERVICE_NAMES.save,
@@ -683,7 +756,7 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
           assertMapAnnotationServiceSuccess(response ?? null, MAP_ANNOTATION_SERVICE_NAMES.save);
           const nextAnnotations = parseMapAnnotationServiceResponse(response ?? null);
           if (nextAnnotations) {
-            setAnnotations(nextAnnotations);
+            commitAnnotationsForRequest(requestId, activeMapId, nextAnnotations);
           } else {
             await fetchRuntimeAnnotations(activeMapId);
           }
@@ -703,6 +776,7 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
 
       if (command.command === "delete_map_annotation") {
         try {
+          const requestId = beginAnnotationRequest();
           await setRuntimeAnnotationRequest({ mapId: activeMapId, id: command.id });
           const response = await ros2Bridge.callService<Record<string, unknown>>(
             MAP_ANNOTATION_SERVICE_NAMES.delete,
@@ -712,7 +786,7 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
           assertMapAnnotationServiceSuccess(response ?? null, MAP_ANNOTATION_SERVICE_NAMES.delete);
           const nextAnnotations = parseMapAnnotationServiceResponse(response ?? null);
           if (nextAnnotations) {
-            setAnnotations(nextAnnotations);
+            commitAnnotationsForRequest(requestId, activeMapId, nextAnnotations);
           } else {
             await fetchRuntimeAnnotations(activeMapId);
           }
@@ -762,7 +836,17 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
       }
       return result;
     },
-    [activeMapId, fetchMissionSnapshot, fetchRuntimeAnnotations, setRuntimeAnnotationRequest, snapshot, snapshot.capabilities, snapshot.readiness],
+    [
+      activeMapId,
+      beginAnnotationRequest,
+      commitAnnotationsForRequest,
+      fetchMissionSnapshot,
+      fetchRuntimeAnnotations,
+      setRuntimeAnnotationRequest,
+      snapshot,
+      snapshot.capabilities,
+      snapshot.readiness,
+    ],
   );
 
   return {
