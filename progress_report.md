@@ -1,31 +1,50 @@
-# Progress Report — Reload / Reconnect Hardening
+# Progress Report — Room / Zone UX Clarity Pass
 
 Current report date: May 26, 2026.
 
 ## 1. What changed
 
-Rooms / Zones now recovers clearer state after the webview closes or reloads during and after room/zone cleaning.
+The Rooms / Zones panel now communicates its state, intent, and constraints more clearly to the operator without changing mission ownership or the adapter contract.
 
-When a runtime snapshot reports an active room or zone cleaning mission, the panel returns to Rooms / Zones mode, reconstructs the selected target from `snapshot.activeMission.target.annotation`, and keeps the active target outlined on the map. Paused room/zone missions hydrate as paused from runtime state, with resume/cancel controls gated by runtime capabilities and `activeMission.availableActions`.
+**Auto-generated default names.** When the operator activates the draw tool or switches between Room and Zone, the name field pre-fills with the next available numbered name in sequence: Room 1, Room 2, Zone 1, Zone 2. Numbers are derived from existing saved annotations on the current map, so they never collide with names already saved.
 
-When the webview reloads after a terminal room/zone result and the runtime exposes only a recent terminal summary, the panel performs a one-time return to Rooms / Zones mode so Recent Missions is visible. Recent terminal room/zone summaries keep using `snapshot.missions.recent`; the UI does not invent terminal truth from React state.
+**Clearer status badge.** The badge in the card header now reflects the current draft state in plain language: "No selection", "Drawing", "Draft ready", the selected annotation name, "Cleaning", "Paused", or "Canceling".
 
-Terminal room/zone missions are no longer treated as actively cleaning for the Rooms / Zones action row. The saved or recovered target remains visible, while active controls are reserved for non-terminal runtime states.
+**Selected annotation header.** When a saved room or zone is selected and no draft is in progress, the annotation name appears as a prominent labelled element at the top of the card, separate from the badge.
+
+**Context-aware action buttons.** The action row now shows only the buttons relevant to the current state instead of always showing all buttons:
+
+- *No selection, no draft* — "Draw area"
+- *Drawing* — "Finish shape", "Save room"/"Save zone", "Clear draft"
+- *Draft ready* — "Redraw", "Save room"/"Save zone", "Clear draft"
+- *Saved annotation selected* — "Clean {name}", "Draw area", "Delete room"/"Delete zone", "Clear selection"
+- *Cleaning active* — "Pause cleaning", "Cancel cleaning"
+- *Cleaning paused* — "Resume cleaning", "Cancel cleaning"
+
+**Clearer button labels.** "Done drawing" is now "Finish shape". "Save" is now "Save room" or "Save zone". "Clear" is now either "Clear draft" or "Clear selection" depending on context. "Cancel" is now "Cancel cleaning". "Resume" is now "Resume cleaning".
+
+**Delete confirmation.** Deleting a saved annotation requires a two-step confirmation. The first click shows "Confirm delete" and "Keep it" buttons. Navigating away or changing selection resets the confirmation without deleting.
+
+**Save and Clean disabled reasons.** When Save or Clean is disabled, the reason is shown inline below the button: "Draw an area first.", "Area is too small or invalid.", "Select a saved room or zone first.", "No cleanable area found in this target.", "Robot is not ready.", "Stop navigation first.", etc.
+
+**Partial target detail with cell counts.** When a selected target is partially cleanable, the detail text now names the specific categories of skipped cells: occupied, unknown, out-of-bounds, or too-small region cells, with counts.
+
+**Stronger selected outline.** The active item in the room/zone list has a slightly stronger border and inset shadow to make the selection state more visible at a glance.
 
 ## 2. Which mode this affects
 
 - Mapping: unchanged.
-- Navigation: unchanged, except Rooms / Zones terminal recovery no longer leaves the operator stranded in Navigate mode after reload.
-- Clean Area: unchanged for command behavior; shared coverage mission hydration remains the source for active cleaning state.
-- Rooms / Zones: active, paused, and terminal room/zone reload behavior is hardened.
-- Shared adapter/runtime architecture: regression coverage now verifies paused room-cleaning hydration, target annotation preservation, and terminal room-cleaning summaries through normalized snapshots.
+- Navigation: unchanged.
+- Clean Area: unchanged.
+- Rooms / Zones: all button labels, status feedback, draft state transitions, and destructive action guards updated.
+- Shared adapter/runtime architecture: unchanged. No ownership moved.
 
 ## 3. Ownership check
 
-- Is this still owned by React/webview state? Unsaved room/zone drafts, draft names, selected id, dismissed local messages, and the one-time presentation choice to return to Rooms / Zones after reload remain webview state.
-- Is this now owned by the runtime/backend? Saved annotations are runtime-owned from Milestones 1-2. Active room/zone mission state, paused state, available actions, target annotation metadata, and terminal summaries are read from runtime snapshots.
-- What state is the UI only rendering? The UI renders saved annotations from `snapshot.map.annotations`, active mission context from `snapshot.activeMission`, and terminal summaries from `snapshot.missions.recent`.
-- What command does the UI submit? The UI submits normalized commands only: `start_room_cleaning`, `start_zone_cleaning`, `pause_mission`, `resume_mission`, `cancel_mission`, `save_map_annotation`, and `delete_map_annotation`.
+- Is this still owned by React/webview state? Yes — draft name, draft kind, draft rect, selected id, delete-confirm-pending flag, and all presentation state remain React-owned.
+- Is this now owned by the runtime/backend? Saved annotations, active mission, available actions, and recent summaries remain runtime-owned from Milestones 1, 2, and 4.
+- What state is the UI only rendering? `snapshot.map.annotations`, `snapshot.activeMission`, `snapshot.missions.recent`.
+- What command does the UI submit? `save_map_annotation`, `delete_map_annotation`, `start_room_cleaning`, `start_zone_cleaning`, `pause_mission`, `resume_mission`, `cancel_mission`.
 
 This follows the rule:
 
@@ -37,41 +56,53 @@ runtime/backend owns confirmed mission state.
 
 ## 4. Webview close/reopen behavior
 
-- mapping: mapping status still hydrates from runtime mapping snapshots.
-- navigation: active navigation still hydrates from `snapshot.activeMission` or normalized navigation state.
-- clean area: active coverage missions still hydrate from runtime mission snapshots.
-- room/zone editing: unsaved drafts may be lost; saved annotations return from `snapshot.map.annotations`.
-- active room/zone cleaning: the panel returns to Rooms / Zones mode, reconstructs the selected target from runtime mission metadata, and renders progress/status from `snapshot.activeMission`.
-- terminal room/zone result: Recent Missions is visible after reload when the runtime exposes the terminal summary through `snapshot.missions.recent`.
+- mapping: unchanged.
+- navigation: unchanged.
+- clean area: unchanged.
+- room/zone editing: unsaved drafts may be lost; delete-confirm-pending state is lost (safe — no data is harmed). Saved annotations return from `snapshot.map.annotations`.
+- active room/zone cleaning: active mission restores from `snapshot.activeMission`; Rooms / Zones mode is re-entered and the target name is shown from runtime annotation metadata.
+- terminal room/zone result: Recent Missions card is shown with the terminal summary from `snapshot.missions.recent`.
 
-After reopening, the UI hydrates from adapter snapshots. It does not reconstruct active room/zone mission authority from prior React state.
+The UX clarity changes are presentation-only and do not affect hydration behavior.
 
 ## 5. Real hardware compatibility check
 
 - Does this expose TurtleBot4/Nav2 specifics to product UI? No.
 - Does this require Nav2 waypoint sequencing as a public concept? No.
-- Can the same adapter shape be implemented by Valetudo later? Yes; the UI reads normalized missions, annotations, capabilities, and available actions.
-- What capability flags decide whether controls are shown/enabled? `room_cleaning`, `zone_cleaning`, `pause_mission`, `resume_mission`, `cancel_mission`, `room_semantics`, `zone_semantics`, and `map_annotations`.
-- What operations are explicitly unsupported? Valetudo room/zone annotation persistence and room/zone cleaning remain unsupported in the current stub until a future backend implementation provides those capabilities.
+- Can the same adapter shape be implemented by Valetudo later? Yes; all changes are UI-side presentation only.
+- What capability flags decide whether controls are shown/enabled? `room_semantics`, `zone_semantics`, `room_cleaning`, `zone_cleaning`, `pause_mission`, `resume_mission`, `cancel_mission`, `map_annotations`.
+- What operations are explicitly unsupported? Valetudo room/zone annotation persistence and room/zone cleaning remain unsupported until a future backend implementation provides those capabilities.
 
 ## 6. Feature behavior changed
 
-- Reload during active room/zone cleaning returns the operator to Rooms / Zones mode.
-- Reload during paused room/zone cleaning preserves the paused status and recovery controls from runtime state.
-- Active room/zone target outlines can recover from `snapshot.activeMission.target.annotation`.
-- Reload after a terminal room/zone result can show Recent Missions without requiring the operator to manually switch modes.
-- Completed, canceled, failed, or unsupported room/zone missions are no longer shown as actively cleaning in the Rooms / Zones action row.
+- Activating the draw tool auto-fills the name field with "Room 1", "Room 2", etc., based on existing saved annotations.
+- Switching between Room and Zone also auto-fills the name with the next available number for that kind when no draft is drawn yet.
+- The card status badge reflects the specific current state in plain language.
+- A selected annotation name appears prominently in the card when selected and no draft is in progress.
+- Action buttons are context-specific: only the buttons relevant to the current state are shown.
+- "Done drawing" is now "Finish shape"; "Save" is "Save room"/"Save zone"; "Delete" requires two-step confirmation.
+- Destructive delete requires a confirm step; navigating away cancels it without deleting.
+- When Save or Clean is disabled, the reason is shown inline below the button.
+- Partial targets now show specific cell-count breakdowns (occupied, unknown, out of bounds, too-small) in the detail text.
+- The selected annotation in the list has a stronger visual outline.
 
 ## 7. Files changed
 
 - `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
-  - Hardens Rooms / Zones mode recovery from active and recent runtime mission snapshots.
-  - Uses runtime annotation metadata to recover selected target presentation after reload.
-  - Separates non-terminal active cleaning controls from terminal room/zone results.
-- `scripts/vacuum-adapter-regression.ts`
-  - Adds regression checks for paused room-cleaning hydration, annotation metadata preservation, and terminal room-cleaning recent summaries.
+  - Adds `nextAnnotationName()` helper to compute the next available Room/Zone number from existing annotations.
+  - Changes the initial draft name from "Kitchen" to "Room 1".
+  - Adds `handleRoomZoneDraftKindChange()` to auto-update the default name when the kind selector changes.
+  - Updates `handleActivateRoomZoneTool()` to auto-fill the default name on tool activation.
+  - Adds `saveDisabledReason` and `cleanDisabledReason` computed values explaining why those actions are disabled.
+  - Expands `selectedRoomZoneTargetDetail` with specific cell-count breakdowns for partial targets.
+  - Rewrites `RoomZonesCard` with clearer status badge, selected-name header, context-aware action rows, two-step delete confirmation, and inline disabled-reason hints.
+  - Updates the `RoomZonesCard` call site to pass `saveDisabledReason`, `cleanDisabledReason`, and `handleRoomZoneDraftKindChange`.
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.css`
+  - Adds `.vacuum-room-zone-selected-name` for the prominent selected annotation name element.
+  - Adds `.vacuum-action-hint--disabled` for inline disabled-reason text styled with a warning tone.
+  - Strengthens `.vacuum-room-zone-list__item--active` border and adds an inset shadow.
 - `progress_report.md`
-  - Records Milestone 4 behavior, ownership, validation, and remaining risks.
+  - Records Milestone 5 behavior, ownership, validation, and remaining risks.
 
 ## 8. Tests / validation run
 
@@ -86,20 +117,29 @@ git diff --check
 Manual runtime checks not run in this pass:
 
 ```text
-Started Clean Living Room, reloaded webview during active mission, and confirmed Rooms / Zones restored active context.
-Paused room cleaning, reloaded webview, and confirmed paused state hydrated correctly.
-Reloaded after terminal state and confirmed Recent Missions showed the terminal summary.
-Restarted/reconnected the panel after terminal state and confirmed the same recent summary hydrated.
+Created Room 1 with default naming — confirmed auto-numbered.
+Created Room 2 — confirmed name increments without collision.
+Created Zone 1 — confirmed separate sequence for zones.
+Switched kind from Room to Zone before drawing — confirmed name updates.
+Drew invalid area — confirmed Save explains why disabled.
+Drew valid area — confirmed Save room / Save zone label.
+Selected annotation — confirmed name appears in stable header.
+Attempted delete — confirmed two-step confirmation required.
+Canceled delete confirmation — confirmed annotation not deleted.
+Selected invalid/partial target — confirmed Clean explains why disabled with detail.
+Started cleaning — confirmed Pause cleaning / Cancel cleaning buttons.
+Paused cleaning — confirmed Resume cleaning / Cancel cleaning buttons.
 ```
 
 ## 9. Remaining risks
 
-- Milestone 3 was intentionally skipped, so recent terminal mission durability still depends on the current runtime snapshot path plus existing webview-local fallback where runtime history is unavailable.
-- Live VM reload/reconnect validation still needs to be run against TurtleBot4/Nav2 simulation.
-- Unsaved room/zone drafts remain intentionally frontend-owned and are not durable.
+- Milestone 3 was intentionally skipped; recent terminal mission durability still depends on the current runtime snapshot path plus webview-local fallback where runtime history is unavailable.
+- Live VM validation for Milestone 5 UX still needs to be run against TurtleBot4/Nav2 simulation.
+- Unsaved room/zone drafts and the delete-confirm-pending flag are intentionally frontend-owned and not durable across reloads.
+- Auto-numbering uses a simple "Room N" / "Zone N" pattern scan; custom-named annotations with those suffixes could affect the sequence counter.
 - Clean Area still has some prototype presentation state around local coverage progress when no runtime mission snapshot is available.
 - Valetudo remains explicitly unsupported for room/zone annotation persistence and room/zone cleaning.
 
 ## 10. Next recommended step
 
-Run the Milestone 4 live VM acceptance checks against TurtleBot4/Nav2 simulation, then move to Milestone 5 for the Rooms / Zones UX clarity pass.
+Run the Milestone 5 live VM acceptance checks against TurtleBot4/Nav2 simulation, then move to Milestone 6 for room/zone recovery controls parity (pause, resume, cancel, retry step, skip step) gated by runtime capabilities and `activeMission.availableActions`.

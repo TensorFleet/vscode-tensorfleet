@@ -329,6 +329,22 @@ function isRoomZoneMissionSnapshot(mission: VacuumMissionSnapshot | null | undef
 
 const RECENT_ROOM_ZONE_MODE_RESTORE_MAX_AGE_MS = 2 * 60 * 1000;
 
+function nextAnnotationName(kind: VacuumMapAnnotationKind, annotations: VacuumMapAnnotation[]): string {
+  const prefix = kind === "room" ? "Room" : "Zone";
+  const used = new Set<number>();
+  for (const ann of annotations) {
+    if (ann.kind === kind) {
+      const match = /^(?:Room|Zone) (\d+)$/.exec(ann.name);
+      if (match) {
+        used.add(Number(match[1]));
+      }
+    }
+  }
+  let n = 1;
+  while (used.has(n)) n++;
+  return `${prefix} ${n}`;
+}
+
 function missionTerminalTime(mission: VacuumMissionSnapshot | null | undefined): number | null {
   return mission?.result?.completedAt ?? mission?.updatedAt ?? mission?.startedAt ?? null;
 }
@@ -1278,6 +1294,8 @@ function RoomZonesCard(props: {
   cleaningActive: boolean;
   cleaningState: CleanAreaMissionState | null;
   canSave: boolean;
+  saveDisabledReason: string | null;
+  cleanDisabledReason: string | null;
   onDraftKindChange: (kind: VacuumMapAnnotationKind) => void;
   onDraftNameChange: (name: string) => void;
   onActivateTool: () => void;
@@ -1290,24 +1308,39 @@ function RoomZonesCard(props: {
   onDelete: () => void;
   onClearDraft: () => void;
 }): JSX.Element {
+  const [deleteConfirmPending, setDeleteConfirmPending] = useState(false);
+  const selectedId = props.selectedAnnotation?.id ?? null;
+
+  useEffect(() => {
+    setDeleteConfirmPending(false);
+  }, [selectedId]);
+
   const selected = props.selectedAnnotation;
+  const kindLabel = props.draftKind === "room" ? "room" : "zone";
+  const hasDraft = Boolean(props.draftRect) || props.toolActive;
   const rect = props.draftRect ?? (selected?.area.shape === "rectangle" ? selected.area : null);
   const size = getCleanAreaSize(rect);
   const targetCoverage = props.targetCoverage;
-  const selectedTitle = selected
+
+  const statusLabel = props.toolActive
+    ? "Drawing"
+    : props.cleaningActive
+      ? props.cleaningState === "paused"
+        ? "Paused"
+        : props.cleaningState === "canceling"
+          ? "Canceling"
+          : "Cleaning"
+      : props.draftRect
+        ? "Draft ready"
+        : selected
+          ? selected.name
+          : "No selection";
+
+  const selectionSummary = selected
     ? `${selected.name} (${selected.kind})`
     : props.draftRect
-      ? `${props.draftKind === "room" ? "Room" : "Zone"} draft`
-      : "No room or zone selected";
-  const statusLabel = props.toolActive
-    ? "Editing draft"
-    : props.cleaningActive
-      ? props.cleaningState === "paused" ? "Paused" : props.cleaningState === "canceling" ? "Canceling" : "Cleaning"
-    : props.draftRect
-      ? "Draft ready"
-      : selected
-        ? "Saved selected"
-        : "No draft";
+      ? `${kindLabel} draft`
+      : "None";
 
   return (
     <section className="vacuum-panel-card vacuum-panel-card--room-zones">
@@ -1315,6 +1348,10 @@ function RoomZonesCard(props: {
         <p className="vacuum-panel-card__eyebrow">Rooms / Zones</p>
         <span className="vacuum-clean-area-badge">{statusLabel}</span>
       </div>
+
+      {selected && !hasDraft ? (
+        <p className="vacuum-room-zone-selected-name">{selected.name}</p>
+      ) : null}
 
       {props.commandError ? (
         <div className="vacuum-mapping-error" role="status">
@@ -1346,7 +1383,7 @@ function RoomZonesCard(props: {
           <input
             value={props.draftName}
             onChange={(event) => props.onDraftNameChange(event.target.value)}
-            placeholder={props.draftKind === "room" ? "Kitchen" : "Under dining table"}
+            placeholder={props.draftKind === "room" ? "Room 1" : "Zone 1"}
           />
         </label>
       </div>
@@ -1354,7 +1391,7 @@ function RoomZonesCard(props: {
       <div className="vacuum-clean-area-coverage-grid">
         <div>
           <span>Selection</span>
-          <strong>{selectedTitle}</strong>
+          <strong>{selectionSummary}</strong>
         </div>
         <div>
           <span>Draft</span>
@@ -1362,7 +1399,7 @@ function RoomZonesCard(props: {
         </div>
         <div>
           <span>Size</span>
-          <strong>{formatDimension(size.width)} x {formatDimension(size.height)}</strong>
+          <strong>{formatDimension(size.width)} × {formatDimension(size.height)}</strong>
         </div>
         <div>
           <span>Saved</span>
@@ -1422,40 +1459,100 @@ function RoomZonesCard(props: {
       )}
 
       <div className="vacuum-actions">
-        {selected ? (
-          props.cleaningActive ? (
-            <>
-              {props.cleaningState === "paused" ? (
-                <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onResumeCleaning} disabled={!props.canResumeCleaning}>
-                  Resume
-                </button>
-              ) : (
-                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onPauseCleaning} disabled={!props.canPauseCleaning}>
-                  Pause
-                </button>
-              )}
-              <button className="vacuum-action vacuum-action--danger" type="button" onClick={props.onCancelCleaning} disabled={!props.canCancelCleaning}>
-                Cancel
+        {/* Drawing / draft phase */}
+        {hasDraft ? (
+          <>
+            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onActivateTool}>
+              {props.toolActive ? "Finish shape" : "Redraw"}
+            </button>
+            <button
+              className="vacuum-action vacuum-action--primary"
+              type="button"
+              onClick={props.onSave}
+              disabled={!props.canSave}
+              title={props.saveDisabledReason ?? undefined}
+            >
+              Save {kindLabel}
+            </button>
+            {props.saveDisabledReason ? (
+              <p className="vacuum-action-hint vacuum-action-hint--disabled">{props.saveDisabledReason}</p>
+            ) : null}
+            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onClearDraft}>
+              Clear draft
+            </button>
+          </>
+        ) : selected && props.cleaningActive ? (
+          /* Active cleaning controls */
+          <>
+            {props.cleaningState === "paused" ? (
+              <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onResumeCleaning} disabled={!props.canResumeCleaning}>
+                Resume cleaning
               </button>
-            </>
-          ) : (
-            <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onStartCleaning} disabled={!props.canStartCleaning}>
+            ) : (
+              <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onPauseCleaning} disabled={!props.canPauseCleaning}>
+                Pause cleaning
+              </button>
+            )}
+            <button className="vacuum-action vacuum-action--danger" type="button" onClick={props.onCancelCleaning} disabled={!props.canCancelCleaning}>
+              Cancel cleaning
+            </button>
+          </>
+        ) : selected ? (
+          /* Saved annotation selected, not cleaning */
+          <>
+            <button
+              className="vacuum-action vacuum-action--primary"
+              type="button"
+              onClick={props.onStartCleaning}
+              disabled={!props.canStartCleaning}
+              title={props.cleanDisabledReason ?? undefined}
+            >
               Clean {selected.name}
             </button>
-          )
-        ) : null}
-        <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onActivateTool}>
-          {props.toolActive ? "Done drawing" : props.draftRect ? "Edit draft" : "Draw area"}
-        </button>
-        <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onSave} disabled={!props.canSave}>
-          Save
-        </button>
-        <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onDelete} disabled={!selected}>
-          Delete
-        </button>
-        <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onClearDraft} disabled={!props.draftRect && !selected && !props.toolActive}>
-          Clear
-        </button>
+            {props.cleanDisabledReason ? (
+              <p className="vacuum-action-hint vacuum-action-hint--disabled">{props.cleanDisabledReason}</p>
+            ) : null}
+            <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onActivateTool}>
+              Draw area
+            </button>
+            {deleteConfirmPending ? (
+              <>
+                <button
+                  className="vacuum-action vacuum-action--danger"
+                  type="button"
+                  onClick={() => { setDeleteConfirmPending(false); props.onDelete(); }}
+                >
+                  Confirm delete
+                </button>
+                <button
+                  className="vacuum-action vacuum-action--ghost"
+                  type="button"
+                  onClick={() => setDeleteConfirmPending(false)}
+                >
+                  Keep it
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="vacuum-action vacuum-action--ghost"
+                  type="button"
+                  onClick={() => setDeleteConfirmPending(true)}
+                >
+                  Delete {selected.kind}
+                </button>
+                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onClearDraft}>
+                  Clear selection
+                </button>
+              </>
+            )}
+          </>
+        ) : (
+          /* No selection, no draft */
+          <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onActivateTool}>
+            Draw area
+          </button>
+        )}
       </div>
     </section>
   );
@@ -1594,7 +1691,7 @@ export function VacuumControlPanel() {
   const [cleanAreaMissionTarget, setCleanAreaMissionTarget] = useState<CleanAreaCoverageTarget | null>(null);
   const [roomZoneToolActive, setRoomZoneToolActive] = useState(false);
   const [roomZoneDraftKind, setRoomZoneDraftKind] = useState<VacuumMapAnnotationKind>("room");
-  const [roomZoneDraftName, setRoomZoneDraftName] = useState("Kitchen");
+  const [roomZoneDraftName, setRoomZoneDraftName] = useState("Room 1");
   const [roomZoneDraftRect, setRoomZoneDraftRect] = useState<CleanAreaRect | null>(null);
   const [roomZoneValidation, setRoomZoneValidation] = useState<CleanAreaValidation | null>(null);
   const [selectedRoomZoneId, setSelectedRoomZoneId] = useState<string | null>(null);
@@ -1806,9 +1903,15 @@ export function VacuumControlPanel() {
       return "No cleanable free-space cells were found in this target.";
     }
     if (selectedRoomZoneTargetStatus === "partial") {
-      return "Some cells are occupied, unknown, out of bounds, or too small; the preview uses the cleanable portion.";
+      const parts: string[] = [];
+      if (selectedRoomZoneCoverage.occupiedCells > 0) parts.push(`${selectedRoomZoneCoverage.occupiedCells} occupied`);
+      if (selectedRoomZoneCoverage.unknownCells > 0) parts.push(`${selectedRoomZoneCoverage.unknownCells} unknown`);
+      if (selectedRoomZoneCoverage.outOfBoundsCells > 0) parts.push(`${selectedRoomZoneCoverage.outOfBoundsCells} out of bounds`);
+      if (selectedRoomZoneCoverage.skippedSmallRegionCells > 0) parts.push(`${selectedRoomZoneCoverage.skippedSmallRegionCells} too-small region cells`);
+      const skipDetail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+      return `Some cells will be skipped${skipDetail}. The cleanable portion is used for preview and coverage.`;
     }
-    return "This saved area can be expressed as a coverage target.";
+    return "This saved area can be expressed as a full coverage target.";
   })();
 
   const activeMissionType = snapshot.activeMission?.type ?? null;
@@ -2152,6 +2255,29 @@ export function VacuumControlPanel() {
   const canCancelRoomZoneCleaning =
     Boolean(activeRoomZoneMission?.availableActions.includes("cancel_mission")) && cancelMissionSupported;
 
+  const saveDisabledReason: string | null = (() => {
+    if (canSaveRoomZone) return null;
+    if (!roomZoneDraftRect) return "Draw an area first.";
+    if (!roomZoneValidation?.ok) return roomZoneValidation?.message ?? "Area is too small or invalid.";
+    if (roomZoneDraftKind === "room" && !roomSemanticsSupported) return "Room semantics not supported.";
+    if (roomZoneDraftKind === "zone" && !zoneSemanticsSupported) return "Zone semantics not supported.";
+    return "Cannot save yet.";
+  })();
+
+  const cleanDisabledReason: string | null = (() => {
+    if (isRoomZoneCleaningRuntimeActive) return null;
+    if (!selectedRoomZone) return "Select a saved room or zone first.";
+    if (selectedRoomZoneTargetStatus === "invalid") return "No cleanable area found in this target.";
+    if (!selectedRoomZoneCoverageTarget || selectedRoomZoneCoverageTarget.cleanableCells.length === 0) return "No cleanable cells found in this area.";
+    if (selectedRoomZone.kind === "room" && !roomCleaningSupported) return "Room cleaning not supported.";
+    if (selectedRoomZone.kind === "zone" && !zoneCleaningSupported) return "Zone cleaning not supported.";
+    if (!readinessReady) return snapshot.readiness.blockingReasons[0] ?? "Robot is not ready.";
+    if (isSendingGoal || isGoalActive) return "Stop navigation first.";
+    if (isMappingWorkflowActive) return "Finish mapping first.";
+    if (isCleanAreaActive) return "Stop clean area mission first.";
+    return null;
+  })();
+
   const handleCleanAreaChange = useCallback((rect: CleanAreaRect, validation: CleanAreaValidation): void => {
     if (!cleanAreaToolActive && cleanAreaState !== "idle" && cleanAreaState !== "editing") {
       setCleanAreaValidation(validation);
@@ -2406,8 +2532,16 @@ export function VacuumControlPanel() {
     setRoomZoneToolActive(true);
     setRoomZoneCommandError(null);
     setSelectedRoomZoneId(null);
+    setRoomZoneDraftName(nextAnnotationName(roomZoneDraftKind, roomZoneAnnotations));
     setDraftTarget(null);
     setSentTarget(null);
+  }
+
+  function handleRoomZoneDraftKindChange(kind: VacuumMapAnnotationKind): void {
+    setRoomZoneDraftKind(kind);
+    if (!roomZoneDraftRect) {
+      setRoomZoneDraftName(nextAnnotationName(kind, roomZoneAnnotations));
+    }
   }
 
   async function handleSaveRoomZone(): Promise<void> {
@@ -3091,7 +3225,9 @@ export function VacuumControlPanel() {
                   cleaningActive={isRoomZoneCleaningRuntimeActive}
                   cleaningState={activeCoverageMissionState}
                   canSave={canSaveRoomZone}
-                  onDraftKindChange={setRoomZoneDraftKind}
+                  saveDisabledReason={saveDisabledReason}
+                  cleanDisabledReason={cleanDisabledReason}
+                  onDraftKindChange={handleRoomZoneDraftKindChange}
                   onDraftNameChange={setRoomZoneDraftName}
                   onActivateTool={handleActivateRoomZoneTool}
                   onSave={() => void handleSaveRoomZone()}

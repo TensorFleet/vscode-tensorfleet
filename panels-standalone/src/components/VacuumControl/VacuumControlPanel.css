@@ -1820,6 +1820,18 @@ body {
   line-height: 1.45;
 }
 
+.vacuum-room-zone-selected-name {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(88, 211, 141, 0.28);
+  background: rgba(88, 211, 141, 0.08);
+  color: #e7ffef;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
 .vacuum-room-zone-form {
   display: grid;
   gap: 8px;
@@ -2004,9 +2016,10 @@ body {
 }
 
 .vacuum-room-zone-list__item--active {
-  border-color: rgba(88, 211, 141, 0.32);
-  background: rgba(88, 211, 141, 0.12);
+  border-color: rgba(88, 211, 141, 0.5);
+  background: rgba(88, 211, 141, 0.16);
   color: #e7ffef;
+  box-shadow: 0 0 0 1px rgba(88, 211, 141, 0.18) inset;
 }
 
 .vacuum-room-zone-list__item span {
@@ -2986,6 +2999,11 @@ body {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
+}
+
+.vacuum-action-hint--disabled {
+  color: var(--vacuum-warning, #f5a623);
+  opacity: 0.85;
 }
 
 .vacuum-action {
