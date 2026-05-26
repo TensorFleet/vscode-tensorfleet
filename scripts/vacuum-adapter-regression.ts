@@ -595,6 +595,45 @@ function testStateMapping(): void {
   assert.equal(hydratedCoverageWithAcceptedMap.mission.state, "cleaning");
   assert.equal(hydratedCoverageWithAcceptedMap.activeMission?.type, "coverage");
 
+  const hydratedPausedRoomCleaning = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      id: "room-cleaning-paused",
+      type: "room_cleaning",
+      status: "paused",
+      backendSource: "turtlebot4_nav2",
+      startedAt: 100,
+      updatedAt: 150,
+      requestedCommand: "start_room_cleaning",
+      phase: "paused",
+      progress: {
+        percent: 0.5,
+        currentStep: 2,
+        totalSteps: 4,
+        distanceRemaining: 0.5,
+        areaCoveredSqM: 1.5,
+        areaRemainingSqM: 1.5,
+      },
+      availableActions: ["resume_mission", "cancel_mission"],
+      result: null,
+      error: null,
+      target: {
+        area: { shape: "rectangle", minX: 0, minY: 0, maxX: 2, maxY: 2 },
+        annotation: { id: "room-1", kind: "room", name: "Kitchen", mapId: "lab-map" },
+      },
+    },
+  });
+  assert.equal(hydratedPausedRoomCleaning.mission.state, "paused");
+  assert.equal(hydratedPausedRoomCleaning.activeMission?.type, "room_cleaning");
+  assert.equal(hydratedPausedRoomCleaning.activeMission?.status, "paused");
+  assert.deepEqual(hydratedPausedRoomCleaning.activeMission?.availableActions, ["resume_mission", "cancel_mission"]);
+  assert.deepEqual((hydratedPausedRoomCleaning.activeMission?.target as { annotation?: unknown }).annotation, {
+    id: "room-1",
+    kind: "room",
+    name: "Kitchen",
+    mapId: "lab-map",
+  });
+
   const hydratedRecentRoomCleaning = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "ready" }),
     recentMissions: [
@@ -633,6 +672,25 @@ function testStateMapping(): void {
   assert.equal(hydratedRecentRoomCleaning.missions.recent.length, 1);
   assert.equal(hydratedRecentRoomCleaning.missions.recent[0]?.type, "room_cleaning");
   assert.equal(hydratedRecentRoomCleaning.missions.recent[0]?.result?.summary, "Kitchen completed.");
+
+  const hydratedTerminalRoomCleaning = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      ...hydratedPausedRoomCleaning.activeMission!,
+      status: "canceled",
+      updatedAt: 250,
+      phase: "canceled",
+      availableActions: [],
+      result: {
+        status: "canceled",
+        completedAt: 250,
+        summary: "Kitchen canceled.",
+      },
+    },
+  });
+  assert.equal(hydratedTerminalRoomCleaning.activeMission?.status, "canceled");
+  assert.equal(hydratedTerminalRoomCleaning.missions.recent[0]?.id, "room-cleaning-paused");
+  assert.equal(hydratedTerminalRoomCleaning.missions.recent[0]?.result?.summary, "Kitchen canceled.");
 
   const mapping = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "ready" }),

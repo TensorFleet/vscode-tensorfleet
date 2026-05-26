@@ -1,29 +1,31 @@
-# Progress Report — Local Storage Migration / Fallback Cleanup
+# Progress Report — Reload / Reconnect Hardening
 
-Current report date: May 22, 2026.
+Current report date: May 26, 2026.
 
 ## 1. What changed
 
-Existing prototype room/zone annotations stored in webview local storage now have a safe migration path into VM/runtime-owned annotation persistence.
+Rooms / Zones now recovers clearer state after the webview closes or reloads during and after room/zone cleaning.
 
-When the TurtleBot4/Nav2 adapter hydrates annotations for the active map, it checks runtime state first. If the runtime annotation store for that map is empty, the adapter reads the old prototype local-storage key for the same map identity and uploads those annotations through the existing runtime `save_map_annotation` path. After that, `snapshot.map.annotations` is populated from runtime-owned state.
+When a runtime snapshot reports an active room or zone cleaning mission, the panel returns to Rooms / Zones mode, reconstructs the selected target from `snapshot.activeMission.target.annotation`, and keeps the active target outlined on the map. Paused room/zone missions hydrate as paused from runtime state, with resume/cancel controls gated by runtime capabilities and `activeMission.availableActions`.
 
-If runtime annotations already exist for the map, local prototype annotations are not imported or allowed to overwrite runtime state. The adapter records that the old local annotations for that map have been handled, so they do not reappear later after a runtime-owned delete.
+When the webview reloads after a terminal room/zone result and the runtime exposes only a recent terminal summary, the panel performs a one-time return to Rooms / Zones mode so Recent Missions is visible. Recent terminal room/zone summaries keep using `snapshot.missions.recent`; the UI does not invent terminal truth from React state.
+
+Terminal room/zone missions are no longer treated as actively cleaning for the Rooms / Zones action row. The saved or recovered target remains visible, while active controls are reserved for non-terminal runtime states.
 
 ## 2. Which mode this affects
 
-- Mapping: migration is keyed to the current accepted/loaded/live map identity.
-- Navigation: unchanged.
-- Clean Area: unchanged.
-- Rooms / Zones: previously saved prototype rooms/zones can appear after upgrading, but runtime persistence becomes authoritative after migration.
-- Shared adapter/runtime architecture: preserves the existing adapter contract while treating webview storage as migration-only fallback.
+- Mapping: unchanged.
+- Navigation: unchanged, except Rooms / Zones terminal recovery no longer leaves the operator stranded in Navigate mode after reload.
+- Clean Area: unchanged for command behavior; shared coverage mission hydration remains the source for active cleaning state.
+- Rooms / Zones: active, paused, and terminal room/zone reload behavior is hardened.
+- Shared adapter/runtime architecture: regression coverage now verifies paused room-cleaning hydration, target annotation preservation, and terminal room-cleaning summaries through normalized snapshots.
 
 ## 3. Ownership check
 
-- Is this still owned by React/webview state? Unsaved room/zone drafts, draft names, selected id, and preview remain webview presentation state.
-- Is this now owned by the runtime/backend? Saved room/zone annotations remain VM/runtime-owned after Milestone 1; this pass only imports old local data into that runtime store when safe.
-- What state is the UI only rendering? The UI renders saved annotations from `snapshot.map.annotations`.
-- What command does the UI submit? The UI still submits `save_map_annotation` and `delete_map_annotation`; migration internally writes through the same runtime annotation service path.
+- Is this still owned by React/webview state? Unsaved room/zone drafts, draft names, selected id, dismissed local messages, and the one-time presentation choice to return to Rooms / Zones after reload remain webview state.
+- Is this now owned by the runtime/backend? Saved annotations are runtime-owned from Milestones 1-2. Active room/zone mission state, paused state, available actions, target annotation metadata, and terminal summaries are read from runtime snapshots.
+- What state is the UI only rendering? The UI renders saved annotations from `snapshot.map.annotations`, active mission context from `snapshot.activeMission`, and terminal summaries from `snapshot.missions.recent`.
+- What command does the UI submit? The UI submits normalized commands only: `start_room_cleaning`, `start_zone_cleaning`, `pause_mission`, `resume_mission`, `cancel_mission`, `save_map_annotation`, and `delete_map_annotation`.
 
 This follows the rule:
 
@@ -33,45 +35,43 @@ UI may own draft and preview state.
 After Start:
 runtime/backend owns confirmed mission state.
 
-Saved annotations are also treated as runtime/backend-owned product state before mission start.
-
 ## 4. Webview close/reopen behavior
 
-- mapping: unchanged; mapping state hydrates from runtime status.
-- navigation: unchanged; active navigation hydrates from runtime mission state.
-- clean area: unchanged; active coverage mission state hydrates from runtime mission snapshots.
-- room/zone editing: unsaved drafts may be lost.
-- active room/zone cleaning: unchanged in this milestone; active mission hydration still comes from `snapshot.activeMission`.
-- terminal room/zone result: unchanged in this milestone; recent summaries are still handled by the existing mission snapshot/recent fallback path.
+- mapping: mapping status still hydrates from runtime mapping snapshots.
+- navigation: active navigation still hydrates from `snapshot.activeMission` or normalized navigation state.
+- clean area: active coverage missions still hydrate from runtime mission snapshots.
+- room/zone editing: unsaved drafts may be lost; saved annotations return from `snapshot.map.annotations`.
+- active room/zone cleaning: the panel returns to Rooms / Zones mode, reconstructs the selected target from runtime mission metadata, and renders progress/status from `snapshot.activeMission`.
+- terminal room/zone result: Recent Missions is visible after reload when the runtime exposes the terminal summary through `snapshot.missions.recent`.
 
-After reopening, the adapter computes the current map identity and asks the VM annotation runtime for that map's annotations. If runtime annotations are empty and an old local prototype annotation set exists for the same map identity, the adapter imports it once into runtime persistence. Future reopens render runtime annotations only.
+After reopening, the UI hydrates from adapter snapshots. It does not reconstruct active room/zone mission authority from prior React state.
 
 ## 5. Real hardware compatibility check
 
 - Does this expose TurtleBot4/Nav2 specifics to product UI? No.
 - Does this require Nav2 waypoint sequencing as a public concept? No.
-- Can the same adapter shape be implemented by Valetudo later? Yes; Valetudo can keep using the same `snapshot.map.annotations`, `save_map_annotation`, and `delete_map_annotation` surfaces if/when room or zone persistence is implemented.
-- What capability flags decide whether controls are shown/enabled? `map_annotations`, `room_semantics`, and `zone_semantics`.
-- What operations are explicitly unsupported? Valetudo map annotations and room/zone semantics remain unsupported in the current stub; TurtleBot4/Nav2 annotations remain unsupported if the VM annotation services are not advertised.
+- Can the same adapter shape be implemented by Valetudo later? Yes; the UI reads normalized missions, annotations, capabilities, and available actions.
+- What capability flags decide whether controls are shown/enabled? `room_cleaning`, `zone_cleaning`, `pause_mission`, `resume_mission`, `cancel_mission`, `room_semantics`, `zone_semantics`, and `map_annotations`.
+- What operations are explicitly unsupported? Valetudo room/zone annotation persistence and room/zone cleaning remain unsupported in the current stub until a future backend implementation provides those capabilities.
 
 ## 6. Feature behavior changed
 
-- Existing local prototype rooms/zones can be imported into VM-owned annotation persistence.
-- Migration only runs for the active map identity.
-- Runtime annotations win over local annotations when both exist.
-- Old local annotations are marked handled after migration or conflict detection, so they do not become authoritative again.
-- The product UI still renders only `snapshot.map.annotations`.
+- Reload during active room/zone cleaning returns the operator to Rooms / Zones mode.
+- Reload during paused room/zone cleaning preserves the paused status and recovery controls from runtime state.
+- Active room/zone target outlines can recover from `snapshot.activeMission.target.annotation`.
+- Reload after a terminal room/zone result can show Recent Missions without requiring the operator to manually switch modes.
+- Completed, canceled, failed, or unsupported room/zone missions are no longer shown as actively cleaning in the Rooms / Zones action row.
 
 ## 7. Files changed
 
-- `panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/localAnnotationMigration.ts`
-  - Adds the local prototype annotation reader and per-map migration marker helpers.
-- `panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/useTurtleBot4Nav2Adapter.ts`
-  - Adds runtime-first annotation hydration with one-time safe import from old local storage only when the runtime map store is empty.
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
+  - Hardens Rooms / Zones mode recovery from active and recent runtime mission snapshots.
+  - Uses runtime annotation metadata to recover selected target presentation after reload.
+  - Separates non-terminal active cleaning controls from terminal room/zone results.
 - `scripts/vacuum-adapter-regression.ts`
-  - Adds regression coverage for old local annotation parsing, map identity filtering, legacy array shape support, and migration marker detection.
+  - Adds regression checks for paused room-cleaning hydration, annotation metadata preservation, and terminal room-cleaning recent summaries.
 - `progress_report.md`
-  - Records Milestone 2 behavior, ownership, validation, and remaining risks.
+  - Records Milestone 4 behavior, ownership, validation, and remaining risks.
 
 ## 8. Tests / validation run
 
@@ -86,20 +86,20 @@ git diff --check
 Manual runtime checks not run in this pass:
 
 ```text
-Opened updated build with old local prototype annotations and confirmed they migrate into runtime persistence.
-Closed/reopened webview and confirmed migrated annotations hydrate from runtime-owned state.
-Created runtime annotation A while local annotation B exists and confirmed B does not overwrite A.
-Deleted migrated annotations, reopened webview, and confirmed stale local annotations do not reappear.
+Started Clean Living Room, reloaded webview during active mission, and confirmed Rooms / Zones restored active context.
+Paused room cleaning, reloaded webview, and confirmed paused state hydrated correctly.
+Reloaded after terminal state and confirmed Recent Missions showed the terminal summary.
+Restarted/reconnected the panel after terminal state and confirmed the same recent summary hydrated.
 ```
 
 ## 9. Remaining risks
 
-- Recent terminal mission summaries are still not fully VM-owned durable history; that is Milestone 3.
-- This milestone validates migration parsing and build behavior automatically, but live VM/webview migration validation is still needed.
-- Runtime annotation persistence still depends on the active map identity string supplied by mapping status; weak or missing map identity can still collapse to `live-map`.
-- Webview local storage remains present only as a migration/fallback source for old prototype annotations and current recent mission fallback.
-- Valetudo remains explicitly unsupported for room/zone annotation persistence.
+- Milestone 3 was intentionally skipped, so recent terminal mission durability still depends on the current runtime snapshot path plus existing webview-local fallback where runtime history is unavailable.
+- Live VM reload/reconnect validation still needs to be run against TurtleBot4/Nav2 simulation.
+- Unsaved room/zone drafts remain intentionally frontend-owned and are not durable.
+- Clean Area still has some prototype presentation state around local coverage progress when no runtime mission snapshot is available.
+- Valetudo remains explicitly unsupported for room/zone annotation persistence and room/zone cleaning.
 
 ## 10. Next recommended step
 
-Milestone 3: persist terminal mission summaries in the runtime and hydrate Recent Missions from `snapshot.missions.recent` without relying on webview-local recent history as the long-term source of truth.
+Run the Milestone 4 live VM acceptance checks against TurtleBot4/Nav2 simulation, then move to Milestone 5 for the Rooms / Zones UX clarity pass.

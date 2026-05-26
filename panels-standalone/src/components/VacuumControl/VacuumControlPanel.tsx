@@ -318,6 +318,21 @@ function isTerminalMissionStatus(status: VacuumMissionSnapshot["status"]): boole
   return status === "completed" || status === "failed" || status === "canceled" || status === "unsupported";
 }
 
+function isRoomZoneMissionSnapshot(mission: VacuumMissionSnapshot | null | undefined): boolean {
+  return (
+    mission?.type === "room_cleaning" ||
+    mission?.type === "zone_cleaning" ||
+    mission?.requestedCommand === "start_room_cleaning" ||
+    mission?.requestedCommand === "start_zone_cleaning"
+  );
+}
+
+const RECENT_ROOM_ZONE_MODE_RESTORE_MAX_AGE_MS = 2 * 60 * 1000;
+
+function missionTerminalTime(mission: VacuumMissionSnapshot | null | undefined): number | null {
+  return mission?.result?.completedAt ?? mission?.updatedAt ?? mission?.startedAt ?? null;
+}
+
 function mapCoverageMissionState(mission: VacuumMissionSnapshot | null): CleanAreaMissionState | null {
   if (!mission) {
     return null;
@@ -1589,6 +1604,7 @@ export function VacuumControlPanel() {
   const [dismissedCoverageMissionId, setDismissedCoverageMissionId] = useState<string | null>(null);
   const goalStartTimeRef = useRef<number | null>(null);
   const previousCoveragePoseRef = useRef<VacuumPoseCoordinates | null>(null);
+  const restoredRoomZoneRecentModeRef = useRef(false);
 
   const currentPose = snapshot.pose.coordinates;
   const availability = snapshot.availability.status;
@@ -1641,13 +1657,19 @@ export function VacuumControlPanel() {
     [cleanAreaCoverageConfig.cleaningSwathWidthM, cleanAreaCoverageTarget, cleanAreaCoveredCellKeys],
   );
   const roomZoneAnnotations = snapshot.map.annotations;
+  const currentMapId = currentMapAnnotationId(snapshot);
+  const latestRecentRoomZoneMission = useMemo(
+    () => snapshot.missions.recent.find((mission) => isRoomZoneMissionSnapshot(mission) && isTerminalMissionStatus(mission.status)) ?? null,
+    [snapshot.missions.recent],
+  );
+  const latestRecentRoomZoneMissionTime = missionTerminalTime(latestRecentRoomZoneMission);
+  const shouldRestoreRecentRoomZoneMode =
+    latestRecentRoomZoneMissionTime != null &&
+    metadataClock - latestRecentRoomZoneMissionTime >= 0 &&
+    metadataClock - latestRecentRoomZoneMissionTime <= RECENT_ROOM_ZONE_MODE_RESTORE_MAX_AGE_MS;
   const activeRoomZoneTarget = missionTargetRecord(snapshot.activeMission);
   const activeRoomZoneMissionRect = coverageMissionArea(snapshot.activeMission);
-  const isActiveRoomZoneSnapshot =
-    snapshot.activeMission?.type === "room_cleaning" ||
-    snapshot.activeMission?.type === "zone_cleaning" ||
-    snapshot.activeMission?.requestedCommand === "start_room_cleaning" ||
-    snapshot.activeMission?.requestedCommand === "start_zone_cleaning";
+  const isActiveRoomZoneSnapshot = isRoomZoneMissionSnapshot(snapshot.activeMission);
   const activeRoomZoneAnnotationRecord =
     isActiveRoomZoneSnapshot
       ? activeRoomZoneTarget?.annotation && typeof activeRoomZoneTarget.annotation === "object"
@@ -1656,8 +1678,20 @@ export function VacuumControlPanel() {
       : null;
   const activeRoomZoneAnnotationId =
     typeof activeRoomZoneAnnotationRecord?.id === "string" ? activeRoomZoneAnnotationRecord.id : null;
+  const recentRoomZoneTarget = missionTargetRecord(latestRecentRoomZoneMission);
+  const recentRoomZoneAnnotationRecord =
+    recentRoomZoneTarget?.annotation && typeof recentRoomZoneTarget.annotation === "object"
+      ? (recentRoomZoneTarget.annotation as Record<string, unknown>)
+      : null;
+  const recentRoomZoneAnnotationId =
+    typeof recentRoomZoneAnnotationRecord?.id === "string" ? recentRoomZoneAnnotationRecord.id : null;
+  const recentRoomZoneAnnotationMapId =
+    typeof recentRoomZoneAnnotationRecord?.mapId === "string" ? recentRoomZoneAnnotationRecord.mapId : null;
+  const recentRoomZoneAnnotationMatchesMap =
+    recentRoomZoneAnnotationRecord != null && (recentRoomZoneAnnotationMapId == null || recentRoomZoneAnnotationMapId === currentMapId);
+  const recoveredRoomZoneSelectionId = selectedRoomZoneId ?? activeRoomZoneAnnotationId ?? (recentRoomZoneAnnotationMatchesMap ? recentRoomZoneAnnotationId : null);
   const selectedRoomZone =
-    roomZoneAnnotations.find((annotation) => annotation.id === (selectedRoomZoneId ?? activeRoomZoneAnnotationId)) ??
+    roomZoneAnnotations.find((annotation) => annotation.id === recoveredRoomZoneSelectionId) ??
     (activeRoomZoneAnnotationRecord && isActiveRoomZoneSnapshot && snapshot.activeMission
       ? {
           id: activeRoomZoneAnnotationId ?? snapshot.activeMission.id,
@@ -1675,6 +1709,28 @@ export function VacuumControlPanel() {
           createdAt: snapshot.activeMission.startedAt ?? Date.now(),
           updatedAt: snapshot.activeMission.updatedAt ?? Date.now(),
         }
+      : recentRoomZoneAnnotationRecord && latestRecentRoomZoneMission && recentRoomZoneAnnotationMatchesMap
+        ? {
+            id: recentRoomZoneAnnotationId ?? latestRecentRoomZoneMission.id,
+            kind:
+              latestRecentRoomZoneMission.type === "room_cleaning" ||
+              latestRecentRoomZoneMission.requestedCommand === "start_room_cleaning"
+                ? "room"
+                : "zone",
+            name:
+              typeof recentRoomZoneAnnotationRecord.name === "string"
+                ? recentRoomZoneAnnotationRecord.name
+                : latestRecentRoomZoneMission.type === "room_cleaning" ||
+                    latestRecentRoomZoneMission.requestedCommand === "start_room_cleaning"
+                  ? "Room"
+                  : "Zone",
+            area: coverageMissionArea(latestRecentRoomZoneMission)
+              ? cleanAreaRectToAnnotationArea(coverageMissionArea(latestRecentRoomZoneMission)!)
+              : { shape: "rectangle", minX: 0, minY: 0, maxX: 0, maxY: 0 },
+            mapId: recentRoomZoneAnnotationMapId,
+            createdAt: latestRecentRoomZoneMission.startedAt ?? Date.now(),
+            updatedAt: latestRecentRoomZoneMission.updatedAt ?? Date.now(),
+          }
       : null);
   const selectedRoomZoneRect = selectedRoomZone ? annotationAreaToCleanAreaRect(selectedRoomZone.area) : null;
   const selectedRoomZoneCoverageTarget = useMemo(
@@ -1772,12 +1828,11 @@ export function VacuumControlPanel() {
       : null;
   const activeCoverageMissionState = mapCoverageMissionState(activeCoverageMission);
   const activeRoomZoneMission =
-    activeCoverageMission?.type === "room_cleaning" ||
-    activeCoverageMission?.type === "zone_cleaning" ||
-    activeCoverageMission?.requestedCommand === "start_room_cleaning" ||
-    activeCoverageMission?.requestedCommand === "start_zone_cleaning"
+    isRoomZoneMissionSnapshot(activeCoverageMission)
       ? activeCoverageMission
       : null;
+  const isRoomZoneCleaningRuntimeActive =
+    activeRoomZoneMission != null && !isTerminalMissionStatus(activeRoomZoneMission.status);
   const activeCoverageArea = coverageMissionArea(activeCoverageMission);
   const activeCoverageRoute = coverageMissionRoute(activeCoverageMission);
   const activeCoverageTarget = useMemo(
@@ -1982,7 +2037,7 @@ export function VacuumControlPanel() {
   const isCleanAreaActive = isRuntimeCoverageActive || isCleanAreaRunning || displayedCleanAreaState === "paused";
   const hasCleanAreaDraft = Boolean(displayedCleanAreaRect) && displayedCleanAreaState !== "idle";
   const isCleanAreaModeLocked = isCleanAreaActive || cleanAreaToolActive;
-  const isRoomZoneModeLocked = roomZoneToolActive;
+  const isRoomZoneModeLocked = roomZoneToolActive || isRoomZoneCleaningRuntimeActive;
   const cleanAreaVisualState = getCleanAreaVisualState(displayedCleanAreaState, cleanAreaToolActive);
   const cleanAreaPreviewPoints =
     displayedCleanAreaWaypoints.length > 0
@@ -2605,6 +2660,15 @@ export function VacuumControlPanel() {
       setActiveMode("rooms");
     } else if (isCleanAreaActive || cleanAreaToolActive || activeCoverageMission) {
       setActiveMode("clean");
+    } else if (
+      !restoredRoomZoneRecentModeRef.current &&
+      latestRecentRoomZoneMission &&
+      shouldRestoreRecentRoomZoneMode &&
+      activeMode === "navigation" &&
+      !hasTarget
+    ) {
+      restoredRoomZoneRecentModeRef.current = true;
+      setActiveMode("rooms");
     } else if (activeMode === "clean" && hasCleanAreaDraft) {
       return;
     } else if (isGoalActive || isRuntimeNavigationActive) {
@@ -2616,10 +2680,13 @@ export function VacuumControlPanel() {
     activeRoomZoneMission,
     activeMode,
     hasCleanAreaDraft,
+    hasTarget,
     isRuntimeNavigationActive,
     isMappingWorkflowActive,
     isCleanAreaActive,
     cleanAreaToolActive,
+    latestRecentRoomZoneMission,
+    shouldRestoreRecentRoomZoneMode,
     roomZoneToolActive,
     isGoalActive,
   ]);
@@ -2725,7 +2792,7 @@ export function VacuumControlPanel() {
             cleanAreaEditable={mapCleanAreaEditable}
             cleanAreaVisualState={mapCleanAreaVisualState}
             mapAnnotations={activeMode === "rooms" ? roomZoneAnnotations : []}
-            selectedMapAnnotationId={selectedRoomZoneId}
+            selectedMapAnnotationId={activeMode === "rooms" ? recoveredRoomZoneSelectionId : null}
             interactionMode={activeMode}
             routeVisualState={routeVisualState}
             isGoalActive={isGoalActive}
@@ -3021,7 +3088,7 @@ export function VacuumControlPanel() {
                   canPauseCleaning={canPauseRoomZoneCleaning}
                   canResumeCleaning={canResumeRoomZoneCleaning}
                   canCancelCleaning={canCancelRoomZoneCleaning}
-                  cleaningActive={Boolean(activeRoomZoneMission)}
+                  cleaningActive={isRoomZoneCleaningRuntimeActive}
                   cleaningState={activeCoverageMissionState}
                   canSave={canSaveRoomZone}
                   onDraftKindChange={setRoomZoneDraftKind}
