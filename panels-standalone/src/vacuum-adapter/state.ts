@@ -75,6 +75,7 @@ export type VacuumMissionResult = {
   status: Extract<VacuumMissionStatus, "completed" | "failed" | "canceled" | "unsupported">;
   completedAt: number | null;
   summary?: string;
+  details?: Record<string, unknown>;
 };
 
 export type VacuumMissionError = {

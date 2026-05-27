@@ -5,7 +5,7 @@ import { useNav2Runtime } from "../../../components/Nav2/runtime/useNav2Runtime"
 import type { VacuumAdapter } from "../../adapter";
 import type { VacuumCommand, VacuumCommandResult } from "../../commands";
 import { buildVacuumMapMetadata, parseVacuumMapGrid } from "../../mapGrid";
-import type { VacuumGoalCoordinates, VacuumMapAnnotation, VacuumMapGrid, VacuumMappingStatus, VacuumMissionSnapshot, VacuumSavedMapSummary } from "../../state";
+import type { VacuumGoalCoordinates, VacuumMapAnnotation, VacuumMapGrid, VacuumMappingStatus, VacuumMissionResult, VacuumMissionSnapshot, VacuumSavedMapSummary } from "../../state";
 import { MAP_ANNOTATION_SERVICE_NAMES, MAPPING_STATUS_TOPIC, MISSION_SERVICE_NAMES, MISSION_STATUS_TOPIC } from "./capabilityMapper";
 import { dispatchTurtleBot4Nav2Command } from "./commandDispatcher";
 import {
@@ -24,6 +24,12 @@ function toFiniteNumber(value: unknown): number | null {
 
 function isTerminalMissionStatus(status: VacuumMissionSnapshot["status"]): boolean {
   return status === "completed" || status === "failed" || status === "canceled" || status === "unsupported";
+}
+
+function toTerminalMissionResultStatus(
+  status: VacuumMissionSnapshot["status"],
+): VacuumMissionResult["status"] | null {
+  return isTerminalMissionStatus(status) ? (status as VacuumMissionResult["status"]) : null;
 }
 
 function parseMapAnnotation(value: unknown): VacuumMapAnnotation | null {
@@ -325,6 +331,7 @@ function parseMissionSnapshot(value: unknown): VacuumMissionSnapshot | null {
     : [];
   const startedAt = toFiniteNumber(mission.startedAt);
   const updatedAt = toFiniteNumber(mission.updatedAt);
+  const terminalStatus = toTerminalMissionResultStatus(status);
   return {
     id: typeof mission.id === "string" ? mission.id : `turtlebot4-nav2:mission:${updatedAt ?? startedAt ?? "unknown"}`,
     type: isMissionType(mission.type) ? mission.type : "navigation",
@@ -342,10 +349,11 @@ function parseMissionSnapshot(value: unknown): VacuumMissionSnapshot | null {
             status: result.status as "completed" | "failed" | "canceled" | "unsupported",
             completedAt: toFiniteNumber(result.completedAt),
             summary: typeof result.summary === "string" ? result.summary : undefined,
+            details: result.details && typeof result.details === "object" ? (result.details as Record<string, unknown>) : undefined,
           }
-        : isTerminalMissionStatus(status)
+        : terminalStatus
           ? {
-              status,
+              status: terminalStatus,
               completedAt: updatedAt,
               summary: typeof mission.phase === "string" ? mission.phase : undefined,
             }

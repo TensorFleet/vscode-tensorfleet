@@ -196,6 +196,7 @@ Each active mission snapshot carries:
 - normalized progress
 - available actions
 - terminal result
+- structured result details when the runtime provides them
 - recoverable error / needs-assistance state
 - target payload
 
@@ -236,6 +237,13 @@ Current implementation note:
   maps the selected annotation to a coverage target privately, and the UI
   hydrates active and terminal summaries from `snapshot.activeMission` and
   `snapshot.missions.recent`.
+- Room/zone recovery controls are runtime/action gated: pause, resume, cancel,
+  retry step, and skip step are shown or dispatched only when
+  `activeMission.availableActions` and adapter capabilities allow them.
+- Coverage-style terminal results may carry structured details for cleaned
+  area, remaining area, skipped area, skipped reasons, route completion, and
+  coverage-threshold status. Product UI may use these details to label a run
+  as cleaned or partially cleaned without exposing Nav2 waypoint internals.
 
 Current position:
 
@@ -263,7 +271,8 @@ Layer 4 — Coverage                  Clean Area execution, route generation,
                                     runtime-owned for TurtleBot4/Nav2
 Layer 5 — Room / Zone Semantics     prototype implemented:
                                     manual annotations, target preview,
-                                    room/zone cleaning, hydration, and recent
+                                    room/zone cleaning, recovery controls,
+                                    hydration, result details, and recent
                                     summaries
 Layer 6 — Real Hardware (Valetudo)  planned
 ```
@@ -465,7 +474,7 @@ Current Clean Area MVP:
   return-to-dock, battery, and charging state
 - states include editing, confirmed, preparing, running, paused, canceling,
   completed, failed, and canceled
-- operators can pause, cancel, retry waypoint, skip waypoint, and clear
+- operators can pause, resume, cancel, retry waypoint, skip waypoint, and clear
 
 Production Layer 4 follow-up:
 
@@ -517,10 +526,16 @@ Current prototype:
   runtime-owned coverage mission request while preserving the room/zone label
   and mission intent in the request payload and optimistic mission snapshot.
 - Active room/zone cleaning hydrates from `snapshot.activeMission`; the UI
-  renders lifecycle/progress state and routes pause/cancel through mission
-  actions.
+  renders lifecycle/progress state and routes pause/resume/cancel/retry/skip
+  through mission actions.
 - Terminal room/zone results hydrate through `snapshot.missions.recent` and
   render as recent mission summaries after webview reopen.
+- Runtime room/zone snapshots preserve product-level annotation metadata
+  including id, kind, name, and map id.
+- Runtime coverage-style results preserve cleaned/remaining/skipped area,
+  skipped-reason counts, route completion, and threshold status when available.
+- Recent mission labels can distinguish cleaned from partially cleaned based on
+  normalized result details.
 - TurtleBot4/Nav2 persists annotations in webview storage keyed to the active
   map identity when available.
 - Valetudo annotation/room/zone semantics remain explicitly unsupported until
@@ -628,7 +643,6 @@ Public backend-neutral capability names include:
 - `events`
 - `dock_state`
 - `battery`
-- `charging`
 
 Do not expose public flags such as:
 
@@ -963,7 +977,7 @@ Scope:
 
 - maintain the current runtime-owned Clean Area simulation flow
 - harden runtime coverage route generation beyond row-level clipping
-- add richer runtime mission summaries for uncovered/skipped cells
+- continue improving runtime mission summaries for uncovered/skipped cells
 - dock / undock awareness in adapter state/commands
 - battery-aware execution and resume
 
@@ -983,6 +997,10 @@ Scope:
 - room/zone target preview
 - translate room/zone requests into Layer 4 coverage goals
 - hydrate active and terminal room/zone missions from adapter snapshots
+- expose room/zone pause, resume, cancel, retry step, and skip step through
+  normalized runtime mission actions
+- preserve room/zone annotation identity and coverage-style result details in
+  normalized mission snapshots
 - keep public shape backend-neutral even if backend input helps segmentation
 
 ### Layer 6 Milestone: Planned

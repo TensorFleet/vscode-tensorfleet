@@ -10,7 +10,7 @@ It is not the architecture source of truth. Use `VACUUM_STACK_PLAN.md` for the
 stack architecture and layer plan. Use `extension.md` for VS Code extension
 files, panels, topics, endpoints, and extension follow-up work.
 
-Current report date: May 21, 2026.
+Current report date: May 27, 2026.
 
 ## Runtime-Owned Mission Architecture Progress
 
@@ -28,12 +28,16 @@ Current contract progress:
   resuming / needs_assistance / completed / failed / canceled / unsupported`.
 - Mission snapshots include id, type, backend source, requested command, phase,
   progress, available actions, terminal result, error, and target payload.
-- TurtleBot4/Nav2 mapping and navigation state are wrapped into
-  `activeMission` snapshots as a contract bridge.
+- TurtleBot4/Nav2 mapping, navigation, coverage, room cleaning, and zone
+  cleaning state are wrapped into `activeMission` snapshots as a contract
+  bridge.
 - Valetudo stub state exposes the same mission snapshot shape.
 - New intent command names are reserved for runtime-owned execution:
   `start_navigation`, `start_coverage`, `pause_mission`, `resume_mission`,
   `cancel_mission`, `retry_mission_step`, and `skip_mission_step`.
+- Mission results can preserve structured runtime details for coverage-style
+  results, including cleaned/remaining/skipped area, skipped reasons, route
+  completion, and coverage-threshold status.
 
 Current limitation:
 
@@ -42,6 +46,9 @@ Current limitation:
 - Clean Area now submits area-only `start_coverage` requests for active runs.
   The VM mission runtime owns route generation and per-cell coverage overlay
   snapshots for TurtleBot4/Nav2.
+- Room/zone active execution is runtime-owned through
+  `start_room_cleaning` / `start_zone_cleaning`, but annotation durability and
+  live retry/skip validation still need hardening.
 
 ## Repositories And Commits
 
@@ -130,6 +137,13 @@ What is currently true:
   TurtleBot4/Nav2 adapter maps those intents to the existing VM-owned coverage
   mission runtime while the UI hydrates active state from
   `snapshot.activeMission`.
+- Active room/zone missions expose pause, resume, cancel, retry step, and skip
+  step through runtime `availableActions` and adapter capabilities.
+- Runtime room/zone snapshots preserve annotation target metadata and
+  coverage-style result details.
+- Recent Missions can label completed coverage-style room/zone results as
+  cleaned or partially cleaned based on remaining/skipped area and
+  coverage-threshold metadata.
 - Terminal room/zone cleaning summaries hydrate through
   `snapshot.missions.recent` and remain visible in Recent Missions after
   webview reopen.
@@ -311,6 +325,8 @@ What exists:
   resuming / needs_assistance / completed / failed / canceled / unsupported`.
   The legacy coarse `snapshot.mission` field remains for current UI
   compatibility.
+- Mission result snapshots can carry structured `details` for runtime-provided
+  coverage outcomes.
 - `Vacuum Control` branches on capabilities and normalized state, not backend
   names.
 - The Valetudo stub defines capability, state, command, and runtime-boundary
@@ -326,6 +342,8 @@ Focused regression coverage:
 - backend-name branching checks in `VacuumControlPanel.tsx`
 - Valetudo capability/command mapper shape
 - clean-area profile/planner/coverage contract checks
+- room/zone recovery-action hydration
+- partial-clean result-detail preservation
 
 Primary verification command:
 
@@ -420,8 +438,8 @@ Current behavior:
   return-to-dock, battery, and charging capabilities.
 - Clean-area state covers editing, confirmed, preparing, running, paused,
   canceling, completed, failed, and canceled.
-- Operators can pause, cancel, retry waypoint, skip waypoint, and clear the
-  area when inactive.
+- Operators can pause, resume, cancel, retry waypoint, skip waypoint, and clear
+  the area when inactive.
 - `TeleopCard` is disabled during active clean-area waypoint runs.
 
 Current limits:
@@ -505,10 +523,14 @@ Current behavior:
   runtime-owned coverage mission path.
 - The UI renders active room/zone cleaning from `snapshot.activeMission`.
 - Pause, resume, and cancel controls follow mission action capabilities.
+- Retry step and Skip step appear for room/zone missions when the runtime
+  reports recoverable step actions.
 - Terminal room/zone results appear in `snapshot.missions.recent` and render in
   the Recent Missions card.
 - Recent room/zone summaries preserve annotation labels when the runtime target
   payload includes them.
+- Recent coverage-style summaries can render Cleaned or Partially cleaned from
+  runtime coverage details.
 
 Current limits:
 
@@ -579,9 +601,18 @@ Suggested build verification:
 
 ```sh
 bun run test:vacuum-adapter
-bun run typecheck
 bun run --cwd panels-standalone build
+npx tsc --noEmit
+git diff --check
 ```
+
+Known verification caveat:
+
+- `npx tsc --noEmit` still fails on existing project-wide type issues outside
+  the current vacuum-adapter pass, including missing `tensorfleet-ros`
+  declarations, gzweb package typing issues, and RawMessages/SensorView3D
+  strictness errors. The focused regression harness and panels production build
+  are the current reliable checks for this slice.
 
 ## Runtime Caveats
 
@@ -608,11 +639,13 @@ Practical consequence:
 
 Near-term validation:
 
-- live-validate Clean Area MVP against the VM
+- live-validate Clean Area runtime result details against the VM
 - visually retest Clean Area preview/execution route overlays in the webview
 - retest mode switching after canceled/completed/failed navigation missions
-- validate pause, cancel, retry, skip, failure handling, and mode locking during
-  Clean Area runs
+- validate pause, resume, cancel, retry, skip, failure handling, and mode
+  locking during Clean Area runs
+- validate room/zone retry/skip controls and cleaned/partially-cleaned result
+  wording against TurtleBot4/Nav2 simulation
 - keep `RawMessagesPanel.tsx` and `SensorView3DPanel.tsx` useful as supporting
   debug surfaces
 

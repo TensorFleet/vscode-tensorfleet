@@ -194,12 +194,32 @@ function getMissionDisplayName(mission: VacuumMissionSnapshot): string {
   if (mission.type === "mapping") {
     return "Mapping";
   }
-  return mission.type.replaceAll("_", " ");
+  return mission.type.replace(/_/g, " ");
 }
 
 function getMissionResultLabel(mission: VacuumMissionSnapshot): string {
   const resultStatus = mission.result?.status ?? (isTerminalMissionStatus(mission.status) ? mission.status : null);
   if (resultStatus === "completed") {
+    const coverage = coverageMissionCoverageRecord(mission) ?? mission.result?.details ?? null;
+    if (coverage && (mission.type === "coverage" || isRoomZoneMissionSnapshot(mission))) {
+      const remainingAreaSqM = toFiniteNumber(coverage.remainingAreaSqM) ?? mission.progress.areaRemainingSqM ?? 0;
+      const skippedAreaSqM = toFiniteNumber(coverage.skippedAreaSqM) ?? 0;
+      const progress =
+        toFiniteNumber(coverage.progress) ?? toFiniteNumber(coverage.coverageProgress) ?? mission.progress.percent ?? 1;
+      const completionThreshold =
+        toFiniteNumber(coverage.completionThreshold) ?? toFiniteNumber(coverage.coverageThreshold) ?? 0.95;
+      const coverageThresholdReached =
+        typeof coverage.coverageThresholdReached === "boolean" ? coverage.coverageThresholdReached : null;
+      if (
+        remainingAreaSqM > 0.01 ||
+        skippedAreaSqM > 0.01 ||
+        coverageThresholdReached === false ||
+        (coverageThresholdReached !== true && progress < completionThreshold)
+      ) {
+        return "Partially cleaned";
+      }
+      return "Cleaned";
+    }
     return "Completed";
   }
   if (resultStatus === "failed") {
@@ -212,6 +232,10 @@ function getMissionResultLabel(mission: VacuumMissionSnapshot): string {
     return "Unsupported";
   }
   return mission.status;
+}
+
+function getMissionResultTone(label: string): string {
+  return label.toLowerCase().replace(/\s+/g, "-");
 }
 
 function formatRecoveries(value: number | null): string {
@@ -1291,6 +1315,8 @@ function RoomZonesCard(props: {
   canPauseCleaning: boolean;
   canResumeCleaning: boolean;
   canCancelCleaning: boolean;
+  canRetryCleaning: boolean;
+  canSkipCleaning: boolean;
   cleaningActive: boolean;
   cleaningState: CleanAreaMissionState | null;
   canSave: boolean;
@@ -1304,6 +1330,8 @@ function RoomZonesCard(props: {
   onPauseCleaning: () => void;
   onResumeCleaning: () => void;
   onCancelCleaning: () => void;
+  onRetryCleaning: () => void;
+  onSkipCleaning: () => void;
   onSelect: (id: string) => void;
   onDelete: () => void;
   onClearDraft: () => void;
@@ -1327,6 +1355,8 @@ function RoomZonesCard(props: {
     : props.cleaningActive
       ? props.cleaningState === "paused"
         ? "Paused"
+        : props.cleaningState === "failed"
+          ? "Needs assistance"
         : props.cleaningState === "canceling"
           ? "Canceling"
           : "Cleaning"
@@ -1484,7 +1514,16 @@ function RoomZonesCard(props: {
         ) : selected && props.cleaningActive ? (
           /* Active cleaning controls */
           <>
-            {props.cleaningState === "paused" ? (
+            {props.cleaningState === "failed" ? (
+              <>
+                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onRetryCleaning} disabled={!props.canRetryCleaning}>
+                  Retry step
+                </button>
+                <button className="vacuum-action vacuum-action--ghost" type="button" onClick={props.onSkipCleaning} disabled={!props.canSkipCleaning}>
+                  Skip step
+                </button>
+              </>
+            ) : props.cleaningState === "paused" ? (
               <button className="vacuum-action vacuum-action--primary" type="button" onClick={props.onResumeCleaning} disabled={!props.canResumeCleaning}>
                 Resume cleaning
               </button>
@@ -1650,7 +1689,7 @@ function RecentMissionsCard(props: { missions: VacuumMissionSnapshot[] }): JSX.E
           const area = mission.progress.areaCoveredSqM == null ? null : formatArea(mission.progress.areaCoveredSqM);
           const resultLabel = getMissionResultLabel(mission);
           return (
-            <div key={mission.id} className={`vacuum-recent-mission vacuum-recent-mission--${resultLabel.toLowerCase()}`}>
+            <div key={mission.id} className={`vacuum-recent-mission vacuum-recent-mission--${getMissionResultTone(resultLabel)}`}>
               <div className="vacuum-recent-mission__main">
                 <strong>{getMissionDisplayName(mission)}</strong>
                 <span>{mission.result?.summary ?? mission.phase}</span>
@@ -2254,6 +2293,10 @@ export function VacuumControlPanel() {
     Boolean(activeRoomZoneMission?.availableActions.includes("resume_mission")) && resumeMissionSupported;
   const canCancelRoomZoneCleaning =
     Boolean(activeRoomZoneMission?.availableActions.includes("cancel_mission")) && cancelMissionSupported;
+  const canRetryRoomZoneCleaning =
+    Boolean(activeRoomZoneMission?.availableActions.includes("retry_mission_step")) && retryMissionStepSupported;
+  const canSkipRoomZoneCleaning =
+    Boolean(activeRoomZoneMission?.availableActions.includes("skip_mission_step")) && skipMissionStepSupported;
 
   const saveDisabledReason: string | null = (() => {
     if (canSaveRoomZone) return null;
@@ -2625,7 +2668,7 @@ export function VacuumControlPanel() {
   }
 
   async function handlePauseRoomZoneCleaning(): Promise<void> {
-    if (!activeRoomZoneMission || !pauseMissionSupported) {
+    if (!activeRoomZoneMission || !canPauseRoomZoneCleaning) {
       return;
     }
     const result = await adapter.sendCommand({ command: "pause_mission" });
@@ -2635,7 +2678,7 @@ export function VacuumControlPanel() {
   }
 
   async function handleResumeRoomZoneCleaning(): Promise<void> {
-    if (!activeRoomZoneMission || !resumeMissionSupported) {
+    if (!activeRoomZoneMission || !canResumeRoomZoneCleaning) {
       return;
     }
     const result = await adapter.sendCommand({ command: "resume_mission" });
@@ -2645,10 +2688,32 @@ export function VacuumControlPanel() {
   }
 
   async function handleCancelRoomZoneCleaning(): Promise<void> {
-    if (!activeRoomZoneMission || !cancelMissionSupported) {
+    if (!activeRoomZoneMission || !canCancelRoomZoneCleaning) {
       return;
     }
     const result = await adapter.sendCommand({ command: "cancel_mission" });
+    if (!result.ok) {
+      setRoomZoneCommandError(result.error.message);
+    }
+  }
+
+  async function handleRetryRoomZoneStep(): Promise<void> {
+    if (!activeRoomZoneMission || !canRetryRoomZoneCleaning) {
+      return;
+    }
+    setRoomZoneCommandError(null);
+    const result = await adapter.sendCommand({ command: "retry_mission_step" });
+    if (!result.ok) {
+      setRoomZoneCommandError(result.error.message);
+    }
+  }
+
+  async function handleSkipRoomZoneStep(): Promise<void> {
+    if (!activeRoomZoneMission || !canSkipRoomZoneCleaning) {
+      return;
+    }
+    setRoomZoneCommandError(null);
+    const result = await adapter.sendCommand({ command: "skip_mission_step" });
     if (!result.ok) {
       setRoomZoneCommandError(result.error.message);
     }
@@ -3222,6 +3287,8 @@ export function VacuumControlPanel() {
                   canPauseCleaning={canPauseRoomZoneCleaning}
                   canResumeCleaning={canResumeRoomZoneCleaning}
                   canCancelCleaning={canCancelRoomZoneCleaning}
+                  canRetryCleaning={canRetryRoomZoneCleaning}
+                  canSkipCleaning={canSkipRoomZoneCleaning}
                   cleaningActive={isRoomZoneCleaningRuntimeActive}
                   cleaningState={activeCoverageMissionState}
                   canSave={canSaveRoomZone}
@@ -3235,6 +3302,8 @@ export function VacuumControlPanel() {
                   onPauseCleaning={() => void handlePauseRoomZoneCleaning()}
                   onResumeCleaning={() => void handleResumeRoomZoneCleaning()}
                   onCancelCleaning={() => void handleCancelRoomZoneCleaning()}
+                  onRetryCleaning={() => void handleRetryRoomZoneStep()}
+                  onSkipCleaning={() => void handleSkipRoomZoneStep()}
                   onSelect={handleSelectRoomZone}
                   onDelete={() => void handleDeleteRoomZone()}
                   onClearDraft={handleClearRoomZoneDraft}

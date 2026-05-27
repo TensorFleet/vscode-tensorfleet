@@ -42,7 +42,11 @@ The extension should:
    be previewed as coverage targets, active room/zone cleaning hydrates from
    `snapshot.activeMission`, and terminal summaries hydrate from
    `snapshot.missions.recent`.
-7. Record panel gaps as extension follow-up work, not as blockers for the
+7. Treat room/zone recovery controls and terminal result labels as
+   runtime-owned mission data: pause, resume, cancel, retry step, and skip step
+   are gated by `activeMission.availableActions`, and cleaned vs partially
+   cleaned labels come from normalized coverage result details when present.
+8. Record panel gaps as extension follow-up work, not as blockers for the
    already-closed Layer 2/Layer 3 simulation slice.
 
 ## Repository
@@ -203,7 +207,8 @@ Panel responsibilities:
 - Clean Area controls and visualization
 - Rooms / Zones controls and manual annotation visualization
 - selected room/zone cleaning-target preview
-- selected room/zone cleaning execution and recent summaries
+- selected room/zone cleaning execution, recovery controls, and recent
+  summaries
 - teleop and camera PiP inside the operator workflow
 
 Current expectations:
@@ -215,6 +220,11 @@ Current expectations:
   UI owns only unsaved draft rectangle/name/kind state.
 - Active room/zone cleaning state comes from `snapshot.activeMission`.
 - Terminal room/zone cleaning summaries come from `snapshot.missions.recent`.
+- Room/zone pause, resume, cancel, retry step, and skip step controls are
+  action-gated by `activeMission.availableActions` and adapter capabilities.
+- Terminal room/zone results may render Cleaned or Partially cleaned from
+  runtime coverage details carried in `mission.result.details` or
+  `mission.target.coverage`.
 - Mode switching prevents mapping, point navigation, and clean-area runs from
   conflicting.
 - Active navigation missions may auto-select Navigate mode. Terminal navigation
@@ -461,8 +471,12 @@ Current behavior:
 - Selecting a saved room/zone can start `start_room_cleaning` or
   `start_zone_cleaning` through the adapter.
 - Active room/zone cleaning hydrates from `snapshot.activeMission`.
+- Pause, resume, cancel, retry step, and skip step dispatch through normalized
+  mission commands only when the runtime reports those actions as available.
 - Terminal room/zone cleaning summaries hydrate from `snapshot.missions.recent`
   and render in Recent Missions.
+- Runtime room/zone result details preserve annotation target metadata and
+  coverage outcome details when the backend provides them.
 - TurtleBot4/Nav2 stores prototype annotations in webview storage keyed to the
   active map identity where available.
 - Controls are capability-gated through `map_annotations`, `room_semantics`,
@@ -518,6 +532,8 @@ Layer 3 extension facts:
 - `snapshot.activeMission` and `snapshot.missions` are the normalized
   runtime-owned mission surfaces for new work.
 - `snapshot.mission` remains as the legacy coarse state used by the current UI.
+- `mission.result.details` can carry structured backend-neutral runtime result
+  details for coverage-style runs.
 - `useTurtleBot4Nav2Adapter` wraps `useNav2Runtime`.
 - `VacuumControlPanel.tsx` consumes `useVacuumAdapter`.
 - `start_navigation` and `cancel_mission` use `adapter.sendCommand`;
@@ -525,6 +541,8 @@ Layer 3 extension facts:
 - Navigation destination/progress/action state hydrates from the runtime-owned
   active mission snapshot. For TurtleBot4/Nav2 this currently uses
   `/vacuum_mission/status` plus `/vacuum_mission/get_snapshot`.
+- Coverage, room cleaning, and zone cleaning lifecycle/recovery actions also
+  hydrate from the runtime-owned mission snapshot.
 - Clear destination after a terminal navigation run is UI presentation state:
   it dismisses the completed/canceled/failed destination locally without
   clearing runtime mission history.
@@ -703,9 +721,18 @@ Suggested verification after extension changes:
 
 ```sh
 bun run test:vacuum-adapter
-bun run typecheck
 bun run --cwd panels-standalone build
+npx tsc --noEmit
+git diff --check
 ```
+
+Known verification caveat:
+
+- `npx tsc --noEmit` still fails on existing project-wide type issues outside
+  the current vacuum-adapter work, including missing `tensorfleet-ros`
+  declarations, gzweb package typing issues, and RawMessages/SensorView3D
+  strictness errors. Use the focused adapter regression harness and panels
+  production build as the current reliable checks for this slice.
 
 Live extension validation should cover:
 
@@ -728,6 +755,10 @@ Live extension validation should cover:
 - Rooms / Zones create/select/delete flows render from adapter annotations.
 - selected room/zone cleaning starts through the adapter and restores active
   state from `snapshot.activeMission` after reopening.
+- room/zone pause, resume, cancel, retry step, and skip step controls appear
+  only when `activeMission.availableActions` includes them.
+- Recent Missions labels full vs partial coverage-style room/zone results from
+  runtime result details.
 - supporting debug panels can inspect `/scan`, `/odom`, `/tf`, `/tf_static`,
   `/map`, and costmaps.
 

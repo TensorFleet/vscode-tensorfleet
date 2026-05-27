@@ -634,6 +634,35 @@ function testStateMapping(): void {
     mapId: "lab-map",
   });
 
+  const hydratedAssistanceZoneCleaning = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      ...hydratedPausedRoomCleaning.activeMission!,
+      id: "zone-cleaning-assistance",
+      type: "zone_cleaning",
+      status: "needs_assistance",
+      requestedCommand: "start_zone_cleaning",
+      phase: "needs_assistance",
+      availableActions: ["retry_mission_step", "skip_mission_step", "cancel_mission"],
+      error: {
+        code: "coverage_step_failed",
+        message: "Coverage navigation step failed.",
+        recoverable: true,
+      },
+      target: {
+        area: { shape: "rectangle", minX: 0, minY: 0, maxX: 2, maxY: 2 },
+        annotation: { id: "zone-1", kind: "zone", name: "Kitchen spill", mapId: "lab-map" },
+      },
+    },
+  });
+  assert.equal(hydratedAssistanceZoneCleaning.mission.state, "paused");
+  assert.equal(hydratedAssistanceZoneCleaning.activeMission?.type, "zone_cleaning");
+  assert.deepEqual(hydratedAssistanceZoneCleaning.activeMission?.availableActions, [
+    "retry_mission_step",
+    "skip_mission_step",
+    "cancel_mission",
+  ]);
+
   const hydratedRecentRoomCleaning = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "ready" }),
     recentMissions: [
@@ -658,12 +687,32 @@ function testStateMapping(): void {
         result: {
           status: "completed",
           completedAt: 200,
-          summary: "Kitchen completed.",
+          summary: "Kitchen partially cleaned. 2.5 m² cleaned, 0.5 m² remaining, 0.2 m² skipped.",
+          details: {
+            featureState: "partially_cleaned",
+            cleanedAreaSqM: 2.5,
+            remainingAreaSqM: 0.5,
+            skippedAreaSqM: 0.2,
+            skippedReasons: { occupied: 2, unknown: 1, outOfBounds: 0, tooSmall: 0 },
+            routeCompleted: true,
+            coverageThresholdReached: false,
+          },
         },
         error: null,
         target: {
           area: { shape: "rectangle", minX: 0, minY: 0, maxX: 2, maxY: 2 },
           annotation: { id: "room-1", kind: "room", name: "Kitchen", mapId: "lab-map" },
+          coverage: {
+            completionThreshold: 0.95,
+            targetCells: 10,
+            coveredCells: 8,
+            remainingCells: 2,
+            cleanableAreaSqM: 3,
+            coveredAreaSqM: 2.5,
+            remainingAreaSqM: 0.5,
+            skippedAreaSqM: 0.2,
+            skippedReasons: { occupied: 2, unknown: 1, outOfBounds: 0, tooSmall: 0 },
+          },
         },
       },
     ],
@@ -671,7 +720,16 @@ function testStateMapping(): void {
   assert.equal(hydratedRecentRoomCleaning.activeMission, null);
   assert.equal(hydratedRecentRoomCleaning.missions.recent.length, 1);
   assert.equal(hydratedRecentRoomCleaning.missions.recent[0]?.type, "room_cleaning");
-  assert.equal(hydratedRecentRoomCleaning.missions.recent[0]?.result?.summary, "Kitchen completed.");
+  assert.equal(
+    hydratedRecentRoomCleaning.missions.recent[0]?.result?.summary,
+    "Kitchen partially cleaned. 2.5 m² cleaned, 0.5 m² remaining, 0.2 m² skipped.",
+  );
+  assert.deepEqual(hydratedRecentRoomCleaning.missions.recent[0]?.result?.details?.skippedReasons, {
+    occupied: 2,
+    unknown: 1,
+    outOfBounds: 0,
+    tooSmall: 0,
+  });
 
   const hydratedTerminalRoomCleaning = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "ready" }),
