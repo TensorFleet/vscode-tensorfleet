@@ -3,9 +3,13 @@ import { useConnectionSettings } from "../ConnectionSettingsProvider";
 import { ros2Bridge } from "tensorfleet-ros";
 import {
   formatDuration,
+  normalizeVacuumAdapterBackend,
+  readConfiguredVacuumAdapterBackend,
   useVacuumAdapter,
+  VACUUM_ADAPTER_BACKENDS,
   type CapabilitySupport,
   type VacuumCommandResult,
+  type VacuumAdapterBackendId,
   type VacuumBatteryState,
   type VacuumCapabilities,
   type VacuumMapAnnotation,
@@ -355,6 +359,21 @@ const RECENT_ROOM_ZONE_MODE_RESTORE_MAX_AGE_MS = 2 * 60 * 1000;
 
 const RECENT_ROOM_ZONE_DISMISSED_AT_STORAGE_KEY =
   "tensorfleet:vacuums:vacuum-control:recent-room-zone-missions-dismissed-at";
+
+const ADAPTER_BACKEND_STORAGE_KEY = "tensorfleet:vacuums:adapter-backend";
+const ADAPTER_BACKEND_OPTIONS = Object.values(VACUUM_ADAPTER_BACKENDS) as VacuumAdapterBackendId[];
+
+function writeSelectedAdapterBackend(backend: VacuumAdapterBackendId): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(ADAPTER_BACKEND_STORAGE_KEY, backend);
+    (window as unknown as { TENSORFLEET_VACUUM_BACKEND?: VacuumAdapterBackendId }).TENSORFLEET_VACUUM_BACKEND = backend;
+  } catch {
+    // Selection still applies for the current React state even if localStorage is unavailable.
+  }
+}
 
 function readDismissedRoomZoneMissionTime(): number | null {
   if (typeof window === "undefined") {
@@ -1722,6 +1741,80 @@ function MissionLifecycleCard(props: {
   );
 }
 
+function BasicControlsCard(props: {
+  capabilities: VacuumCapabilities;
+  commandError: string | null;
+  onStart: () => void;
+  onPause: () => void;
+  onStop: () => void;
+  onReturnToDock: () => void;
+}): JSX.Element | null {
+  const hasBasicControl =
+    props.capabilities.start_cleaning.supported ||
+    props.capabilities.pause.supported ||
+    props.capabilities.stop.supported ||
+    props.capabilities.return_to_dock.supported;
+  if (!hasBasicControl) {
+    return null;
+  }
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--mission-lifecycle">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Basic Cleaning</p>
+        <span className="vacuum-clean-area-badge">Runtime</span>
+      </div>
+      {props.commandError ? (
+        <div className="vacuum-mapping-error" role="status">
+          {props.commandError}
+        </div>
+      ) : null}
+      <div className="vacuum-actions">
+        <button
+          className="vacuum-action vacuum-action--primary"
+          type="button"
+          onClick={props.onStart}
+          disabled={!props.capabilities.start_cleaning.supported}
+        >
+          Start cleaning
+        </button>
+        <button
+          className="vacuum-action vacuum-action--ghost"
+          type="button"
+          onClick={props.onPause}
+          disabled={!props.capabilities.pause.supported}
+        >
+          Pause
+        </button>
+        <button
+          className="vacuum-action vacuum-action--danger"
+          type="button"
+          onClick={props.onStop}
+          disabled={!props.capabilities.stop.supported}
+        >
+          Stop
+        </button>
+        <button
+          className="vacuum-action vacuum-action--ghost"
+          type="button"
+          onClick={props.onReturnToDock}
+          disabled={!props.capabilities.return_to_dock.supported}
+        >
+          Return to dock
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function UnsupportedFeatureCard(props: { title: string; detail: string }): JSX.Element {
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--progress-idle">
+      <p className="vacuum-panel-card__eyebrow">{props.title}</p>
+      <p className="vacuum-progress-idle-hint">{props.detail}</p>
+    </section>
+  );
+}
+
 function RecentMissionsCard(props: { missions: VacuumMissionSnapshot[] }): JSX.Element | null {
   const missions = props.missions.filter((mission) => isTerminalMissionStatus(mission.status)).slice(0, 4);
   if (missions.length === 0) {
@@ -1758,8 +1851,13 @@ function RecentMissionsCard(props: { missions: VacuumMissionSnapshot[] }): JSX.E
   );
 }
 
-export function VacuumControlPanel() {
-  const adapter = useVacuumAdapter();
+type VacuumControlPanelContentProps = {
+  backend: VacuumAdapterBackendId;
+  onBackendChange: (backend: VacuumAdapterBackendId) => void;
+};
+
+function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
+  const adapter = useVacuumAdapter({ backend: props.backend });
   const snapshot = adapter.snapshot;
   const { openOverlay } = useConnectionSettings();
   const [draftTarget, setDraftTarget] = useState<DraftTarget | null>(null);
@@ -1826,6 +1924,13 @@ export function VacuumControlPanel() {
   const mappingState = mapAdapterMappingState(mappingStatus.state);
   const autoMappingSupported = snapshot.capabilities.auto_mapping.supported;
   const mappingSessionSupported = snapshot.capabilities.mapping_session.supported;
+  const mapSupported = snapshot.capabilities.map.supported;
+  const mapSurfaceAvailable = mapSupported;
+  const navigationSupported = startNavigationSupported || snapshot.capabilities.go_to_location.supported;
+  const cleanAreaSupported = startCoverageSupported || snapshot.capabilities.coverage_mission.supported;
+  const roomsZonesSupported =
+    roomSemanticsSupported || zoneSemanticsSupported || roomCleaningSupported || zoneCleaningSupported;
+  const manualControlSupported = snapshot.capabilities.manual_control.supported;
   const cleanAreaCoverageConfig = useMemo(
     () =>
       buildCleanAreaCoverageRuntimeConfig({
@@ -2902,6 +3007,14 @@ export function VacuumControlPanel() {
     }
   }
 
+  async function handleBasicCommand(command: "start_cleaning" | "pause" | "stop" | "return_to_dock"): Promise<void> {
+    setMissionCommandError(null);
+    const result = await adapter.sendCommand({ command });
+    if (!result.ok) {
+      setMissionCommandError(result.error.message);
+    }
+  }
+
   async function handleRetryCleanAreaWaypoint(): Promise<void> {
     if (!activeCoverageMission || !retryMissionStepSupported) {
       return;
@@ -2925,6 +3038,22 @@ export function VacuumControlPanel() {
   }
 
   useEffect(() => {
+    if (activeMode === "mapping" && !mappingSessionSupported && !autoMappingSupported) {
+      setActiveMode(navigationSupported ? "navigation" : cleanAreaSupported ? "clean" : roomsZonesSupported ? "rooms" : "navigation");
+      return;
+    }
+    if (activeMode === "navigation" && !navigationSupported) {
+      setActiveMode(cleanAreaSupported ? "clean" : roomsZonesSupported ? "rooms" : mappingSessionSupported || autoMappingSupported ? "mapping" : "navigation");
+      return;
+    }
+    if (activeMode === "clean" && !cleanAreaSupported) {
+      setActiveMode(navigationSupported ? "navigation" : roomsZonesSupported ? "rooms" : mappingSessionSupported || autoMappingSupported ? "mapping" : "navigation");
+      return;
+    }
+    if (activeMode === "rooms" && !roomsZonesSupported) {
+      setActiveMode(navigationSupported ? "navigation" : cleanAreaSupported ? "clean" : mappingSessionSupported || autoMappingSupported ? "mapping" : "navigation");
+      return;
+    }
     if (isMappingWorkflowActive) {
       setActiveMode("mapping");
     } else if (activeRoomZoneMission) {
@@ -2962,6 +3091,11 @@ export function VacuumControlPanel() {
     shouldRestoreRecentRoomZoneMode,
     roomZoneToolActive,
     isGoalActive,
+    autoMappingSupported,
+    cleanAreaSupported,
+    mappingSessionSupported,
+    navigationSupported,
+    roomsZonesSupported,
   ]);
 
   const mapRoomZonePreviewRect = activeRoomZoneMission ? activeCoverageArea : roomZoneDraftRect ?? selectedRoomZoneRect;
@@ -3011,6 +3145,21 @@ export function VacuumControlPanel() {
             <span className="vacuum-header__breadcrumb">{modeBreadcrumb}</span>
           </div>
           <div className="vacuum-header__right">
+            <label className="vacuum-backend-select">
+              <span>Adapter</span>
+              <select
+                value={props.backend}
+                onChange={(event) => {
+                  const nextBackend = normalizeVacuumAdapterBackend(event.target.value);
+                  if (nextBackend) {
+                    props.onBackendChange(nextBackend);
+                  }
+                }}
+              >
+                <option value={ADAPTER_BACKEND_OPTIONS[0]}>Simulation</option>
+                <option value={ADAPTER_BACKEND_OPTIONS[1]}>Valetudo runtime</option>
+              </select>
+            </label>
             {availability === "offline" ? (
               <button
                 className="vacuum-pill vacuum-pill--disconnected vacuum-pill--clickable"
@@ -3052,36 +3201,56 @@ export function VacuumControlPanel() {
         </section>
 
         <section className="vacuum-layout">
-          <MapCanvas
-            currentPose={currentPose}
-            planPoints={displayedPlanPoints}
-            draftTarget={displayedDraftTarget}
-            sentTarget={displayedSentTarget}
-            cleanAreaRect={mapCleanAreaRect}
-            cleanAreaPreviewPoints={mapCleanAreaPreviewPoints}
-            cleanAreaCurrentIndex={displayedCleanAreaCurrentIndex}
-            cleanAreaCoverage={mapCleanAreaCoverage}
-            cleanAreaToolActive={mapCleanAreaToolActive}
-            cleanAreaEditable={mapCleanAreaEditable}
-            cleanAreaVisualState={mapCleanAreaVisualState}
-            mapAnnotations={activeMode === "rooms" ? roomZoneAnnotations : []}
-            selectedMapAnnotationId={activeMode === "rooms" ? recoveredRoomZoneSelectionId : null}
-            interactionMode={activeMode}
-            routeVisualState={routeVisualState}
-            isGoalActive={isGoalActive}
-            mappingState={mappingState}
-            disableTargetSelection={activeMode !== "navigation" || isMappingWorkflowActive || cleanAreaToolActive || roomZoneToolActive || isCleanAreaActive}
-            targetDistance={destinationDistance}
-            adapterMapGrid={snapshot.map.grid}
-            adapterMapMetadata={snapshot.map.metadata}
-            onTargetStart={handleTargetStart}
-            onTargetRotate={handleTargetRotate}
-            onCleanAreaChange={handleMapAreaChange}
-            onMapAnnotationSelect={handleSelectRoomZone}
-            onMapMetadataChange={setMapMetadata}
-          />
+          {mapSurfaceAvailable ? (
+            <MapCanvas
+              currentPose={currentPose}
+              planPoints={displayedPlanPoints}
+              draftTarget={displayedDraftTarget}
+              sentTarget={displayedSentTarget}
+              cleanAreaRect={mapCleanAreaRect}
+              cleanAreaPreviewPoints={mapCleanAreaPreviewPoints}
+              cleanAreaCurrentIndex={displayedCleanAreaCurrentIndex}
+              cleanAreaCoverage={mapCleanAreaCoverage}
+              cleanAreaToolActive={mapCleanAreaToolActive}
+              cleanAreaEditable={mapCleanAreaEditable}
+              cleanAreaVisualState={mapCleanAreaVisualState}
+              mapAnnotations={activeMode === "rooms" ? roomZoneAnnotations : []}
+              selectedMapAnnotationId={activeMode === "rooms" ? recoveredRoomZoneSelectionId : null}
+              interactionMode={activeMode}
+              routeVisualState={routeVisualState}
+              isGoalActive={isGoalActive}
+              mappingState={mappingState}
+              disableTargetSelection={activeMode !== "navigation" || isMappingWorkflowActive || cleanAreaToolActive || roomZoneToolActive || isCleanAreaActive}
+              targetDistance={destinationDistance}
+              adapterMapGrid={snapshot.map.grid}
+              adapterMapMetadata={snapshot.map.metadata}
+              onTargetStart={handleTargetStart}
+              onTargetRotate={handleTargetRotate}
+              onCleanAreaChange={handleMapAreaChange}
+              onMapAnnotationSelect={handleSelectRoomZone}
+              onMapMetadataChange={setMapMetadata}
+            />
+          ) : (
+            <div className="vacuum-map-empty" role="status">
+              <VacuumMark className="vacuum-map-empty__mark" />
+              <div>
+                <strong>{snapshot.identity.label}</strong>
+                <span>{snapshot.map.detail ?? "Map is unavailable for this backend."}</span>
+              </div>
+            </div>
+          )}
 
           <div className="vacuum-sidebar">
+            {!mapSurfaceAvailable ? (
+              <BasicControlsCard
+                capabilities={snapshot.capabilities}
+                commandError={missionCommandError}
+                onStart={() => void handleBasicCommand("start_cleaning")}
+                onPause={() => void handleBasicCommand("pause")}
+                onStop={() => void handleBasicCommand("stop")}
+                onReturnToDock={() => void handleBasicCommand("return_to_dock")}
+              />
+            ) : null}
 
             {/* ── Mode switcher ── */}
             <div className="vacuum-mode-switcher">
@@ -3091,8 +3260,8 @@ export function VacuumControlPanel() {
                   type="button"
                   className={`vacuum-mode-tab vacuum-mode-tab--mapping${activeMode === "mapping" ? " vacuum-mode-tab--active" : ""}`}
                   onClick={() => { setActiveMode("mapping"); }}
-                  disabled={isCleanAreaModeLocked || isRoomZoneModeLocked || (isGoalActive && !isMappingWorkflowActive)}
-                  title={isCleanAreaModeLocked ? "Finish clean area first" : isRoomZoneModeLocked ? "Finish room or zone editing first" : isGoalActive && !isMappingWorkflowActive ? "Stop navigation first" : "Mapping"}
+                  disabled={(!mappingSessionSupported && !autoMappingSupported) || isCleanAreaModeLocked || isRoomZoneModeLocked || (isGoalActive && !isMappingWorkflowActive)}
+                  title={!mappingSessionSupported && !autoMappingSupported ? "Mapping unsupported" : isCleanAreaModeLocked ? "Finish clean area first" : isRoomZoneModeLocked ? "Finish room or zone editing first" : isGoalActive && !isMappingWorkflowActive ? "Stop navigation first" : "Mapping"}
                 >
                   <MappingModeIcon className="vacuum-mode-tab__icon" />
                   <span>Mapping</span>
@@ -3101,8 +3270,8 @@ export function VacuumControlPanel() {
                   type="button"
                   className={`vacuum-mode-tab vacuum-mode-tab--navigation${activeMode === "navigation" ? " vacuum-mode-tab--active" : ""}`}
                   onClick={() => { setActiveMode("navigation"); }}
-                  disabled={isMappingWorkflowActive || isCleanAreaModeLocked || isRoomZoneModeLocked}
-                  title={isMappingWorkflowActive ? "Finish mapping first" : isCleanAreaModeLocked ? "Finish clean area first" : isRoomZoneModeLocked ? "Finish room or zone editing first" : "Navigate"}
+                  disabled={!navigationSupported || isMappingWorkflowActive || isCleanAreaModeLocked || isRoomZoneModeLocked}
+                  title={!navigationSupported ? "Navigation unsupported" : isMappingWorkflowActive ? "Finish mapping first" : isCleanAreaModeLocked ? "Finish clean area first" : isRoomZoneModeLocked ? "Finish room or zone editing first" : "Navigate"}
                 >
                   <NavigateModeIcon className="vacuum-mode-tab__icon" />
                   <span>Navigate</span>
@@ -3111,8 +3280,8 @@ export function VacuumControlPanel() {
                   type="button"
                   className={`vacuum-mode-tab vacuum-mode-tab--clean${activeMode === "clean" ? " vacuum-mode-tab--active" : ""}`}
                   onClick={() => { setActiveMode("clean"); }}
-                  disabled={isMappingWorkflowActive || isRoomZoneModeLocked || (isGoalActive && !isCleanAreaActive)}
-                  title={isMappingWorkflowActive ? "Finish mapping first" : isRoomZoneModeLocked ? "Finish room or zone editing first" : isGoalActive && !isCleanAreaActive ? "Stop navigation first" : "Clean area"}
+                  disabled={!cleanAreaSupported || isMappingWorkflowActive || isRoomZoneModeLocked || (isGoalActive && !isCleanAreaActive)}
+                  title={!cleanAreaSupported ? "Clean Area unsupported" : isMappingWorkflowActive ? "Finish mapping first" : isRoomZoneModeLocked ? "Finish room or zone editing first" : isGoalActive && !isCleanAreaActive ? "Stop navigation first" : "Clean area"}
                 >
                   <CleanModeIcon className="vacuum-mode-tab__icon" />
                   <span>Clean area</span>
@@ -3121,8 +3290,8 @@ export function VacuumControlPanel() {
                   type="button"
                   className={`vacuum-mode-tab vacuum-mode-tab--rooms${activeMode === "rooms" ? " vacuum-mode-tab--active" : ""}`}
                   onClick={() => { setActiveMode("rooms"); }}
-                  disabled={isMappingWorkflowActive || isCleanAreaModeLocked || (isGoalActive && !isCleanAreaActive)}
-                  title={isMappingWorkflowActive ? "Finish mapping first" : isCleanAreaModeLocked ? "Finish clean area first" : isGoalActive && !isCleanAreaActive ? "Stop navigation first" : "Rooms and zones"}
+                  disabled={!roomsZonesSupported || isMappingWorkflowActive || isCleanAreaModeLocked || (isGoalActive && !isCleanAreaActive)}
+                  title={!roomsZonesSupported ? "Rooms and zones unsupported" : isMappingWorkflowActive ? "Finish mapping first" : isCleanAreaModeLocked ? "Finish clean area first" : isGoalActive && !isCleanAreaActive ? "Stop navigation first" : "Rooms and zones"}
                 >
                   <RoomsModeIcon className="vacuum-mode-tab__icon" />
                   <span>Rooms</span>
@@ -3133,39 +3302,54 @@ export function VacuumControlPanel() {
             {/* ── Mapping mode ── */}
             {activeMode === "mapping" && (
               <div className="vacuum-mode-content">
-                <MappingCard
-                  mappingState={mappingState}
-                  mappingStatus={mappingStatus}
-                  metadata={mapMetadata}
-                  savedMap={savedMap}
-                  savedMaps={mappingStatus.savedMaps}
-                  commandError={mappingCommandError}
-                  mapName={mapName}
-                  now={metadataClock}
-                  onMapNameChange={setMapName}
-                  autoSupported={autoMappingSupported}
-                  manualSupported={mappingSessionSupported}
-                  onStartAuto={() => void handleStartAutoMapping()}
-                  onStartManual={() => void handleStartManualMapping()}
-                  onPause={() => void handlePauseMapping()}
-                  onContinue={() => void handleContinueMapping()}
-                  onFinish={() => void handleFinishMapping()}
-                  onDiscard={() => void handleDiscardMapping()}
-                  onUseMap={() => void handleUseMap()}
-                  onLoadMap={(name) => void handleLoadMap(name)}
-                  onImproveMap={(name) => void handleImproveMap(name)}
-                  onRemap={() => void handleRemap()}
-                />
-                <TeleopCard
-                  disabled={mappingStatus.state === "auto_mapping"}
-                  disabledReason="Pause auto mapping before using manual control."
-                />
+                {mappingSessionSupported || autoMappingSupported ? (
+                  <>
+                    <MappingCard
+                      mappingState={mappingState}
+                      mappingStatus={mappingStatus}
+                      metadata={mapMetadata}
+                      savedMap={savedMap}
+                      savedMaps={mappingStatus.savedMaps}
+                      commandError={mappingCommandError}
+                      mapName={mapName}
+                      now={metadataClock}
+                      onMapNameChange={setMapName}
+                      autoSupported={autoMappingSupported}
+                      manualSupported={mappingSessionSupported}
+                      onStartAuto={() => void handleStartAutoMapping()}
+                      onStartManual={() => void handleStartManualMapping()}
+                      onPause={() => void handlePauseMapping()}
+                      onContinue={() => void handleContinueMapping()}
+                      onFinish={() => void handleFinishMapping()}
+                      onDiscard={() => void handleDiscardMapping()}
+                      onUseMap={() => void handleUseMap()}
+                      onLoadMap={(name) => void handleLoadMap(name)}
+                      onImproveMap={(name) => void handleImproveMap(name)}
+                      onRemap={() => void handleRemap()}
+                    />
+                    {manualControlSupported ? (
+                      <TeleopCard
+                        disabled={mappingStatus.state === "auto_mapping"}
+                        disabledReason="Pause auto mapping before using manual control."
+                      />
+                    ) : null}
+                  </>
+                ) : (
+                  <UnsupportedFeatureCard title="Mapping" detail={snapshot.mapping.stateReason} />
+                )}
               </div>
             )}
 
             {/* ── Navigate mode ── */}
             {activeMode === "navigation" && (
               <div className="vacuum-mode-content">
+                {!navigationSupported ? (
+                  <UnsupportedFeatureCard
+                    title="Navigation"
+                    detail={snapshot.capabilities.start_navigation.notes ?? "Navigation is unavailable for this backend."}
+                  />
+                ) : (
+                  <>
                 <section className={`vacuum-panel-card vacuum-panel-card--destination ${displayedTarget ? "vacuum-panel-card--destination-selected" : ""}`}>
                   <div className="vacuum-panel-card__head">
                     <p className="vacuum-panel-card__eyebrow">Destination</p>
@@ -3288,39 +3472,48 @@ export function VacuumControlPanel() {
                     </button>
                   </div>
                 </section>
+                  </>
+                )}
               </div>
             )}
 
             {/* ── Clean area mode ── */}
             {activeMode === "clean" && (
               <div className="vacuum-mode-content">
-                <CleanAreaCard
-                  state={displayedCleanAreaState}
-                  toolActive={cleanAreaToolActive}
-                  rect={displayedCleanAreaRect}
-                  validation={cleanAreaValidation}
-                  coverage={displayedCleanAreaCoverage}
-                  coverageConfig={cleanAreaCoverageConfig}
-                  waypointCount={displayedCleanAreaWaypoints.length}
-                  currentWaypointIndex={displayedCleanAreaCurrentIndex}
-                  passCount={cleanAreaMetrics.passCount}
-                  estimatedDistance={cleanAreaMetrics.totalDistance}
-                  distanceRemaining={cleanAreaMetrics.remainingDistance}
-                  commandError={displayedCleanAreaCommandError}
-                  canStart={canStartCleanArea}
-                  canCancel={canCancelCleanArea && !isCancelingGoal}
-                  canPause={canPauseCleanArea && !isCancelingGoal}
-                  canRetry={Boolean(activeCoverageMission?.availableActions.includes("retry_mission_step")) && retryMissionStepSupported}
-                  canSkip={Boolean(activeCoverageMission?.availableActions.includes("skip_mission_step")) && skipMissionStepSupported}
-                  onActivateTool={handleActivateCleanAreaTool}
-                  onConfirm={handleConfirmCleanArea}
-                  onStart={handleStartCleanArea}
-                  onPause={() => void handlePauseCleanArea()}
-                  onRetry={handleRetryCleanAreaWaypoint}
-                  onSkip={handleSkipCleanAreaWaypoint}
-                  onCancel={() => void handleCancelCleanArea()}
-                  onClear={handleClearCleanArea}
-                />
+                {cleanAreaSupported ? (
+                  <CleanAreaCard
+                    state={displayedCleanAreaState}
+                    toolActive={cleanAreaToolActive}
+                    rect={displayedCleanAreaRect}
+                    validation={cleanAreaValidation}
+                    coverage={displayedCleanAreaCoverage}
+                    coverageConfig={cleanAreaCoverageConfig}
+                    waypointCount={displayedCleanAreaWaypoints.length}
+                    currentWaypointIndex={displayedCleanAreaCurrentIndex}
+                    passCount={cleanAreaMetrics.passCount}
+                    estimatedDistance={cleanAreaMetrics.totalDistance}
+                    distanceRemaining={cleanAreaMetrics.remainingDistance}
+                    commandError={displayedCleanAreaCommandError}
+                    canStart={canStartCleanArea}
+                    canCancel={canCancelCleanArea && !isCancelingGoal}
+                    canPause={canPauseCleanArea && !isCancelingGoal}
+                    canRetry={Boolean(activeCoverageMission?.availableActions.includes("retry_mission_step")) && retryMissionStepSupported}
+                    canSkip={Boolean(activeCoverageMission?.availableActions.includes("skip_mission_step")) && skipMissionStepSupported}
+                    onActivateTool={handleActivateCleanAreaTool}
+                    onConfirm={handleConfirmCleanArea}
+                    onStart={handleStartCleanArea}
+                    onPause={() => void handlePauseCleanArea()}
+                    onRetry={handleRetryCleanAreaWaypoint}
+                    onSkip={handleSkipCleanAreaWaypoint}
+                    onCancel={() => void handleCancelCleanArea()}
+                    onClear={handleClearCleanArea}
+                  />
+                ) : (
+                  <UnsupportedFeatureCard
+                    title="Clean Area"
+                    detail={snapshot.capabilities.start_coverage.notes ?? "Clean Area is unavailable for this backend."}
+                  />
+                )}
                 <MissionLifecycleCard
                   mission={snapshot.mission}
                   battery={snapshot.battery}
@@ -3329,17 +3522,20 @@ export function VacuumControlPanel() {
                   onReturnToDock={() => void handleReturnToDock()}
                 />
                 <RecentMissionsCard missions={snapshot.missions.recent} />
-                <TeleopCard
-                  disabled={isCleanAreaActive}
-                  disabledReason="Stop the cleaning run before using manual control."
-                />
+                {manualControlSupported ? (
+                  <TeleopCard
+                    disabled={isCleanAreaActive}
+                    disabledReason="Stop the cleaning run before using manual control."
+                  />
+                ) : null}
               </div>
             )}
 
             {/* ── Rooms / Zones mode ── */}
             {activeMode === "rooms" && (
               <div className="vacuum-mode-content">
-                <RoomZonesCard
+                {roomsZonesSupported ? (
+                  <RoomZonesCard
                   annotations={roomZoneAnnotations}
                   selectedAnnotation={selectedRoomZone}
                   targetStatus={selectedRoomZoneTargetStatus}
@@ -3381,7 +3577,13 @@ export function VacuumControlPanel() {
                   onSelect={handleSelectRoomZone}
                   onDelete={() => void handleDeleteRoomZone()}
                   onClearDraft={handleClearRoomZoneDraft}
-                />
+                  />
+                ) : (
+                  <UnsupportedFeatureCard
+                    title="Rooms / Zones"
+                    detail={snapshot.capabilities.room_semantics.notes ?? "Rooms and zones are unavailable for this backend."}
+                  />
+                )}
                 <MissionLifecycleCard
                   mission={snapshot.mission}
                   battery={snapshot.battery}
@@ -3390,7 +3592,9 @@ export function VacuumControlPanel() {
                   onReturnToDock={() => void handleReturnToDock()}
                 />
                 <RecentMissionsCard missions={snapshot.missions.recent} />
-                <TeleopCard disabled={isCleanAreaActive} disabledReason="Stop the active mission before using manual control." />
+                {manualControlSupported ? (
+                  <TeleopCard disabled={isCleanAreaActive} disabledReason="Stop the active mission before using manual control." />
+                ) : null}
               </div>
             )}
 
@@ -3398,5 +3602,22 @@ export function VacuumControlPanel() {
         </section>
       </main>
     </div>
+  );
+}
+
+export function VacuumControlPanel() {
+  const [backend, setBackend] = useState<VacuumAdapterBackendId>(() => readConfiguredVacuumAdapterBackend());
+
+  const handleBackendChange = useCallback((nextBackend: VacuumAdapterBackendId) => {
+    writeSelectedAdapterBackend(nextBackend);
+    setBackend(nextBackend);
+  }, []);
+
+  return (
+    <VacuumControlPanelContent
+      key={backend}
+      backend={backend}
+      onBackendChange={handleBackendChange}
+    />
   );
 }

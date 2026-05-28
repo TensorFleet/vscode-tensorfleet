@@ -279,6 +279,20 @@
           ],
           "description": "Select your TensorFleet region for VM and API access.",
           "order": 1
+        },
+        "tensorfleet.vacuum.backend": {
+          "type": "string",
+          "default": "turtlebot4_nav2",
+          "enum": [
+            "turtlebot4_nav2",
+            "valetudo"
+          ],
+          "enumDescriptions": [
+            "Use the TurtleBot4/Nav2 simulation and regression backend.",
+            "Use the VM-managed Valetudo integration runtime backend."
+          ],
+          "description": "Select the backend behind the product-facing vacuum adapter.",
+          "order": 2
         }
       }
     },

@@ -1,0 +1,149 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { VacuumAdapter } from "../../adapter";
+import type { VacuumCommand, VacuumCommandResult } from "../../commands";
+import { unsupportedCommand } from "../../errors";
+import { mapVacuumCommandToValetudoRequest } from "./commandMapper";
+import { createValetudoRuntimeClient, type ValetudoRuntimeClient } from "./runtimeClient";
+import type { ValetudoRuntimeCommandResult, ValetudoRuntimeSnapshot } from "./runtimeContract";
+import {
+  isValetudoRuntimeSnapshot,
+  mapValetudoRuntimeSnapshotToBoundary,
+  mapValetudoRuntimeUnavailable,
+  mapValetudoState,
+} from "./stateMapper";
+
+const POLL_INTERVAL_MS = 3000;
+
+function commandResultFromRuntime(
+  command: VacuumCommand["command"],
+  result: ValetudoRuntimeCommandResult,
+): VacuumCommandResult {
+  if (result.ok && result.status === "success") {
+    return {
+      ok: true,
+      command,
+      message: result.message,
+    };
+  }
+  return {
+    ok: false,
+    command,
+    error: {
+      command,
+      code:
+        result.status === "unsupported"
+          ? "unsupported"
+          : result.status === "unavailable"
+            ? "not_ready"
+            : "backend_error",
+      message: result.message || result.reason || `Valetudo runtime command ${command} failed.`,
+    },
+  };
+}
+
+function runtimeCommandName(command: VacuumCommand["command"]): string {
+  if (command === "pause_mission") {
+    return "pause";
+  }
+  if (command === "cancel_mission") {
+    return "stop";
+  }
+  return command;
+}
+
+export function useValetudoAdapter(client?: ValetudoRuntimeClient): VacuumAdapter {
+  const runtimeClient = useMemo(() => client ?? createValetudoRuntimeClient(), [client]);
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<ValetudoRuntimeSnapshot | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const nextSnapshot = await runtimeClient.getSnapshot();
+      if (!isValetudoRuntimeSnapshot(nextSnapshot)) {
+        throw new Error("Valetudo integration runtime returned an unexpected snapshot shape.");
+      }
+      setRuntimeSnapshot(nextSnapshot);
+      setLastError(null);
+    } catch (error) {
+      setLastError(error instanceof Error ? error.message : String(error));
+    }
+  }, [runtimeClient]);
+
+  useEffect(() => {
+    let active = true;
+    const refreshIfActive = async () => {
+      try {
+        const nextSnapshot = await runtimeClient.getSnapshot();
+        if (!isValetudoRuntimeSnapshot(nextSnapshot)) {
+          throw new Error("Valetudo integration runtime returned an unexpected snapshot shape.");
+        }
+        if (active) {
+          setRuntimeSnapshot(nextSnapshot);
+          setLastError(null);
+        }
+      } catch (error) {
+        if (active) {
+          setLastError(error instanceof Error ? error.message : String(error));
+        }
+      }
+    };
+    void refreshIfActive();
+    const interval = setInterval(() => void refreshIfActive(), POLL_INTERVAL_MS);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [runtimeClient]);
+
+  const snapshot = useMemo(() => {
+    if (!runtimeSnapshot) {
+      return mapValetudoState(
+        mapValetudoRuntimeUnavailable(lastError ?? "Waiting for Valetudo integration runtime snapshot."),
+      );
+    }
+    if (lastError) {
+      return mapValetudoState(mapValetudoRuntimeUnavailable(lastError));
+    }
+    return mapValetudoState(mapValetudoRuntimeSnapshotToBoundary(runtimeSnapshot));
+  }, [lastError, runtimeSnapshot]);
+
+  const sendCommand = useCallback(
+    async (command: VacuumCommand): Promise<VacuumCommandResult> => {
+      const mapped = mapVacuumCommandToValetudoRequest(command, snapshot.capabilities);
+      if (!mapped.ok) {
+        return {
+          ok: false,
+          command: command.command,
+          error: unsupportedCommand(command.command, mapped.message),
+        };
+      }
+      try {
+        const result = await runtimeClient.sendCommand({
+          command: runtimeCommandName(command.command),
+        });
+        await refresh();
+        return commandResultFromRuntime(command.command, result);
+      } catch (error) {
+        await refresh();
+        return {
+          ok: false,
+          command: command.command,
+          error: {
+            command: command.command,
+            code: "backend_error",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+    },
+    [refresh, runtimeClient, snapshot.capabilities],
+  );
+
+  return useMemo(
+    () => ({
+      snapshot,
+      sendCommand,
+    }),
+    [sendCommand, snapshot],
+  );
+}

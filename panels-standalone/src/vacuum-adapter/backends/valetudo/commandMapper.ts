@@ -18,7 +18,7 @@ export function mapVacuumCommandToValetudoRequest(
   if (command.command === "start_cleaning") {
     return capabilities.start_cleaning.supported
       ? { ok: true, command: command.command, request: { type: "basic_control", action: "start" } }
-      : unsupported(command.command, "Valetudo BasicControlCapability is not available.");
+      : unsupported(command.command, "Valetudo basic cleaning control is not available.");
   }
   if (command.command === "pause") {
     return capabilities.pause.supported
@@ -48,7 +48,7 @@ export function mapVacuumCommandToValetudoRequest(
   if (command.command === "start_navigation" || command.command === "go_to_location") {
     return capabilities.go_to_location.supported
       ? { ok: true, command: command.command, request: { type: "go_to_location", target: command.target } }
-      : unsupported(command.command, "Valetudo GoToLocationCapability is not available.");
+      : unsupported(command.command, "Valetudo go-to execution is not available.");
   }
   if (command.command === "set_fan_speed") {
     return capabilities.fan_speed.supported

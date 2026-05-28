@@ -43,6 +43,12 @@ import {
   mapValetudoCapabilities,
 } from "../panels-standalone/src/vacuum-adapter/backends/valetudo/capabilityMapper";
 import {
+  isValetudoRuntimeSnapshot,
+  mapValetudoRuntimeSnapshotToBoundary,
+  mapValetudoRuntimeUnavailable,
+  mapValetudoState,
+} from "../panels-standalone/src/vacuum-adapter/backends/valetudo/stateMapper";
+import {
   buildCleanAreaCoverageSnapshot,
   buildCleanAreaCoverageTarget,
   markCleanAreaCoveredCells,
@@ -429,8 +435,10 @@ function testCapabilityCoverage(): void {
   ]);
   assert.equal(valetudo.start_cleaning.supported, true);
   assert.equal(valetudo.return_to_dock.supported, true);
-  assert.equal(valetudo.go_to_location.supported, true);
-  assert.equal(valetudo.fan_speed.supported, true);
+  assert.equal(valetudo.go_to_location.supported, false);
+  assert.equal(valetudo.fan_speed.supported, false);
+  assert.equal(valetudo.map.supported, false);
+  assert.equal(valetudo.pose.supported, false);
   assert.equal(valetudo.zone_cleaning.supported, false);
   assert.equal(valetudo.room_cleaning.supported, false);
   assert.equal(valetudo.map_annotations.supported, false);
@@ -1006,19 +1014,11 @@ function testValetudoCommandStub(): void {
     command: "start_cleaning",
     request: { type: "basic_control", action: "start" },
   });
-  assert.deepEqual(
-    mapVacuumCommandToValetudoRequest({ command: "go_to_location", target: { x: 1, y: 2, yaw: 0 } }, capabilities),
-    {
-      ok: true,
-      command: "go_to_location",
-      request: { type: "go_to_location", target: { x: 1, y: 2, yaw: 0 } },
-    },
+  assert.equal(
+    mapVacuumCommandToValetudoRequest({ command: "go_to_location", target: { x: 1, y: 2, yaw: 0 } }, capabilities).ok,
+    false,
   );
-  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "set_water_usage", value: "medium" }, capabilities), {
-    ok: true,
-    command: "set_water_usage",
-    request: { type: "set_water_usage", value: "medium" },
-  });
+  assert.equal(mapVacuumCommandToValetudoRequest({ command: "set_water_usage", value: "medium" }, capabilities).ok, false);
   const zoneResult = mapVacuumCommandToValetudoRequest({
     command: "start_zone_cleaning",
     annotation: {
@@ -1045,6 +1045,76 @@ function testValetudoCommandStub(): void {
   assert.equal(annotationResult.ok, false);
   const mappingResult = mapVacuumCommandToValetudoRequest({ command: "start_mapping", mode: "auto" }, capabilities);
   assert.equal(mappingResult.ok, false);
+}
+
+function testValetudoRuntimeSnapshotMapping(): void {
+  const boundary = mapValetudoRuntimeSnapshotToBoundary({
+    runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.1.0-layer6a-m1", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
+    source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 1 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "idle", label: "Idle", started: false, paused: false },
+    battery: { level: 82, charging: false },
+    dock: { state: "available", docked: true },
+    capabilities: {
+      commands: {
+        start_cleaning: { available: true },
+        pause: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      },
+      diagnostics: [{ name: "GoToLocationCapability", detected: true, implemented: false, scope: "diagnostics" }],
+    },
+    diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability", "GoToLocationCapability"] },
+    updatedAt: 1,
+  });
+  const snapshot = mapValetudoState(boundary);
+  assert.equal(snapshot.identity.label, "Valetudo Fixed Mock");
+  assert.equal(snapshot.availability.status, "online");
+  assert.equal(snapshot.capabilities.start_cleaning.supported, true);
+  assert.equal(snapshot.capabilities.return_to_dock.supported, true);
+  assert.equal(snapshot.capabilities.go_to_location.supported, false);
+  assert.equal(snapshot.capabilities.map.supported, false);
+  assert.equal(snapshot.map.grid, null);
+  assert.equal(snapshot.pose.available, false);
+  assert.equal(snapshot.battery.percentage, 82);
+  // A docked-but-idle robot that is not charging must read as idle with no active mission.
+  assert.equal(snapshot.mission.state, "idle");
+  assert.equal(snapshot.battery.charging, false);
+  assert.equal(snapshot.activeMission, null);
+  assert.equal(snapshot.missions.active, null);
+}
+
+function testValetudoChargingAndOfflineMapping(): void {
+  const chargingBoundary = mapValetudoRuntimeSnapshotToBoundary({
+    runtime: { id: "rt", version: "v", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
+    source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 1 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "docked", label: "Docked", started: false, paused: false },
+    battery: { level: 50, charging: true },
+    dock: { state: "charging", docked: true },
+    capabilities: { commands: { start_cleaning: { available: true } }, diagnostics: [] },
+    diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability"] },
+    updatedAt: 1,
+  });
+  const chargingSnapshot = mapValetudoState(chargingBoundary);
+  assert.equal(chargingSnapshot.mission.state, "charging");
+  assert.equal(chargingSnapshot.battery.charging, true);
+
+  // Malformed payloads (e.g. a proxy error body) must be rejected so the adapter
+  // can fall back to an offline snapshot instead of crashing the UI.
+  assert.equal(isValetudoRuntimeSnapshot({ error: "Tensorfleet VM service is unavailable" }), false);
+  assert.equal(isValetudoRuntimeSnapshot(null), false);
+  assert.equal(isValetudoRuntimeSnapshot("offline"), false);
+
+  const offline = mapValetudoState(mapValetudoRuntimeUnavailable("runtime stopped"));
+  assert.equal(offline.availability.connected, false);
+  assert.equal(offline.availability.status, "offline");
+  assert.equal(offline.map.grid, null);
+  assert.equal(offline.activeMission, null);
 }
 
 function testPublicContractAndUiBoundary(): void {
@@ -1108,6 +1178,8 @@ async function main(): Promise<void> {
   testMapMetadata();
   testCleanAreaCoverageAndPlanning();
   testCoverageProfileAndDecomposition();
+  testValetudoRuntimeSnapshotMapping();
+  testValetudoChargingAndOfflineMapping();
   testValetudoCommandStub();
   testPublicContractAndUiBoundary();
   testServiceDiscoveryNormalization();

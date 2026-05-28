@@ -1,6 +1,13 @@
-import type { VacuumAdapterSnapshot, VacuumMissionSnapshot, VacuumNavigationStatus } from "../../state";
+import type {
+  VacuumAdapterSnapshot,
+  VacuumMissionSnapshot,
+  VacuumMissionState,
+  VacuumNavigationStatus,
+} from "../../state";
 import { buildVacuumMapMetadata } from "../../mapGrid";
+import type { ValetudoBackendCapability } from "./capabilityMapper";
 import { mapValetudoCapabilities } from "./capabilityMapper";
+import type { ValetudoRuntimeSnapshot } from "./runtimeContract";
 import type { ValetudoRuntimeBoundary } from "./types";
 
 const EMPTY_NAVIGATION: VacuumNavigationStatus = {
@@ -20,6 +27,94 @@ const EMPTY_NAVIGATION: VacuumNavigationStatus = {
     estimatedTimeRemaining: null,
   },
 };
+
+const RUNTIME_COMMAND_TO_BACKEND_CAPABILITY: Record<string, ValetudoBackendCapability> = {
+  start_cleaning: "BasicControlCapability",
+  pause: "BasicControlCapability",
+  stop: "BasicControlCapability",
+  return_to_dock: "BasicControlCapability",
+};
+
+export function isValetudoRuntimeSnapshot(value: unknown): value is ValetudoRuntimeSnapshot {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  const robot = candidate.robot as Record<string, unknown> | undefined;
+  const state = candidate.state as Record<string, unknown> | undefined;
+  const connectivity = candidate.connectivity as Record<string, unknown> | undefined;
+  const capabilities = candidate.capabilities as Record<string, unknown> | undefined;
+  return (
+    typeof candidate.backend === "string" &&
+    robot != null &&
+    typeof robot.id === "string" &&
+    state != null &&
+    typeof state.value === "string" &&
+    connectivity != null &&
+    typeof connectivity.online === "boolean" &&
+    capabilities != null &&
+    typeof capabilities.commands === "object" &&
+    capabilities.commands != null
+  );
+}
+
+function normalizeMissionState(snapshot: ValetudoRuntimeSnapshot): VacuumMissionState {
+  const value = snapshot.state.value.toLowerCase();
+  if (snapshot.state.paused || value.includes("pause")) {
+    return "paused";
+  }
+  if (value.includes("return")) {
+    return "returning";
+  }
+  if (snapshot.state.started || value.includes("clean")) {
+    return "cleaning";
+  }
+  // Only treat the robot as charging when the source actually reports charging.
+  // Being docked while idle is not a mission and must map to "idle".
+  if (snapshot.battery?.charging) {
+    return "charging";
+  }
+  return "idle";
+}
+
+export function mapValetudoRuntimeSnapshotToBoundary(
+  snapshot: ValetudoRuntimeSnapshot,
+): ValetudoRuntimeBoundary {
+  const capabilities = new Set<ValetudoBackendCapability>();
+  for (const [command, availability] of Object.entries(snapshot.capabilities.commands)) {
+    const backendCapability = RUNTIME_COMMAND_TO_BACKEND_CAPABILITY[command];
+    if (backendCapability && availability.available) {
+      capabilities.add(backendCapability);
+    }
+  }
+
+  const faults = snapshot.source.stale ? ["Valetudo runtime source state is stale."] : [];
+
+  return {
+    connectionStatus: snapshot.connectivity.online ? "online" : "offline",
+    capabilities: [...capabilities],
+    state: {
+      id: snapshot.robot.id,
+      label: snapshot.robot.name,
+      mapAvailable: false,
+      pose: null,
+      batteryPercentage: snapshot.battery?.level ?? null,
+      charging: snapshot.battery?.charging ?? null,
+      missionState: normalizeMissionState(snapshot),
+      faults,
+    },
+    lastError: snapshot.connectivity.online ? undefined : "Valetudo runtime source is unreachable.",
+  };
+}
+
+export function mapValetudoRuntimeUnavailable(message: string): ValetudoRuntimeBoundary {
+  return {
+    connectionStatus: "offline",
+    capabilities: [],
+    state: null,
+    lastError: message,
+  };
+}
 
 function buildValetudoActiveMission(runtime: ValetudoRuntimeBoundary): VacuumMissionSnapshot | null {
   const state = runtime.state;
@@ -80,19 +175,19 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     },
     capabilities: mapValetudoCapabilities(runtime.capabilities),
     map: {
-      readiness: state?.mapAvailable ? "ready" : connected ? "waiting" : "unavailable",
-      receiving: state?.mapAvailable ?? false,
-      detail: state?.mapAvailable ? "Map is available." : "Waiting for Valetudo map state.",
+      readiness: "unavailable",
+      receiving: false,
+      detail: "Valetudo map rendering is unsupported in Layer 6A Milestone 2.",
       grid: null,
       metadata: buildVacuumMapMetadata(null, null),
       annotations: [],
     },
     pose: {
-      readiness: state?.pose ? "ready" : connected ? "waiting" : "unavailable",
-      available: state?.pose != null,
+      readiness: "unavailable",
+      available: false,
       source: "valetudo",
-      coordinates: state?.pose ?? null,
-      detail: state?.pose ? "Pose is available." : "Waiting for Valetudo pose state.",
+      coordinates: null,
+      detail: "Valetudo pose is not exposed as a product navigation surface in Layer 6A Milestone 2.",
     },
     navigation: EMPTY_NAVIGATION,
     mission: {

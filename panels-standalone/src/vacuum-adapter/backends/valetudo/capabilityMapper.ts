@@ -11,18 +11,16 @@ export type ValetudoBackendCapability =
 
 export const VALETUDO_CAPABILITY_MAP: Record<ValetudoBackendCapability, VacuumCapabilityName[]> = {
   BasicControlCapability: ["start_cleaning", "pause", "stop", "return_to_dock"],
-  GoToLocationCapability: ["start_navigation", "go_to_location"],
-  MapSegmentationCapability: ["segment_cleaning"],
-  ZoneCleaningCapability: ["zone_cleaning"],
-  FanSpeedControlCapability: ["fan_speed"],
-  WaterUsageControlCapability: ["water_usage"],
+  GoToLocationCapability: [],
+  MapSegmentationCapability: [],
+  ZoneCleaningCapability: [],
+  FanSpeedControlCapability: [],
+  WaterUsageControlCapability: [],
 };
 
 const SOURCE = "valetudo" as const;
 
 const VALETUDO_BASE_CAPABILITIES: VacuumCapabilityName[] = [
-  "map",
-  "pose",
   "battery",
   "dock_state",
   "events",
@@ -44,7 +42,7 @@ const VALETUDO_BACKEND_COMMANDS: Partial<Record<VacuumCapabilityName, string[]>>
 };
 
 function supportedCapability(
-  backendCapability: ValetudoBackendCapability | "ValetudoRobotState",
+  backendCapability: string,
   overrides: Omit<CapabilitySupport, "supported" | "source" | "backendCapability"> = {},
 ): CapabilitySupport {
   return {
@@ -70,7 +68,7 @@ export function mapValetudoCapabilities(
   const advertised = new Set(backendCapabilities);
 
   for (const name of VALETUDO_BASE_CAPABILITIES) {
-    capabilities[name] = supportedCapability("ValetudoRobotState", {
+    capabilities[name] = supportedCapability("runtime_state", {
       attributes: ["normalized_state"],
       notes: "Expected from the Valetudo integration runtime state stream.",
     });
@@ -79,12 +77,34 @@ export function mapValetudoCapabilities(
   for (const backendCapability of advertised) {
     const publicCapabilities = VALETUDO_CAPABILITY_MAP[backendCapability];
     for (const name of publicCapabilities) {
-      capabilities[name] = supportedCapability(backendCapability, {
+      capabilities[name] = supportedCapability(`runtime_command:${name}`, {
         commands: VALETUDO_BACKEND_COMMANDS[name],
-        notes: "Mapped privately from the Valetudo backend capability set.",
+        notes: "Mapped from normalized Valetudo runtime command availability.",
       });
     }
   }
+
+  capabilities.map = unsupportedCapability(
+    "Valetudo map rendering is not implemented in Layer 6A Milestone 2.",
+  );
+  capabilities.pose = unsupportedCapability(
+    "Valetudo pose is not exposed as a product navigation surface in Layer 6A Milestone 2.",
+  );
+  capabilities.start_navigation = unsupportedCapability(
+    "Valetudo go-to execution is detected only as diagnostics until the product workflow is implemented.",
+  );
+  capabilities.go_to_location = unsupportedCapability(
+    "Valetudo go-to execution is detected only as diagnostics until the product workflow is implemented.",
+  );
+  capabilities.segment_cleaning = unsupportedCapability(
+    "Valetudo segment cleaning is diagnostics-only until segment mapping is implemented.",
+  );
+  capabilities.fan_speed = unsupportedCapability(
+    "Valetudo fan speed controls are diagnostics-only in Layer 6A Milestone 2.",
+  );
+  capabilities.water_usage = unsupportedCapability(
+    "Valetudo water controls are diagnostics-only in Layer 6A Milestone 2.",
+  );
 
   capabilities.resume = unsupportedCapability(
     "Valetudo resume support must be mapped explicitly once the selected robot capability surface is known.",
@@ -123,7 +143,7 @@ export function mapValetudoCapabilities(
     "Coverage missions must be mapped through zone, segment, or explicit unsupported behavior in the Layer 6 runtime.",
   );
   capabilities.pause_mission = capabilities.pause.supported
-    ? supportedCapability("BasicControlCapability", {
+    ? supportedCapability("runtime_command:pause", {
         commands: ["pause_mission"],
         notes: "Mapped to backend pause by the Valetudo integration runtime when a mission is active.",
       })
@@ -132,7 +152,7 @@ export function mapValetudoCapabilities(
     "Valetudo resume support must be mapped explicitly once the selected robot capability surface is known.",
   );
   capabilities.cancel_mission = capabilities.stop.supported
-    ? supportedCapability("BasicControlCapability", {
+    ? supportedCapability("runtime_command:stop", {
         commands: ["cancel_mission"],
         notes: "Mapped to backend stop by the Valetudo integration runtime when a mission is active.",
       })
@@ -144,11 +164,11 @@ export function mapValetudoCapabilities(
     "Mission step skip requires runtime-owned recovery semantics.",
   );
   capabilities.navigation_status = capabilities.go_to_location.supported
-    ? supportedCapability("GoToLocationCapability", {
+    ? supportedCapability("runtime_navigation_status", {
         attributes: ["normalized_mission_state"],
         notes: "Navigation status is derived from normalized Valetudo state.",
       })
-    : unsupportedCapability("GoToLocationCapability is not advertised by the Valetudo backend.");
+    : unsupportedCapability("Valetudo go-to status is not exposed as a product navigation surface.");
 
   return capabilities;
 }
