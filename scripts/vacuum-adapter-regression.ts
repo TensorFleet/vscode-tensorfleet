@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   CANCEL_GOAL_SERVICE,
@@ -61,6 +61,32 @@ import {
 } from "../panels-standalone/src/components/VacuumControl/cleanAreaProfile";
 
 const repoRoot = resolve(import.meta.dir, "..");
+const valetudoRawCapabilityNames = [
+  "BasicControlCapability",
+  "BatteryStateCapability",
+  "ConsumableMonitoringCapability",
+  "FanSpeedControlCapability",
+  "GoToLocationCapability",
+  "MapSegmentationCapability",
+  "WaterUsageControlCapability",
+  "ZoneCleaningCapability",
+] as const;
+
+function collectFiles(dir: string, predicate: (path: string) => boolean): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const path = resolve(dir, entry);
+    const stat = statSync(path);
+    if (stat.isDirectory()) {
+      files.push(...collectFiles(path, predicate));
+      continue;
+    }
+    if (predicate(path)) {
+      files.push(path);
+    }
+  }
+  return files;
+}
 
 function installMockLocalStorage(): Map<string, string> {
   const storage = new Map<string, string>();
@@ -430,13 +456,25 @@ function testCapabilityCoverage(): void {
 
   const valetudo = mapValetudoCapabilities([
     "BasicControlCapability",
+    "BatteryStateCapability",
+    "ConsumableMonitoringCapability",
     "GoToLocationCapability",
     "FanSpeedControlCapability",
+    "WaterUsageControlCapability",
+    "MapSegmentationCapability",
+    "ZoneCleaningCapability",
   ]);
   assert.equal(valetudo.start_cleaning.supported, true);
+  assert.equal(valetudo.pause.supported, true);
+  assert.equal(valetudo.stop.supported, true);
   assert.equal(valetudo.return_to_dock.supported, true);
+  assert.equal(valetudo.battery.supported, true);
   assert.equal(valetudo.go_to_location.supported, false);
   assert.equal(valetudo.fan_speed.supported, false);
+  assert.equal(valetudo.water_usage.supported, false);
+  assert.equal(valetudo.consumables.supported, false);
+  assert.equal(valetudo.segment_cleaning.supported, false);
+  assert.equal(valetudo.zone_cleaning.supported, false);
   assert.equal(valetudo.map.supported, false);
   assert.equal(valetudo.pose.supported, false);
   assert.equal(valetudo.zone_cleaning.supported, false);
@@ -446,6 +484,21 @@ function testCapabilityCoverage(): void {
   assert.equal(valetudo.zone_semantics.supported, false);
   assert.equal(valetudo.resume.supported, false);
   assert.equal(valetudo.auto_mapping.supported, false);
+
+  for (const name of ["fan_speed", "water_usage", "consumables", "segment_cleaning", "zone_cleaning"] as const) {
+    assert.equal(valetudo[name].source, "valetudo");
+    assert.equal(
+      valetudo[name].notes,
+      "Valetudo capability detected, but product workflow is not implemented in this slice.",
+    );
+  }
+
+  const withoutBasicControl = mapValetudoCapabilities(["BatteryStateCapability"]);
+  assert.equal(withoutBasicControl.start_cleaning.supported, false);
+  assert.equal(withoutBasicControl.pause.supported, false);
+  assert.equal(withoutBasicControl.stop.supported, false);
+  assert.equal(withoutBasicControl.return_to_dock.supported, false);
+  assert.equal(withoutBasicControl.battery.supported, true);
 }
 
 function testServiceDiscoveryNormalization(): void {
@@ -1014,11 +1067,27 @@ function testValetudoCommandStub(): void {
     command: "start_cleaning",
     request: { type: "basic_control", action: "start" },
   });
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "pause" }, capabilities), {
+    ok: true,
+    command: "pause",
+    request: { type: "basic_control", action: "pause" },
+  });
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "stop" }, capabilities), {
+    ok: true,
+    command: "stop",
+    request: { type: "basic_control", action: "stop" },
+  });
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "return_to_dock" }, capabilities), {
+    ok: true,
+    command: "return_to_dock",
+    request: { type: "basic_control", action: "home" },
+  });
   assert.equal(
     mapVacuumCommandToValetudoRequest({ command: "go_to_location", target: { x: 1, y: 2, yaw: 0 } }, capabilities).ok,
     false,
   );
   assert.equal(mapVacuumCommandToValetudoRequest({ command: "set_water_usage", value: "medium" }, capabilities).ok, false);
+  assert.equal(mapVacuumCommandToValetudoRequest({ command: "set_fan_speed", value: "turbo" }, capabilities).ok, false);
   const zoneResult = mapVacuumCommandToValetudoRequest({
     command: "start_zone_cleaning",
     annotation: {
@@ -1045,6 +1114,12 @@ function testValetudoCommandStub(): void {
   assert.equal(annotationResult.ok, false);
   const mappingResult = mapVacuumCommandToValetudoRequest({ command: "start_mapping", mode: "auto" }, capabilities);
   assert.equal(mappingResult.ok, false);
+
+  const missingBasicControl = mapValetudoCapabilities([]);
+  for (const command of ["start_cleaning", "pause", "stop", "return_to_dock"] as const) {
+    const result = mapVacuumCommandToValetudoRequest({ command }, missingBasicControl);
+    assert.equal(result.ok, false, `${command} should be unsupported without BasicControlCapability`);
+  }
 }
 
 function testValetudoRuntimeSnapshotMapping(): void {
@@ -1064,17 +1139,35 @@ function testValetudoRuntimeSnapshotMapping(): void {
         stop: { available: true },
         return_to_dock: { available: true },
       },
-      diagnostics: [{ name: "GoToLocationCapability", detected: true, implemented: false, scope: "diagnostics" }],
+      diagnostics: [
+        { name: "FanSpeedControlCapability", detected: true, implemented: false, scope: "diagnostics" },
+        { name: "GoToLocationCapability", detected: true, implemented: false, scope: "diagnostics" },
+        { name: "ZoneCleaningCapability", detected: true, implemented: false, scope: "diagnostics" },
+      ],
     },
-    diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability", "GoToLocationCapability"] },
+    diagnostics: {
+      mode: "fixed_mock",
+      rawCapabilityNames: [
+        "BasicControlCapability",
+        "BatteryStateCapability",
+        "FanSpeedControlCapability",
+        "GoToLocationCapability",
+        "ZoneCleaningCapability",
+      ],
+    },
     updatedAt: 1,
   });
   const snapshot = mapValetudoState(boundary);
   assert.equal(snapshot.identity.label, "Valetudo Fixed Mock");
   assert.equal(snapshot.availability.status, "online");
   assert.equal(snapshot.capabilities.start_cleaning.supported, true);
+  assert.equal(snapshot.capabilities.pause.supported, true);
+  assert.equal(snapshot.capabilities.stop.supported, true);
   assert.equal(snapshot.capabilities.return_to_dock.supported, true);
+  assert.equal(snapshot.capabilities.battery.supported, true);
   assert.equal(snapshot.capabilities.go_to_location.supported, false);
+  assert.equal(snapshot.capabilities.fan_speed.supported, false);
+  assert.equal(snapshot.capabilities.zone_cleaning.supported, false);
   assert.equal(snapshot.capabilities.map.supported, false);
   assert.equal(snapshot.map.grid, null);
   assert.equal(snapshot.pose.available, false);
@@ -1084,6 +1177,39 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.battery.charging, false);
   assert.equal(snapshot.activeMission, null);
   assert.equal(snapshot.missions.active, null);
+
+  const missingBasic = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.1.0-layer6a-m1", status: "online" },
+      backend: "valetudo",
+      robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
+      source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 1 },
+      connectivity: { reachable: true, online: true },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      battery: { level: 82, charging: false },
+      dock: { state: "available", docked: true },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: false, reason: "capability_unavailable" },
+          pause: { available: false, reason: "capability_unavailable" },
+          stop: { available: false, reason: "capability_unavailable" },
+          return_to_dock: { available: false, reason: "capability_unavailable" },
+        },
+        diagnostics: [
+          { name: "BasicControlCapability", detected: true, implemented: true, scope: "diagnostics" },
+          { name: "FanSpeedControlCapability", detected: true, implemented: false, scope: "diagnostics" },
+        ],
+      },
+      diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability", "FanSpeedControlCapability"] },
+      updatedAt: 1,
+    }),
+  );
+  assert.equal(missingBasic.capabilities.start_cleaning.supported, false);
+  assert.equal(missingBasic.capabilities.pause.supported, false);
+  assert.equal(missingBasic.capabilities.stop.supported, false);
+  assert.equal(missingBasic.capabilities.return_to_dock.supported, false);
+  assert.equal(missingBasic.capabilities.battery.supported, true);
+  assert.equal(missingBasic.capabilities.fan_speed.supported, false);
 }
 
 function testValetudoRuntimeMissionStateMapping(): void {
@@ -1172,6 +1298,9 @@ function testPublicContractAndUiBoundary(): void {
   for (const file of publicFiles) {
     const contents = readFileSync(resolve(repoRoot, "panels-standalone/src/vacuum-adapter", file), "utf8");
     assert.equal(/components\/Nav2|nav2Runtime|nav_msgs\/msg|geometry_msgs\/msg/.test(contents), false, file);
+    for (const capabilityName of valetudoRawCapabilityNames) {
+      assert.equal(contents.includes(capabilityName), false, `${file} should not expose ${capabilityName}`);
+    }
   }
 
   const panelContents = readFileSync(
@@ -1182,6 +1311,17 @@ function testPublicContractAndUiBoundary(): void {
     assert.equal(panelContents.includes(backendName), false, `Vacuum Control should not branch on ${backendName}`);
   }
   assert.equal(/identity\.source|snapshot\.identity\.source/.test(panelContents), false);
+
+  const componentFiles = collectFiles(
+    resolve(repoRoot, "panels-standalone/src/components/VacuumControl"),
+    (path) => path.endsWith(".ts") || path.endsWith(".tsx"),
+  );
+  for (const file of componentFiles) {
+    const contents = readFileSync(file, "utf8");
+    for (const capabilityName of valetudoRawCapabilityNames) {
+      assert.equal(contents.includes(capabilityName), false, `${file} should not branch on ${capabilityName}`);
+    }
+  }
 }
 
 function assertCommandNamesHandled(): void {

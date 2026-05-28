@@ -35,6 +35,25 @@ const RUNTIME_COMMAND_TO_BACKEND_CAPABILITY: Record<string, ValetudoBackendCapab
   return_to_dock: "BasicControlCapability",
 };
 
+const KNOWN_VALETUDO_BACKEND_CAPABILITIES = new Set<ValetudoBackendCapability>([
+  "BasicControlCapability",
+  "BatteryStateCapability",
+  "ConsumableMonitoringCapability",
+  "FanSpeedControlCapability",
+  "GoToLocationCapability",
+  "MapSegmentationCapability",
+  "WaterUsageControlCapability",
+  "ZoneCleaningCapability",
+]);
+
+function isKnownValetudoBackendCapability(value: string): value is ValetudoBackendCapability {
+  return KNOWN_VALETUDO_BACKEND_CAPABILITIES.has(value as ValetudoBackendCapability);
+}
+
+function isDiagnosticOnlyCapability(value: ValetudoBackendCapability): boolean {
+  return value !== "BasicControlCapability" && value !== "BatteryStateCapability";
+}
+
 export function isValetudoRuntimeSnapshot(value: unknown): value is ValetudoRuntimeSnapshot {
   if (value == null || typeof value !== "object") {
     return false;
@@ -85,6 +104,18 @@ export function mapValetudoRuntimeSnapshotToBoundary(
     const backendCapability = RUNTIME_COMMAND_TO_BACKEND_CAPABILITY[command];
     if (backendCapability && availability.available) {
       capabilities.add(backendCapability);
+    }
+  }
+  if (snapshot.battery) {
+    capabilities.add("BatteryStateCapability");
+  }
+  for (const diagnostic of snapshot.capabilities.diagnostics) {
+    if (
+      diagnostic.detected &&
+      isKnownValetudoBackendCapability(diagnostic.name) &&
+      isDiagnosticOnlyCapability(diagnostic.name)
+    ) {
+      capabilities.add(diagnostic.name);
     }
   }
 

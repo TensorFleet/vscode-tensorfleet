@@ -3,6 +3,8 @@ import { createUnsupportedCapabilities } from "../../capabilities";
 
 export type ValetudoBackendCapability =
   | "BasicControlCapability"
+  | "BatteryStateCapability"
+  | "ConsumableMonitoringCapability"
   | "GoToLocationCapability"
   | "MapSegmentationCapability"
   | "ZoneCleaningCapability"
@@ -11,11 +13,24 @@ export type ValetudoBackendCapability =
 
 export const VALETUDO_CAPABILITY_MAP: Record<ValetudoBackendCapability, VacuumCapabilityName[]> = {
   BasicControlCapability: ["start_cleaning", "pause", "stop", "return_to_dock"],
+  BatteryStateCapability: ["battery"],
+  ConsumableMonitoringCapability: [],
   GoToLocationCapability: [],
   MapSegmentationCapability: [],
   ZoneCleaningCapability: [],
   FanSpeedControlCapability: [],
   WaterUsageControlCapability: [],
+};
+
+const VALETUDO_DETECTED_BUT_UNIMPLEMENTED_CAPABILITIES: Partial<
+  Record<ValetudoBackendCapability, VacuumCapabilityName[]>
+> = {
+  ConsumableMonitoringCapability: ["consumables"],
+  FanSpeedControlCapability: ["fan_speed"],
+  GoToLocationCapability: ["go_to_location"],
+  MapSegmentationCapability: ["segment_cleaning"],
+  WaterUsageControlCapability: ["water_usage"],
+  ZoneCleaningCapability: ["zone_cleaning"],
 };
 
 const SOURCE = "valetudo" as const;
@@ -61,6 +76,12 @@ function unsupportedCapability(notes: string): CapabilitySupport {
   };
 }
 
+function detectedButUnsupportedCapability(): CapabilitySupport {
+  return unsupportedCapability(
+    "Valetudo capability detected, but product workflow is not implemented in this slice.",
+  );
+}
+
 export function mapValetudoCapabilities(
   backendCapabilities: Iterable<ValetudoBackendCapability> = [],
 ): VacuumCapabilities {
@@ -77,10 +98,22 @@ export function mapValetudoCapabilities(
   for (const backendCapability of advertised) {
     const publicCapabilities = VALETUDO_CAPABILITY_MAP[backendCapability];
     for (const name of publicCapabilities) {
+      if (name === "battery") {
+        capabilities[name] = supportedCapability("runtime_state", {
+          attributes: ["battery.level", "battery.charging"],
+          notes: "Mapped from normalized Valetudo runtime battery state.",
+        });
+        continue;
+      }
       capabilities[name] = supportedCapability(`runtime_command:${name}`, {
         commands: VALETUDO_BACKEND_COMMANDS[name],
         notes: "Mapped from normalized Valetudo runtime command availability.",
       });
+    }
+
+    const detectedPublicCapabilities = VALETUDO_DETECTED_BUT_UNIMPLEMENTED_CAPABILITIES[backendCapability] ?? [];
+    for (const name of detectedPublicCapabilities) {
+      capabilities[name] = detectedButUnsupportedCapability();
     }
   }
 
@@ -93,18 +126,26 @@ export function mapValetudoCapabilities(
   capabilities.start_navigation = unsupportedCapability(
     "Valetudo go-to execution is detected only as diagnostics until the product workflow is implemented.",
   );
-  capabilities.go_to_location = unsupportedCapability(
-    "Valetudo go-to execution is detected only as diagnostics until the product workflow is implemented.",
-  );
-  capabilities.segment_cleaning = unsupportedCapability(
-    "Valetudo segment cleaning is diagnostics-only until segment mapping is implemented.",
-  );
-  capabilities.fan_speed = unsupportedCapability(
-    "Valetudo fan speed controls are diagnostics-only in Layer 6A Milestone 2.",
-  );
-  capabilities.water_usage = unsupportedCapability(
-    "Valetudo water controls are diagnostics-only in Layer 6A Milestone 2.",
-  );
+  if (!advertised.has("GoToLocationCapability")) {
+    capabilities.go_to_location = unsupportedCapability(
+      "Valetudo go-to execution is detected only as diagnostics until the product workflow is implemented.",
+    );
+  }
+  if (!advertised.has("MapSegmentationCapability")) {
+    capabilities.segment_cleaning = unsupportedCapability(
+      "Valetudo segment cleaning is diagnostics-only until segment mapping is implemented.",
+    );
+  }
+  if (!advertised.has("FanSpeedControlCapability")) {
+    capabilities.fan_speed = unsupportedCapability(
+      "Valetudo fan speed controls are diagnostics-only in Layer 6A Milestone 2.",
+    );
+  }
+  if (!advertised.has("WaterUsageControlCapability")) {
+    capabilities.water_usage = unsupportedCapability(
+      "Valetudo water controls are diagnostics-only in Layer 6A Milestone 2.",
+    );
+  }
 
   capabilities.resume = unsupportedCapability(
     "Valetudo resume support must be mapped explicitly once the selected robot capability surface is known.",
@@ -136,9 +177,11 @@ export function mapValetudoCapabilities(
   capabilities.room_cleaning = unsupportedCapability(
     "Valetudo room cleaning must be mapped from vendor segments or adapter-owned annotations in Layer 6.",
   );
-  capabilities.zone_cleaning = unsupportedCapability(
-    "Valetudo zone cleaning requires explicit Layer 6 geometry mapping before product room/zone commands are enabled.",
-  );
+  if (!advertised.has("ZoneCleaningCapability")) {
+    capabilities.zone_cleaning = unsupportedCapability(
+      "Valetudo zone cleaning requires explicit Layer 6 geometry mapping before product room/zone commands are enabled.",
+    );
+  }
   capabilities.start_coverage = unsupportedCapability(
     "Coverage missions must be mapped through zone, segment, or explicit unsupported behavior in the Layer 6 runtime.",
   );
