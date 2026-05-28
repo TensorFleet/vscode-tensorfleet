@@ -353,6 +353,40 @@ function isRoomZoneMissionSnapshot(mission: VacuumMissionSnapshot | null | undef
 
 const RECENT_ROOM_ZONE_MODE_RESTORE_MAX_AGE_MS = 2 * 60 * 1000;
 
+const RECENT_ROOM_ZONE_DISMISSED_AT_STORAGE_KEY =
+  "tensorfleet:vacuums:vacuum-control:recent-room-zone-missions-dismissed-at";
+
+function readDismissedRoomZoneMissionTime(): number | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(RECENT_ROOM_ZONE_DISMISSED_AT_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDismissedRoomZoneMissionTime(value: number | null): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    if (value == null) {
+      window.localStorage.removeItem(RECENT_ROOM_ZONE_DISMISSED_AT_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(RECENT_ROOM_ZONE_DISMISSED_AT_STORAGE_KEY, String(value));
+    }
+  } catch {
+    // Best-effort persistence; a failed write only affects reload behavior.
+  }
+}
+
 function nextAnnotationName(kind: VacuumMapAnnotationKind, annotations: VacuumMapAnnotation[]): string {
   const prefix = kind === "room" ? "Room" : "Zone";
   const used = new Set<number>();
@@ -1756,6 +1790,13 @@ export function VacuumControlPanel() {
   const [activeMode, setActiveMode] = useState<VacuumControlMode>("navigation");
   const [dismissedNavigationTargetKey, setDismissedNavigationTargetKey] = useState<string | null>(null);
   const [dismissedCoverageMissionId, setDismissedCoverageMissionId] = useState<string | null>(null);
+  const [recentRoomZoneMissionsDismissedAt, setRecentRoomZoneMissionsDismissedAt] = useState<number | null>(
+    () => readDismissedRoomZoneMissionTime(),
+  );
+
+  useEffect(() => {
+    writeDismissedRoomZoneMissionTime(recentRoomZoneMissionsDismissedAt);
+  }, [recentRoomZoneMissionsDismissedAt]);
   const goalStartTimeRef = useRef<number | null>(null);
   const previousCoveragePoseRef = useRef<VacuumPoseCoordinates | null>(null);
   const restoredRoomZoneRecentModeRef = useRef(false);
@@ -1813,8 +1854,18 @@ export function VacuumControlPanel() {
   const roomZoneAnnotations = snapshot.map.annotations;
   const currentMapId = currentMapAnnotationId(snapshot);
   const latestRecentRoomZoneMission = useMemo(
-    () => snapshot.missions.recent.find((mission) => isRoomZoneMissionSnapshot(mission) && isTerminalMissionStatus(mission.status)) ?? null,
-    [snapshot.missions.recent],
+    () =>
+      snapshot.missions.recent.find((mission) => {
+        if (!isRoomZoneMissionSnapshot(mission) || !isTerminalMissionStatus(mission.status)) {
+          return false;
+        }
+        if (recentRoomZoneMissionsDismissedAt == null) {
+          return true;
+        }
+        const terminalTime = missionTerminalTime(mission);
+        return terminalTime != null && terminalTime > recentRoomZoneMissionsDismissedAt;
+      }) ?? null,
+    [recentRoomZoneMissionsDismissedAt, snapshot.missions.recent],
   );
   const latestRecentRoomZoneMissionTime = missionTerminalTime(latestRecentRoomZoneMission);
   const shouldRestoreRecentRoomZoneMode =
@@ -2648,15 +2699,20 @@ export function VacuumControlPanel() {
       return;
     }
     setRoomZoneCommandError(null);
-    const result = await adapter.sendCommand({ command: "delete_map_annotation", id: selectedRoomZone.id });
-    if (!result.ok) {
-      setRoomZoneCommandError(result.error.message);
-      return;
+    const isSavedAnnotation = roomZoneAnnotations.some((entry) => entry.id === selectedRoomZone.id);
+    if (isSavedAnnotation) {
+      const result = await adapter.sendCommand({ command: "delete_map_annotation", id: selectedRoomZone.id });
+      if (!result.ok) {
+        setRoomZoneCommandError(result.error.message);
+        return;
+      }
     }
+    setRecentRoomZoneMissionsDismissedAt(Date.now());
     setSelectedRoomZoneId(null);
   }
 
   function handleClearRoomZoneDraft(): void {
+    setRecentRoomZoneMissionsDismissedAt(Date.now());
     setSelectedRoomZoneId(null);
     setRoomZoneDraftRect(null);
     setRoomZoneValidation(null);

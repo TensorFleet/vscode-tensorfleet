@@ -538,6 +538,7 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
     [mappingStatus?.activeMapName, mappingStatus?.loadedMapPath, mappingStatus?.savedMapPath],
   );
   const activeMapIdRef = useRef(activeMapId);
+  const previousAnnotationMapIdRef = useRef<string | null>(null);
   const annotationRequestIdRef = useRef(0);
   activeMapIdRef.current = activeMapId;
 
@@ -607,7 +608,6 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
     const commitAnnotations = (nextAnnotations: VacuumMapAnnotation[]): boolean =>
       commitAnnotationsForRequest(requestId, mapId, nextAnnotations);
 
-    commitAnnotations([]);
     if (
       !ros2Bridge.isConnected() ||
       !runtimeRef.current.availableServices.includes(MISSION_SERVICE_NAMES.setParameters) ||
@@ -622,7 +622,15 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
         {},
         { timeoutMs: 5_000 },
       );
-      const runtimeAnnotations = filterMapAnnotationsForMap(parseMapAnnotationServiceResponse(response ?? null) ?? [], mapId);
+      const parsedAnnotations = parseMapAnnotationServiceResponse(response ?? null);
+      if (parsedAnnotations == null) {
+        // Runtime did not return a parseable annotation snapshot (e.g. transient
+        // failure while the mission runtime is busy). Preserve the previous
+        // annotation list so a refresh during cleaning does not wipe saved
+        // rooms/zones.
+        return [];
+      }
+      const runtimeAnnotations = filterMapAnnotationsForMap(parsedAnnotations, mapId);
       if (runtimeAnnotations.length > 0) {
         markLocalPrototypeMapAnnotationsMigrated(mapId);
         commitAnnotations(runtimeAnnotations);
@@ -657,7 +665,8 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
       commitAnnotations(migratedAnnotations);
       return migratedAnnotations;
     } catch {
-      commitAnnotations([]);
+      // Transient runtime errors (timeouts, busy mission node during cleaning)
+      // must not erase the locally cached annotation list.
       return [];
     }
   }, [beginAnnotationRequest, commitAnnotationsForRequest, setRuntimeAnnotationRequest]);
@@ -740,9 +749,25 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   const mapLastUpdateAt = mapSnapshotGrid ? mapSnapshotLastUpdateAt : rawMapLastUpdateAt;
   const mapMetadata = useMemo(() => buildVacuumMapMetadata(mapGrid, mapLastUpdateAt), [mapGrid, mapLastUpdateAt]);
 
+  const annotationServicesAvailable = useMemo(
+    () =>
+      runtime.availableServices.includes(MISSION_SERVICE_NAMES.setParameters) &&
+      runtime.availableServices.includes(MAP_ANNOTATION_SERVICE_NAMES.getSnapshot),
+    [runtime.availableServices],
+  );
+
   useEffect(() => {
+    if (previousAnnotationMapIdRef.current !== activeMapId) {
+      // Map identity changed: drop annotations from the previous map immediately
+      // so the new map starts clean while the runtime fetch is in flight.
+      previousAnnotationMapIdRef.current = activeMapId;
+      setAnnotations([]);
+    }
+    if (!annotationServicesAvailable) {
+      return;
+    }
     void fetchRuntimeAnnotations(activeMapId);
-  }, [activeMapId, fetchRuntimeAnnotations, runtime.availableServices]);
+  }, [activeMapId, annotationServicesAvailable, fetchRuntimeAnnotations]);
 
   const snapshot = useMemo(
     () =>
