@@ -1086,6 +1086,56 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.missions.active, null);
 }
 
+function testValetudoRuntimeMissionStateMapping(): void {
+  const createSnapshot = (state: {
+    value: string;
+    label: string;
+    started: boolean;
+    paused: boolean;
+  }) =>
+    mapValetudoState(
+      mapValetudoRuntimeSnapshotToBoundary({
+        runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.1.0-layer6a-m1", status: "online" },
+        backend: "valetudo",
+        robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
+        source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 1 },
+        connectivity: { reachable: true, online: true },
+        state,
+        battery: { level: 82, charging: false },
+        dock: { state: "available", docked: false },
+        capabilities: {
+          commands: {
+            start_cleaning: { available: true },
+            pause: { available: true },
+            stop: { available: true },
+            return_to_dock: { available: true },
+          },
+          diagnostics: [],
+        },
+        diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability"] },
+        updatedAt: 1,
+      }),
+    );
+
+  assert.equal(
+    createSnapshot({ value: "cleaning", label: "Cleaning", started: true, paused: false }).mission.state,
+    "cleaning",
+  );
+  assert.equal(
+    createSnapshot({ value: "paused", label: "Paused", started: true, paused: true }).mission.state,
+    "paused",
+  );
+  assert.equal(
+    createSnapshot({ value: "stopped", label: "Stopped", started: false, paused: false }).mission.state,
+    "idle",
+  );
+  assert.equal(
+    createSnapshot({ value: "returning_to_dock", label: "Returning to dock", started: false, paused: false }).mission
+      .state,
+    "returning",
+  );
+}
+
 function testValetudoChargingAndOfflineMapping(): void {
   const chargingBoundary = mapValetudoRuntimeSnapshotToBoundary({
     runtime: { id: "rt", version: "v", status: "online" },
@@ -1179,6 +1229,7 @@ async function main(): Promise<void> {
   testCleanAreaCoverageAndPlanning();
   testCoverageProfileAndDecomposition();
   testValetudoRuntimeSnapshotMapping();
+  testValetudoRuntimeMissionStateMapping();
   testValetudoChargingAndOfflineMapping();
   testValetudoCommandStub();
   testPublicContractAndUiBoundary();
