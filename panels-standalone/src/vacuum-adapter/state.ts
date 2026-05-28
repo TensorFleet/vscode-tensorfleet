@@ -273,6 +273,9 @@ export type VacuumSavedMapSummary = {
   name: string;
   yamlPath: string;
   imagePath: string | null;
+  poseGraphPath: string | null;
+  loadable: boolean;
+  loadUnavailableReason: string | null;
   modifiedAt: number | null;
   sizeBytes: number;
   active: boolean;

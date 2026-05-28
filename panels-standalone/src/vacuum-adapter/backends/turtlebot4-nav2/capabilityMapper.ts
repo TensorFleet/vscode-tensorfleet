@@ -15,6 +15,7 @@ import { unsupportedCommand } from "../../errors";
 const SOURCE = "turtlebot4_nav2" as const;
 
 export const MAPPING_STATUS_TOPIC = "/vacuum_mapping/status";
+export const MAPPING_MAP_SNAPSHOT_TOPIC = "/vacuum_mapping/map_snapshot";
 export const MAPPING_SERVICE_NAMES = {
   startAuto: "/vacuum_mapping/start_auto",
   startManual: "/vacuum_mapping/start_manual",

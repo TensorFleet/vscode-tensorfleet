@@ -920,14 +920,32 @@ function MappingCard(props: {
                   key={savedMap.id}
                   className={`vacuum-saved-map${savedMap.active ? " vacuum-saved-map--active" : ""}`}
                 >
-                  <button className="vacuum-saved-map__main" type="button" onClick={() => props.onLoadMap(savedMap.name)}>
+                  <button
+                    className="vacuum-saved-map__main"
+                    type="button"
+                    onClick={() => props.onLoadMap(savedMap.name)}
+                    disabled={!savedMap.loadable}
+                    title={savedMap.loadUnavailableReason ?? "Load saved map"}
+                  >
                     <span>{savedMap.name}</span>
-                    <small>{formatSavedMapTime(savedMap.modifiedAt)}</small>
+                    <small>{savedMap.loadable ? formatSavedMapTime(savedMap.modifiedAt) : "Needs pose graph"}</small>
                   </button>
-                  <button className="vacuum-saved-map__action" type="button" onClick={() => props.onLoadMap(savedMap.name)}>
-                    Use
+                  <button
+                    className="vacuum-saved-map__action"
+                    type="button"
+                    onClick={() => props.onLoadMap(savedMap.name)}
+                    disabled={!savedMap.loadable}
+                    title={savedMap.loadUnavailableReason ?? "Use saved map"}
+                  >
+                    {savedMap.loadable ? "Use" : "Unavailable"}
                   </button>
-                  <button className="vacuum-saved-map__action" type="button" onClick={() => props.onImproveMap(savedMap.name)}>
+                  <button
+                    className="vacuum-saved-map__action"
+                    type="button"
+                    onClick={() => props.onImproveMap(savedMap.name)}
+                    disabled={!savedMap.loadable}
+                    title={savedMap.loadUnavailableReason ?? "Improve saved map"}
+                  >
                     Improve
                   </button>
                 </div>

@@ -6,7 +6,13 @@ import type { VacuumAdapter } from "../../adapter";
 import type { VacuumCommand, VacuumCommandResult } from "../../commands";
 import { buildVacuumMapMetadata, parseVacuumMapGrid } from "../../mapGrid";
 import type { VacuumGoalCoordinates, VacuumMapAnnotation, VacuumMapGrid, VacuumMappingStatus, VacuumMissionResult, VacuumMissionSnapshot, VacuumSavedMapSummary } from "../../state";
-import { MAP_ANNOTATION_SERVICE_NAMES, MAPPING_STATUS_TOPIC, MISSION_SERVICE_NAMES, MISSION_STATUS_TOPIC } from "./capabilityMapper";
+import {
+  MAP_ANNOTATION_SERVICE_NAMES,
+  MAPPING_MAP_SNAPSHOT_TOPIC,
+  MAPPING_STATUS_TOPIC,
+  MISSION_SERVICE_NAMES,
+  MISSION_STATUS_TOPIC,
+} from "./capabilityMapper";
 import { dispatchTurtleBot4Nav2Command } from "./commandDispatcher";
 import {
   hasMigratedLocalPrototypeMapAnnotations,
@@ -177,6 +183,10 @@ function parseMappingStatus(message: Record<string, unknown> | null): VacuumMapp
               name: typeof record.name === "string" ? record.name : id,
               yamlPath: typeof record.yamlPath === "string" ? record.yamlPath : "",
               imagePath: typeof record.imagePath === "string" ? record.imagePath : null,
+              poseGraphPath: typeof record.poseGraphPath === "string" ? record.poseGraphPath : null,
+              loadable: typeof record.loadable === "boolean" ? record.loadable : typeof record.poseGraphPath === "string",
+              loadUnavailableReason:
+                typeof record.loadUnavailableReason === "string" ? record.loadUnavailableReason : null,
               modifiedAt: toFiniteNumber(record.modifiedAt),
               sizeBytes: toFiniteNumber(record.sizeBytes) ?? 0,
               active: Boolean(record.active),
@@ -510,8 +520,10 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
   const runtime = useNav2Runtime();
   const [currentTarget, setCurrentTarget] = useState<VacuumGoalCoordinates | null>(null);
   const [initialDistance, setInitialDistance] = useState<number | null>(null);
-  const [mapGrid, setMapGrid] = useState<VacuumMapGrid | null>(null);
-  const [mapLastUpdateAt, setMapLastUpdateAt] = useState<number | null>(null);
+  const [rawMapGrid, setRawMapGrid] = useState<VacuumMapGrid | null>(null);
+  const [rawMapLastUpdateAt, setRawMapLastUpdateAt] = useState<number | null>(null);
+  const [mapSnapshotGrid, setMapSnapshotGrid] = useState<VacuumMapGrid | null>(null);
+  const [mapSnapshotLastUpdateAt, setMapSnapshotLastUpdateAt] = useState<number | null>(null);
   const [mappingStatus, setMappingStatus] = useState<VacuumMappingStatus | null>(null);
   const [missionStatus, setMissionStatus] = useState<VacuumMissionSnapshot | null>(null);
   const [recentMissions, setRecentMissions] = useState<VacuumMissionSnapshot[]>(() =>
@@ -655,10 +667,25 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
       const normalized = normalizeRosMessage(message);
       const grid = parseVacuumMapGrid(normalized);
       if (grid) {
-        setMapGrid(grid);
-        setMapLastUpdateAt(Date.now());
+        setRawMapGrid(grid);
+        setRawMapLastUpdateAt(Date.now());
       }
     });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = ros2Bridge.subscribe(
+      { topic: MAPPING_MAP_SNAPSHOT_TOPIC, type: "nav_msgs/msg/OccupancyGrid" },
+      (message) => {
+        const normalized = normalizeRosMessage(message);
+        const grid = parseVacuumMapGrid(normalized);
+        if (grid) {
+          setMapSnapshotGrid(grid);
+          setMapSnapshotLastUpdateAt(Date.now());
+        }
+      },
+    );
     return unsubscribe;
   }, []);
 
@@ -709,6 +736,8 @@ export function useTurtleBot4Nav2Adapter(): VacuumAdapter {
     };
   }, [fetchMissionSnapshot, runtime.availableServices]);
 
+  const mapGrid = mapSnapshotGrid ?? rawMapGrid;
+  const mapLastUpdateAt = mapSnapshotGrid ? mapSnapshotLastUpdateAt : rawMapLastUpdateAt;
   const mapMetadata = useMemo(() => buildVacuumMapMetadata(mapGrid, mapLastUpdateAt), [mapGrid, mapLastUpdateAt]);
 
   useEffect(() => {
