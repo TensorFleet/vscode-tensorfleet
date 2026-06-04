@@ -1,110 +1,125 @@
-# Progress Report - Milestone 7 Expanded Diagnostics
+# Progress Report - Milestone 8 Documentation + Layer 6A Summary
 Current report date: 2026-06-05.
 
 ## 1. What changed
 
-The VM-managed Valetudo integration runtime now exposes richer diagnostics for operators and future backend work without enabling new product UI controls.
+Layer 6A documentation now describes the implemented Valetudo mock-through-VM path instead of leaving the feature as a planned or stubbed hardware milestone.
 
-Runtime snapshots still use the same `/health`, `/snapshot`, and `/command` API paths, but `/snapshot.diagnostics` now includes source freshness details, stale reasons, last successful source update, last source error, last command result, and capability tiers. Raw Valetudo capability names remain diagnostics only.
+The docs distinguish the later real-hardware wording from the current mock milestone:
+
+```text
+Valetudo itself runs on the robot in the real hardware path.
+The VM runs our Valetudo integration runtime.
+Current Layer 6A uses fixed/mock Valetudo source first.
+The adapter consumes the VM runtime API.
+The UI consumes vacuum_adapter.
+```
+
+The documented implemented path is:
+
+```text
+Valetudo mock HTTP source or fixed mock runtime data
+-> VM-managed Valetudo integration runtime
+-> /api/v1/valetudo/health, /snapshot, /command
+-> Valetudo backend adapter
+-> vacuum_adapter
+-> existing VS Code extension UI
+```
 
 ## 2. Which mode this affects
 
-- Mapping: unchanged; Valetudo map rendering remains unsupported.
-- Navigation: unchanged; go-to remains diagnostics-only.
-- Clean Area: unchanged; Valetudo coverage remains unsupported.
-- Rooms / Zones: unchanged; detected segment/zone capabilities remain diagnostics-only.
-- Valetudo backend: runtime diagnostics are expanded.
-- Shared adapter/runtime architecture: endpoint paths and product-facing adapter behavior remain stable.
+- Mapping: documentation keeps Valetudo map rendering out of scope.
+- Navigation: documentation keeps Valetudo go-to-location and ROS2 bridge support out of scope.
+- Clean Area: documentation keeps Valetudo Clean Area execution out of scope.
+- Rooms / Zones: documentation keeps Valetudo room/segment and zone execution out of scope.
+- Valetudo backend: documentation now records the implemented mock/runtime/client/adapter path.
+- Shared adapter/runtime architecture: documentation reinforces that product UI consumes `vacuum_adapter`, not backend endpoints.
 
 ## 3. Ownership check
 
-VM runtime owns source diagnostics, stale reasons, transport diagnostics, capability tiers, and last command audit.
+React/webview state owns presentation, local mode selection, and UI hydration from `useVacuumAdapter`.
 
-Valetudo backend adapter continues to map runtime snapshots into `vacuum_adapter`; it does not interpret raw Valetudo capability names as product behavior.
+The VM runtime owns backend connection, mock/source state cache, runtime/source health, stale-state handling, command routing, and diagnostics.
 
-React/webview state remains presentation-only. The UI renders normalized adapter state and submits normalized commands such as `start_cleaning`, `pause`, `stop`, and `return_to_dock`.
+The Valetudo backend adapter owns mapping VM runtime snapshots into `vacuum_adapter` snapshots and mapping normalized commands/results.
 
-This follows the rule: Product UI renders normalized adapter state and submits normalized commands. Backend adapter maps backend runtime state into `vacuum_adapter`. VM runtime owns backend connection, state cache, diagnostics, and command routing.
+The UI only renders normalized adapter state: identity, availability, state, battery, dock/charging, capabilities, mission summary, fault/unavailable state, and unsupported map/pose/navigation surfaces.
+
+The UI submits normalized commands: `start_cleaning`, `pause`, `stop`, and `return_to_dock`.
+
+This follows the rule: Product UI renders normalized adapter state and submits normalized commands. Backend adapter maps backend runtime state into `vacuum_adapter`. VM runtime owns backend connection, state cache, and command routing.
 
 ## 4. Webview close/reopen behavior
 
-- idle Valetudo mock state: reopening polls `/snapshot` and hydrates from normalized runtime state plus diagnostics.
-- unavailable VM runtime: the adapter still falls back to a safe offline snapshot.
-- reachable mock runtime: reopening receives current source freshness and transport diagnostics.
-- active mock cleaning state: reopening hydrates active cleaning state and preserves last command diagnostics when runtime memory is still alive.
-- paused mock cleaning state: reopening hydrates paused state from runtime snapshot.
-- terminal or stopped mock state: reopening hydrates the stopped/idle state, or stale/unavailable if the source is down.
+- idle Valetudo mock state: reopening polls `/snapshot` through the adapter and hydrates identity, availability, idle state, battery, dock, and capabilities.
+- unavailable VM runtime: the adapter maps fetch failure to a safe offline snapshot, so the panel remains mounted.
+- reachable mock runtime: reopening receives the latest normalized runtime snapshot and runtime/source health.
+- active mock cleaning state: reopening hydrates active cleaning from runtime state and renders a backend-neutral mission summary.
+- paused mock cleaning state: reopening hydrates paused state from runtime state.
+- terminal or stopped mock state: reopening hydrates stopped/idle state, or stale/unavailable state if the source is down.
 
-The UI hydrates through `useVacuumAdapter`; it does not call Valetudo HTTP, MQTT, or VM runtime internals directly.
+The UI hydrates through `useVacuumAdapter`; it does not reconstruct Valetudo runtime authority from React state and does not call Valetudo source APIs directly.
 
 ## 5. Real hardware compatibility check
 
 - Does this assume the robot is TurtleBot4/Nav2? No.
 - Does this expose TurtleBot4/Nav2 specifics to product UI? No.
-- Does this expose Valetudo raw capability names to product UI? No; raw names live in runtime diagnostics and adapter test fixtures only.
-- Can the same VM runtime API later connect to a real Valetudo robot? Yes; the diagnostics are source/transport metadata behind the same runtime API.
-- What capability flags decide whether controls are shown/enabled? Normalized `vacuum_adapter` capabilities derived from runtime command availability.
-- What operations are explicitly unsupported? Valetudo map rendering, go-to, Clean Area/coverage, rooms/zones, segment cleaning, fan/water setters, consumables UI, manual control, camera, and annotations.
+- Does this expose Valetudo raw capability names to product UI? No; raw names remain runtime diagnostics and adapter test fixture data.
+- Can the same VM runtime API later connect to a real Valetudo robot? Yes; the runtime API boundary is stable enough for the source implementation to change behind it.
+- What capability flags decide whether controls are shown/enabled? Public `vacuum_adapter` capability descriptors derived from runtime command availability and conservative Valetudo capability mapping.
+- What operations are explicitly unsupported? Valetudo map rendering, robot movement visualization, go-to-location, Clean Area, rooms/zones, segment cleaning, fan/water setters, consumables UI, manual control, camera, ROS2 bridge for Valetudo, OpenClaw, and real hardware.
 
 ## 6. Feature behavior changed
 
-- Runtime `/snapshot.diagnostics.source` reports source kind, status, stale state, stale reason, last poll, last successful update, last error, and configured source URL.
-- Runtime `/snapshot.diagnostics.lastCommand` reports the last structured runtime command result.
-- Runtime `/snapshot.diagnostics.capabilityTiers` groups detected raw Valetudo capabilities into implemented, detected-not-ready, detected-not-implemented, and deferred tiers.
-- HTTP and MQTT transport diagnostics now include last success and stale reason fields.
-- Runtime version advanced to `0.7.0-layer6a-m7`.
-- No new Valetudo controls were enabled in the product UI.
+- Architecture docs now say the VM runs our Valetudo integration runtime, not Valetudo itself.
+- The Layer 6A summary records fixed mock data, HTTP mock source mode, optional MQTT diagnostics behind the runtime boundary, adapter mapping, and existing UI consumption.
+- Extension docs now describe the Valetudo backend route, injected runtime configuration, supported commands, and unsupported/deferred behaviors.
+- The Layer 6 plan now separates completed mock-through-VM behavior from later real-hardware work.
 
 ## 7. Files changed
 
-- `/home/shane/firecracker-vm/tensorfleet-mgr/valetudo_runtime.go`: added runtime-owned diagnostics state, source diagnostics, last command audit, capability tiers, HTTP poll tracking, and Milestone 7 runtime version.
-- `/home/shane/firecracker-vm/tensorfleet-mgr/valetudo_mqtt.go`: added MQTT source diagnostics, MQTT stale reasons, and expanded transport diagnostics.
-- `/home/shane/firecracker-vm/tensorfleet-mgr/handlers_test.go`: added tests for capability tiers, last command diagnostics, HTTP source freshness/error preservation, and MQTT stale reasons.
-- `/home/shane/vscode-tensorfleet/panels-standalone/src/vacuum-adapter/backends/valetudo/runtimeContract.ts`: mirrored optional diagnostics fields for the extension-side runtime contract.
-- `/home/shane/vscode-tensorfleet/progress_report.md`: recorded Milestone 7 behavior, validation, risks, and contract status.
+- `/home/shane/vscode-tensorfleet/VACUUM_STACK_PLAN.md`: updated Layer 6 status and architecture text to describe completed Layer 6A mock-through-VM behavior and later real-hardware scope.
+- `/home/shane/vscode-tensorfleet/extension.md`: added extension-side Valetudo backend path, runtime endpoints, configuration inputs, supported behavior, and unsupported/deferred behavior.
+- `/home/shane/vscode-tensorfleet/6a.md`: converted current progress wording into a Layer 6A summary and recorded Milestone 8 documentation completion.
+- `/home/shane/vscode-tensorfleet/progress_report.md`: replaced Milestone 7 report with this Milestone 8 documentation report.
 
 ## 8. Tests / validation run
 
 ```sh
-go test ./...
 bun run test:vacuum-adapter
-bun run typecheck
+bun run --cwd panels-standalone build
 git diff --check
-git -C /home/shane/firecracker-vm diff --check
-git -C /home/shane/vm-manager diff --check
 ```
 
 Passed:
 
 ```text
-go test ./... in /home/shane/firecracker-vm/tensorfleet-mgr
-bun run test:vacuum-adapter in /home/shane/vscode-tensorfleet
-git diff --check in /home/shane/vscode-tensorfleet
-git -C /home/shane/firecracker-vm diff --check
-git -C /home/shane/vm-manager diff --check
+bun run test:vacuum-adapter
+bun run --cwd panels-standalone build
+git diff --check
 ```
 
-`bun run typecheck` still fails on pre-existing unused variables in `/home/shane/vscode-tensorfleet/packages/tensorfleet-auth/src/oauth-core.ts`: `callbackBaseUrl` and `actualPort`.
+`bun run --cwd panels-standalone build` emitted existing Vite warnings about browser-externalized `path`/`fs`, `eval` in `@protobufjs/inquire`, and large chunks, but the build completed successfully.
 
-Manual live VM endpoint validation was not rerun in this pass. The VM and mock source were reported running by the operator, and this milestone was validated with runtime tests around the VM runtime API handlers.
+Live VM endpoint and webview validation were not rerun in this documentation-only pass. The latest recorded runtime validation remains the Milestone 7 state: `go test ./...` passed in `/home/shane/firecracker-vm/tensorfleet-mgr`, `bun run test:vacuum-adapter` passed, and VM-facing `/health`, `/snapshot`, and `/command` had previously been validated against the mock source.
 
 ## 9. Remaining risks
 
-- Diagnostics are runtime-memory based; last command audit is not durable across runtime restart.
-- MQTT still has not been validated against a live broker in this pass.
-- Real hardware is not connected.
-- Raw payload sampling remains deferred; raw capability names are present, but full payload samples are not exposed.
-- Live VS Code webview operator validation was not performed in this pass.
+- Live VS Code webview operator validation still needs a final pass.
+- Real Valetudo hardware has not been connected.
+- MQTT is optional and not production-hardened.
+- Runtime diagnostics and last-command audit are memory-backed.
 - Command availability is still broad when `BasicControlCapability` is present.
+- Valetudo map, room, zone, Clean Area, go-to-location, fan/water setters, and consumables remain unsupported or diagnostics-only.
 
 ## 10. Next recommended step
 
-Proceed to Milestone 8 documentation and Layer 6A summary after a quick live VM validation of `/health`, `/snapshot`, `/command`, and the Valetudo webview path.
+Run final live operator validation through vm-manager for `/health`, `/snapshot`, `/command`, and the Valetudo backend webview. After that, the next smallest architecture-aligned step is real-hardware reachability discovery behind the same VM runtime API, without adding ROS2/OpenClaw, map rendering, rooms/zones, or go-to-location.
 
 ## 11. Contract changes
 
-- Runtime API changed? Endpoint paths did not change. Snapshot diagnostics gained `source`, `lastCommand`, `capabilityTiers`, transport `lastSuccessAt`, and transport `staleReason`.
+- Runtime API changed? No endpoint or top-level contract change in this documentation pass.
 - `vacuum_adapter` public contract changed? No.
-- Capability descriptors changed? No public descriptor shape changed.
-- UI behavior changed? No direct UI behavior changed; controls remain capability-gated through normalized adapter state.
-- Backward compatibility impact? The extension-side diagnostics fields are optional, so Milestone 6 runtime responses still type-check. TurtleBot4/Nav2 remains the default product backend and regression path.
+- Capability descriptors changed? No.
+- UI behavior changed? No implementation behavior changed; docs now clarify existing adapter-driven behavior.
+- Backward compatibility impact? None. TurtleBot4/Nav2 remains the default simulation/regression backend and Valetudo remains opt-in.

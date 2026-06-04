@@ -523,7 +523,8 @@ VS Code extension / product UI
 
      -> Valetudo backend adapter
         -> VM-managed Valetudo integration runtime
-           -> real Valetudo-compatible vacuum on local network
+           -> Valetudo mock source or fixed mock runtime data
+           -> real Valetudo-compatible vacuum on local network later
 ```
 
 Layer 3 extension facts:
@@ -551,10 +552,92 @@ Layer 3 extension facts:
   `snapshot.activeMission` and `snapshot.missions` expose normalized
   runtime-owned statuses.
 - TurtleBot4/Nav2 reports unsupported vacuum-only operations explicitly.
-- Valetudo backend stubs exist but do not implement hardware connectivity yet.
+- Valetudo backend adapter code exists for Layer 6A. It polls the VM-managed
+  Valetudo runtime API, maps snapshots into `vacuum_adapter`, and routes the
+  basic normalized commands `start_cleaning`, `pause`, `stop`, and
+  `return_to_dock`.
+- Valetudo hardware connectivity is still not implemented; the current path is
+  mock source or fixed mock data through the VM runtime.
 
 Capability model and Valetudo planning details are documented in
 `VACUUM_STACK_PLAN.md`.
+
+## Valetudo Backend Extension Path
+
+Layer 6A keeps the extension UI backend-neutral. The product UI still consumes
+`useVacuumAdapter`; it does not call Valetudo HTTP, Valetudo MQTT, VM runtime
+endpoints, or raw Valetudo source endpoints directly.
+
+Current Layer 6A path:
+
+```text
+Vacuum Control
+  -> useVacuumAdapter({ backend: "valetudo" })
+  -> Valetudo backend adapter
+  -> Valetudo runtime client
+  -> vm-manager /vms/self/tensorfleet/... proxy by default
+  -> VM-managed Valetudo integration runtime
+  -> Valetudo mock HTTP source or fixed mock runtime data
+```
+
+Runtime endpoints consumed by the adapter:
+
+```text
+GET  /api/v1/valetudo/health
+GET  /api/v1/valetudo/snapshot
+POST /api/v1/valetudo/command
+```
+
+The default extension route uses vm-manager:
+
+```text
+{TENSORFLEET_VM_MANAGER_URL}/vms/self/tensorfleet/api/v1/valetudo/health
+{TENSORFLEET_VM_MANAGER_URL}/vms/self/tensorfleet/api/v1/valetudo/snapshot
+{TENSORFLEET_VM_MANAGER_URL}/vms/self/tensorfleet/api/v1/valetudo/command
+```
+
+Local development may use `TENSORFLEET_VALETUDO_RUNTIME_URL` for direct runtime
+access. Runtime client configuration comes from injected window values:
+
+```text
+window.TENSORFLEET_VM_MANAGER_URL
+window.TENSORFLEET_VALETUDO_RUNTIME_URL
+window.TENSORFLEET_VALETUDO_RUNTIME_ROUTE_MODE
+window.TENSORFLEET_VACUUM_BACKEND
+window.TENSORFLEET_JWT
+```
+
+Supported Valetudo product behavior in Layer 6A:
+
+- identity
+- availability
+- state
+- battery when available
+- dock/charging when available
+- capabilities mapped into public `vacuum_adapter` descriptors
+- `start_cleaning`
+- `pause`
+- `stop`
+- `return_to_dock`
+- explicit unsupported operations
+- runtime/source health and stale source handling
+
+Unsupported or deferred Valetudo behavior:
+
+- real hardware
+- Valetudo map rendering
+- robot movement visualization
+- room/segment cleaning
+- zone cleaning
+- go-to-location
+- Clean Area execution through Valetudo
+- ROS2 bridge support for Valetudo
+- OpenClaw integration
+- MQTT production hardening
+
+Raw Valetudo capability names may appear in runtime diagnostics and adapter
+fixtures, but product UI behavior must continue branching only on normalized
+capability descriptors and normalized adapter state.
 
 ## Supporting Panel Mapping
 

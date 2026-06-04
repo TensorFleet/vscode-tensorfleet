@@ -262,8 +262,8 @@ Current position:
 Layer 0 — Sensors                   validated
 Layer 1 — Localization + Map        running
 Layer 2 — Navigation                closed for TurtleBot4/Nav2 simulation
-Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation,
-                                    Valetudo stub reserved for Layer 6
+Layer 3 — Vacuum Adapter            closed for TurtleBot4/Nav2 simulation;
+                                    Valetudo path implemented for Layer 6A
 Layer 4 prerequisite: Mapping + Whole Map View
                                     implemented for TurtleBot4/Nav2 simulation
 Layer 4 — Coverage                  Clean Area execution, route generation,
@@ -274,7 +274,8 @@ Layer 5 — Room / Zone Semantics     prototype implemented:
                                     room/zone cleaning, recovery controls,
                                     hydration, result details, and recent
                                     summaries
-Layer 6 — Real Hardware (Valetudo)  planned
+Layer 6A — Valetudo Mock Through VM implemented through documentation summary
+Layer 6 — Real Hardware (Valetudo)  deferred until Layer 6A remains stable
 ```
 
 Each layer should be stable before the next layer depends on it.
@@ -546,34 +547,87 @@ Still pending after the prototype:
 - VM/runtime-owned annotation durability
 - VM/runtime-owned durable mission history
 
-## Layer 6: Real Hardware (Valetudo)
+## Layer 6A: Valetudo Mock Through VM
 
-Status: planned.
+Status: implemented through the mock/runtime/adapter documentation slice.
 
 Purpose:
 
-- ship a Valetudo backend implementing the same `vacuum_adapter` contract
-- swap TurtleBot4 simulation for a real Valetudo-compatible vacuum with no
-  changes above the adapter
-- keep the same extension, same UI, and same workflows
-- run the Valetudo integration runtime in the VM so users do not need local
-  integration tooling
+- prove that Valetudo-shaped state, capabilities, and basic commands can travel
+  through the same `vacuum_adapter` boundary as the TurtleBot4/Nav2 simulation
+  backend
+- keep TurtleBot4/Nav2 as the simulation and regression backend
+- run our Valetudo integration runtime in the VM while the mock source runs
+  locally or in a local development environment
+- keep the same extension and product UI consuming only normalized adapter
+  state and commands
 
 Important wording:
 
 - say "Valetudo integration runtime in the VM"
+- say "Valetudo runs on the robot" for the later real hardware path
 - do not imply the VM replaces the Valetudo instance on the robot
 
-Target path:
+Implemented Layer 6A path:
 
 ```text
-real vacuum running Valetudo
-  -> VM-managed Valetudo integration client / MQTT broker / adapter service
+Valetudo mock HTTP source or fixed mock runtime data
+  -> VM-managed Valetudo integration runtime
+  -> /api/v1/valetudo/health
+  -> /api/v1/valetudo/snapshot
+  -> /api/v1/valetudo/command
+  -> Valetudo backend adapter
   -> vacuum_adapter
   -> extension / product UI
 ```
 
-First Layer 6 validation path:
+Supported Layer 6A behavior:
+
+- robot identity
+- availability/connectivity
+- state
+- battery when available
+- dock/charging when available
+- conservative capability mapping
+- runtime/source health
+- stale source handling
+- explicit unsupported, unavailable, failed, and successful command results
+- `start_cleaning`
+- `pause`
+- `stop`
+- `return_to_dock`
+
+Deferred or unsupported in Layer 6A:
+
+- real Valetudo-compatible robot hardware
+- ROS2 bridge support for Valetudo
+- OpenClaw integration
+- production MQTT hardening
+- Valetudo map rendering
+- Valetudo robot movement visualization
+- go-to-location execution
+- room/segment cleaning
+- zone cleaning
+- Clean Area execution through Valetudo
+- fan and water setters as product-ready controls
+- consumables UI polish
+
+The runtime currently supports HTTP-backed mock source mode and fixed mock mode.
+Optional MQTT state caching exists behind the VM runtime boundary, but the
+adapter and UI do not know whether runtime state came from HTTP, MQTT, or fixed
+mock data.
+
+Later real-hardware target path:
+
+```text
+real vacuum running Valetudo
+  -> VM-managed Valetudo integration runtime
+  -> Valetudo backend adapter
+  -> vacuum_adapter
+  -> extension / product UI
+```
+
+First real-hardware validation path after Layer 6A:
 
 ```text
 Valetudo robot reachable
