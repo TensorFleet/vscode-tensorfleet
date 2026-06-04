@@ -61,6 +61,9 @@ export type ValetudoRuntimeSnapshot = {
   diagnostics: {
     mode: string;
     rawCapabilityNames: string[];
+    source?: ValetudoRuntimeSourceDiagnostic;
+    lastCommand?: ValetudoRuntimeCommandAudit;
+    capabilityTiers?: ValetudoRuntimeCapabilityTier[];
     transports?: ValetudoRuntimeTransportDiagnostic[];
     notes?: string[];
   };
@@ -98,8 +101,41 @@ export type ValetudoRuntimeTransportDiagnostic = {
   status: string;
   stale: boolean;
   lastSeenAt?: number | null;
+  lastSuccessAt?: number | null;
+  staleReason?: string;
   detail?: string;
   messageCount?: number;
   lastError?: string | null;
   subscriptions?: string[];
+};
+
+export type ValetudoRuntimeSourceDiagnostic = {
+  kind: ValetudoRuntimeSourceKind;
+  status: ValetudoRuntimeSourceStatus;
+  stale: boolean;
+  staleReason?: string;
+  lastPollAt?: number | null;
+  lastSuccessfulUpdateAt?: number | null;
+  lastError?: string | null;
+  sourceUrl?: string;
+  mqttBrokerUrl?: string;
+  mqttTopicRoot?: string;
+};
+
+export type ValetudoRuntimeCommandAudit = {
+  ok: boolean;
+  status: ValetudoRuntimeCommandStatus;
+  command: string;
+  message: string;
+  reason?: string;
+  code?: string;
+  updatedAt: number;
+};
+
+export type ValetudoRuntimeCapabilityTier = {
+  tier: number;
+  label: string;
+  implemented: boolean;
+  names: string[];
+  note?: string;
 };
