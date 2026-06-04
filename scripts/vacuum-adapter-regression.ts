@@ -1178,6 +1178,48 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.activeMission, null);
   assert.equal(snapshot.missions.active, null);
 
+  const mqttBoundary = mapValetudoRuntimeSnapshotToBoundary({
+    runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-mqtt-robot", name: "Valetudo MQTT Source" },
+    source: { kind: "valetudo_mock", status: "reachable", stale: false, lastSeenAt: 2 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "cleaning", label: "Cleaning", started: true, paused: false },
+    battery: { level: 64, charging: true },
+    dock: { state: "available", docked: false },
+    capabilities: {
+      commands: {
+        start_cleaning: { available: true },
+        pause: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      },
+      diagnostics: [],
+    },
+    diagnostics: {
+      mode: "valetudo_mock_mqtt",
+      rawCapabilityNames: ["BasicControlCapability", "BatteryStateCapability"],
+      transports: [
+        { name: "http", enabled: true, status: "available", stale: false },
+        {
+          name: "mqtt",
+          enabled: true,
+          status: "reachable",
+          stale: false,
+          messageCount: 4,
+          subscriptions: ["valetudo/robot/#"],
+        },
+      ],
+    },
+    updatedAt: 2,
+  });
+  const mqttSnapshot = mapValetudoState(mqttBoundary);
+  assert.equal(mqttSnapshot.identity.label, "Valetudo MQTT Source");
+  assert.equal(mqttSnapshot.availability.status, "online");
+  assert.equal(mqttSnapshot.mission.state, "cleaning");
+  assert.equal(mqttSnapshot.capabilities.start_cleaning.supported, true);
+  assert.equal(mqttSnapshot.capabilities.battery.supported, true);
+
   const missingBasic = mapValetudoState(
     mapValetudoRuntimeSnapshotToBoundary({
       runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.1.0-layer6a-m1", status: "online" },

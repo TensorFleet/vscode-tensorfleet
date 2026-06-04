@@ -61,6 +61,7 @@ export type ValetudoRuntimeSnapshot = {
   diagnostics: {
     mode: string;
     rawCapabilityNames: string[];
+    transports?: ValetudoRuntimeTransportDiagnostic[];
     notes?: string[];
   };
   rawDiagnostics?: Record<string, unknown>;
@@ -89,4 +90,16 @@ export type ValetudoRuntimeCapabilityDiagnostic = {
   implemented: boolean;
   scope: string;
   note?: string;
+};
+
+export type ValetudoRuntimeTransportDiagnostic = {
+  name: "http" | "mqtt" | string;
+  enabled: boolean;
+  status: string;
+  stale: boolean;
+  lastSeenAt?: number | null;
+  detail?: string;
+  messageCount?: number;
+  lastError?: string | null;
+  subscriptions?: string[];
 };
