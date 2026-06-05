@@ -56,14 +56,27 @@ const VALETUDO_BACKEND_COMMANDS: Partial<Record<VacuumCapabilityName, string[]>>
   water_usage: ["set_water_usage"],
 };
 
+export type ValetudoCapabilityAvailability = {
+  available: boolean;
+  reason?: string;
+};
+
+export type ValetudoCapabilityMappingOptions = {
+  commandAvailability?: Partial<Record<VacuumCapabilityName, ValetudoCapabilityAvailability>>;
+  unavailableReason?: string;
+};
+
 function supportedCapability(
   backendCapability: string,
   overrides: Omit<CapabilitySupport, "supported" | "source" | "backendCapability"> = {},
 ): CapabilitySupport {
+  const available = overrides.available ?? true;
   return {
     supported: true,
     source: SOURCE,
     backendCapability,
+    status: available ? "supported" : "unavailable",
+    available,
     ...overrides,
   };
 }
@@ -72,18 +85,53 @@ function unsupportedCapability(notes: string): CapabilitySupport {
   return {
     supported: false,
     source: SOURCE,
+    status: "unsupported",
+    available: false,
     notes,
   };
 }
 
 function detectedButUnsupportedCapability(): CapabilitySupport {
-  return unsupportedCapability(
-    "Valetudo capability detected, but product workflow is not implemented in this slice.",
-  );
+  return {
+    ...unsupportedCapability("Valetudo capability detected, but product workflow is not implemented in this slice."),
+    status: "detected_not_ready",
+    reasons: [
+      {
+        code: "product_workflow_not_implemented",
+        message: "Backend capability is detected, but the product workflow is not implemented in this slice.",
+      },
+    ],
+  };
+}
+
+function commandAvailabilityFor(
+  name: VacuumCapabilityName,
+  options: ValetudoCapabilityMappingOptions,
+): Pick<CapabilitySupport, "available" | "availabilityReason" | "status" | "reasons"> {
+  const availability = options.commandAvailability?.[name];
+  if (!availability && !options.unavailableReason) {
+    return {};
+  }
+  const available = availability?.available ?? false;
+  const reason = availability?.reason ?? options.unavailableReason ?? "Backend source is unavailable.";
+  return {
+    available,
+    status: available ? "supported" : "unavailable",
+    availabilityReason: available ? undefined : reason,
+    reasons: available
+      ? undefined
+      : [
+          {
+            code: reason,
+            message: reason,
+          },
+        ],
+  };
 }
 
 export function mapValetudoCapabilities(
   backendCapabilities: Iterable<ValetudoBackendCapability> = [],
+  options: ValetudoCapabilityMappingOptions = {},
 ): VacuumCapabilities {
   const capabilities = createUnsupportedCapabilities();
   const advertised = new Set(backendCapabilities);
@@ -107,6 +155,7 @@ export function mapValetudoCapabilities(
       }
       capabilities[name] = supportedCapability(`runtime_command:${name}`, {
         commands: VALETUDO_BACKEND_COMMANDS[name],
+        ...commandAvailabilityFor(name, options),
         notes: "Mapped from normalized Valetudo runtime command availability.",
       });
     }
@@ -188,6 +237,10 @@ export function mapValetudoCapabilities(
   capabilities.pause_mission = capabilities.pause.supported
     ? supportedCapability("runtime_command:pause", {
         commands: ["pause_mission"],
+        available: capabilities.pause.available,
+        status: capabilities.pause.status,
+        availabilityReason: capabilities.pause.availabilityReason,
+        reasons: capabilities.pause.reasons,
         notes: "Mapped to backend pause by the Valetudo integration runtime when a mission is active.",
       })
     : unsupportedCapability("Valetudo pause support is not available.");
@@ -197,6 +250,10 @@ export function mapValetudoCapabilities(
   capabilities.cancel_mission = capabilities.stop.supported
     ? supportedCapability("runtime_command:stop", {
         commands: ["cancel_mission"],
+        available: capabilities.stop.available,
+        status: capabilities.stop.status,
+        availabilityReason: capabilities.stop.availabilityReason,
+        reasons: capabilities.stop.reasons,
         notes: "Mapped to backend stop by the Valetudo integration runtime when a mission is active.",
       })
     : unsupportedCapability("Valetudo stop support is not available.");

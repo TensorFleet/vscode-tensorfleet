@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { VacuumAdapter } from "../../adapter";
 import type { VacuumCommand, VacuumCommandResult } from "../../commands";
-import { unsupportedCommand } from "../../errors";
-import { mapVacuumCommandToValetudoRequest } from "./commandMapper";
+import { mapVacuumCommandToValetudoRequest, mapValetudoRuntimeCommandResult } from "./commandMapper";
 import { createValetudoRuntimeClient, type ValetudoRuntimeClient } from "./runtimeClient";
-import type { ValetudoRuntimeCommandResult, ValetudoRuntimeSnapshot } from "./runtimeContract";
+import type { ValetudoRuntimeSnapshot } from "./runtimeContract";
 import {
   isValetudoRuntimeSnapshot,
   mapValetudoRuntimeSnapshotToBoundary,
@@ -13,33 +12,6 @@ import {
 } from "./stateMapper";
 
 const POLL_INTERVAL_MS = 3000;
-
-function commandResultFromRuntime(
-  command: VacuumCommand["command"],
-  result: ValetudoRuntimeCommandResult,
-): VacuumCommandResult {
-  if (result.ok && result.status === "success") {
-    return {
-      ok: true,
-      command,
-      message: result.message,
-    };
-  }
-  return {
-    ok: false,
-    command,
-    error: {
-      command,
-      code:
-        result.status === "unsupported"
-          ? "unsupported"
-          : result.status === "unavailable"
-            ? "not_ready"
-            : "backend_error",
-      message: result.message || result.reason || `Valetudo runtime command ${command} failed.`,
-    },
-  };
-}
 
 function runtimeCommandName(command: VacuumCommand["command"]): string {
   if (command === "pause_mission") {
@@ -114,7 +86,11 @@ export function useValetudoAdapter(client?: ValetudoRuntimeClient): VacuumAdapte
         return {
           ok: false,
           command: command.command,
-          error: unsupportedCommand(command.command, mapped.message),
+          error: {
+            command: command.command,
+            code: mapped.reason,
+            message: mapped.message,
+          },
         };
       }
       try {
@@ -122,7 +98,7 @@ export function useValetudoAdapter(client?: ValetudoRuntimeClient): VacuumAdapte
           command: runtimeCommandName(command.command),
         });
         await refresh();
-        return commandResultFromRuntime(command.command, result);
+        return mapValetudoRuntimeCommandResult(command.command, result);
       } catch (error) {
         await refresh();
         return {

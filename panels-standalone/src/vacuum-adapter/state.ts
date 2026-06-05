@@ -299,10 +299,52 @@ export type VacuumBatteryState = {
   detail?: string;
 };
 
+export type VacuumRuntimeHealthStatus = "online" | "degraded" | "offline" | "unknown";
+
+export type VacuumSourceKind = "turtlebot4_nav2" | "fixed_mock" | "valetudo_mock" | "real_robot" | "unknown";
+
+export type VacuumSourceStatus = "reachable" | "unreachable" | "stale" | "unknown";
+
+export type VacuumDockState = "unknown" | "docked" | "undocked" | "returning" | "charging" | "error";
+
+export type VacuumRuntimeHealth = {
+  runtimeStatus: VacuumRuntimeHealthStatus;
+  updatedAt?: number | string;
+  detail?: string;
+};
+
+export type VacuumSourceState = {
+  kind?: VacuumSourceKind;
+  status?: VacuumSourceStatus;
+  stale?: boolean;
+  lastSeenAt?: number | string | null;
+  reason?: string;
+};
+
+export type VacuumDockStatus = {
+  supported?: boolean;
+  state?: VacuumDockState;
+  charging?: boolean;
+  detail?: string;
+};
+
+export type VacuumAdapterDiagnostics = {
+  backend?: string;
+  runtime?: unknown;
+  source?: unknown;
+  capabilities?: unknown;
+  warnings?: string[];
+  raw?: unknown;
+};
+
 export type VacuumAdapterSnapshot = {
   identity: VacuumBackendIdentity;
   availability: VacuumAvailability;
   capabilities: VacuumCapabilities;
+  health?: VacuumRuntimeHealth;
+  source?: VacuumSourceState;
+  dock?: VacuumDockStatus;
+  diagnostics?: VacuumAdapterDiagnostics;
   map: VacuumMapState;
   pose: VacuumPoseState;
   navigation: VacuumNavigationStatus;

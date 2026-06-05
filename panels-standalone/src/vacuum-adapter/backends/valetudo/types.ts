@@ -1,5 +1,14 @@
 import type { VacuumCommandName } from "../../commands";
-import type { VacuumGoalCoordinates, VacuumMissionState, VacuumPoseCoordinates } from "../../state";
+import type {
+  VacuumAdapterDiagnostics,
+  VacuumDockStatus,
+  VacuumGoalCoordinates,
+  VacuumMissionState,
+  VacuumPoseCoordinates,
+  VacuumRuntimeHealth,
+  VacuumSourceState,
+} from "../../state";
+import type { ValetudoCapabilityAvailability } from "./capabilityMapper";
 import type { ValetudoBackendCapability } from "./capabilityMapper";
 
 export type ValetudoConnectionStatus = "offline" | "connecting" | "online";
@@ -8,7 +17,12 @@ export type ValetudoRuntimeBoundary = {
   connectionStatus: ValetudoConnectionStatus;
   endpoint?: string;
   capabilities: ValetudoBackendCapability[];
+  commandAvailability?: Partial<Record<string, ValetudoCapabilityAvailability>>;
   state: ValetudoRobotState | null;
+  health?: VacuumRuntimeHealth;
+  source?: VacuumSourceState;
+  dock?: VacuumDockStatus;
+  diagnostics?: VacuumAdapterDiagnostics;
   lastError?: string;
 };
 
@@ -55,6 +69,6 @@ export type ValetudoCommandMappingResult =
   | {
       ok: false;
       command: VacuumCommandName;
-      reason: "unsupported" | "invalid_request";
+      reason: "unsupported" | "unavailable" | "invalid_request";
       message: string;
     };

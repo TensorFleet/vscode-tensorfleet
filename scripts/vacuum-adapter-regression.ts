@@ -38,6 +38,7 @@ import {
 } from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/localAnnotationMigration";
 import {
   mapVacuumCommandToValetudoRequest,
+  mapValetudoRuntimeCommandResult,
 } from "../panels-standalone/src/vacuum-adapter/backends/valetudo/commandMapper";
 import {
   mapValetudoCapabilities,
@@ -465,6 +466,8 @@ function testCapabilityCoverage(): void {
     "ZoneCleaningCapability",
   ]);
   assert.equal(valetudo.start_cleaning.supported, true);
+  assert.equal(valetudo.start_cleaning.status, "supported");
+  assert.equal(valetudo.start_cleaning.available, true);
   assert.equal(valetudo.pause.supported, true);
   assert.equal(valetudo.stop.supported, true);
   assert.equal(valetudo.return_to_dock.supported, true);
@@ -487,6 +490,8 @@ function testCapabilityCoverage(): void {
 
   for (const name of ["fan_speed", "water_usage", "consumables", "segment_cleaning", "zone_cleaning"] as const) {
     assert.equal(valetudo[name].source, "valetudo");
+    assert.equal(valetudo[name].status, "detected_not_ready");
+    assert.equal(valetudo[name].available, false);
     assert.equal(
       valetudo[name].notes,
       "Valetudo capability detected, but product workflow is not implemented in this slice.",
@@ -517,6 +522,12 @@ function testStateMapping(): void {
   const idle = mapTurtleBot4Nav2State({ runtime: createRuntime({ goalState: "ready" }), currentTarget: null });
   assert.equal(idle.mission.state, "idle");
   assert.equal(idle.navigation.state, "idle");
+  assert.equal(idle.health?.runtimeStatus, "online");
+  assert.equal(idle.source?.kind, "turtlebot4_nav2");
+  assert.equal(idle.source?.status, "reachable");
+  assert.equal(idle.dock?.supported, false);
+  assert.equal(idle.dock?.state, "unknown");
+  assert.equal(idle.diagnostics?.backend, "turtlebot4_nav2");
   assert.deepEqual(idle.navigation.planPath, [
     { x: 1, y: 2 },
     { x: 3, y: 4 },
@@ -1120,6 +1131,52 @@ function testValetudoCommandStub(): void {
     const result = mapVacuumCommandToValetudoRequest({ command }, missingBasicControl);
     assert.equal(result.ok, false, `${command} should be unsupported without BasicControlCapability`);
   }
+
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "unsupported",
+      command: "start_cleaning",
+      message: "not implemented",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: { command: "start_cleaning", code: "unsupported", message: "not implemented" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "unavailable",
+      command: "start_cleaning",
+      message: "source down",
+      reason: "source_unreachable",
+      code: "source_unreachable",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: { command: "start_cleaning", code: "source_unreachable", message: "source down" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("pause", {
+      ok: false,
+      status: "unavailable",
+      command: "pause",
+      message: "stale",
+      reason: "stale_source",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "pause",
+      error: { command: "pause", code: "stale_source", message: "stale" },
+    },
+  );
 }
 
 function testValetudoRuntimeSnapshotMapping(): void {
@@ -1160,7 +1217,16 @@ function testValetudoRuntimeSnapshotMapping(): void {
   const snapshot = mapValetudoState(boundary);
   assert.equal(snapshot.identity.label, "Valetudo Fixed Mock");
   assert.equal(snapshot.availability.status, "online");
+  assert.equal(snapshot.health?.runtimeStatus, "online");
+  assert.equal(snapshot.source?.kind, "fixed_mock");
+  assert.equal(snapshot.source?.status, "reachable");
+  assert.equal(snapshot.source?.stale, false);
+  assert.equal(snapshot.dock?.supported, true);
+  assert.equal(snapshot.dock?.state, "docked");
+  assert.equal(snapshot.diagnostics?.backend, "valetudo");
   assert.equal(snapshot.capabilities.start_cleaning.supported, true);
+  assert.equal(snapshot.capabilities.start_cleaning.status, "supported");
+  assert.equal(snapshot.capabilities.start_cleaning.available, true);
   assert.equal(snapshot.capabilities.pause.supported, true);
   assert.equal(snapshot.capabilities.stop.supported, true);
   assert.equal(snapshot.capabilities.return_to_dock.supported, true);
@@ -1216,6 +1282,8 @@ function testValetudoRuntimeSnapshotMapping(): void {
   const mqttSnapshot = mapValetudoState(mqttBoundary);
   assert.equal(mqttSnapshot.identity.label, "Valetudo MQTT Source");
   assert.equal(mqttSnapshot.availability.status, "online");
+  assert.equal(mqttSnapshot.source?.kind, "valetudo_mock");
+  assert.equal(mqttSnapshot.dock?.state, "charging");
   assert.equal(mqttSnapshot.mission.state, "cleaning");
   assert.equal(mqttSnapshot.capabilities.start_cleaning.supported, true);
   assert.equal(mqttSnapshot.capabilities.battery.supported, true);
@@ -1246,12 +1314,105 @@ function testValetudoRuntimeSnapshotMapping(): void {
       updatedAt: 1,
     }),
   );
-  assert.equal(missingBasic.capabilities.start_cleaning.supported, false);
-  assert.equal(missingBasic.capabilities.pause.supported, false);
-  assert.equal(missingBasic.capabilities.stop.supported, false);
-  assert.equal(missingBasic.capabilities.return_to_dock.supported, false);
+  assert.equal(missingBasic.capabilities.start_cleaning.supported, true);
+  assert.equal(missingBasic.capabilities.start_cleaning.status, "unavailable");
+  assert.equal(missingBasic.capabilities.start_cleaning.available, false);
+  assert.equal(missingBasic.capabilities.pause.supported, true);
+  assert.equal(missingBasic.capabilities.pause.status, "unavailable");
+  assert.equal(missingBasic.capabilities.stop.supported, true);
+  assert.equal(missingBasic.capabilities.stop.status, "unavailable");
+  assert.equal(missingBasic.capabilities.return_to_dock.supported, true);
+  assert.equal(missingBasic.capabilities.return_to_dock.status, "unavailable");
   assert.equal(missingBasic.capabilities.battery.supported, true);
   assert.equal(missingBasic.capabilities.fan_speed.supported, false);
+
+  const unreachable = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0", status: "online" },
+      backend: "valetudo",
+      robot: { id: "valetudo-source-down", name: "Valetudo Source Down" },
+      source: { kind: "real_robot", status: "unreachable", stale: false, lastSeenAt: 10 },
+      connectivity: { reachable: false, online: true },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      battery: { level: 72, charging: false },
+      dock: { state: "available", docked: true },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: false, reason: "source_unreachable" },
+          pause: { available: false, reason: "source_unreachable" },
+          stop: { available: false, reason: "source_unreachable" },
+          return_to_dock: { available: false, reason: "source_unreachable" },
+        },
+        diagnostics: [],
+      },
+      diagnostics: { mode: "real_robot", rawCapabilityNames: ["BasicControlCapability"] },
+      updatedAt: 10,
+    }),
+  );
+  assert.equal(unreachable.availability.status, "online");
+  assert.equal(unreachable.source?.status, "unreachable");
+  assert.equal(unreachable.source?.reason, "source_unreachable");
+  assert.equal(unreachable.capabilities.start_cleaning.supported, true);
+  assert.equal(unreachable.capabilities.start_cleaning.status, "unavailable");
+  assert.equal(unreachable.capabilities.start_cleaning.available, false);
+  assert.equal(unreachable.capabilities.start_cleaning.availabilityReason, "source_unreachable");
+  const unreachableCommand = mapVacuumCommandToValetudoRequest(
+    { command: "start_cleaning" },
+    unreachable.capabilities,
+  );
+  assert.equal(unreachableCommand.ok, false);
+  assert.equal(unreachableCommand.reason, "unavailable");
+
+  const runtimeOffline = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0", status: "offline" },
+      backend: "valetudo",
+      robot: { id: "valetudo-runtime-down", name: "Valetudo Runtime Down" },
+      source: { kind: "real_robot", status: "unreachable", stale: false, lastSeenAt: 10 },
+      connectivity: { reachable: false, online: false },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: false, reason: "source_unreachable" },
+          pause: { available: false, reason: "source_unreachable" },
+          stop: { available: false, reason: "source_unreachable" },
+          return_to_dock: { available: false, reason: "source_unreachable" },
+        },
+        diagnostics: [],
+      },
+      diagnostics: { mode: "real_robot", rawCapabilityNames: ["BasicControlCapability"] },
+      updatedAt: 10,
+    }),
+  );
+  assert.equal(runtimeOffline.availability.status, "offline");
+  assert.equal(runtimeOffline.health?.runtimeStatus, "offline");
+  assert.equal(runtimeOffline.source?.reason, "runtime_offline");
+  assert.equal(runtimeOffline.capabilities.start_cleaning.availabilityReason, "runtime_offline");
+  assert.deepEqual(runtimeOffline.fault.faults, ["Valetudo integration runtime is offline."]);
+
+  const stale = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0", status: "online" },
+      backend: "valetudo",
+      robot: { id: "valetudo-stale", name: "Valetudo Stale" },
+      source: { kind: "valetudo_mock", status: "reachable", stale: true, lastSeenAt: 11 },
+      connectivity: { reachable: true, online: true },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: false, reason: "stale_source" },
+        },
+        diagnostics: [{ name: "BasicControlCapability", detected: true, implemented: true, scope: "control" }],
+      },
+      diagnostics: { mode: "valetudo_mock", rawCapabilityNames: ["BasicControlCapability"] },
+      updatedAt: 11,
+    }),
+  );
+  assert.equal(stale.source?.status, "stale");
+  assert.equal(stale.source?.stale, true);
+  assert.equal(stale.capabilities.start_cleaning.supported, true);
+  assert.equal(stale.capabilities.start_cleaning.status, "unavailable");
+  assert.equal(stale.capabilities.start_cleaning.availabilityReason, "stale_source");
 }
 
 function testValetudoRuntimeMissionStateMapping(): void {
@@ -1325,6 +1486,16 @@ function testValetudoChargingAndOfflineMapping(): void {
   // Malformed payloads (e.g. a proxy error body) must be rejected so the adapter
   // can fall back to an offline snapshot instead of crashing the UI.
   assert.equal(isValetudoRuntimeSnapshot({ error: "Tensorfleet VM service is unavailable" }), false);
+  assert.equal(
+    isValetudoRuntimeSnapshot({
+      backend: "valetudo",
+      robot: { id: "valetudo-fixed-mock-001" },
+      connectivity: { online: true },
+      state: { value: "idle" },
+      capabilities: { commands: {} },
+    }),
+    false,
+  );
   assert.equal(isValetudoRuntimeSnapshot(null), false);
   assert.equal(isValetudoRuntimeSnapshot("offline"), false);
 

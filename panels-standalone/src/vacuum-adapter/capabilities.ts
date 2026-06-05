@@ -1,5 +1,12 @@
 export type VacuumBackendSource = "turtlebot4_nav2" | "valetudo" | "mock";
 
+export type CapabilityStatus = "supported" | "unsupported" | "unavailable" | "detected_not_ready";
+
+export type CapabilityReason = {
+  code: string;
+  message: string;
+};
+
 export const VACUUM_CAPABILITY_NAMES = [
   "mission_state",
   "start_navigation",
@@ -47,12 +54,18 @@ export type CapabilitySupport = {
   commands?: string[];
   attributes?: string[];
   notes?: string;
+  status?: CapabilityStatus;
+  available?: boolean;
+  availabilityReason?: string;
+  reasons?: CapabilityReason[];
 };
 
 export type VacuumCapabilities = Record<VacuumCapabilityName, CapabilitySupport>;
 
 const UNSUPPORTED_CAPABILITY: CapabilitySupport = {
   supported: false,
+  status: "unsupported",
+  available: false,
   notes: "Not supported by this backend.",
 };
 

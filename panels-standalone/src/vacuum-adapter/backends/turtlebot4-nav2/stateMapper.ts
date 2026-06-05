@@ -539,6 +539,32 @@ export function mapTurtleBot4Nav2State(
       detail: runtime.connectionStatus === "connected" ? "Foxglove bridge connected." : "Robot bridge is not online.",
     },
     capabilities,
+    health: {
+      runtimeStatus: runtime.connectionStatus === "connected" ? "online" : runtime.connectionStatus === "disconnected" ? "offline" : "unknown",
+      detail: runtime.connectionStatus === "connected" ? "Foxglove bridge connected." : "Robot bridge status is not online.",
+    },
+    source: {
+      kind: "turtlebot4_nav2",
+      status: runtime.connectionStatus === "connected" ? "reachable" : "unknown",
+      stale: false,
+      lastSeenAt: null,
+      reason: runtime.connectionStatus === "connected" ? undefined : "bridge_not_connected",
+    },
+    dock: {
+      supported: false,
+      state: "unknown",
+      charging: undefined,
+      detail: "Dock state is not part of the TurtleBot4/Nav2 adapter slice.",
+    },
+    diagnostics: {
+      backend: "turtlebot4_nav2",
+      runtime: {
+        connectionStatus: runtime.connectionStatus,
+        availableTopicCount: runtime.availableTopics.length,
+        availableServiceCount: runtime.availableServices.length,
+      },
+      warnings: faults,
+    },
     map: {
       readiness: mapReadiness,
       topic: "/map",
