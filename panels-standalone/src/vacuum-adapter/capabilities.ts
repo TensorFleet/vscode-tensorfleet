@@ -50,6 +50,7 @@ export type VacuumCapabilityName = (typeof VACUUM_CAPABILITY_NAMES)[number];
 export type CapabilitySupport = {
   supported: boolean;
   source?: VacuumBackendSource;
+  /** @deprecated Compatibility mirror only. Backend identifiers belong in snapshot.diagnostics.capabilities. */
   backendCapability?: string;
   commands?: string[];
   attributes?: string[];

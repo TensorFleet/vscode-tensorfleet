@@ -225,6 +225,7 @@ export type VacuumAvailability = {
 
 export type VacuumMapState = {
   readiness: VacuumReadinessState;
+  /** @deprecated Compatibility mirror only. Backend topics belong in snapshot.diagnostics.map. */
   topic?: string;
   receiving: boolean;
   detail?: string;
@@ -236,6 +237,7 @@ export type VacuumMapState = {
 export type VacuumPoseState = {
   readiness: VacuumReadinessState;
   available: boolean;
+  /** @deprecated Compatibility mirror only. Backend pose sources belong in snapshot.diagnostics.pose. */
   source?: string;
   coordinates: VacuumPoseCoordinates | null;
   detail?: string;
@@ -251,6 +253,7 @@ export type VacuumNavigationProgress = {
 
 export type VacuumNavigationStatus = {
   state: VacuumNavigationState;
+  /** @deprecated Compatibility mirror only. Backend goal states belong in snapshot.diagnostics.navigation. */
   backendGoalState: string | null;
   active: boolean;
   isSending: boolean;
@@ -307,8 +310,11 @@ export type VacuumMappingStatus = {
 export type VacuumSavedMapSummary = {
   id: string;
   name: string;
+  /** @deprecated Compatibility mirror only. Saved map paths belong in snapshot.diagnostics.mapping. */
   yamlPath: string;
+  /** @deprecated Compatibility mirror only. Saved map paths belong in snapshot.diagnostics.mapping. */
   imagePath: string | null;
+  /** @deprecated Compatibility mirror only. Saved map paths belong in snapshot.diagnostics.mapping. */
   poseGraphPath: string | null;
   loadable: boolean;
   loadUnavailableReason: string | null;
@@ -369,6 +375,10 @@ export type VacuumAdapterDiagnostics = {
   runtime?: unknown;
   source?: unknown;
   capabilities?: unknown;
+  map?: unknown;
+  pose?: unknown;
+  navigation?: unknown;
+  mapping?: unknown;
   warnings?: string[];
   raw?: unknown;
 };

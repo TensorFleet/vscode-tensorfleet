@@ -4,6 +4,10 @@ import {
 } from "../../../components/Nav2/runtime/nav2RuntimeUtils";
 import type { Nav2RuntimeState, GoalState, TopicHealth } from "../../../components/Nav2/runtime/nav2RuntimeTypes";
 import type {
+  CapabilitySupport,
+  VacuumCapabilityName,
+} from "../../capabilities";
+import type {
   VacuumAdapterSnapshot,
   VacuumAvailabilityStatus,
   VacuumGoalCoordinates,
@@ -493,6 +497,14 @@ function getReadinessBlockers(runtime: Nav2RuntimeState, mapReady: boolean): str
   return blockers;
 }
 
+function collectBackendCapabilityDiagnostics(capabilities: Record<VacuumCapabilityName, CapabilitySupport>): Partial<Record<VacuumCapabilityName, string>> {
+  return Object.fromEntries(
+    Object.entries(capabilities)
+      .filter((entry): entry is [VacuumCapabilityName, CapabilitySupport & { backendCapability: string }] => typeof entry[1].backendCapability === "string")
+      .map(([name, capability]) => [name, capability.backendCapability]),
+  );
+}
+
 export function mapTurtleBot4Nav2State(
   input: TurtleBot4Nav2StateMapperInput | Nav2RuntimeState,
   legacyCurrentTarget?: VacuumGoalCoordinates | null,
@@ -596,6 +608,7 @@ export function mapTurtleBot4Nav2State(
     normalizedMapping,
     navigationActive: active,
   });
+  const navigationBackendGoalState = navigationMission?.phase ?? runtime.goalState;
 
   return {
     identity: {
@@ -634,6 +647,38 @@ export function mapTurtleBot4Nav2State(
         availableTopicCount: runtime.availableTopics.length,
         availableServiceCount: runtime.availableServices.length,
       },
+      capabilities: {
+        backendCapabilities: collectBackendCapabilityDiagnostics(capabilities),
+      },
+      map: {
+        topic: "/map",
+        topicStatus: mapStatus,
+      },
+      pose: {
+        source: runtime.helperPoseSource,
+      },
+      navigation: {
+        backendGoalState: navigationBackendGoalState,
+        actionServices: {
+          sendGoal: "/navigate_to_pose/_action/send_goal",
+          cancelGoal: "/navigate_to_pose/_action/cancel_goal",
+        },
+      },
+      mapping: {
+        topics: {
+          status: "/vacuum_mapping/status",
+        },
+        savedMapPaths: {
+          savedMapPath: normalizedMapping.savedMapPath,
+          loadedMapPath: normalizedMapping.loadedMapPath,
+          savedMaps: normalizedMapping.savedMaps.map((savedMap) => ({
+            id: savedMap.id,
+            yamlPath: savedMap.yamlPath,
+            imagePath: savedMap.imagePath,
+            poseGraphPath: savedMap.poseGraphPath,
+          })),
+        },
+      },
       warnings: faults,
     },
     map: {
@@ -654,7 +699,7 @@ export function mapTurtleBot4Nav2State(
     },
     navigation: {
       state: navigationFromMissionState ?? navigationState,
-      backendGoalState: navigationMission?.phase ?? runtime.goalState,
+      backendGoalState: navigationBackendGoalState,
       active: navigationMission ? ["preparing", "running", "canceling"].includes(navigationMission.status) : active,
       isSending: navigationMission ? navigationMission.status === "preparing" : runtime.isSendingGoal,
       isCanceling: navigationMission ? navigationMission.status === "canceling" : runtime.isCancelingGoal,

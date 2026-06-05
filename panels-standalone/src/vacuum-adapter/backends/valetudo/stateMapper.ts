@@ -218,7 +218,26 @@ function mapDiagnostics(snapshot: ValetudoRuntimeSnapshot): VacuumAdapterDiagnos
     backend: "valetudo",
     runtime: snapshot.runtime,
     source: snapshot.diagnostics.source ?? snapshot.source,
-    capabilities: snapshot.capabilities.diagnostics,
+    capabilities: {
+      detected: snapshot.capabilities.diagnostics,
+      rawCapabilityNames: snapshot.diagnostics.rawCapabilityNames,
+    },
+    map: {
+      supported: false,
+      reason: "Valetudo map data is diagnostics-only until product map rendering is implemented.",
+    },
+    pose: {
+      supported: false,
+      reason: "Valetudo pose data is not exposed as a product navigation surface in this adapter slice.",
+    },
+    navigation: {
+      supported: false,
+      reason: "Valetudo go-to/navigation data is diagnostics-only until the normalized workflow is implemented.",
+    },
+    mapping: {
+      supported: false,
+      reason: "Valetudo mapping sessions are unsupported by this adapter slice.",
+    },
     warnings,
     raw: {
       valetudoState: snapshot.state.value,
@@ -430,6 +449,29 @@ export function mapValetudoRuntimeUnavailable(message: string): ValetudoRuntimeB
     },
     diagnostics: {
       backend: "valetudo",
+      runtime: {
+        status: "offline",
+      },
+      source: {
+        status: "unknown",
+        reason: "runtime_offline",
+      },
+      map: {
+        supported: false,
+        reason: "Valetudo map data is unavailable while the runtime is offline.",
+      },
+      pose: {
+        supported: false,
+        reason: "Valetudo pose data is unavailable while the runtime is offline.",
+      },
+      navigation: {
+        supported: false,
+        reason: "Valetudo navigation data is unavailable while the runtime is offline.",
+      },
+      mapping: {
+        supported: false,
+        reason: "Valetudo mapping data is unavailable while the runtime is offline.",
+      },
       warnings: [message],
     },
     lastError: message,

@@ -529,6 +529,17 @@ function testStateMapping(): void {
   assert.equal(idle.dock?.supported, false);
   assert.equal(idle.dock?.state, "unknown");
   assert.equal(idle.diagnostics?.backend, "turtlebot4_nav2");
+  assert.equal((idle.diagnostics?.map as { topic?: string } | undefined)?.topic, "/map");
+  assert.equal((idle.diagnostics?.pose as { source?: string } | undefined)?.source, "test");
+  assert.equal(
+    (idle.diagnostics?.navigation as { backendGoalState?: string } | undefined)?.backendGoalState,
+    "ready",
+  );
+  assert.equal(
+    ((idle.diagnostics?.capabilities as { backendCapabilities?: Record<string, string> } | undefined)?.backendCapabilities ?? {})
+      .go_to_location,
+    "nav2_msgs/action/NavigateToPose",
+  );
   assert.deepEqual(idle.navigation.planPath, [
     { x: 1, y: 2 },
     { x: 3, y: 4 },
@@ -858,6 +869,67 @@ function testStateMapping(): void {
   assert.equal(mapping.activeMission?.progress.percent, 0.25);
   assert.deepEqual(mapping.activeMission?.availableActions, ["pause_mapping", "finish_mapping", "discard_mapping"]);
   assert.equal(mapping.mapping.frontierCount, 3);
+
+  const mappingWithSavedPaths = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mapping: {
+      state: "idle",
+      mode: null,
+      stateReason: "Saved map inventory loaded.",
+      knownRatio: 1,
+      unknownRatio: 0,
+      frontierCount: 0,
+      visitedGoalCount: 0,
+      failedGoalCount: 0,
+      activeGoal: null,
+      lastError: null,
+      updatedAt: 20,
+      persistence: "persistent",
+      acceptedSessionLevel: false,
+      savedMapPath: "/maps/lab.yaml",
+      loadedMapPath: "/maps/lab.yaml",
+      lastSavedAt: 20,
+      saveError: null,
+      loadError: null,
+      activeMapName: "lab",
+      savedMaps: [
+        {
+          id: "lab",
+          name: "Lab",
+          yamlPath: "/maps/lab.yaml",
+          imagePath: "/maps/lab.pgm",
+          poseGraphPath: "/maps/lab.posegraph",
+          loadable: true,
+          loadUnavailableReason: null,
+          modifiedAt: 20,
+          sizeBytes: 123,
+          active: true,
+        },
+      ],
+    },
+  });
+  assert.equal(mappingWithSavedPaths.mapping.savedMaps[0]?.yamlPath, "/maps/lab.yaml");
+  assert.deepEqual(
+    (mappingWithSavedPaths.diagnostics?.mapping as {
+      savedMapPaths?: {
+        savedMapPath?: string | null;
+        loadedMapPath?: string | null;
+        savedMaps?: Array<{ id: string; yamlPath: string; imagePath: string | null; poseGraphPath: string | null }>;
+      };
+    } | undefined)?.savedMapPaths,
+    {
+      savedMapPath: "/maps/lab.yaml",
+      loadedMapPath: "/maps/lab.yaml",
+      savedMaps: [
+        {
+          id: "lab",
+          yamlPath: "/maps/lab.yaml",
+          imagePath: "/maps/lab.pgm",
+          poseGraphPath: "/maps/lab.posegraph",
+        },
+      ],
+    },
+  );
 
   const offline = mapTurtleBot4Nav2State({
     runtime: createRuntime({ connectionStatus: "disconnected" }),
@@ -1470,6 +1542,20 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.activeMission, null);
   assert.equal(snapshot.missions.active, null);
   assert.equal((snapshot.diagnostics?.raw as { valetudoState?: string } | undefined)?.valetudoState, "idle");
+  assert.deepEqual(
+    (snapshot.diagnostics?.capabilities as { rawCapabilityNames?: string[] } | undefined)?.rawCapabilityNames,
+    [
+      "BasicControlCapability",
+      "BatteryStateCapability",
+      "FanSpeedControlCapability",
+      "GoToLocationCapability",
+      "ZoneCleaningCapability",
+    ],
+  );
+  assert.equal((snapshot.diagnostics?.map as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((snapshot.diagnostics?.pose as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((snapshot.diagnostics?.navigation as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((snapshot.diagnostics?.mapping as { supported?: boolean } | undefined)?.supported, false);
 
   const mqttBoundary = mapValetudoRuntimeSnapshotToBoundary({
     runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
@@ -1850,6 +1936,10 @@ function testAdvancedSurfaceOptionality(): void {
       "ZoneCleaningCapability",
     ],
   );
+  assert.equal((noMapValetudo.diagnostics?.map as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((noMapValetudo.diagnostics?.pose as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((noMapValetudo.diagnostics?.navigation as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((noMapValetudo.diagnostics?.mapping as { supported?: boolean } | undefined)?.supported, false);
 }
 
 function testPublicContractAndUiBoundary(): void {
@@ -1902,6 +1992,9 @@ function testPublicContractAndUiBoundary(): void {
     "Teleop should be gated by normalized manual_control capability",
   );
   assert.equal(panelContents.includes("rawCapabilityNames"), false, "Vacuum Control should not read raw backend capability diagnostics");
+  assert.equal(panelContents.includes("map.topic"), false, "Vacuum Control should not branch on backend map topics");
+  assert.equal(panelContents.includes("pose.source"), false, "Vacuum Control should not branch on backend pose sources");
+  assert.equal(panelContents.includes("imagePath"), false, "Vacuum Control should not branch on saved-map image paths");
   assert.equal(panelContents.includes("backendGoalState"), false, "Vacuum Control should not branch on Nav2 backend goal state");
   assert.equal(panelContents.includes("yamlPath"), false, "Vacuum Control should not branch on saved-map YAML paths");
   assert.equal(panelContents.includes("poseGraphPath"), false, "Vacuum Control should not branch on saved-map pose graph paths");
@@ -1915,6 +2008,15 @@ function testPublicContractAndUiBoundary(): void {
     for (const capabilityName of valetudoRawCapabilityNames) {
       assert.equal(contents.includes(capabilityName), false, `${file} should not branch on ${capabilityName}`);
     }
+    assert.equal(contents.includes("rawCapabilityNames"), false, `${file} should not branch on raw backend capability diagnostics`);
+    assert.equal(contents.includes("map.topic"), false, `${file} should not branch on backend map topics`);
+    assert.equal(contents.includes("pose.source"), false, `${file} should not branch on backend pose sources`);
+    assert.equal(contents.includes("backendGoalState"), false, `${file} should not branch on backend navigation states`);
+    assert.equal(contents.includes("yamlPath"), false, `${file} should not branch on saved-map YAML paths`);
+    assert.equal(contents.includes("imagePath"), false, `${file} should not branch on saved-map image paths`);
+    assert.equal(contents.includes("poseGraphPath"), false, `${file} should not branch on saved-map pose graph paths`);
+    assert.equal(contents.includes("identity.source"), false, `${file} should not branch on backend identity source`);
+    assert.equal(contents.includes("snapshot.identity.source"), false, `${file} should not branch on backend identity source`);
   }
 }
 
