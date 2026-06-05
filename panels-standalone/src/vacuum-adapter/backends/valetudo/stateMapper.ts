@@ -34,6 +34,7 @@ const EMPTY_NAVIGATION: VacuumNavigationStatus = {
     navigationTime: null,
     estimatedTimeRemaining: null,
   },
+  detail: "Valetudo navigation/go-to is unsupported in the current product contract.",
 };
 
 const RUNTIME_COMMAND_TO_BACKEND_CAPABILITY: Record<string, ValetudoBackendCapability> = {
@@ -555,7 +556,7 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     map: {
       readiness: "unavailable",
       receiving: false,
-      detail: "Valetudo map rendering is unsupported in Layer 6A Milestone 2.",
+      detail: "Map is unsupported for this Valetudo adapter state; no product map is available.",
       grid: null,
       metadata: buildVacuumMapMetadata(null, null),
       annotations: [],
@@ -563,9 +564,8 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     pose: {
       readiness: "unavailable",
       available: false,
-      source: "valetudo",
       coordinates: null,
-      detail: "Valetudo pose is not exposed as a product navigation surface in Layer 6A Milestone 2.",
+      detail: "Pose is unsupported for this Valetudo adapter state; no product pose is available.",
     },
     navigation: EMPTY_NAVIGATION,
     activity,

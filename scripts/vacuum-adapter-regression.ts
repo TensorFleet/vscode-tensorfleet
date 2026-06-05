@@ -1431,8 +1431,36 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.capabilities.fan_speed.supported, false);
   assert.equal(snapshot.capabilities.zone_cleaning.supported, false);
   assert.equal(snapshot.capabilities.map.supported, false);
+  assert.equal(snapshot.capabilities.pose.supported, false);
+  assert.equal(snapshot.capabilities.navigation_status.supported, false);
+  assert.equal(snapshot.capabilities.mapping_session.supported, false);
+  assert.equal(snapshot.capabilities.auto_mapping.supported, false);
+  assert.equal(snapshot.capabilities.coverage_mission.supported, false);
+  assert.equal(snapshot.capabilities.start_coverage.supported, false);
+  assert.equal(snapshot.capabilities.map_annotations.supported, false);
+  assert.equal(snapshot.capabilities.room_semantics.supported, false);
+  assert.equal(snapshot.capabilities.zone_semantics.supported, false);
+  assert.equal(snapshot.capabilities.room_cleaning.supported, false);
+  assert.equal(snapshot.capabilities.manual_control.supported, false);
   assert.equal(snapshot.map.grid, null);
+  assert.equal(snapshot.map.metadata.hasMap, false);
+  assert.equal(snapshot.map.metadata.totalCells, 0);
+  assert.equal(snapshot.map.receiving, false);
+  assert.equal(snapshot.map.readiness, "unavailable");
+  assert.deepEqual(snapshot.map.annotations, []);
   assert.equal(snapshot.pose.available, false);
+  assert.equal(snapshot.pose.coordinates, null);
+  assert.equal(snapshot.pose.readiness, "unavailable");
+  assert.equal(snapshot.pose.source, undefined);
+  assert.equal(snapshot.navigation.active, false);
+  assert.equal(snapshot.navigation.currentTarget, null);
+  assert.equal(snapshot.navigation.backendGoalState, null);
+  assert.equal(snapshot.navigation.planPath, null);
+  assert.equal(snapshot.mapping.persistence, "unsupported");
+  assert.equal(snapshot.mapping.state, "idle");
+  assert.equal(snapshot.mapping.savedMaps.length, 0);
+  assert.equal(snapshot.readiness.ready, true);
+  assert.equal(snapshot.fault.readiness, "ready");
   assert.equal(snapshot.battery.percentage, 82);
   // A docked-but-idle robot that is not charging must read as idle with no active mission.
   assert.equal(snapshot.mission.state, "idle");
@@ -1713,8 +1741,115 @@ function testValetudoChargingAndOfflineMapping(): void {
   assert.equal(offline.availability.connected, false);
   assert.equal(offline.availability.status, "offline");
   assert.equal(offline.map.grid, null);
+  assert.equal(offline.map.metadata.hasMap, false);
+  assert.equal(offline.pose.available, false);
+  assert.equal(offline.navigation.active, false);
+  assert.equal(offline.mapping.persistence, "unsupported");
   assert.equal(offline.activity?.status, "unavailable");
   assert.equal(offline.activeMission, null);
+}
+
+function testAdvancedSurfaceOptionality(): void {
+  const grid = parseVacuumMapGrid({
+    info: {
+      width: 2,
+      height: 2,
+      resolution: 0.5,
+      origin: { position: { x: -1, y: -1 }, orientation: { w: 1 } },
+    },
+    header: { frame_id: "map" },
+    data: [0, 0, 100, -1],
+  });
+  assert.ok(grid);
+  const metadata = buildVacuumMapMetadata(grid, 50);
+  const nav2 = mapTurtleBot4Nav2State({
+    runtime: createRuntime({
+      currentMapCoordinates: { x: 0.25, y: 0.5, yaw: 90 },
+      helperPoseSource: "amcl",
+      goalState: "executing",
+    }),
+    currentTarget: { x: 1, y: 1, yaw: 0 },
+    initialDistance: 2,
+    mapGrid: grid,
+    mapMetadata: metadata,
+  });
+  assert.equal(nav2.capabilities.map.supported, true);
+  assert.equal(nav2.map.metadata.hasMap, true);
+  assert.deepEqual(nav2.map.grid, grid);
+  assert.equal(nav2.pose.available, true);
+  assert.deepEqual(nav2.pose.coordinates, { x: 0.25, y: 0.5, yaw: 90 });
+  assert.equal(nav2.navigation.active, true);
+  assert.equal(nav2.mapping.knownRatio, metadata.knownRatio);
+  assert.equal(nav2.capabilities.coverage_mission.supported, true);
+
+  const noMapValetudo = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "rt", version: "v", status: "online" },
+      backend: "valetudo",
+      robot: { id: "real-valetudo", name: "Real Valetudo" },
+      source: { kind: "real_robot", status: "reachable", stale: false, lastSeenAt: 100 },
+      connectivity: { reachable: true, online: true },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      battery: { level: 70, charging: false },
+      dock: { state: "available", docked: false },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: true },
+          pause: { available: true },
+          stop: { available: true },
+          return_to_dock: { available: true },
+        },
+        diagnostics: [
+          { name: "GoToLocationCapability", detected: true, implemented: false, scope: "diagnostics" },
+          { name: "MapSegmentationCapability", detected: true, implemented: false, scope: "diagnostics" },
+          { name: "ZoneCleaningCapability", detected: true, implemented: false, scope: "diagnostics" },
+        ],
+      },
+      diagnostics: {
+        mode: "real_robot",
+        rawCapabilityNames: [
+          "BasicControlCapability",
+          "GoToLocationCapability",
+          "MapSegmentationCapability",
+          "ZoneCleaningCapability",
+        ],
+      },
+      updatedAt: 100,
+    }),
+  );
+  assert.equal(noMapValetudo.capabilities.map.supported, false);
+  assert.equal(noMapValetudo.map.grid, null);
+  assert.equal(noMapValetudo.map.metadata.hasMap, false);
+  assert.deepEqual(noMapValetudo.map.annotations, []);
+  assert.equal(noMapValetudo.pose.available, false);
+  assert.equal(noMapValetudo.pose.coordinates, null);
+  assert.equal(noMapValetudo.navigation.active, false);
+  assert.equal(noMapValetudo.navigation.state, "idle");
+  assert.equal(noMapValetudo.navigation.backendGoalState, null);
+  assert.equal(noMapValetudo.capabilities.go_to_location.status, "detected_not_ready");
+  assert.equal(noMapValetudo.capabilities.navigation_status.supported, false);
+  assert.equal(noMapValetudo.mapping.persistence, "unsupported");
+  assert.equal(noMapValetudo.capabilities.coverage_mission.supported, false);
+  assert.equal(noMapValetudo.capabilities.start_coverage.supported, false);
+  assert.equal(noMapValetudo.capabilities.map_annotations.supported, false);
+  assert.equal(noMapValetudo.capabilities.room_semantics.supported, false);
+  assert.equal(noMapValetudo.capabilities.zone_semantics.supported, false);
+  assert.equal(noMapValetudo.capabilities.room_cleaning.supported, false);
+  assert.equal(noMapValetudo.capabilities.zone_cleaning.status, "detected_not_ready");
+  assert.equal(noMapValetudo.capabilities.manual_control.supported, false);
+  assert.equal(noMapValetudo.activity?.status, "idle");
+  assert.deepEqual(noMapValetudo.activity?.availableActions, ["start_cleaning", "return_to_dock"]);
+  assert.equal(noMapValetudo.fault.readiness, "ready");
+  assert.deepEqual(noMapValetudo.fault.faults, []);
+  assert.deepEqual(
+    (noMapValetudo.diagnostics?.raw as { rawCapabilityNames?: string[] } | undefined)?.rawCapabilityNames,
+    [
+      "BasicControlCapability",
+      "GoToLocationCapability",
+      "MapSegmentationCapability",
+      "ZoneCleaningCapability",
+    ],
+  );
 }
 
 function testPublicContractAndUiBoundary(): void {
@@ -1741,6 +1876,35 @@ function testPublicContractAndUiBoundary(): void {
     true,
     "Basic controls should render disabled state from normalized availability",
   );
+  assert.equal(
+    /const mapSurfaceAvailable = mapSupported/.test(panelContents),
+    true,
+    "MapCanvas should be gated by the normalized map capability",
+  );
+  assert.equal(
+    /disabled=\{!navigationSupported/.test(panelContents),
+    true,
+    "Navigation controls should be gated by normalized navigation capability",
+  );
+  assert.equal(
+    /disabled=\{!cleanAreaSupported/.test(panelContents),
+    true,
+    "Clean Area controls should be gated by normalized coverage capability",
+  );
+  assert.equal(
+    /disabled=\{!roomsZonesSupported/.test(panelContents),
+    true,
+    "Rooms/Zones controls should be gated by normalized room and zone capabilities",
+  );
+  assert.equal(
+    /manualControlSupported \? \(/.test(panelContents),
+    true,
+    "Teleop should be gated by normalized manual_control capability",
+  );
+  assert.equal(panelContents.includes("rawCapabilityNames"), false, "Vacuum Control should not read raw backend capability diagnostics");
+  assert.equal(panelContents.includes("backendGoalState"), false, "Vacuum Control should not branch on Nav2 backend goal state");
+  assert.equal(panelContents.includes("yamlPath"), false, "Vacuum Control should not branch on saved-map YAML paths");
+  assert.equal(panelContents.includes("poseGraphPath"), false, "Vacuum Control should not branch on saved-map pose graph paths");
 
   const componentFiles = collectFiles(
     resolve(repoRoot, "panels-standalone/src/components/VacuumControl"),
@@ -1802,6 +1966,7 @@ async function main(): Promise<void> {
   testValetudoRuntimeSnapshotMapping();
   testValetudoRuntimeMissionStateMapping();
   testValetudoChargingAndOfflineMapping();
+  testAdvancedSurfaceOptionality();
   testValetudoCommandStub();
   testPublicContractAndUiBoundary();
   testServiceDiscoveryNormalization();

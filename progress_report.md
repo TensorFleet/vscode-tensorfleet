@@ -1,49 +1,47 @@
-# Progress Report - Milestone D Activity vs Mission Split
+# Progress Report - Milestone E Optional Advanced Surfaces / No-Map Contract Hardening
 Current report date: 2026-06-05.
 
 ## 1. What changed
 
-The vacuum adapter contract now has a backend-neutral `activity` snapshot field for broad robot behavior. The chosen field name is `activity`, and its status enum is `VacuumRobotActivityStatus`: `unknown`, `unavailable`, `idle`, `cleaning`, `paused`, `returning`, `docked`, `charging`, `faulted`, `mapping`, `navigating`, and `covering`.
+Advanced robot surfaces are now treated as optional product surfaces instead of assumed simulation surfaces. A Valetudo robot can be online, reachable, dock-aware, battery-aware, and command-capable without exposing a map, pose, navigation route, mapping session, coverage planner, map annotations, room/zone semantics, camera, or manual teleop.
 
-Valetudo basic robot states now map into `activity` without requiring every hardware state to become a product mission. A docked but not charging robot reports `activity.status = "docked"` while legacy `mission.state` remains `idle`; charging reports `charging`; cleaning reports `cleaning`; paused reports `paused`; returning reports `returning`; stopped/idle reports `idle`; source unreachable or runtime offline reports `unavailable`; error/fault states report `faulted`.
+Valetudo no-map/no-pose state remains a normal snapshot. The adapter keeps compatibility fields such as `map`, `pose`, `navigation`, and `mapping`, but they now report unavailable or unsupported values with null data instead of fake map or pose data. Basic activity and basic cleaning controls still work from normalized capability and availability flags.
 
-TurtleBot4/Nav2 keeps existing mission behavior and now adds activity from the same normalized runtime state: active navigation maps to `navigating`, coverage/room/zone cleaning workflows map to `covering` or `paused`, mapping maps to `mapping`, idle maps to `idle`, and disconnected runtime maps to `unavailable`.
-
-Raw Valetudo state is retained only in diagnostics as `diagnostics.raw.valetudoState`.
+TurtleBot4/Nav2 map, pose, navigation, mapping, and coverage behavior remains intact. Regression coverage now proves Nav2 map/pose/navigation hydrate when runtime data exists while Valetudo advanced surfaces stay unsupported.
 
 ## 2. Which mode this affects
 
-- Mapping: active mapping now also reports `activity.status = "mapping"`.
-- Navigation: active Nav2 navigation now also reports `activity.status = "navigating"`.
-- Clean Area: coverage workflows now also report `activity.status = "covering"` or `paused`.
-- Rooms / Zones: room and zone cleaning workflows now also report `activity.status = "covering"` or `paused`.
-- Valetudo backend: basic robot activity is normalized separately from mission workflows.
-- Shared adapter/runtime architecture: the snapshot can now distinguish broad activity from explicit product missions.
+- Mapping: Valetudo mapping remains unsupported/unavailable; TurtleBot4/Nav2 mapping remains hydrated through existing mapping state.
+- Navigation: Valetudo navigation/go-to remains unsupported and inactive; TurtleBot4/Nav2 navigation still hydrates active targets, pose, map, and progress.
+- Clean Area: Valetudo coverage/Clean Area remains unsupported; TurtleBot4/Nav2 coverage remains supported.
+- Rooms / Zones: Valetudo room/zone semantics and cleaning remain unsupported or detected-not-ready; TurtleBot4/Nav2 room/zone annotations and cleaning remain capability-gated.
+- Valetudo backend: no-map/no-pose hardware is now explicitly covered as a valid adapter state.
+- Shared adapter/runtime architecture: advanced surfaces are capability-gated compatibility fields, not mandatory product state.
 
 ## 3. Ownership check
 
-React/webview state owns rendering only. It may render `activity`, capabilities, legacy mission fields, and mission workflows, but it does not infer backend-specific behavior.
+React/webview state owns local drafts and rendering only. It renders normalized capability flags, map/pose availability, activity, dock, battery, command availability, mission snapshots, and unsupported cards/fallbacks.
 
 The VM runtime owns backend connection, source freshness, cached robot state, and command routing.
 
-The Valetudo backend adapter owns mapping runtime/source/robot state into `activity`, legacy mission state, diagnostics, dock, battery, source, and normalized capabilities.
+The Valetudo backend adapter owns mapping runtime/source/robot state into `vacuum_adapter`, including unsupported advanced surface defaults.
 
-The UI only renders normalized adapter state such as `activity.status`, `capabilities.*.available`, `activeMission`, and `missions`.
+The UI only renders normalized adapter state: `capabilities.map.supported`, `map.metadata.hasMap`, `pose.available`, `navigation.active`, `mapping.persistence`, `activity.status`, and command availability.
 
-The UI submits normalized commands such as `start_cleaning`, `pause`, `stop`, `return_to_dock`, `start_navigation`, and mission actions.
+The UI submits normalized commands such as `start_cleaning`, `pause`, `stop`, `return_to_dock`, `start_navigation`, `start_coverage`, and mission controls when the normalized capabilities allow them.
 
 This follows the rule: Product UI renders normalized adapter state and submits normalized commands. Backend adapter maps backend runtime state into `vacuum_adapter`. VM runtime owns backend connection, state cache, and command routing.
 
 ## 4. Webview close/reopen behavior
 
-- idle Valetudo mock state: reopening hydrates from the runtime snapshot with `activity.status = "idle"` or `docked` depending on dock state; legacy mission remains idle.
-- unavailable VM runtime: reopening maps to offline/unavailable adapter state with `activity.status = "unavailable"` and commands unavailable with `runtime_offline`.
-- reachable mock runtime: reopening hydrates source, dock, battery, capabilities, activity, and legacy mission state from the runtime snapshot.
-- active mock cleaning state: reopening hydrates `activity.status = "cleaning"` and preserves the current compatibility `activeMission` bridge.
-- paused mock cleaning state: reopening hydrates `activity.status = "paused"` and state-aware command availability.
-- terminal or stopped mock state: reopening hydrates `activity.status = "idle"` with no active mission unless the runtime reports a still-active workflow.
+- idle Valetudo mock state: reopening hydrates identity, source, activity, dock, battery, basic controls, and explicit no-map/no-pose compatibility fields from the runtime snapshot.
+- unavailable VM runtime: reopening maps to offline/unavailable adapter state with null map grid, `metadata.hasMap = false`, unavailable pose, inactive navigation, unsupported mapping, and disabled commands.
+- reachable mock runtime: reopening hydrates reachable source state and basic control availability without requiring map or pose data.
+- active mock cleaning state: reopening hydrates `activity.status = "cleaning"`, the compatibility hardware-cleaning mission bridge, and unsupported advanced surfaces.
+- paused mock cleaning state: reopening hydrates `activity.status = "paused"` and state-aware basic command availability.
+- terminal or stopped mock state: reopening hydrates idle activity with no active mission and no advanced surface fault.
 
-Hydration still flows through the VM runtime snapshot and adapter mapper. React does not reconstruct activity or command authority after reopen.
+Hydration continues to flow from VM/runtime snapshots through the adapter mapper. React does not reconstruct map, pose, navigation, or command authority after reopen.
 
 ## 5. Real hardware compatibility check
 
@@ -51,26 +49,26 @@ Hydration still flows through the VM runtime snapshot and adapter mapper. React 
 - Does this expose TurtleBot4/Nav2 specifics to product UI? No.
 - Does this expose Valetudo raw capability names to product UI? No.
 - Can the same VM runtime API later connect to a real Valetudo robot? Yes.
-- What capability flags decide whether controls are shown/enabled? `supported`, `status`, `available`, `availabilityReason`, and structured `reasons`; `activity.availableActions` is derived from those normalized fields for Valetudo basic actions.
-- What operations are explicitly unsupported? Valetudo map rendering, pose/navigation product surface, go-to, coverage, Clean Area, room cleaning, zone cleaning, segment cleaning, fan speed, water usage, consumables UI, manual control, mapping sessions, mission recovery commands without runtime support, and `resume`.
+- What capability flags decide whether controls are shown/enabled? `capabilities.map.supported`, `start_navigation`, `go_to_location`, `mapping_session`, `auto_mapping`, `coverage_mission`, `start_coverage`, `map_annotations`, `room_semantics`, `zone_semantics`, `room_cleaning`, `zone_cleaning`, `manual_control`, plus `supported`, `status`, `available`, `availabilityReason`, and state-aware command availability.
+- What operations are explicitly unsupported? Valetudo map rendering, product pose, navigation/go-to, navigation status, mapping sessions, auto mapping, coverage/Clean Area, map annotations, room semantics, zone semantics, room cleaning, product zone cleaning, manual control, resume, mission recovery, fan speed, water usage, and consumables UI.
 
 ## 6. Feature behavior changed
 
-- Adapter snapshots now include normalized `activity` alongside `mission`, `activeMission`, and `missions`.
-- Valetudo docked idle state now reads as robot activity `docked` while remaining a non-mission idle state.
-- Valetudo charging, cleaning, paused, returning, stopped/idle, unavailable, stale, and fault/error states have explicit product activity mapping.
-- TurtleBot4/Nav2 navigation, mapping, and coverage workflows now expose broad activity without changing existing mission workflow fields.
-- Raw Valetudo state is available only as diagnostics, not as a product behavior flag.
-- Compatibility mission fields remain present; Valetudo basic cleaning still keeps the current bridge active mission where existing UI/tests require it.
+- Valetudo snapshots are valid without map or pose data.
+- Valetudo map state reports unavailable with `grid = null`, `metadata.hasMap = false`, no receiving state, and no annotations.
+- Valetudo pose state reports unavailable with no coordinates and no backend source marker.
+- Valetudo navigation state reports inactive, no target, no backend goal state, no path, and an unsupported detail.
+- Valetudo mapping state remains idle with unsupported persistence and no saved maps.
+- No-map/no-pose Valetudo state is not treated as a fault.
+- Basic Valetudo activity and basic commands remain available when the runtime reports they are safe.
+- UI boundary tests verify product behavior does not branch on backend id, raw Valetudo capability names, Nav2 backend goal state, or saved-map file paths.
 
 ## 7. Files changed
 
-- `/home/shane/vscode-tensorfleet/panels-standalone/src/vacuum-adapter/state.ts`: added `VacuumRobotActivity`, activity statuses/actions, and optional `snapshot.activity`.
-- `/home/shane/vscode-tensorfleet/panels-standalone/src/vacuum-adapter/backends/valetudo/stateMapper.ts`: mapped Valetudo runtime state/source health into normalized activity and moved raw backend state into diagnostics.
-- `/home/shane/vscode-tensorfleet/panels-standalone/src/vacuum-adapter/backends/valetudo/types.ts`: carried normalized activity fields through the Valetudo boundary.
-- `/home/shane/vscode-tensorfleet/panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/stateMapper.ts`: derived activity from existing Nav2 connection, mapping, navigation, and mission state.
-- `/home/shane/vscode-tensorfleet/scripts/vacuum-adapter-regression.ts`: added activity mapping, mission compatibility, stale/offline/unreachable, diagnostics privacy, and UI-boundary regression coverage.
-- `/home/shane/vscode-tensorfleet/progress_report.md`: updated this milestone report.
+- `/home/shane/vscode-tensorfleet/panels-standalone/src/vacuum-adapter/backends/valetudo/stateMapper.ts`: clarified unsupported Valetudo map, pose, and navigation compatibility fields.
+- `/home/shane/vscode-tensorfleet/scripts/vacuum-adapter-regression.ts`: added regression coverage for Valetudo no-map/no-pose optional surfaces, TurtleBot4/Nav2 advanced surface compatibility, UI capability gating, and diagnostics-boundary checks.
+- `/home/shane/vscode-tensorfleet/progress_report.md`: updated the milestone report.
+- `/home/shane/knowledge/knowledge.md`: appended one transferable note about optional contract surfaces.
 
 ## 8. Tests / validation run
 
@@ -92,4 +90,4 @@ git diff --check
 
 Manual live webview validation was not run in this pass.
 
-Remaining mission/activity ambiguity: Valetudo basic cleaning still creates a compatibility `activeMission` bridge for current UI/tests. Future UI migration can prefer `activity` for hardware-style basic cleaning and reserve `activeMission` for product-owned workflows with target/progress/result.
+Remaining simulation-shaped fields: compatibility fields still include `map.topic`, `pose.source`, `navigation.backendGoalState`, and saved-map file paths such as `yamlPath`, `imagePath`, and `poseGraphPath`. This milestone keeps them for compatibility and verifies the product UI does not use them as behavior flags.
