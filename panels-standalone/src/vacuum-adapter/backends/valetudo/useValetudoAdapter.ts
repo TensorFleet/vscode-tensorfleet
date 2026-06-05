@@ -106,7 +106,7 @@ export function useValetudoAdapter(client?: ValetudoRuntimeClient): VacuumAdapte
           command: command.command,
           error: {
             command: command.command,
-            code: "backend_error",
+            code: "runtime_offline",
             message: error instanceof Error ? error.message : String(error),
           },
         };

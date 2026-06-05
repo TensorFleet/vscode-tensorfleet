@@ -63,6 +63,7 @@ export type ValetudoCapabilityAvailability = {
 
 export type ValetudoCapabilityMappingOptions = {
   commandAvailability?: Partial<Record<VacuumCapabilityName, ValetudoCapabilityAvailability>>;
+  unsupportedCommands?: Partial<Record<VacuumCapabilityName, string>>;
   unavailableReason?: string;
 };
 
@@ -151,6 +152,11 @@ export function mapValetudoCapabilities(
           attributes: ["battery.level", "battery.charging"],
           notes: "Mapped from normalized Valetudo runtime battery state.",
         });
+        continue;
+      }
+      const unsupportedReason = options.unsupportedCommands?.[name];
+      if (unsupportedReason) {
+        capabilities[name] = unsupportedCapability(unsupportedReason);
         continue;
       }
       capabilities[name] = supportedCapability(`runtime_command:${name}`, {

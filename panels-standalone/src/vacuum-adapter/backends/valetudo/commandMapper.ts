@@ -7,7 +7,7 @@ import type { ValetudoCommandMappingResult } from "./types";
 
 function blocked(
   command: VacuumCommand["command"],
-  reason: "unsupported" | "unavailable" | "invalid_request",
+  reason: VacuumCommandErrorCode,
   message: string,
 ): ValetudoCommandMappingResult {
   return {
@@ -22,13 +22,25 @@ function unsupported(command: VacuumCommand["command"], message: string): Valetu
   return blocked(command, "unsupported", message);
 }
 
-function unavailable(command: VacuumCommand["command"], message: string): ValetudoCommandMappingResult {
-  return blocked(command, "unavailable", message);
+function isVacuumCommandErrorCode(value: string | undefined): value is VacuumCommandErrorCode {
+  return Boolean(value) && RICH_RUNTIME_ERROR_CODES.has(value as VacuumCommandErrorCode);
 }
 
 function isCapabilityUsable(capabilities: VacuumCapabilities, name: keyof VacuumCapabilities): boolean {
   const capability = capabilities[name];
   return capability.supported && capability.available !== false && capability.status !== "unavailable";
+}
+
+function unavailableReasonCode(capabilities: VacuumCapabilities, name: keyof VacuumCapabilities): VacuumCommandErrorCode {
+  const capability = capabilities[name];
+  const structuredCode = capability.reasons?.find((reason) => isVacuumCommandErrorCode(reason.code))?.code;
+  if (structuredCode) {
+    return structuredCode;
+  }
+  if (isVacuumCommandErrorCode(capability.availabilityReason)) {
+    return capability.availabilityReason;
+  }
+  return "unavailable";
 }
 
 function unavailableMessage(capabilities: VacuumCapabilities, name: keyof VacuumCapabilities, fallback: string): string {
@@ -47,7 +59,11 @@ function supportedOrUnavailable(
     return unsupported(command.command, unsupportedMessage);
   }
   if (!isCapabilityUsable(capabilities, name)) {
-    return unavailable(command.command, unavailableMessage(capabilities, name, unsupportedMessage));
+    return blocked(
+      command.command,
+      unavailableReasonCode(capabilities, name),
+      unavailableMessage(capabilities, name, unsupportedMessage),
+    );
   }
   return { ok: true, command: command.command, request };
 }

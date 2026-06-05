@@ -39,6 +39,10 @@ const RUNTIME_COMMAND_TO_BACKEND_CAPABILITY: Record<string, ValetudoBackendCapab
   return_to_dock: "BasicControlCapability",
 };
 
+const VALETUDO_BASIC_COMMANDS = ["start_cleaning", "pause", "stop", "return_to_dock"] as const;
+
+type ValetudoBasicCommandName = (typeof VALETUDO_BASIC_COMMANDS)[number];
+
 const KNOWN_VALETUDO_BACKEND_CAPABILITIES = new Set<ValetudoBackendCapability>([
   "BasicControlCapability",
   "BatteryStateCapability",
@@ -95,14 +99,76 @@ function sourceUnavailableReason(snapshot: ValetudoRuntimeSnapshot): string | un
   return undefined;
 }
 
+function isBasicCommandName(value: string): value is ValetudoBasicCommandName {
+  return (VALETUDO_BASIC_COMMANDS as readonly string[]).includes(value);
+}
+
+function normalizeStateValue(snapshot: ValetudoRuntimeSnapshot): string {
+  return snapshot.state.value.toLowerCase();
+}
+
+function hasStateToken(snapshot: ValetudoRuntimeSnapshot, token: string): boolean {
+  return normalizeStateValue(snapshot).includes(token);
+}
+
+function isRobotCleaning(snapshot: ValetudoRuntimeSnapshot): boolean {
+  const value = normalizeStateValue(snapshot);
+  return (snapshot.state.started && !snapshot.state.paused) || value.includes("clean");
+}
+
+function isRobotPaused(snapshot: ValetudoRuntimeSnapshot): boolean {
+  return snapshot.state.paused || hasStateToken(snapshot, "pause");
+}
+
+function isRobotReturningToDock(snapshot: ValetudoRuntimeSnapshot): boolean {
+  return hasStateToken(snapshot, "return") || mapDockState(snapshot) === "returning";
+}
+
+function isRobotDockedOrCharging(snapshot: ValetudoRuntimeSnapshot): boolean {
+  const dockState = mapDockState(snapshot);
+  return dockState === "docked" || dockState === "charging" || snapshot.battery?.charging === true;
+}
+
+function stateUnavailableReason(
+  snapshot: ValetudoRuntimeSnapshot,
+  command: ValetudoBasicCommandName,
+): string | undefined {
+  if (command === "start_cleaning") {
+    if (isRobotCleaning(snapshot) || isRobotPaused(snapshot) || isRobotReturningToDock(snapshot)) {
+      return "invalid_state";
+    }
+    return undefined;
+  }
+  if (command === "pause") {
+    return isRobotCleaning(snapshot) && !isRobotPaused(snapshot) && !isRobotReturningToDock(snapshot)
+      ? undefined
+      : "invalid_state";
+  }
+  if (command === "stop") {
+    return isRobotCleaning(snapshot) || isRobotPaused(snapshot) || isRobotReturningToDock(snapshot)
+      ? undefined
+      : "invalid_state";
+  }
+  if (command === "return_to_dock") {
+    return isRobotDockedOrCharging(snapshot) || isRobotReturningToDock(snapshot) ? "invalid_state" : undefined;
+  }
+  return undefined;
+}
+
 function commandUnavailableReason(
   snapshot: ValetudoRuntimeSnapshot,
+  command: ValetudoBasicCommandName,
+  commandAvailable: boolean,
   commandReason: string | undefined,
 ): string | undefined {
-  if (!snapshot.connectivity.online) {
-    return sourceUnavailableReason(snapshot);
+  const sourceReason = sourceUnavailableReason(snapshot);
+  if (sourceReason) {
+    return sourceReason;
   }
-  return commandReason ?? sourceUnavailableReason(snapshot);
+  if (!commandAvailable) {
+    return commandReason ?? "unavailable";
+  }
+  return stateUnavailableReason(snapshot, command);
 }
 
 function mapDockState(snapshot: ValetudoRuntimeSnapshot): VacuumDockState {
@@ -227,15 +293,28 @@ export function mapValetudoRuntimeSnapshotToBoundary(
 ): ValetudoRuntimeBoundary {
   const capabilities = new Set<ValetudoBackendCapability>();
   const commandAvailability: ValetudoRuntimeBoundary["commandAvailability"] = {};
+  const unsupportedCommands: ValetudoRuntimeBoundary["unsupportedCommands"] = {};
+  const runtimeCommandNames = new Set(Object.keys(snapshot.capabilities.commands));
   for (const [command, availability] of Object.entries(snapshot.capabilities.commands)) {
     const backendCapability = RUNTIME_COMMAND_TO_BACKEND_CAPABILITY[command];
     if (backendCapability) {
       capabilities.add(backendCapability);
     }
-    commandAvailability[command] = {
-      available: availability.available,
-      reason: commandUnavailableReason(snapshot, availability.reason),
-    };
+    if (isBasicCommandName(command)) {
+      const reason = commandUnavailableReason(snapshot, command, availability.available, availability.reason);
+      commandAvailability[command] = {
+        available: reason ? false : true,
+        reason,
+      };
+    } else {
+      commandAvailability[command] = {
+        available: availability.available && !sourceUnavailableReason(snapshot),
+        reason: sourceUnavailableReason(snapshot) ?? availability.reason,
+      };
+    }
+  }
+  if (capabilities.has("BasicControlCapability") && !runtimeCommandNames.has("return_to_dock")) {
+    unsupportedCommands.return_to_dock = "Valetudo return-to-dock support is not reported by this runtime.";
   }
   if (snapshot.battery) {
     capabilities.add("BatteryStateCapability");
@@ -261,6 +340,7 @@ export function mapValetudoRuntimeSnapshotToBoundary(
     connectionStatus: snapshot.connectivity.online ? "online" : "offline",
     capabilities: [...capabilities],
     commandAvailability,
+    unsupportedCommands,
     state: {
       id: snapshot.robot.id,
       label: snapshot.robot.name,
@@ -379,6 +459,7 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     },
     capabilities: mapValetudoCapabilities(runtime.capabilities, {
       commandAvailability: runtime.commandAvailability,
+      unsupportedCommands: runtime.unsupportedCommands,
       unavailableReason:
         runtime.connectionStatus === "online" && runtime.source?.reason
           ? runtime.source.reason

@@ -1179,6 +1179,190 @@ function testValetudoCommandStub(): void {
   );
 }
 
+function testValetudoStateAwareCommandAvailability(): void {
+  const snapshotFor = (overrides: {
+    state?: { value: string; label: string; started: boolean; paused: boolean };
+    dock?: { state: string; docked: boolean };
+    battery?: { level: number; charging: boolean };
+    runtimeStatus?: "online" | "degraded" | "offline";
+    sourceStatus?: "reachable" | "unreachable" | "unknown";
+    sourceStale?: boolean;
+    reachable?: boolean;
+    online?: boolean;
+    commands?: Record<string, { available: boolean; reason?: string }>;
+  }) =>
+    mapValetudoState(
+      mapValetudoRuntimeSnapshotToBoundary({
+        runtime: {
+          id: "tensorfleet-valetudo-runtime",
+          version: "0.6.0",
+          status: overrides.runtimeStatus ?? "online",
+        },
+        backend: "valetudo",
+        robot: { id: "valetudo-command-rules", name: "Valetudo Command Rules" },
+        source: {
+          kind: "valetudo_mock",
+          status: overrides.sourceStatus ?? "reachable",
+          stale: overrides.sourceStale ?? false,
+          lastSeenAt: 1,
+        },
+        connectivity: {
+          reachable: overrides.reachable ?? true,
+          online: overrides.online ?? true,
+        },
+        state: overrides.state ?? { value: "idle", label: "Idle", started: false, paused: false },
+        battery: overrides.battery ?? { level: 82, charging: false },
+        dock: overrides.dock ?? { state: "available", docked: false },
+        capabilities: {
+          commands: overrides.commands ?? {
+            start_cleaning: { available: true },
+            pause: { available: true },
+            stop: { available: true },
+            return_to_dock: { available: true },
+          },
+          diagnostics: [],
+        },
+        diagnostics: { mode: "valetudo_mock", rawCapabilityNames: ["BasicControlCapability"] },
+        updatedAt: 1,
+      }),
+    );
+
+  const assertAvailability = (
+    label: string,
+    snapshot: ReturnType<typeof snapshotFor>,
+    expected: Record<"start_cleaning" | "pause" | "stop" | "return_to_dock", { available: boolean; reason?: string }>,
+  ) => {
+    for (const command of ["start_cleaning", "pause", "stop", "return_to_dock"] as const) {
+      assert.equal(
+        snapshot.capabilities[command].available,
+        expected[command].available,
+        `${label}: ${command} availability`,
+      );
+      assert.equal(
+        snapshot.capabilities[command].availabilityReason,
+        expected[command].reason,
+        `${label}: ${command} reason`,
+      );
+      const result = mapVacuumCommandToValetudoRequest({ command }, snapshot.capabilities);
+      assert.equal(result.ok, expected[command].available, `${label}: ${command} dispatch gate`);
+      if (!result.ok) {
+        assert.equal(result.reason, expected[command].reason ?? "unavailable", `${label}: ${command} result reason`);
+      }
+    }
+  };
+
+  assertAvailability("idle away from dock", snapshotFor({}), {
+    start_cleaning: { available: true },
+    pause: { available: false, reason: "invalid_state" },
+    stop: { available: false, reason: "invalid_state" },
+    return_to_dock: { available: true },
+  });
+
+  assertAvailability("idle docked", snapshotFor({ dock: { state: "available", docked: true } }), {
+    start_cleaning: { available: true },
+    pause: { available: false, reason: "invalid_state" },
+    stop: { available: false, reason: "invalid_state" },
+    return_to_dock: { available: false, reason: "invalid_state" },
+  });
+
+  assertAvailability(
+    "cleaning",
+    snapshotFor({ state: { value: "cleaning", label: "Cleaning", started: true, paused: false } }),
+    {
+      start_cleaning: { available: false, reason: "invalid_state" },
+      pause: { available: true },
+      stop: { available: true },
+      return_to_dock: { available: true },
+    },
+  );
+
+  assertAvailability(
+    "paused",
+    snapshotFor({ state: { value: "paused", label: "Paused", started: true, paused: true } }),
+    {
+      start_cleaning: { available: false, reason: "invalid_state" },
+      pause: { available: false, reason: "invalid_state" },
+      stop: { available: true },
+      return_to_dock: { available: true },
+    },
+  );
+
+  assertAvailability(
+    "returning",
+    snapshotFor({
+      state: { value: "returning_to_dock", label: "Returning", started: false, paused: false },
+      dock: { state: "returning", docked: false },
+    }),
+    {
+      start_cleaning: { available: false, reason: "invalid_state" },
+      pause: { available: false, reason: "invalid_state" },
+      stop: { available: true },
+      return_to_dock: { available: false, reason: "invalid_state" },
+    },
+  );
+
+  assertAvailability(
+    "stopped away from dock",
+    snapshotFor({ state: { value: "stopped", label: "Stopped", started: false, paused: false } }),
+    {
+      start_cleaning: { available: true },
+      pause: { available: false, reason: "invalid_state" },
+      stop: { available: false, reason: "invalid_state" },
+      return_to_dock: { available: true },
+    },
+  );
+
+  for (const [label, overrides, reason] of [
+    ["stale source", { sourceStale: true }, "stale_source"],
+    ["unreachable source", { sourceStatus: "unreachable", reachable: false }, "source_unreachable"],
+    ["offline runtime", { runtimeStatus: "offline", online: false, reachable: false }, "runtime_offline"],
+    ["degraded runtime", { runtimeStatus: "degraded" }, "degraded_runtime"],
+  ] as const) {
+    assertAvailability(label, snapshotFor(overrides), {
+      start_cleaning: { available: false, reason },
+      pause: { available: false, reason },
+      stop: { available: false, reason },
+      return_to_dock: { available: false, reason },
+    });
+  }
+
+  const runtimeBlocked = snapshotFor({
+    commands: {
+      start_cleaning: { available: false, reason: "unavailable" },
+      pause: { available: false, reason: "unavailable" },
+      stop: { available: false, reason: "unavailable" },
+      return_to_dock: { available: false, reason: "unavailable" },
+    },
+  });
+  assert.equal(runtimeBlocked.capabilities.start_cleaning.status, "unavailable");
+  assert.equal(runtimeBlocked.capabilities.start_cleaning.availabilityReason, "unavailable");
+
+  const withoutBasicControl = mapValetudoCapabilities([]);
+  for (const command of ["start_cleaning", "pause", "stop", "return_to_dock"] as const) {
+    const result = mapVacuumCommandToValetudoRequest({ command }, withoutBasicControl);
+    assert.equal(withoutBasicControl[command].supported, false, `${command} should be unsupported`);
+    assert.equal(result.ok, false, `${command} should be blocked without BasicControlCapability`);
+    if (!result.ok) {
+      assert.equal(result.reason, "unsupported", `${command} should return unsupported`);
+    }
+  }
+
+  const withoutReturnHome = snapshotFor({
+    commands: {
+      start_cleaning: { available: true },
+      pause: { available: true },
+      stop: { available: true },
+    },
+  });
+  assert.equal(withoutReturnHome.capabilities.return_to_dock.supported, false);
+  assert.equal(withoutReturnHome.capabilities.return_to_dock.status, "unsupported");
+
+  const detectedButNotReady = mapValetudoCapabilities(["FanSpeedControlCapability", "WaterUsageControlCapability"]);
+  assert.equal(detectedButNotReady.fan_speed.status, "detected_not_ready");
+  assert.equal(detectedButNotReady.water_usage.status, "detected_not_ready");
+  assert.equal(mapValetudoCapabilities(["BasicControlCapability"]).resume.supported, false);
+}
+
 function testValetudoRuntimeSnapshotMapping(): void {
   const boundary = mapValetudoRuntimeSnapshotToBoundary({
     runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.1.0-layer6a-m1", status: "online" },
@@ -1361,7 +1545,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
     unreachable.capabilities,
   );
   assert.equal(unreachableCommand.ok, false);
-  assert.equal(unreachableCommand.reason, "unavailable");
+  assert.equal(unreachableCommand.reason, "source_unreachable");
 
   const runtimeOffline = mapValetudoState(
     mapValetudoRuntimeSnapshotToBoundary({
@@ -1524,6 +1708,11 @@ function testPublicContractAndUiBoundary(): void {
     assert.equal(panelContents.includes(backendName), false, `Vacuum Control should not branch on ${backendName}`);
   }
   assert.equal(/identity\.source|snapshot\.identity\.source/.test(panelContents), false);
+  assert.equal(
+    /start_cleaning\.supported && props\.capabilities\.start_cleaning\.available !== false/.test(panelContents),
+    true,
+    "Basic controls should render disabled state from normalized availability",
+  );
 
   const componentFiles = collectFiles(
     resolve(repoRoot, "panels-standalone/src/components/VacuumControl"),
@@ -1581,6 +1770,7 @@ async function main(): Promise<void> {
   testMapMetadata();
   testCleanAreaCoverageAndPlanning();
   testCoverageProfileAndDecomposition();
+  testValetudoStateAwareCommandAvailability();
   testValetudoRuntimeSnapshotMapping();
   testValetudoRuntimeMissionStateMapping();
   testValetudoChargingAndOfflineMapping();

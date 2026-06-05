@@ -1693,6 +1693,7 @@ function MissionLifecycleCard(props: {
   const returnToDock = props.capabilities.return_to_dock;
   const dockState = props.capabilities.dock_state;
   const battery = props.capabilities.battery;
+  const canUseReturnToDock = returnToDock.supported && returnToDock.available !== false;
 
   return (
     <section className="vacuum-panel-card vacuum-panel-card--mission-lifecycle">
@@ -1732,7 +1733,7 @@ function MissionLifecycleCard(props: {
           className="vacuum-action vacuum-action--ghost"
           type="button"
           onClick={props.onReturnToDock}
-          disabled={!returnToDock.supported}
+          disabled={!canUseReturnToDock}
         >
           Return to dock
         </button>
@@ -1749,6 +1750,12 @@ function BasicControlsCard(props: {
   onStop: () => void;
   onReturnToDock: () => void;
 }): JSX.Element | null {
+  const canUseStartCleaning =
+    props.capabilities.start_cleaning.supported && props.capabilities.start_cleaning.available !== false;
+  const canUsePause = props.capabilities.pause.supported && props.capabilities.pause.available !== false;
+  const canUseStop = props.capabilities.stop.supported && props.capabilities.stop.available !== false;
+  const canUseReturnToDock =
+    props.capabilities.return_to_dock.supported && props.capabilities.return_to_dock.available !== false;
   const hasBasicControl =
     props.capabilities.start_cleaning.supported ||
     props.capabilities.pause.supported ||
@@ -1773,7 +1780,7 @@ function BasicControlsCard(props: {
           className="vacuum-action vacuum-action--primary"
           type="button"
           onClick={props.onStart}
-          disabled={!props.capabilities.start_cleaning.supported}
+          disabled={!canUseStartCleaning}
         >
           Start cleaning
         </button>
@@ -1781,7 +1788,7 @@ function BasicControlsCard(props: {
           className="vacuum-action vacuum-action--ghost"
           type="button"
           onClick={props.onPause}
-          disabled={!props.capabilities.pause.supported}
+          disabled={!canUsePause}
         >
           Pause
         </button>
@@ -1789,7 +1796,7 @@ function BasicControlsCard(props: {
           className="vacuum-action vacuum-action--danger"
           type="button"
           onClick={props.onStop}
-          disabled={!props.capabilities.stop.supported}
+          disabled={!canUseStop}
         >
           Stop
         </button>
@@ -1797,7 +1804,7 @@ function BasicControlsCard(props: {
           className="vacuum-action vacuum-action--ghost"
           type="button"
           onClick={props.onReturnToDock}
-          disabled={!props.capabilities.return_to_dock.supported}
+          disabled={!canUseReturnToDock}
         >
           Return to dock
         </button>

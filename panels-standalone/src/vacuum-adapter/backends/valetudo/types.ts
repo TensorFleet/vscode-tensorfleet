@@ -1,4 +1,6 @@
 import type { VacuumCommandName } from "../../commands";
+import type { VacuumCapabilityName } from "../../capabilities";
+import type { VacuumCommandErrorCode } from "../../errors";
 import type {
   VacuumAdapterDiagnostics,
   VacuumDockStatus,
@@ -18,6 +20,7 @@ export type ValetudoRuntimeBoundary = {
   endpoint?: string;
   capabilities: ValetudoBackendCapability[];
   commandAvailability?: Partial<Record<string, ValetudoCapabilityAvailability>>;
+  unsupportedCommands?: Partial<Record<VacuumCapabilityName, string>>;
   state: ValetudoRobotState | null;
   health?: VacuumRuntimeHealth;
   source?: VacuumSourceState;
@@ -69,6 +72,6 @@ export type ValetudoCommandMappingResult =
   | {
       ok: false;
       command: VacuumCommandName;
-      reason: "unsupported" | "unavailable" | "invalid_request";
+      reason: VacuumCommandErrorCode;
       message: string;
     };
