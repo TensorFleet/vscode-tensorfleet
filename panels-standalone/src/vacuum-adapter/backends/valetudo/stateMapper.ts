@@ -5,9 +5,13 @@ import type {
   VacuumMissionSnapshot,
   VacuumMissionState,
   VacuumNavigationStatus,
+  VacuumRobotActivity,
+  VacuumRobotActivityAction,
+  VacuumRobotActivityStatus,
   VacuumRuntimeHealth,
   VacuumSourceState,
 } from "../../state";
+import type { VacuumCapabilities } from "../../capabilities";
 import { buildVacuumMapMetadata } from "../../mapGrid";
 import type { ValetudoBackendCapability } from "./capabilityMapper";
 import { mapValetudoCapabilities } from "./capabilityMapper";
@@ -216,6 +220,7 @@ function mapDiagnostics(snapshot: ValetudoRuntimeSnapshot): VacuumAdapterDiagnos
     capabilities: snapshot.capabilities.diagnostics,
     warnings,
     raw: {
+      valetudoState: snapshot.state.value,
       rawCapabilityNames: snapshot.diagnostics.rawCapabilityNames,
       capabilityTiers: snapshot.diagnostics.capabilityTiers,
       transports: snapshot.diagnostics.transports,
@@ -288,6 +293,33 @@ function normalizeMissionState(snapshot: ValetudoRuntimeSnapshot): VacuumMission
   return "idle";
 }
 
+function normalizeActivityStatus(snapshot: ValetudoRuntimeSnapshot): VacuumRobotActivityStatus {
+  const sourceReason = sourceUnavailableReason(snapshot);
+  if (sourceReason === "runtime_offline" || sourceReason === "source_unreachable") {
+    return "unavailable";
+  }
+  const value = normalizeStateValue(snapshot);
+  if (value.includes("fault") || value.includes("error")) {
+    return "faulted";
+  }
+  if (snapshot.state.paused || value.includes("pause")) {
+    return "paused";
+  }
+  if (value.includes("return")) {
+    return "returning";
+  }
+  if (snapshot.state.started || value.includes("clean")) {
+    return "cleaning";
+  }
+  if (snapshot.battery?.charging) {
+    return "charging";
+  }
+  if (mapDockState(snapshot) === "docked") {
+    return "docked";
+  }
+  return "idle";
+}
+
 export function mapValetudoRuntimeSnapshotToBoundary(
   snapshot: ValetudoRuntimeSnapshot,
 ): ValetudoRuntimeBoundary {
@@ -349,6 +381,9 @@ export function mapValetudoRuntimeSnapshotToBoundary(
       batteryPercentage: snapshot.battery?.level ?? null,
       charging: snapshot.battery?.charging ?? null,
       missionState: normalizeMissionState(snapshot),
+      activityStatus: normalizeActivityStatus(snapshot),
+      activityLabel: snapshot.state.label,
+      activityUpdatedAt: snapshot.updatedAt,
       faults,
     },
     health: mapHealth(snapshot),
@@ -400,6 +435,49 @@ export function mapValetudoRuntimeUnavailable(message: string): ValetudoRuntimeB
   };
 }
 
+const VALETUDO_ACTIVITY_ACTIONS = [
+  "start_cleaning",
+  "pause",
+  "stop",
+  "return_to_dock",
+] as const satisfies readonly VacuumRobotActivityAction[];
+
+function availableValetudoActivityActions(capabilities: VacuumCapabilities): VacuumRobotActivityAction[] {
+  return VALETUDO_ACTIVITY_ACTIONS.filter((action) => capabilities[action].supported && capabilities[action].available !== false);
+}
+
+function buildValetudoActivity(
+  runtime: ValetudoRuntimeBoundary,
+  capabilities: VacuumCapabilities,
+): VacuumRobotActivity {
+  const state = runtime.state;
+  if (!state) {
+    return {
+      status: "unavailable",
+      label: "Unavailable",
+      source: "valetudo",
+      reason: runtime.source?.reason ?? "runtime_offline",
+      availableActions: [],
+    };
+  }
+  const status =
+    runtime.source?.reason === "runtime_offline" || runtime.source?.reason === "source_unreachable"
+      ? "unavailable"
+      : state.activityStatus;
+  return {
+    status,
+    label: state.activityLabel,
+    updatedAt: state.activityUpdatedAt,
+    source: "valetudo",
+    reason: runtime.source?.reason,
+    availableActions: availableValetudoActivityActions(capabilities),
+    details: {
+      dock: runtime.dock?.state ?? "unknown",
+      charging: state.charging,
+    },
+  };
+}
+
 function buildValetudoActiveMission(runtime: ValetudoRuntimeBoundary): VacuumMissionSnapshot | null {
   const state = runtime.state;
   if (!state || state.missionState === "idle") {
@@ -445,6 +523,18 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     faults.push(runtime.lastError);
   }
 
+  const capabilities = mapValetudoCapabilities(runtime.capabilities, {
+    commandAvailability: runtime.commandAvailability,
+    unsupportedCommands: runtime.unsupportedCommands,
+    unavailableReason:
+      runtime.connectionStatus === "online" && runtime.source?.reason
+        ? runtime.source.reason
+        : runtime.connectionStatus === "online"
+          ? undefined
+          : "runtime_offline",
+  });
+  const activity = buildValetudoActivity(runtime, capabilities);
+
   return {
     identity: {
       id: state?.id ?? "valetudo",
@@ -457,16 +547,7 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
       connected,
       detail: connected ? "Valetudo integration runtime is online." : "Valetudo integration runtime is not online.",
     },
-    capabilities: mapValetudoCapabilities(runtime.capabilities, {
-      commandAvailability: runtime.commandAvailability,
-      unsupportedCommands: runtime.unsupportedCommands,
-      unavailableReason:
-        runtime.connectionStatus === "online" && runtime.source?.reason
-          ? runtime.source.reason
-          : runtime.connectionStatus === "online"
-            ? undefined
-            : "runtime_offline",
-    }),
+    capabilities,
     health: runtime.health,
     source: runtime.source,
     dock: runtime.dock,
@@ -487,6 +568,7 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
       detail: "Valetudo pose is not exposed as a product navigation surface in Layer 6A Milestone 2.",
     },
     navigation: EMPTY_NAVIGATION,
+    activity,
     mission: {
       state: state?.missionState ?? "idle",
       detail: state ? `Valetudo mission state: ${state.missionState}.` : "Waiting for Valetudo mission state.",

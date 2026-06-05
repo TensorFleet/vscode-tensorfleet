@@ -62,6 +62,42 @@ export type VacuumMissionAction =
   | "accept_map"
   | "discard_mapping";
 
+export type VacuumRobotActivityStatus =
+  | "unknown"
+  | "unavailable"
+  | "idle"
+  | "cleaning"
+  | "paused"
+  | "returning"
+  | "docked"
+  | "charging"
+  | "faulted"
+  | "mapping"
+  | "navigating"
+  | "covering";
+
+export type VacuumRobotActivityAction =
+  | VacuumMissionAction
+  | "start_cleaning"
+  | "pause"
+  | "resume"
+  | "stop"
+  | "return_to_dock"
+  | "start_navigation"
+  | "cancel_navigation"
+  | "start_mapping"
+  | "start_coverage";
+
+export type VacuumRobotActivity = {
+  status: VacuumRobotActivityStatus;
+  label?: string;
+  updatedAt?: number | string;
+  source?: VacuumBackendSource;
+  reason?: string;
+  availableActions?: VacuumRobotActivityAction[];
+  details?: unknown;
+};
+
 export type VacuumMissionProgress = {
   percent: number | null;
   currentStep: number | null;
@@ -348,6 +384,7 @@ export type VacuumAdapterSnapshot = {
   map: VacuumMapState;
   pose: VacuumPoseState;
   navigation: VacuumNavigationStatus;
+  activity?: VacuumRobotActivity;
   mission: VacuumLegacyMissionStatus;
   activeMission: VacuumMissionSnapshot | null;
   missions: VacuumMissionCollection;

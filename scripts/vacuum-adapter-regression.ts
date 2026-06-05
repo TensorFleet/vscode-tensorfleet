@@ -521,6 +521,7 @@ function testServiceDiscoveryNormalization(): void {
 function testStateMapping(): void {
   const idle = mapTurtleBot4Nav2State({ runtime: createRuntime({ goalState: "ready" }), currentTarget: null });
   assert.equal(idle.mission.state, "idle");
+  assert.equal(idle.activity?.status, "idle");
   assert.equal(idle.navigation.state, "idle");
   assert.equal(idle.health?.runtimeStatus, "online");
   assert.equal(idle.source?.kind, "turtlebot4_nav2");
@@ -556,6 +557,7 @@ function testStateMapping(): void {
     initialDistance: 5,
   });
   assert.equal(navigating.mission.state, "navigating");
+  assert.equal(navigating.activity?.status, "navigating");
   assert.equal(navigating.activeMission?.type, "navigation");
   assert.equal(navigating.activeMission?.status, "running");
   assert.equal(navigating.activeMission?.requestedCommand, "start_navigation");
@@ -624,6 +626,7 @@ function testStateMapping(): void {
     },
   });
   assert.equal(hydratedCoverage.mission.state, "cleaning");
+  assert.equal(hydratedCoverage.activity?.status, "covering");
   assert.equal(hydratedCoverage.activeMission?.type, "coverage");
   assert.equal(hydratedCoverage.activeMission?.status, "running");
   assert.deepEqual(hydratedCoverage.activeMission?.availableActions, [
@@ -696,6 +699,7 @@ function testStateMapping(): void {
     },
   });
   assert.equal(hydratedPausedRoomCleaning.mission.state, "paused");
+  assert.equal(hydratedPausedRoomCleaning.activity?.status, "paused");
   assert.equal(hydratedPausedRoomCleaning.activeMission?.type, "room_cleaning");
   assert.equal(hydratedPausedRoomCleaning.activeMission?.status, "paused");
   assert.deepEqual(hydratedPausedRoomCleaning.activeMission?.availableActions, ["resume_mission", "cancel_mission"]);
@@ -848,11 +852,19 @@ function testStateMapping(): void {
     },
   });
   assert.equal(mapping.mission.state, "mapping");
+  assert.equal(mapping.activity?.status, "mapping");
   assert.equal(mapping.activeMission?.type, "mapping");
   assert.equal(mapping.activeMission?.status, "running");
   assert.equal(mapping.activeMission?.progress.percent, 0.25);
   assert.deepEqual(mapping.activeMission?.availableActions, ["pause_mapping", "finish_mapping", "discard_mapping"]);
   assert.equal(mapping.mapping.frontierCount, 3);
+
+  const offline = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ connectionStatus: "disconnected" }),
+    currentTarget: null,
+  });
+  assert.equal(offline.activity?.status, "unavailable");
+  assert.equal(offline.mission.state, "idle");
 }
 
 function testLocalPrototypeAnnotationMigrationParsing(): void {
@@ -1424,9 +1436,12 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.battery.percentage, 82);
   // A docked-but-idle robot that is not charging must read as idle with no active mission.
   assert.equal(snapshot.mission.state, "idle");
+  assert.equal(snapshot.activity?.status, "docked");
+  assert.deepEqual(snapshot.activity?.availableActions, ["start_cleaning"]);
   assert.equal(snapshot.battery.charging, false);
   assert.equal(snapshot.activeMission, null);
   assert.equal(snapshot.missions.active, null);
+  assert.equal((snapshot.diagnostics?.raw as { valetudoState?: string } | undefined)?.valetudoState, "idle");
 
   const mqttBoundary = mapValetudoRuntimeSnapshotToBoundary({
     runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
@@ -1469,6 +1484,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(mqttSnapshot.source?.kind, "valetudo_mock");
   assert.equal(mqttSnapshot.dock?.state, "charging");
   assert.equal(mqttSnapshot.mission.state, "cleaning");
+  assert.equal(mqttSnapshot.activity?.status, "cleaning");
   assert.equal(mqttSnapshot.capabilities.start_cleaning.supported, true);
   assert.equal(mqttSnapshot.capabilities.battery.supported, true);
 
@@ -1536,6 +1552,8 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(unreachable.availability.status, "online");
   assert.equal(unreachable.source?.status, "unreachable");
   assert.equal(unreachable.source?.reason, "source_unreachable");
+  assert.equal(unreachable.activity?.status, "unavailable");
+  assert.equal(unreachable.activity?.reason, "source_unreachable");
   assert.equal(unreachable.capabilities.start_cleaning.supported, true);
   assert.equal(unreachable.capabilities.start_cleaning.status, "unavailable");
   assert.equal(unreachable.capabilities.start_cleaning.available, false);
@@ -1571,6 +1589,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(runtimeOffline.availability.status, "offline");
   assert.equal(runtimeOffline.health?.runtimeStatus, "offline");
   assert.equal(runtimeOffline.source?.reason, "runtime_offline");
+  assert.equal(runtimeOffline.activity?.status, "unavailable");
   assert.equal(runtimeOffline.capabilities.start_cleaning.availabilityReason, "runtime_offline");
   assert.deepEqual(runtimeOffline.fault.faults, ["Valetudo integration runtime is offline."]);
 
@@ -1594,6 +1613,8 @@ function testValetudoRuntimeSnapshotMapping(): void {
   );
   assert.equal(stale.source?.status, "stale");
   assert.equal(stale.source?.stale, true);
+  assert.equal(stale.activity?.status, "idle");
+  assert.equal(stale.activity?.reason, "stale_source");
   assert.equal(stale.capabilities.start_cleaning.supported, true);
   assert.equal(stale.capabilities.start_cleaning.status, "unavailable");
   assert.equal(stale.capabilities.start_cleaning.availabilityReason, "stale_source");
@@ -1630,23 +1651,27 @@ function testValetudoRuntimeMissionStateMapping(): void {
       }),
     );
 
-  assert.equal(
-    createSnapshot({ value: "cleaning", label: "Cleaning", started: true, paused: false }).mission.state,
-    "cleaning",
-  );
-  assert.equal(
-    createSnapshot({ value: "paused", label: "Paused", started: true, paused: true }).mission.state,
-    "paused",
-  );
-  assert.equal(
-    createSnapshot({ value: "stopped", label: "Stopped", started: false, paused: false }).mission.state,
-    "idle",
-  );
-  assert.equal(
-    createSnapshot({ value: "returning_to_dock", label: "Returning to dock", started: false, paused: false }).mission
-      .state,
-    "returning",
-  );
+  const cleaning = createSnapshot({ value: "cleaning", label: "Cleaning", started: true, paused: false });
+  assert.equal(cleaning.mission.state, "cleaning");
+  assert.equal(cleaning.activity?.status, "cleaning");
+  assert.equal(cleaning.activeMission?.type, "hardware_cleaning");
+  assert.deepEqual(cleaning.activity?.availableActions, ["pause", "stop", "return_to_dock"]);
+
+  const paused = createSnapshot({ value: "paused", label: "Paused", started: true, paused: true });
+  assert.equal(paused.mission.state, "paused");
+  assert.equal(paused.activity?.status, "paused");
+
+  const stopped = createSnapshot({ value: "stopped", label: "Stopped", started: false, paused: false });
+  assert.equal(stopped.mission.state, "idle");
+  assert.equal(stopped.activity?.status, "idle");
+  assert.equal(stopped.activeMission, null);
+
+  const returning = createSnapshot({ value: "returning_to_dock", label: "Returning to dock", started: false, paused: false });
+  assert.equal(returning.mission.state, "returning");
+  assert.equal(returning.activity?.status, "returning");
+
+  const faulted = createSnapshot({ value: "error", label: "Error", started: false, paused: false });
+  assert.equal(faulted.activity?.status, "faulted");
 }
 
 function testValetudoChargingAndOfflineMapping(): void {
@@ -1665,6 +1690,7 @@ function testValetudoChargingAndOfflineMapping(): void {
   });
   const chargingSnapshot = mapValetudoState(chargingBoundary);
   assert.equal(chargingSnapshot.mission.state, "charging");
+  assert.equal(chargingSnapshot.activity?.status, "charging");
   assert.equal(chargingSnapshot.battery.charging, true);
 
   // Malformed payloads (e.g. a proxy error body) must be rejected so the adapter
@@ -1687,6 +1713,7 @@ function testValetudoChargingAndOfflineMapping(): void {
   assert.equal(offline.availability.connected, false);
   assert.equal(offline.availability.status, "offline");
   assert.equal(offline.map.grid, null);
+  assert.equal(offline.activity?.status, "unavailable");
   assert.equal(offline.activeMission, null);
 }
 
@@ -1708,6 +1735,7 @@ function testPublicContractAndUiBoundary(): void {
     assert.equal(panelContents.includes(backendName), false, `Vacuum Control should not branch on ${backendName}`);
   }
   assert.equal(/identity\.source|snapshot\.identity\.source/.test(panelContents), false);
+  assert.equal(panelContents.includes("returning_to_dock"), false, "Vacuum Control should not branch on raw Valetudo state");
   assert.equal(
     /start_cleaning\.supported && props\.capabilities\.start_cleaning\.available !== false/.test(panelContents),
     true,

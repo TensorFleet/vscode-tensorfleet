@@ -19,6 +19,7 @@ import type {
   VacuumNavigationTerminalState,
   VacuumPathPoint,
   VacuumReadinessState,
+  VacuumRobotActivity,
 } from "../../state";
 import { buildVacuumMapMetadata } from "../../mapGrid";
 import { mapTurtleBot4Nav2Capabilities } from "./capabilityMapper";
@@ -90,6 +91,69 @@ function deriveMissionState(navigationActive: boolean, mappingState?: VacuumMapp
     return "navigating";
   }
   return "idle";
+}
+
+function buildRobotActivity(input: {
+  runtime: Nav2RuntimeState;
+  activeMission: VacuumMissionSnapshot | null;
+  missionState: VacuumMissionState;
+  normalizedMapping: VacuumMappingStatus;
+  navigationActive: boolean;
+}): VacuumRobotActivity {
+  if (input.runtime.connectionStatus !== "connected") {
+    return {
+      status: "unavailable",
+      label: "Unavailable",
+      source: "turtlebot4_nav2",
+      reason: "bridge_not_connected",
+      availableActions: [],
+    };
+  }
+  if (input.activeMission?.type === "coverage" || input.activeMission?.type === "room_cleaning" || input.activeMission?.type === "zone_cleaning") {
+    return {
+      status: input.activeMission.status === "paused" || input.activeMission.status === "needs_assistance" ? "paused" : "covering",
+      label: input.activeMission.type === "coverage" ? "Covering" : "Cleaning",
+      updatedAt: input.activeMission.updatedAt ?? undefined,
+      source: "turtlebot4_nav2",
+      availableActions: input.activeMission.availableActions,
+      details: { missionType: input.activeMission.type },
+    };
+  }
+  if (input.activeMission?.type === "mapping" || input.missionState === "mapping") {
+    return {
+      status: "mapping",
+      label: "Mapping",
+      updatedAt: input.normalizedMapping.updatedAt ?? input.activeMission?.updatedAt ?? undefined,
+      source: "turtlebot4_nav2",
+      availableActions: input.activeMission?.availableActions ?? [],
+      details: { mappingState: input.normalizedMapping.state },
+    };
+  }
+  if (input.activeMission?.type === "navigation" || input.navigationActive || input.missionState === "navigating") {
+    return {
+      status: "navigating",
+      label: "Navigating",
+      updatedAt: input.activeMission?.updatedAt ?? undefined,
+      source: "turtlebot4_nav2",
+      availableActions: input.activeMission?.availableActions ?? [],
+      details: { goalState: input.runtime.goalState },
+    };
+  }
+  if (input.missionState === "paused") {
+    return {
+      status: "paused",
+      label: "Paused",
+      updatedAt: input.activeMission?.updatedAt ?? undefined,
+      source: "turtlebot4_nav2",
+      availableActions: input.activeMission?.availableActions ?? [],
+    };
+  }
+  return {
+    status: "idle",
+    label: "Idle",
+    source: "turtlebot4_nav2",
+    availableActions: [],
+  };
 }
 
 function emptyMissionProgress(): VacuumMissionSnapshot["progress"] {
@@ -525,6 +589,13 @@ export function mapTurtleBot4Nav2State(
           ? "paused"
           : "cleaning"
         : deriveMissionState(active, normalizedMapping.state);
+  const activity = buildRobotActivity({
+    runtime,
+    activeMission,
+    missionState,
+    normalizedMapping,
+    navigationActive: active,
+  });
 
   return {
     identity: {
@@ -599,6 +670,7 @@ export function mapTurtleBot4Nav2State(
       },
       detail: navigationMission?.error?.message ?? navigationMission?.result?.summary ?? runtime.validationSummary.detail,
     },
+    activity,
     mission: {
       state: missionState,
       detail:

@@ -7,6 +7,7 @@ import type {
   VacuumGoalCoordinates,
   VacuumMissionState,
   VacuumPoseCoordinates,
+  VacuumRobotActivityStatus,
   VacuumRuntimeHealth,
   VacuumSourceState,
 } from "../../state";
@@ -38,6 +39,9 @@ export type ValetudoRobotState = {
   batteryPercentage: number | null;
   charging: boolean | null;
   missionState: VacuumMissionState;
+  activityStatus: VacuumRobotActivityStatus;
+  activityLabel?: string;
+  activityUpdatedAt?: number | string;
   faults: string[];
 };
 
