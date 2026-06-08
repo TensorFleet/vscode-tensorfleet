@@ -105,6 +105,20 @@ function detectedButUnsupportedCapability(): CapabilitySupport {
   };
 }
 
+function humanizeAvailabilityReason(reason: string): string {
+  const knownReasons: Record<string, string> = {
+    capability_unavailable: "Not supported by this backend.",
+    degraded_runtime: "Runtime degraded.",
+    invalid_state: "Robot state does not allow this action.",
+    runtime_offline: "Runtime offline.",
+    source_unreachable: "Source unreachable.",
+    stale_source: "Robot state is stale.",
+    unavailable: "Currently unavailable.",
+    unsupported: "Not supported by this backend.",
+  };
+  return knownReasons[reason] ?? reason.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) + ".";
+}
+
 function commandAvailabilityFor(
   name: VacuumCapabilityName,
   options: ValetudoCapabilityMappingOptions,
@@ -122,11 +136,11 @@ function commandAvailabilityFor(
     reasons: available
       ? undefined
       : [
-          {
-            code: reason,
-            message: reason,
-          },
-        ],
+        {
+          code: reason,
+          message: humanizeAvailabilityReason(reason),
+        },
+      ],
   };
 }
 

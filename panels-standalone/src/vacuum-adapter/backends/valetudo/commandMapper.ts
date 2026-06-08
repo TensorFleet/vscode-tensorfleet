@@ -44,7 +44,12 @@ function unavailableReasonCode(capabilities: VacuumCapabilities, name: keyof Vac
 }
 
 function unavailableMessage(capabilities: VacuumCapabilities, name: keyof VacuumCapabilities, fallback: string): string {
-  return capabilities[name].availabilityReason ?? capabilities[name].notes ?? fallback;
+  const capability = capabilities[name];
+  const structuredMessage = capability.reasons?.[0]?.message;
+  if (structuredMessage && structuredMessage !== capability.reasons?.[0]?.code) {
+    return structuredMessage;
+  }
+  return humanizeRuntimeReason(capability.availabilityReason) ?? capability.notes ?? fallback;
 }
 
 function supportedOrUnavailable(
@@ -84,7 +89,49 @@ const RICH_RUNTIME_ERROR_CODES = new Set<VacuumCommandErrorCode>([
   "invalid_request",
 ]);
 
+const RUNTIME_ERROR_CODE_ALIASES: Record<string, VacuumCommandErrorCode> = {
+  unsupported_command: "unsupported",
+  capability_unavailable: "unsupported",
+  command_invalid_state: "invalid_state",
+  invalid_json: "invalid_request",
+  missing_command: "invalid_request",
+  source_command_failed: "backend_error",
+  mqtt_publish_failure: "backend_error",
+  malformed_snapshot: "malformed_backend_response",
+  malformed_command_response: "malformed_backend_response",
+};
+
+function humanizeRuntimeReason(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const knownReasons: Record<string, string> = {
+    unsupported: "Not supported by this backend.",
+    unsupported_command: "Not supported by this backend.",
+    capability_unavailable: "Not supported by this backend.",
+    invalid_state: "Robot state does not allow this action.",
+    command_invalid_state: "Robot state does not allow this action.",
+    source_unreachable: "Source unreachable.",
+    stale_source: "Robot state is stale.",
+    runtime_offline: "Runtime offline.",
+    degraded_runtime: "Runtime degraded.",
+    invalid_request: "Invalid command request.",
+    invalid_json: "Invalid command payload.",
+    missing_command: "Missing command.",
+    source_command_failed: "Backend command failed.",
+    backend_error: "Backend command failed.",
+    malformed_backend_response: "Malformed backend response.",
+  };
+  return knownReasons[value] ?? null;
+}
+
 function normalizeRuntimeErrorCode(result: ValetudoRuntimeCommandResult): VacuumCommandErrorCode {
+  if (result.code && RUNTIME_ERROR_CODE_ALIASES[result.code]) {
+    return RUNTIME_ERROR_CODE_ALIASES[result.code];
+  }
+  if (result.reason && RUNTIME_ERROR_CODE_ALIASES[result.reason]) {
+    return RUNTIME_ERROR_CODE_ALIASES[result.reason];
+  }
   if (result.code && RICH_RUNTIME_ERROR_CODES.has(result.code as VacuumCommandErrorCode)) {
     return result.code as VacuumCommandErrorCode;
   }
@@ -117,7 +164,7 @@ export function mapValetudoRuntimeCommandResult(
     error: {
       command,
       code: normalizeRuntimeErrorCode(result),
-      message: result.message || result.reason || `Valetudo runtime command ${command} failed.`,
+      message: result.message || humanizeRuntimeReason(result.code) || humanizeRuntimeReason(result.reason) || `Valetudo runtime command ${command} failed.`,
     },
   };
 }

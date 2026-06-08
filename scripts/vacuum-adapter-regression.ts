@@ -1261,6 +1261,86 @@ function testValetudoCommandStub(): void {
       error: { command: "pause", code: "stale_source", message: "stale" },
     },
   );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("pause", {
+      ok: false,
+      status: "failed",
+      command: "pause",
+      message: "cannot pause from docked",
+      reason: "invalid_state",
+      code: "invalid_state",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "pause",
+      error: { command: "pause", code: "invalid_state", message: "cannot pause from docked" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("pause", {
+      ok: false,
+      status: "unsupported",
+      command: "pause",
+      message: "legacy invalid state",
+      reason: "command_invalid_state",
+      code: "command_invalid_state",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "pause",
+      error: { command: "pause", code: "invalid_state", message: "legacy invalid state" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "unsupported",
+      command: "start_cleaning",
+      message: "missing basic control",
+      reason: "capability_unavailable",
+      code: "capability_unavailable",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: { command: "start_cleaning", code: "unsupported", message: "missing basic control" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "failed",
+      command: "start_cleaning",
+      message: "source rejected command",
+      reason: "source_command_failed",
+      code: "source_command_failed",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: { command: "start_cleaning", code: "backend_error", message: "source rejected command" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "failed",
+      command: "",
+      message: "Missing command",
+      reason: "invalid_request",
+      code: "missing_command",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: { command: "start_cleaning", code: "invalid_request", message: "Missing command" },
+    },
+  );
 }
 
 function testValetudoStateAwareCommandAvailability(): void {
@@ -1420,6 +1500,8 @@ function testValetudoStateAwareCommandAvailability(): void {
   });
   assert.equal(runtimeBlocked.capabilities.start_cleaning.status, "unavailable");
   assert.equal(runtimeBlocked.capabilities.start_cleaning.availabilityReason, "unavailable");
+  assert.equal(runtimeBlocked.capabilities.start_cleaning.reasons?.[0]?.code, "unavailable");
+  assert.equal(runtimeBlocked.capabilities.start_cleaning.reasons?.[0]?.message, "Currently unavailable.");
 
   const withoutBasicControl = mapValetudoCapabilities([]);
   for (const command of ["start_cleaning", "pause", "stop", "return_to_dock"] as const) {
@@ -1445,6 +1527,10 @@ function testValetudoStateAwareCommandAvailability(): void {
   assert.equal(detectedButNotReady.fan_speed.status, "detected_not_ready");
   assert.equal(detectedButNotReady.water_usage.status, "detected_not_ready");
   assert.equal(mapValetudoCapabilities(["BasicControlCapability"]).resume.supported, false);
+
+  const staleSource = snapshotFor({ sourceStale: true });
+  assert.equal(staleSource.capabilities.start_cleaning.reasons?.[0]?.code, "stale_source");
+  assert.equal(staleSource.capabilities.start_cleaning.reasons?.[0]?.message, "Robot state is stale.");
 }
 
 function testValetudoRuntimeSnapshotMapping(): void {
@@ -1962,9 +2048,60 @@ function testPublicContractAndUiBoundary(): void {
   assert.equal(/identity\.source|snapshot\.identity\.source/.test(panelContents), false);
   assert.equal(panelContents.includes("returning_to_dock"), false, "Vacuum Control should not branch on raw Valetudo state");
   assert.equal(
-    /start_cleaning\.supported && props\.capabilities\.start_cleaning\.available !== false/.test(panelContents),
+    panelContents.includes("Map unavailable") && panelContents.includes("This backend does not expose a product map yet."),
     true,
-    "Basic controls should render disabled state from normalized availability",
+    "Vacuum Control should render a no-map placeholder in the reserved map area",
+  );
+  assert.equal(
+    /mapSurfaceAvailable \? \([\s\S]*?<MapCanvas[\s\S]*?\) : \([\s\S]*?<NoMapCanvasPlaceholder/.test(panelContents),
+    true,
+    "MapCanvas should be replaced by a no-map placeholder when map support is false",
+  );
+  assert.equal(
+    /health=\{snapshot\.health\}/.test(panelContents) &&
+      /source=\{snapshot\.source\}/.test(panelContents) &&
+      /activity=\{snapshot\.activity\}/.test(panelContents) &&
+      /dock=\{snapshot\.dock\}/.test(panelContents),
+    true,
+    "No-map sidebar should render normalized health, source, activity, and dock state",
+  );
+  assert.equal(
+    /battery=\{snapshot\.battery\}/.test(panelContents) && /fault=\{snapshot\.fault\}/.test(panelContents),
+    true,
+    "No-map sidebar should render normalized battery and fault state",
+  );
+  assert.equal(
+    /supportedControls = controls\.filter\(\(control\) => control\.capability\.supported\)/.test(panelContents),
+    true,
+    "Unsupported basic commands should not appear as active controls",
+  );
+  assert.equal(
+    /control\.capability\.available === false/.test(panelContents) &&
+      /formatCapabilityReason\([\s\S]*control\.capability[\s\S]*control\.key/.test(panelContents) &&
+      /vacuum-action-hint--disabled/.test(panelContents),
+    true,
+    "Basic controls should render disabled state and visible reasons from normalized availability",
+  );
+  assert.equal(
+      panelContents.includes("Robot is not cleaning.") &&
+      panelContents.includes("Nothing is running.") &&
+      panelContents.includes("Already docked.") &&
+      panelContents.includes("Robot state is stale.") &&
+      panelContents.includes("Runtime offline.") &&
+      panelContents.includes("Source unreachable.") &&
+      panelContents.includes("Not supported by this backend."),
+    true,
+    "UI should translate raw availability reason codes into readable operator copy",
+  );
+  assert.equal(
+    /isBasicRobotProfile/.test(panelContents) && /UnavailableWorkflowsCard/.test(panelContents),
+    true,
+    "No-map basic profiles should show advanced workflows as unavailable instead of dominant mode tabs",
+  );
+  assert.equal(
+    /!mapSurfaceAvailable && !isBasicRobotProfile[\s\S]*?<BasicControlsCard/.test(panelContents),
+    false,
+    "No-map advanced profiles should not duplicate the basic command controls beside the status surface",
   );
   assert.equal(
     /const mapSurfaceAvailable = mapSupported/.test(panelContents),

@@ -10,8 +10,15 @@ import {
   type CapabilitySupport,
   type VacuumCommandResult,
   type VacuumAdapterBackendId,
+  type VacuumAvailability,
   type VacuumBatteryState,
   type VacuumCapabilities,
+  type VacuumBackendIdentity,
+  type VacuumDockStatus,
+  type VacuumFaultState,
+  type VacuumRobotActivity,
+  type VacuumRuntimeHealth,
+  type VacuumSourceState,
   type VacuumMapAnnotation,
   type VacuumMapAnnotationKind,
   type VacuumMappingStatus,
@@ -664,7 +671,7 @@ function SidebarIcon(props: { className?: string; kind: "navigation" | "history"
   return <GearIcon className={props.className} />;
 }
 
-function StatusChipIcon(props: { className?: string; kind: "connected" | "map" | "localized" | "ready" | "target" }) {
+function StatusChipIcon(props: { className?: string; kind: "connected" | "map" | "localized" | "ready" | "target" | "battery" | "dock" }) {
   if (props.kind === "connected") {
     return (
       <svg aria-hidden="true" className={props.className} viewBox="0 0 20 20">
@@ -703,6 +710,25 @@ function StatusChipIcon(props: { className?: string; kind: "connected" | "map" |
     return (
       <svg aria-hidden="true" className={props.className} viewBox="0 0 20 20">
         <path d="m4.5 10.5 3.2 3.2 7.8-7.8" />
+      </svg>
+    );
+  }
+
+  if (props.kind === "battery") {
+    return (
+      <svg aria-hidden="true" className={props.className} viewBox="0 0 20 20">
+        <rect x="3" y="6" width="12" height="8" rx="1.8" />
+        <path d="M15 9h2v2h-2" />
+      </svg>
+    );
+  }
+
+  if (props.kind === "dock") {
+    return (
+      <svg aria-hidden="true" className={props.className} viewBox="0 0 20 20">
+        <path d="M4 15.5h12" />
+        <path d="M6 15.5v-7l4-3 4 3v7" />
+        <path d="M8.5 15.5v-4h3v4" />
       </svg>
     );
   }
@@ -1683,6 +1709,137 @@ function formatBatteryState(battery: VacuumBatteryState): string {
   return `${Math.round(battery.percentage)}%${charging}`;
 }
 
+function humanizeStatus(value: string | null | undefined): string {
+  if (!value) {
+    return "Unknown";
+  }
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function humanizeReasonCode(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const knownReasons: Record<string, string> = {
+    invalid_state: "Robot state does not allow this action.",
+    source_stale: "Robot state is stale.",
+    stale_source: "Robot state is stale.",
+    stale: "Robot state is stale.",
+    source_unreachable: "Source unreachable.",
+    unreachable: "Source unreachable.",
+    runtime_offline: "Runtime offline.",
+    degraded_runtime: "Runtime degraded.",
+    offline: "Runtime offline.",
+    unsupported: "Not supported by this backend.",
+    unsupported_command: "Not supported by this backend.",
+    capability_unavailable: "Not supported by this backend.",
+    unavailable: "Currently unavailable.",
+    not_supported: "Not supported by this backend.",
+    invalid_request: "Invalid command request.",
+    invalid_json: "Invalid command payload.",
+    missing_command: "Missing command.",
+    source_command_failed: "Backend command failed.",
+    backend_error: "Backend command failed.",
+  };
+  return knownReasons[value] ?? `${value.replace(/_/g, " ")}.`;
+}
+
+function formatTimestamp(value: number | string | null | undefined): string {
+  if (value == null || value === "") {
+    return "n/a";
+  }
+  const timestamp = typeof value === "number" ? value : Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return String(value);
+  }
+  return new Date(timestamp).toLocaleString();
+}
+
+function formatCapabilityReason(capability: CapabilitySupport, command?: "start_cleaning" | "pause" | "stop" | "return_to_dock"): string | null {
+  const structuredReason = capability.reasons?.[0]?.message ?? null;
+  const reasonCode = capability.reasons?.[0]?.code ?? capability.availabilityReason ?? null;
+  if (reasonCode === "invalid_state") {
+    if (command === "pause") {
+      return "Robot is not cleaning.";
+    }
+    if (command === "stop") {
+      return "Nothing is running.";
+    }
+    if (command === "return_to_dock") {
+      return "Already docked.";
+    }
+    if (command === "start_cleaning") {
+      return "Robot cannot start cleaning from this state.";
+    }
+  }
+  const readableReason = structuredReason ?? humanizeReasonCode(reasonCode);
+  if (!capability.supported) {
+    return readableReason ?? capability.notes ?? "Not supported by this backend.";
+  }
+  if (capability.available === false) {
+    return readableReason ?? capability.notes ?? "Currently unavailable.";
+  }
+  if (capability.status === "unavailable") {
+    return readableReason ?? capability.notes ?? "Currently unavailable.";
+  }
+  if (capability.status === "detected_not_ready") {
+    return structuredReason ?? capability.notes ?? "Detected, but this product workflow is not implemented yet.";
+  }
+  return null;
+}
+
+function StatusRow(props: { label: string; value: string; detail?: string | null; tone?: "ready" | "warning" | "danger" | "muted" }): JSX.Element {
+  return (
+    <div className={`vacuum-basic-status-row vacuum-basic-status-row--${props.tone ?? "muted"}`}>
+      <span>{props.label}</span>
+      <div>
+        <strong>{props.value}</strong>
+        {props.detail ? <small>{props.detail}</small> : null}
+      </div>
+    </div>
+  );
+}
+
+function getHealthTone(status: VacuumRuntimeHealth["runtimeStatus"] | undefined): "ready" | "warning" | "danger" | "muted" {
+  if (status === "online") return "ready";
+  if (status === "degraded") return "warning";
+  if (status === "offline") return "danger";
+  return "muted";
+}
+
+function getSourceTone(source: VacuumSourceState | undefined): "ready" | "warning" | "danger" | "muted" {
+  if (!source?.status) return "muted";
+  if (source.stale || source.status === "stale") return "warning";
+  if (source.status === "reachable") return "ready";
+  if (source.status === "unreachable") return "danger";
+  return "muted";
+}
+
+function getActivityTone(activity: VacuumRobotActivity | undefined): "ready" | "warning" | "danger" | "muted" {
+  if (!activity) return "muted";
+  if (activity.status === "faulted" || activity.status === "unavailable") return "danger";
+  if (activity.status === "paused" || activity.status === "unknown") return "warning";
+  if (activity.status === "idle" || activity.status === "docked" || activity.status === "charging") return "ready";
+  return "warning";
+}
+
+function getDockTone(dock: VacuumDockStatus | undefined): "ready" | "warning" | "danger" | "muted" {
+  if (!dock?.state) return "muted";
+  if (dock.state === "docked" || dock.state === "charging") return "ready";
+  if (dock.state === "returning") return "warning";
+  if (dock.state === "error") return "danger";
+  return "muted";
+}
+
+function getFaultTone(fault: VacuumFaultState): "ready" | "warning" | "danger" | "muted" {
+  if (fault.faults.length > 0) return "danger";
+  if (fault.readiness === "degraded" || fault.readiness === "waiting") return "warning";
+  if (fault.readiness === "ready") return "ready";
+  return "muted";
+}
+
 function MissionLifecycleCard(props: {
   mission: VacuumLegacyMissionStatus;
   battery: VacuumBatteryState;
@@ -1750,20 +1907,42 @@ function BasicControlsCard(props: {
   onStop: () => void;
   onReturnToDock: () => void;
 }): JSX.Element | null {
-  const canUseStartCleaning =
-    props.capabilities.start_cleaning.supported && props.capabilities.start_cleaning.available !== false;
-  const canUsePause = props.capabilities.pause.supported && props.capabilities.pause.available !== false;
-  const canUseStop = props.capabilities.stop.supported && props.capabilities.stop.available !== false;
-  const canUseReturnToDock =
-    props.capabilities.return_to_dock.supported && props.capabilities.return_to_dock.available !== false;
-  const hasBasicControl =
-    props.capabilities.start_cleaning.supported ||
-    props.capabilities.pause.supported ||
-    props.capabilities.stop.supported ||
-    props.capabilities.return_to_dock.supported;
-  if (!hasBasicControl) {
+  const controls = [
+    {
+      key: "start_cleaning",
+      label: "Start cleaning",
+      className: "vacuum-action vacuum-action--primary",
+      capability: props.capabilities.start_cleaning,
+      onClick: props.onStart,
+    },
+    {
+      key: "pause",
+      label: "Pause",
+      className: "vacuum-action vacuum-action--ghost",
+      capability: props.capabilities.pause,
+      onClick: props.onPause,
+    },
+    {
+      key: "stop",
+      label: "Stop",
+      className: "vacuum-action vacuum-action--danger",
+      capability: props.capabilities.stop,
+      onClick: props.onStop,
+    },
+    {
+      key: "return_to_dock",
+      label: "Return to dock",
+      className: "vacuum-action vacuum-action--ghost",
+      capability: props.capabilities.return_to_dock,
+      onClick: props.onReturnToDock,
+    },
+  ];
+  const supportedControls = controls.filter((control) => control.capability.supported);
+
+  if (supportedControls.length === 0) {
     return null;
   }
+
   return (
     <section className="vacuum-panel-card vacuum-panel-card--mission-lifecycle">
       <div className="vacuum-panel-card__head">
@@ -1775,39 +1954,244 @@ function BasicControlsCard(props: {
           {props.commandError}
         </div>
       ) : null}
-      <div className="vacuum-actions">
-        <button
-          className="vacuum-action vacuum-action--primary"
-          type="button"
-          onClick={props.onStart}
-          disabled={!canUseStartCleaning}
-        >
-          Start cleaning
-        </button>
-        <button
-          className="vacuum-action vacuum-action--ghost"
-          type="button"
-          onClick={props.onPause}
-          disabled={!canUsePause}
-        >
-          Pause
-        </button>
-        <button
-          className="vacuum-action vacuum-action--danger"
-          type="button"
-          onClick={props.onStop}
-          disabled={!canUseStop}
-        >
-          Stop
-        </button>
-        <button
-          className="vacuum-action vacuum-action--ghost"
-          type="button"
-          onClick={props.onReturnToDock}
-          disabled={!canUseReturnToDock}
-        >
-          Return to dock
-        </button>
+      <div className="vacuum-actions vacuum-basic-actions">
+        {supportedControls.map((control) => {
+          const reason = formatCapabilityReason(
+            control.capability,
+            control.key as "start_cleaning" | "pause" | "stop" | "return_to_dock",
+          );
+          const disabled = control.capability.available === false || control.capability.status === "unavailable";
+          return (
+            <div key={control.key} className="vacuum-basic-action-row">
+              <button
+                className={control.className}
+                type="button"
+                onClick={control.onClick}
+                disabled={disabled}
+                title={reason ?? undefined}
+              >
+                {control.label}
+              </button>
+              {disabled && reason ? (
+                <p className="vacuum-action-hint vacuum-action-hint--disabled">{reason}</p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function NoMapCanvasPlaceholder(props: {
+  identity: VacuumBackendIdentity;
+  availability: VacuumAvailability;
+  source?: VacuumSourceState;
+  activity?: VacuumRobotActivity;
+  dock?: VacuumDockStatus;
+  battery: VacuumBatteryState;
+  mapDetail?: string;
+}): JSX.Element {
+  const modelLabel = props.identity.model ? `${props.identity.model}` : "Model not reported";
+  const sourceStatus = props.source?.stale ? "stale" : props.source?.status ?? "unknown";
+  const activityStatus = props.activity?.status ?? "unknown";
+  const dockStatus = props.dock?.state ?? "unknown";
+  const batteryDetail =
+    props.battery.percentage == null
+      ? props.battery.detail ?? "Battery not reported"
+      : props.battery.charging == null
+        ? "Charging state unknown"
+        : props.battery.charging
+          ? "Charging"
+          : "Not charging";
+
+  return (
+    <section className="vacuum-map-card" aria-label="Reserved map area">
+      <div className="vacuum-map-stage vacuum-map-stage--no-map">
+        <div className="vacuum-no-map-placeholder">
+          <VacuumMark className="vacuum-no-map-placeholder__mark" />
+          <div className="vacuum-no-map-placeholder__copy">
+            <p className="vacuum-panel-card__eyebrow">Map unavailable</p>
+            <h2>{props.identity.label}</h2>
+            <span>{modelLabel}</span>
+            <strong>{humanizeStatus(activityStatus)}</strong>
+            <p>{props.mapDetail ?? "This backend does not expose a product map yet."}</p>
+            <p>Basic cleaning controls are available from the sidebar.</p>
+          </div>
+          <div className="vacuum-no-map-placeholder__chips" aria-label="Basic robot state">
+            <span>{props.availability.connected ? "Connected" : humanizeStatus(props.availability.status)}</span>
+            <span>{humanizeStatus(sourceStatus)}</span>
+            <span>{humanizeStatus(dockStatus)}</span>
+            <span>{props.battery.percentage == null ? batteryDetail : `${Math.round(props.battery.percentage)}%${props.battery.charging ? " charging" : ""}`}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BasicRobotStatusCard(props: {
+  availability: VacuumAvailability;
+  health?: VacuumRuntimeHealth;
+  source?: VacuumSourceState;
+  activity?: VacuumRobotActivity;
+  dock?: VacuumDockStatus;
+  battery: VacuumBatteryState;
+  fault: VacuumFaultState;
+}): JSX.Element {
+  const healthStatus = props.health?.runtimeStatus ?? "unknown";
+  const sourceStatus = props.source?.stale ? "stale" : props.source?.status ?? "unknown";
+  const activityStatus = props.activity?.status ?? "unknown";
+  const dockStatus = props.dock?.state ?? "unknown";
+  const faultSummary =
+    props.fault.faults.length > 0
+      ? props.fault.faults.slice(0, 2).join("; ")
+      : props.fault.detail ?? "No active faults";
+  const batteryDetail =
+    props.battery.percentage == null
+      ? props.battery.detail ?? "Battery not reported"
+      : props.battery.charging == null
+        ? "Charging state unknown"
+        : props.battery.charging
+          ? "Charging"
+          : "Not charging";
+  const sourceDetail = [
+    humanizeReasonCode(props.source?.reason),
+    props.source?.lastSeenAt != null ? `Last seen ${formatTimestamp(props.source.lastSeenAt)}` : null,
+  ].filter(Boolean).join(" · ");
+  const activityDetail = [
+    props.activity?.label,
+    humanizeReasonCode(props.activity?.reason),
+    props.activity?.updatedAt != null ? `Updated ${formatTimestamp(props.activity.updatedAt)}` : null,
+  ].filter(Boolean).join(" · ");
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--basic-status" aria-label="Robot status">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Robot Status</p>
+        <span className="vacuum-clean-area-badge">{humanizeStatus(activityStatus)}</span>
+      </div>
+      <div className="vacuum-basic-status-grid" aria-label="Robot status details">
+        <StatusRow
+          label="Connection"
+          value={humanizeStatus(props.availability.status)}
+          detail={props.availability.detail ?? (props.availability.connected ? "Adapter connected" : "Adapter disconnected")}
+          tone={props.availability.status === "online" ? "ready" : props.availability.status === "connecting" ? "warning" : "danger"}
+        />
+        <StatusRow
+          label="Runtime"
+          value={humanizeStatus(healthStatus)}
+          detail={props.health?.detail ?? (props.health?.updatedAt != null ? `Updated ${formatTimestamp(props.health.updatedAt)}` : null)}
+          tone={getHealthTone(props.health?.runtimeStatus)}
+        />
+        <StatusRow
+          label="Source"
+          value={humanizeStatus(sourceStatus)}
+          detail={sourceDetail || "Source state not reported"}
+          tone={getSourceTone(props.source)}
+        />
+        <StatusRow
+          label="Activity"
+          value={humanizeStatus(activityStatus)}
+          detail={activityDetail || "Activity state not reported"}
+          tone={getActivityTone(props.activity)}
+        />
+        <StatusRow
+          label="Dock"
+          value={humanizeStatus(dockStatus)}
+          detail={props.dock?.detail ?? (props.dock?.charging == null ? "Charging not reported" : props.dock.charging ? "Charging" : "Not charging")}
+          tone={getDockTone(props.dock)}
+        />
+        <StatusRow
+          label="Battery"
+          value={props.battery.percentage == null ? "Unknown" : `${Math.round(props.battery.percentage)}%`}
+          detail={batteryDetail}
+          tone={props.battery.readiness === "ready" ? "ready" : props.battery.readiness === "unavailable" ? "danger" : "warning"}
+        />
+        <StatusRow
+          label="Fault"
+          value={props.fault.faults.length > 0 ? `${props.fault.faults.length} active` : humanizeStatus(props.fault.readiness)}
+          detail={faultSummary}
+          tone={getFaultTone(props.fault)}
+        />
+      </div>
+    </section>
+  );
+}
+
+function UnavailableWorkflowsCard(props: { capabilities: VacuumCapabilities }): JSX.Element {
+  const workflows = [
+    {
+      label: "Map",
+      available: props.capabilities.map.supported,
+      reason: formatCapabilityReason(props.capabilities.map) ?? "No map surface is supported.",
+    },
+    {
+      label: "Navigation",
+      available: props.capabilities.start_navigation.supported || props.capabilities.go_to_location.supported,
+      reason:
+        formatCapabilityReason(props.capabilities.start_navigation) ??
+        formatCapabilityReason(props.capabilities.go_to_location) ??
+        "Navigation is not supported.",
+    },
+    {
+      label: "Mapping",
+      available: props.capabilities.mapping_session.supported || props.capabilities.auto_mapping.supported,
+      reason:
+        formatCapabilityReason(props.capabilities.mapping_session) ??
+        formatCapabilityReason(props.capabilities.auto_mapping) ??
+        "Mapping is not supported.",
+    },
+    {
+      label: "Clean Area",
+      available: props.capabilities.start_coverage.supported || props.capabilities.coverage_mission.supported,
+      reason:
+        formatCapabilityReason(props.capabilities.start_coverage) ??
+        formatCapabilityReason(props.capabilities.coverage_mission) ??
+        "Coverage cleaning is not supported.",
+    },
+    {
+      label: "Rooms / zones",
+      available:
+        props.capabilities.room_semantics.supported ||
+        props.capabilities.zone_semantics.supported ||
+        props.capabilities.room_cleaning.supported ||
+        props.capabilities.zone_cleaning.supported,
+      reason:
+        formatCapabilityReason(props.capabilities.room_cleaning) ??
+        formatCapabilityReason(props.capabilities.zone_cleaning) ??
+        formatCapabilityReason(props.capabilities.room_semantics) ??
+        formatCapabilityReason(props.capabilities.zone_semantics) ??
+        "Rooms and zones are not supported.",
+    },
+    {
+      label: "Manual control",
+      available: props.capabilities.manual_control.supported,
+      reason: formatCapabilityReason(props.capabilities.manual_control) ?? "Manual control is not supported.",
+    },
+    {
+      label: "Camera",
+      available: false,
+      reason: "Camera feed is not exposed by the normalized vacuum adapter.",
+    },
+  ].filter((workflow) => !workflow.available);
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--progress-idle vacuum-unavailable-workflows">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Unavailable workflows</p>
+        <span className="vacuum-clean-area-badge">{workflows.length}</span>
+      </div>
+      <p className="vacuum-progress-idle-hint">
+        Advanced workflows are hidden until this backend reports support.
+      </p>
+      <div className="vacuum-unavailable-workflows__list">
+        {workflows.map((workflow) => (
+          <div key={workflow.label} className="vacuum-unavailable-workflows__item">
+            <strong>{workflow.label}</strong>
+            <span>{workflow.reason}</span>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -1938,6 +2322,14 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
   const roomsZonesSupported =
     roomSemanticsSupported || zoneSemanticsSupported || roomCleaningSupported || zoneCleaningSupported;
   const manualControlSupported = snapshot.capabilities.manual_control.supported;
+  const isBasicRobotProfile =
+    !mapSurfaceAvailable &&
+    !navigationSupported &&
+    !cleanAreaSupported &&
+    !roomsZonesSupported &&
+    !mappingSessionSupported &&
+    !autoMappingSupported &&
+    !manualControlSupported;
   const cleanAreaCoverageConfig = useMemo(
     () =>
       buildCleanAreaCoverageRuntimeConfig({
@@ -2230,38 +2622,77 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
     }
     return clamp(1 - remaining / initialRouteDistance, 0, 0.98);
   })();
-  const systemChips = [
-    {
-      label: "Connected",
-      icon: "connected" as const,
-      state: getChipTone(availability === "online", "success"),
-      pulsing: false,
-    },
-    {
-      label: "Map Live",
-      icon: "map" as const,
-      state: getChipTone(isMapReceiving, "success"),
-      pulsing: isMapReceiving,
-    },
-    {
-      label: "Localized",
-      icon: "localized" as const,
-      state: getChipTone(poseReady, "success"),
-      pulsing: false,
-    },
-  ] as const;
-  const taskChips = [
-    {
-      label: "Ready",
-      icon: "ready" as const,
-      state: getChipTone(readinessReady && poseReady, "success"),
-    },
-    {
-      label: "Target Selected",
-      icon: "target" as const,
-      state: getChipTone(hasTarget, "active"),
-    },
-  ] as const;
+  const systemChips = mapSurfaceAvailable
+    ? [
+        {
+          label: "Connected",
+          icon: "connected" as const,
+          state: getChipTone(availability === "online", "success"),
+          pulsing: false,
+        },
+        {
+          label: "Map Live",
+          icon: "map" as const,
+          state: getChipTone(isMapReceiving, "success"),
+          pulsing: isMapReceiving,
+        },
+        {
+          label: "Localized",
+          icon: "localized" as const,
+          state: getChipTone(poseReady, "success"),
+          pulsing: false,
+        },
+      ] as const
+    : [
+        {
+          label: "Connected",
+          icon: "connected" as const,
+          state: getChipTone(availability === "online", "success"),
+          pulsing: false,
+        },
+        {
+          label: "Runtime",
+          icon: "ready" as const,
+          state: getChipTone(snapshot.health?.runtimeStatus === "online", "success"),
+          pulsing: false,
+        },
+        {
+          label: "Source",
+          icon: "connected" as const,
+          state: getChipTone(Boolean(snapshot.source && !snapshot.source.stale && snapshot.source.status === "reachable"), "success"),
+          pulsing: false,
+        },
+      ] as const;
+  const taskChips = mapSurfaceAvailable
+    ? [
+        {
+          label: "Ready",
+          icon: "ready" as const,
+          state: getChipTone(readinessReady && poseReady, "success"),
+        },
+        {
+          label: "Target Selected",
+          icon: "target" as const,
+          state: getChipTone(hasTarget, "active"),
+        },
+      ] as const
+    : [
+        {
+          label: `Activity: ${humanizeStatus(snapshot.activity?.status)}`,
+          icon: "ready" as const,
+          state: getActivityTone(snapshot.activity) === "danger" ? "inactive" as const : getChipTone(Boolean(snapshot.activity), "active"),
+        },
+        {
+          label: snapshot.battery.percentage == null ? "Battery" : `${Math.round(snapshot.battery.percentage)}%`,
+          icon: "battery" as const,
+          state: getChipTone(snapshot.battery.readiness === "ready", "success"),
+        },
+        {
+          label: `Dock: ${humanizeStatus(snapshot.dock?.state)}`,
+          icon: "dock" as const,
+          state: getChipTone(getDockTone(snapshot.dock) === "ready", "success"),
+        },
+      ] as const;
   const readinessIssue = snapshot.readiness.blockingReasons[0] ?? null;
   const targetDistanceLabel = displayedTarget ? formatDistance(destinationDistance) : null;
   const targetHeadingLabel = displayedTarget ? headingLabel(displayedTarget.yaw) : null;
@@ -2330,7 +2761,9 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
   const recoveryLabel = formatRecoveries(recoveryCount);
   const recoveryWarning = recoveryCount != null && recoveryCount > 0;
   const modeBreadcrumb =
-    activeMode === "mapping"
+    isBasicRobotProfile
+      ? "Basic Robot"
+      : activeMode === "mapping"
       ? "Mapping"
       : activeMode === "clean"
         ? "Clean Area"
@@ -3238,27 +3671,41 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
               onMapMetadataChange={setMapMetadata}
             />
           ) : (
-            <div className="vacuum-map-empty" role="status">
-              <VacuumMark className="vacuum-map-empty__mark" />
-              <div>
-                <strong>{snapshot.identity.label}</strong>
-                <span>{snapshot.map.detail ?? "Map is unavailable for this backend."}</span>
-              </div>
-            </div>
+            <NoMapCanvasPlaceholder
+              identity={snapshot.identity}
+              availability={snapshot.availability}
+              source={snapshot.source}
+              activity={snapshot.activity}
+              dock={snapshot.dock}
+              battery={snapshot.battery}
+              mapDetail={snapshot.map.detail}
+            />
           )}
 
           <div className="vacuum-sidebar">
-            {!mapSurfaceAvailable ? (
-              <BasicControlsCard
-                capabilities={snapshot.capabilities}
-                commandError={missionCommandError}
-                onStart={() => void handleBasicCommand("start_cleaning")}
-                onPause={() => void handleBasicCommand("pause")}
-                onStop={() => void handleBasicCommand("stop")}
-                onReturnToDock={() => void handleBasicCommand("return_to_dock")}
-              />
-            ) : null}
-
+            {isBasicRobotProfile ? (
+              <div className="vacuum-mode-content">
+                <BasicControlsCard
+                  capabilities={snapshot.capabilities}
+                  commandError={missionCommandError}
+                  onStart={() => void handleBasicCommand("start_cleaning")}
+                  onPause={() => void handleBasicCommand("pause")}
+                  onStop={() => void handleBasicCommand("stop")}
+                  onReturnToDock={() => void handleBasicCommand("return_to_dock")}
+                />
+                <BasicRobotStatusCard
+                  availability={snapshot.availability}
+                  health={snapshot.health}
+                  source={snapshot.source}
+                  activity={snapshot.activity}
+                  dock={snapshot.dock}
+                  battery={snapshot.battery}
+                  fault={snapshot.fault}
+                />
+                <UnavailableWorkflowsCard capabilities={snapshot.capabilities} />
+              </div>
+            ) : (
+              <>
             {/* ── Mode switcher ── */}
             <div className="vacuum-mode-switcher">
               <span className="vacuum-mode-switcher__label">Mode</span>
@@ -3605,6 +4052,8 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
               </div>
             )}
 
+              </>
+            )}
           </div>
         </section>
       </main>
