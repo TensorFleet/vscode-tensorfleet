@@ -101,3 +101,67 @@ export interface CallbackServerResult {
   /** Promise that resolves when token is received */
   tokenPromise: Promise<string>;
 }
+
+/**
+ * Options for platform-neutral OAuth login redirect flow.
+ * Works in Node.js and Electron main process with injected adapters.
+ */
+export interface OAuthRedirectFlowOptions {
+  /** Backend base URL (e.g., https://eu.vm.tensorfleet.net) */
+  backendUrl: string;
+
+  /** Opens the computed OAuth URL in the target environment */
+  openBrowser: (url: string) => Promise<void> | void;
+
+  /** Create an HTTP server (usually `http.createServer`) */
+  createServer: (
+    handler?: (
+      req: import("http").IncomingMessage,
+      res: import("http").ServerResponse,
+    ) => void,
+  ) => import("http").Server;
+
+  /** Called before resolving the token */
+  onTokenReceived?: (token: string) => Promise<void> | void;
+
+  /** Optional error hook */
+  onError?: (error: Error) => void;
+
+  /** Initiate endpoint path (default: /api/auth/vscode/initiate) */
+  initiatePath?: string;
+
+  /** Callback host (default: 127.0.0.1) */
+  host?: string;
+
+  /** Callback listen port (default: 0, ephemeral) */
+  port?: number;
+
+  /** Callback path (default: /callback) */
+  callbackPath?: string;
+
+  /** Timeout in milliseconds (default: 5 minutes) */
+  timeoutMs?: number;
+
+  /** Optional fetch override for testing/custom runtimes */
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Active OAuth redirect flow handle.
+ */
+export interface OAuthRedirectFlowSession {
+  /** Promise that resolves to token */
+  tokenPromise: Promise<string>;
+
+  /** Callback URL passed to backend */
+  callbackBaseUrl: string;
+
+  /** Final browser URL that was opened */
+  finalAuthUrl: string;
+
+  /** OAuth state from initiate endpoint */
+  state: string;
+
+  /** Cancel in-progress flow */
+  cancel: (error?: Error) => void;
+}

@@ -1,10 +1,22 @@
 import * as vscode from 'vscode';
-import * as http from 'http';
-import * as https from 'https';
 import * as auth from './auth';
 import { getVmManagerUrl } from './regions';
 import { UnifiedStatusCoordinator } from './unified-status';
 import type { TelemetryService } from './telemetry';
+import {
+  createVmSnapshot,
+  fetchVmSnapshot,
+  formatError as formatVmError,
+  getGazeboSelection as getSharedGazeboSelection,
+  isVmAuthError,
+  listGazeboPresets as listSharedGazeboPresets,
+  resetGazeboSelection as resetSharedGazeboSelection,
+  restartVm as restartSharedVm,
+  setGazeboPreset as setSharedGazeboPreset,
+  startVm as startSharedVm,
+  stopVm as stopSharedVm,
+  type VmManagerClientOptions,
+} from 'tensorfleet-auth';
 
 // Core state types (imported from unified-status, keeping local types for backward compatibility)
 // Note: These types are now imported from unified-status.ts, but keeping local definitions
@@ -18,28 +30,6 @@ type VmState =
   | 'stopping'
   | 'failed'
   | 'pending';
-
-// API response types
-interface VmStatusResponse {
-  status: string;
-  vm_id?: string;
-  ip_address?: string;
-  updated_at?: string;
-  vmId?: string;
-}
-
-interface VmInfoResponse extends VmStatusResponse {
-  id?: string;
-  created_at?: string;
-  uptime_seconds?: number | null;
-  provider?: string;
-  region?: string;
-}
-
-interface ApiHealthResponse {
-  status: string;
-  time: string;
-}
 
 // Internal state representation
 interface VmSnapshot {
@@ -56,11 +46,6 @@ interface VmSnapshot {
 
 interface VmQuickPickItem extends vscode.QuickPickItem {
   action?: () => Promise<void> | void | Thenable<void>;
-}
-
-interface HttpError extends Error {
-  status?: number;
-  body?: string;
 }
 
 // VM Configuration types
@@ -187,7 +172,7 @@ export class VMManagerIntegration implements vscode.Disposable {
     this.statusBarItem.hide(); // Hide - unified coordinator handles display
 
     // Initialize with unknown state
-    this.currentSnapshot = this.createSnapshot({ connection: 'disconnected', vmState: 'unknown' });
+    this.currentSnapshot = createVmSnapshot({ connection: 'disconnected', vmState: 'unknown' });
 
     context.subscriptions.push(
       this,
@@ -282,7 +267,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       // Check if it's an auth error scoped to VM Manager
       if (this.isAuthError(error)) {
         this.applySnapshot(
-          this.createSnapshot({
+          createVmSnapshot({
             connection: 'not_authenticated',
             vmState: 'unknown',
             error: 'VM Manager authentication failed - check settings or login again'
@@ -294,7 +279,7 @@ export class VMManagerIntegration implements vscode.Disposable {
 
       // Mark as disconnected but preserve last known VM state
       this.applySnapshot(
-        this.createSnapshot({
+        createVmSnapshot({
           connection: 'disconnected',
           vmState: this.currentSnapshot.vmState,
           error: message
@@ -308,93 +293,18 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   private async fetchSnapshot(): Promise<VmSnapshot> {
-    // Check auth first - no token means not authenticated
     const token = await this.getAuthToken();
-    if (!token) {
-      return this.createSnapshot({
-        connection: 'not_authenticated',
-        vmState: 'unknown',
-        error: 'Please login to access VM Manager'
-      });
-    }
 
     try {
-      await this.ensureApiHealthy();
-
-      let status: VmStatusResponse | undefined;
-      let vmState: VmState = 'unknown';
-      let sawVmMissing = false;
-
-      try {
-        status = await this.apiRequest<VmStatusResponse>('GET', '/vms/self/status');
-        if (status) {
-          vmState = this.parseVmState(status.status);
-        }
-      } catch (statusError) {
-        if (this.isAuthError(statusError)) {
-          return this.createSnapshot({
-            connection: 'not_authenticated',
-            vmState: 'unknown',
-            error: 'VM Manager authentication failed - check settings or login again'
-          });
-        }
-        if (this.isNotFoundError(statusError)) {
-          sawVmMissing = true;
-        } else {
-          this.outputChannel.appendLine(`[VM Manager] Status fetch failed: ${this.formatError(statusError)}`);
-          this.captureVmError(statusError, { source: 'vm.status_fetch' });
-        }
-      }
-
-      let info: VmInfoResponse | undefined;
-      try {
-        info = await this.apiRequest<VmInfoResponse>('GET', '/vms/self/info');
-      } catch (infoError) {
-        if (this.isAuthError(infoError)) {
-          return this.createSnapshot({
-            connection: 'not_authenticated',
-            vmState: 'unknown',
-            error: 'VM Manager authentication failed - check settings or login again'
-          });
-        }
-        if (this.isNotFoundError(infoError)) {
-          sawVmMissing = true;
-        } else {
-          this.outputChannel.appendLine(`[VM Manager] Info fetch failed: ${this.formatError(infoError)}`);
-          this.captureVmError(infoError, { source: 'vm.info_fetch' });
-        }
-      }
-
-      const resolvedState = vmState === 'unknown' && sawVmMissing ? 'pending' : vmState;
-
-      return this.createSnapshot({
-        connection: 'connected',
-        vmState: resolvedState,
-        nodeId: info?.id ?? status?.vm_id,
-        ipAddress: info?.ip_address || status?.ip_address,
-        provider: info?.provider,
-        region: info?.region,
-        uptimeSeconds: info?.uptime_seconds
-      });
+      return await fetchVmSnapshot(this.getVmClientOptions(token));
     } catch (error) {
-      // Check if it's auth error
       if (this.isAuthError(error)) {
-        return this.createSnapshot({
+        return createVmSnapshot({
           connection: 'not_authenticated',
           vmState: 'unknown',
           error: 'VM Manager authentication failed - check settings or login again'
         });
       }
-      // Re-throw other errors to be handled by refresh()
-      throw error;
-    }
-  }
-
-  private async ensureApiHealthy(): Promise<ApiHealthResponse> {
-    try {
-      return await this.apiRequest<ApiHealthResponse>('GET', '/vms/health', undefined, { includeAuth: false });
-    } catch (error) {
-      this.captureVmError(error, { source: 'vm.health_check' });
       throw error;
     }
   }
@@ -672,11 +582,7 @@ export class VMManagerIntegration implements vscode.Disposable {
 
       this.trackVmEvent('vm.start', { config: configToUse.id });
 
-      const requestBody = {
-        sim_config: configToUse.sim_config,
-      };
-
-      await this.apiRequest<{ status: string }>('POST', '/vms/self/start', requestBody);
+      await startSharedVm(this.getVmClientOptions(await this.getRequiredAuthToken()), configToUse);
       await this.refresh(true);
       this.outputChannel.appendLine(`[VM Manager] VM start initiated with config: ${configToUse.name}`);
       this.trackVmEvent('vm.start', { phase: 'success', config: configToUse.id });
@@ -697,7 +603,7 @@ export class VMManagerIntegration implements vscode.Disposable {
       this.userInitiatedAction = 'stop';
       this.trackVmEvent('vm.stop', { phase: 'start' });
       this.setOptimisticState('stopping');
-      await this.apiRequest<{ status: string }>('POST', '/vms/self/stop');
+      await stopSharedVm(this.getVmClientOptions(await this.getRequiredAuthToken()));
       await this.refresh(true);
       this.outputChannel.appendLine('[VM Manager] VM stop initiated');
       this.trackVmEvent('vm.stop', { phase: 'success' });
@@ -711,39 +617,23 @@ export class VMManagerIntegration implements vscode.Disposable {
   }
 
   async listGazeboPresets(): Promise<GazeboPreset[]> {
-    const response = await this.apiRequest<{ presets?: GazeboPreset[] }>(
-      'GET',
-      '/vms/self/tensorfleet/api/v1/presets'
-    );
-    return response.presets ?? [];
+    return await listSharedGazeboPresets(this.getVmClientOptions(await this.getRequiredAuthToken()));
   }
 
   async getGazeboSelection(): Promise<GazeboSelection> {
-    return this.apiRequest<GazeboSelection>(
-      'GET',
-      '/vms/self/tensorfleet/api/v1/gazebo/world'
-    );
+    return await getSharedGazeboSelection(this.getVmClientOptions(await this.getRequiredAuthToken()));
   }
 
   async setGazeboPreset(preset: string): Promise<string> {
-    const trimmedPreset = preset.trim();
-    const response = await this.apiRequest<{ message?: string }>(
-      'POST',
-      '/vms/self/tensorfleet/api/v1/gazebo/world',
-      { preset: trimmedPreset }
-    );
-    this.outputChannel.appendLine(`[VM Manager] Gazebo preset switch requested: ${trimmedPreset}`);
-    return response.message ?? `Gazebo preset '${trimmedPreset}' switch requested`;
+    const message = await setSharedGazeboPreset(this.getVmClientOptions(await this.getRequiredAuthToken()), preset);
+    this.outputChannel.appendLine(`[VM Manager] ${message}`);
+    return message;
   }
 
   async resetGazeboSelection(): Promise<string> {
-    const response = await this.apiRequest<{ message?: string }>(
-      'POST',
-      '/vms/self/tensorfleet/api/v1/gazebo/world',
-      { reset: true }
-    );
-    this.outputChannel.appendLine('[VM Manager] Gazebo selection reset requested');
-    return response.message ?? 'Gazebo selection reset requested';
+    const message = await resetSharedGazeboSelection(this.getVmClientOptions(await this.getRequiredAuthToken()));
+    this.outputChannel.appendLine(`[VM Manager] ${message}`);
+    return message;
   }
 
   private async restartVm() {
@@ -764,11 +654,7 @@ export class VMManagerIntegration implements vscode.Disposable {
 
       // Use the same config logic as startVm
       const configToUse = this.getLastUsedConfig();
-      const requestBody = {
-        sim_config: configToUse.sim_config,
-      };
-
-      await this.apiRequest<{ status: string; message?: string }>('POST', '/vms/self/restart', requestBody);
+      await restartSharedVm(this.getVmClientOptions(await this.getRequiredAuthToken()), configToUse);
       await this.refresh(true);
       this.outputChannel.appendLine('[VM Manager] VM restart initiated');
     } catch (error) {
@@ -823,141 +709,14 @@ export class VMManagerIntegration implements vscode.Disposable {
     }
   }
 
-  // ========== HTTP Client ==========
-
-  private async apiRequest<T>(
-    method: string,
-    endpoint: string,
-    body?: any,
-    options?: { includeAuth?: boolean; baseUrlOverride?: string; tokenOverride?: string }
-  ): Promise<T> {
-    const baseUrl = (options?.baseUrlOverride ?? this.getApiBaseUrl()).trim() || this.getApiBaseUrl();
-    const url = new URL(endpoint.replace(/^\//, ''), baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
-    const isHttps = url.protocol === 'https:';
-    const lib = isHttps ? https : http;
-    const data = body ? JSON.stringify(body) : undefined;
-
-    const headers: http.OutgoingHttpHeaders = {
-      Accept: 'application/json',
-      ...(data && { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) })
-    };
-
-    const includeAuth = options?.includeAuth ?? true;
-    if (includeAuth) {
-      const token = await this.getAuthToken();
-      if (!token) {
-        throw new Error('NOT_AUTHENTICATED');
-      }
-      headers.Authorization = `Bearer ${token}`;
-    }
-
-    return new Promise<T>((resolve, reject) => {
-      const req = lib.request(
-        {
-          method,
-          hostname: url.hostname,
-          port: url.port || (isHttps ? 443 : 80),
-          path: `${url.pathname}${url.search}`,
-          headers
-        },
-        (res) => {
-          const chunks: Buffer[] = [];
-          res.on('data', (chunk) => chunks.push(chunk));
-          res.on('end', () => {
-            const bodyText = Buffer.concat(chunks).toString('utf8');
-
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              if (!bodyText) {
-                resolve(undefined as T);
-                return;
-              }
-              try {
-                resolve(JSON.parse(bodyText));
-              } catch (error) {
-                reject(error);
-              }
-              return;
-            }
-
-            // Handle auth errors (401/403) scoped to VM Manager
-            if (res.statusCode === 401 || res.statusCode === 403) {
-              const httpError: HttpError = new Error('VM Manager authentication failed');
-              httpError.status = res.statusCode;
-              httpError.body = bodyText;
-              reject(httpError);
-              return;
-            }
-
-            const httpError: HttpError = new Error(
-              `Request failed (${res.statusCode}): ${bodyText || res.statusMessage || 'Unknown error'}`
-            );
-            httpError.status = res.statusCode;
-            httpError.body = bodyText;
-            reject(httpError);
-          });
-        }
-      );
-
-      req.on('error', (error) => {
-        if (error && typeof error === 'object' && 'code' in error) {
-          const code = String((error as NodeJS.ErrnoException).code);
-          if (code === 'ECONNREFUSED') {
-            reject(new Error(`VM Manager API not responding`));
-            return;
-          }
-          if (code === 'ETIMEDOUT') {
-            reject(new Error(`Request to ${url.origin} timed out`));
-            return;
-          }
-        }
-        reject(error);
-      });
-
-      req.setTimeout(5000, () => req.destroy(new Error(`Request timed out`)));
-      if (data) req.write(data);
-      req.end();
-    });
-  }
-
   // ========== Helpers ==========
-
-  private createSnapshot(params: Partial<VmSnapshot>): VmSnapshot {
-    return {
-      connection: params.connection ?? 'connected',
-      vmState: params.vmState ?? 'unknown',
-      nodeId: params.nodeId,
-      ipAddress: params.ipAddress,
-      provider: params.provider,
-      region: params.region,
-      uptimeSeconds: params.uptimeSeconds,
-      timestamp: params.timestamp ?? Date.now(),
-      error: params.error
-    };
-  }
 
   private setOptimisticState(vmState: VmState) {
     this.applySnapshot({ ...this.currentSnapshot, vmState, error: undefined, timestamp: Date.now() });
   }
 
-  private parseVmState(status?: string): VmState {
-    const normalized = (status ?? '').toLowerCase().trim();
-    if (normalized.includes('running')) return 'running';
-    if (normalized.includes('starting')) return 'starting';
-    if (normalized.includes('stopping')) return 'stopping';
-    if (normalized.includes('stopped')) return 'stopped';
-    if (normalized.includes('fail') || normalized.includes('error')) return 'failed';
-    return 'unknown';
-  }
-
-
   private formatError(error: unknown): string {
-    if (error instanceof Error) return error.message;
-    if (typeof error === 'string') return error;
-    try {
-      return JSON.stringify(error);
-    } catch {
-      return 'Unknown error';
-    }
+    return formatVmError(error);
   }
 
   private isValidConfigId(configId?: string): configId is string {
@@ -1037,17 +796,24 @@ export class VMManagerIntegration implements vscode.Disposable {
     }
   }
 
-  private isNotFoundError(error: unknown): boolean {
-    return !!(error && typeof error === 'object' && 'status' in error && (error as HttpError).status === 404);
+  private async getRequiredAuthToken(): Promise<string> {
+    const token = await this.getAuthToken();
+    if (!token) {
+      throw new Error('NOT_AUTHENTICATED');
+    }
+    return token;
   }
 
   private isAuthError(error: unknown): boolean {
-    return !!(
-      error &&
-      typeof error === 'object' &&
-      'status' in error &&
-      ((error as HttpError).status === 401 || (error as HttpError).status === 403)
-    );
+    return isVmAuthError(error);
+  }
+
+  private getVmClientOptions(token?: string): VmManagerClientOptions {
+    return {
+      baseUrl: this.getApiBaseUrl(),
+      token,
+      timeoutMs: 5000,
+    };
   }
 
   // ========== Configuration Management ==========
