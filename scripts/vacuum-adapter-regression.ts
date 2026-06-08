@@ -1341,6 +1341,26 @@ function testValetudoCommandStub(): void {
       error: { command: "start_cleaning", code: "invalid_request", message: "Missing command" },
     },
   );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "failed",
+      command: "start_cleaning",
+      message: "runtime returned malformed command response",
+      reason: "malformed_command_response",
+      code: "malformed_command_response",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: {
+        command: "start_cleaning",
+        code: "malformed_backend_response",
+        message: "runtime returned malformed command response",
+      },
+    },
+  );
 }
 
 function testValetudoStateAwareCommandAvailability(): void {

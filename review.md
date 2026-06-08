@@ -231,21 +231,33 @@ Diagnostics-only fields that must not drive product behavior:
 ## Existing Validation Coverage Found
 
 - VM runtime tests cover fixed mock snapshot identity, raw capability diagnostics, capability tiers, last command audit, unknown command unsupported results, malformed command requests, source-unreachable unavailable results, fixed mock command state transitions, invalid-state behavior for basic commands, missing BasicControl capability, HTTP mock source snapshot/command routing, HTTP source command failure, HTTP source unavailable/stale diagnostics, MQTT snapshot hydration, MQTT stale diagnostics, stale MQTT command unavailability, and MQTT disconnected command unavailability.
-- Adapter regression covers Valetudo capability mapping, command mapping, runtime command result mapping, state-aware command availability, runtime unavailable mapping, no-map product surface safety, and raw capability privacy from UI behavior.
+- Adapter regression covers Valetudo capability mapping, command mapping, runtime command result mapping, malformed backend command-response aliasing, state-aware command availability, runtime unavailable mapping, no-map product surface safety, readable disabled reasons, and raw capability privacy from UI behavior.
 
-## Recommended Next Milestone Instructions
+## Boundary Hardening Closure
 
-1. Normalize runtime command error codes so invalid state, capability unavailable, source command failed, and malformed request paths map cleanly into `VacuumCommandErrorCode` without losing meaning.
-2. Add a diagnostics-only UI drawer/card that renders normalized diagnostics and raw runtime diagnostics without using them to gate controls.
-3. Extend runtime inventory tests with explicit fixtures for each snapshot source mode and command result shape, then assert adapter mapping for every field in this inventory.
-4. Decide the first advanced Valetudo product workflow only after the runtime can normalize the required source data: fan/water presets, consumables, map/segment IDs, zone geometry, or go-to targets.
-5. Keep product behavior gated only by normalized `vacuum_adapter` state and descriptors; do not branch on backend id outside adapter selection/composition and do not use diagnostics for control enablement.
+Milestone 1 inventory is complete. Milestone 2A command/result hardening is complete. The final boundary lock pass confirmed focused runtime and adapter coverage for stale source command blocking, invalid-state results, unsupported/capability-unavailable results, malformed command requests, source command failures, malformed backend command-response aliases, readable disabled reasons, and raw Valetudo capability privacy.
+
+Diagnostics remain intentionally passive. Raw Valetudo capability names, transport details, source URLs, last-command audit data, and raw runtime/source details stay diagnostics-only and must not gate product controls. Product behavior continues to branch on normalized adapter state and capability descriptors.
+
+Deferred Valetudo capabilities remain deferred: map rendering, go-to/navigation, Clean Area, rooms/zones/segments, fan speed, water usage, consumables, OpenClaw, MQTT production hardening, real hardware support, and diagnostics drawer work are outside this closed regression/diagnostics-focused thread.
+
+## Next Product Direction
+
+Recommended next milestone: `Valetudo Milestone 3 - Basic Operator Surface Forward Pass`.
+
+Focus:
+
+1. Improve product/operator UX for the existing supported no-map Valetudo path.
+2. Keep the simulation layout intact.
+3. Use only normalized adapter fields.
+4. Do not add a diagnostics drawer unless explicitly requested later.
+5. Do not add advanced controls until the runtime normalizes the required state, presets, and targets.
 
 ## Validation
 
-Milestone 2A updated runtime command behavior, adapter command result mapping, capability reason text, and focused regression coverage.
+Milestone 2A updated runtime command behavior, adapter command result mapping, capability reason text, and focused regression coverage. The final boundary lock pass added only the missing malformed backend command-response alias regression and documentation closure notes.
 
-Focused checks after hardening:
+Focused checks for the final wrap-up:
 
 ```sh
 bun run test:vacuum-adapter
