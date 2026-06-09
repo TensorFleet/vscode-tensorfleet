@@ -2073,6 +2073,11 @@ function testPublicContractAndUiBoundary(): void {
     "Vacuum Control should render a no-map placeholder in the reserved map area",
   );
   assert.equal(
+    /vacuum-no-map-placeholder__chips/.test(panelContents),
+    false,
+    "No-map placeholder should keep the map-unavailable hierarchy sparse instead of duplicating status chips",
+  );
+  assert.equal(
     /mapSurfaceAvailable \? \([\s\S]*?<MapCanvas[\s\S]*?\) : \([\s\S]*?<NoMapCanvasPlaceholder/.test(panelContents),
     true,
     "MapCanvas should be replaced by a no-map placeholder when map support is false",
@@ -2117,6 +2122,21 @@ function testPublicContractAndUiBoundary(): void {
     /isBasicRobotProfile/.test(panelContents) && /UnavailableWorkflowsCard/.test(panelContents),
     true,
     "No-map basic profiles should show advanced workflows as unavailable instead of dominant mode tabs",
+  );
+  assert.equal(
+    /Map Live/.test(panelContents) && /Localized/.test(panelContents) && /Target Selected/.test(panelContents),
+    true,
+    "Simulation status strip labels should remain available for map-capable backends",
+  );
+  assert.equal(
+    /formatDockBatterySummary\(snapshot\.activity, snapshot\.dock, snapshot\.battery, \{\s*omitDockWhenActivityDuplicates: true,\s*\}\)/.test(panelContents),
+    true,
+    "No-map task strip should collapse dock and battery into one summary chip",
+  );
+  assert.equal(
+    /icon: "dock" as const/.test(panelContents),
+    false,
+    "No-map task strip should not render a separate dock chip beside activity and battery summary",
   );
   assert.equal(
     /!mapSurfaceAvailable && !isBasicRobotProfile[\s\S]*?<BasicControlsCard/.test(panelContents),

@@ -1709,6 +1709,10 @@ function formatBatteryState(battery: VacuumBatteryState): string {
   return `${Math.round(battery.percentage)}%${charging}`;
 }
 
+function formatBatteryLevel(battery: VacuumBatteryState): string | null {
+  return battery.percentage == null ? null : `${Math.round(battery.percentage)}%`;
+}
+
 function humanizeStatus(value: string | null | undefined): string {
   if (!value) {
     return "Unknown";
@@ -1831,6 +1835,43 @@ function getDockTone(dock: VacuumDockStatus | undefined): "ready" | "warning" | 
   if (dock.state === "returning") return "warning";
   if (dock.state === "error") return "danger";
   return "muted";
+}
+
+function getBasicActivityLabel(activity: VacuumRobotActivity | undefined): string {
+  if (activity?.status === "returning") {
+    return "Returning to dock";
+  }
+  return humanizeStatus(activity?.status ?? "unknown");
+}
+
+function formatDockBatterySummary(
+  activity: VacuumRobotActivity | undefined,
+  dock: VacuumDockStatus | undefined,
+  battery: VacuumBatteryState,
+  options: { omitDockWhenActivityDuplicates?: boolean } = {},
+): string {
+  const batteryLevel = formatBatteryLevel(battery);
+  const dockLabel = dock?.state && dock.state !== "unknown" ? humanizeStatus(dock.state) : null;
+  const activityStatus = activity?.status;
+  const dockDuplicatesActivity =
+    options.omitDockWhenActivityDuplicates === true &&
+    ((activityStatus === "docked" && dock?.state === "docked") ||
+      (activityStatus === "charging" && dock?.state === "charging") ||
+      (activityStatus === "returning" && (dock?.state === "returning" || dock?.state === "docked")));
+  const parts = [dockDuplicatesActivity ? null : dockLabel, batteryLevel].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : "Battery unknown";
+}
+
+function formatNoMapPlaceholderSummary(
+  activity: VacuumRobotActivity | undefined,
+  dock: VacuumDockStatus | undefined,
+  battery: VacuumBatteryState,
+): string {
+  if (activity?.status === "returning") {
+    const batteryLevel = formatBatteryLevel(battery);
+    return ["Returning to dock", batteryLevel].filter(Boolean).join(" · ");
+  }
+  return formatDockBatterySummary(activity, dock, battery);
 }
 
 function getFaultTone(fault: VacuumFaultState): "ready" | "warning" | "danger" | "muted" {
@@ -1982,13 +2023,6 @@ function BasicControlsCard(props: {
   );
 }
 
-function noMapChipClass(tone: "ready" | "warning" | "danger" | "muted"): string {
-  if (tone === "ready") return " vacuum-no-map-chip--ready";
-  if (tone === "warning") return " vacuum-no-map-chip--warning";
-  if (tone === "danger") return " vacuum-no-map-chip--danger";
-  return "";
-}
-
 function NoMapCanvasPlaceholder(props: {
   identity: VacuumBackendIdentity;
   availability: VacuumAvailability;
@@ -1998,27 +2032,7 @@ function NoMapCanvasPlaceholder(props: {
   battery: VacuumBatteryState;
   mapDetail?: string;
 }): JSX.Element {
-  const sourceStatus = props.source?.stale ? "stale" : props.source?.status ?? "unknown";
-  const activityStatus = props.activity?.status ?? "unknown";
-  const dockStatus = props.dock?.state ?? "unknown";
-  const batteryLabel =
-    props.battery.percentage == null
-      ? "Battery unknown"
-      : `${Math.round(props.battery.percentage)}%${props.battery.charging ? " charging" : ""}`;
-
-  const availabilityTone: "ready" | "warning" | "danger" | "muted" =
-    props.availability.connected ? "ready" : props.availability.status === "connecting" ? "warning" : "danger";
-  const sourceTone = getSourceTone(props.source);
-  const dockTone = getDockTone(props.dock);
-  const batteryTone: "ready" | "warning" | "danger" | "muted" =
-    props.battery.readiness === "ready" ? "ready" : props.battery.readiness === "unavailable" ? "danger" : "muted";
-
-  const sourceChipLabel = (() => {
-    if (sourceStatus === "reachable" && !props.source?.stale) return "Source live";
-    if (sourceStatus === "stale") return "Source stale";
-    if (sourceStatus === "unreachable") return "Source offline";
-    return `Source: ${humanizeStatus(sourceStatus)}`;
-  })();
+  const statusSummary = formatNoMapPlaceholderSummary(props.activity, props.dock, props.battery);
 
   return (
     <section className="vacuum-map-card" aria-label="Reserved map area">
@@ -2028,18 +2042,9 @@ function NoMapCanvasPlaceholder(props: {
           <div className="vacuum-no-map-placeholder__copy">
             <p className="vacuum-panel-card__eyebrow">Map unavailable</p>
             <h2>{props.identity.label}</h2>
-            {props.identity.model ? <span>{props.identity.model}</span> : null}
-            <strong>{humanizeStatus(activityStatus)}</strong>
+            <strong>{statusSummary}</strong>
             <p>{props.mapDetail ?? "This backend does not expose a product map yet."}</p>
             <p>Basic cleaning controls are available from the sidebar.</p>
-          </div>
-          <div className="vacuum-no-map-placeholder__chips" aria-label="Basic robot state">
-            <span className={noMapChipClass(availabilityTone)}>
-              {props.availability.connected ? "Connected" : humanizeStatus(props.availability.status)}
-            </span>
-            <span className={noMapChipClass(sourceTone)}>{sourceChipLabel}</span>
-            <span className={noMapChipClass(dockTone)}>{humanizeStatus(dockStatus)}</span>
-            <span className={noMapChipClass(batteryTone)}>{batteryLabel}</span>
           </div>
         </div>
       </div>
@@ -2695,19 +2700,16 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
       ] as const
     : [
         {
-          label: humanizeStatus(snapshot.activity?.status ?? "unknown"),
+          label: getBasicActivityLabel(snapshot.activity),
           icon: "ready" as const,
           state: getActivityTone(snapshot.activity) === "danger" ? "inactive" as const : getChipTone(Boolean(snapshot.activity), "active"),
         },
         {
-          label: snapshot.battery.percentage == null ? "Battery" : `${Math.round(snapshot.battery.percentage)}%`,
+          label: formatDockBatterySummary(snapshot.activity, snapshot.dock, snapshot.battery, {
+            omitDockWhenActivityDuplicates: true,
+          }),
           icon: "battery" as const,
-          state: getChipTone(snapshot.battery.readiness === "ready", "success"),
-        },
-        {
-          label: humanizeStatus(snapshot.dock?.state ?? "unknown"),
-          icon: "dock" as const,
-          state: getChipTone(getDockTone(snapshot.dock) === "ready", "success"),
+          state: getChipTone(snapshot.battery.readiness === "ready" || getDockTone(snapshot.dock) === "ready", "success"),
         },
       ] as const;
   const readinessIssue = snapshot.readiness.blockingReasons[0] ?? null;

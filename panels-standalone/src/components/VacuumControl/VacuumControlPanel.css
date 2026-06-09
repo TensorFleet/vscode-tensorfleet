@@ -3073,45 +3073,6 @@ body {
   line-height: 1.45;
 }
 
-.vacuum-no-map-placeholder__chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 7px;
-}
-
-.vacuum-no-map-placeholder__chips span {
-  max-width: 190px;
-  overflow: hidden;
-  padding: 6px 9px;
-  border: 1px solid rgba(232, 226, 214, 0.08);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.035);
-  color: var(--vacuum-text-muted);
-  font-size: 10px;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.vacuum-no-map-chip--ready {
-  color: var(--vacuum-success) !important;
-  background: rgba(88, 211, 141, 0.1) !important;
-  border-color: rgba(88, 211, 141, 0.18) !important;
-}
-
-.vacuum-no-map-chip--warning {
-  color: var(--vacuum-warning) !important;
-  background: rgba(255, 179, 92, 0.1) !important;
-  border-color: rgba(255, 179, 92, 0.18) !important;
-}
-
-.vacuum-no-map-chip--danger {
-  color: var(--vacuum-danger) !important;
-  background: rgba(255, 116, 97, 0.1) !important;
-  border-color: rgba(255, 116, 97, 0.18) !important;
-}
-
 .vacuum-basic-status-grid {
   display: grid;
   grid-template-columns: 1fr;
