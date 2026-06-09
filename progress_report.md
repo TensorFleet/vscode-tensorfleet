@@ -1,116 +1,89 @@
-# Progress Report - Valetudo Final Boundary Lock
+# Progress Report - Valetudo Milestone 3: Basic Operator Surface Forward Pass
 Current report date: 2026-06-09.
 
 ## 1. What changed
 
-This was the final command/regression/diagnostics-boundary wrap-up pass for the Valetudo mock/backend hardening thread.
+This milestone improved the product/operator UX for the existing supported no-map Valetudo path. No new Valetudo capabilities, no diagnostics drawer, and no advanced robot features were added. All behavior still derives from normalized adapter fields and normalized commands.
 
-- Audited the Milestone 2A runtime and adapter tests before adding coverage.
-- Added one focused adapter regression for the already-supported `malformed_command_response` runtime alias mapping to shared `malformed_backend_response`.
-- Updated `review.md` to mark the Milestone 1 inventory, Milestone 2A command hardening, and final boundary checks closed for now.
-- No product behavior changed.
-- No new product features were added.
-- No diagnostics drawer or broad fixture matrix was added.
+### No-map canvas placeholder
 
-## 2. Which mode this affects
+- **Tonal chip states**: The four status chips at the bottom of the placeholder (availability, source, dock, battery) now carry visual tone — green for healthy/ready states, orange for stale/warning states, red for unreachable/danger states. Previously all chips were the same muted grey regardless of health.
+- **Source chip label**: The source chip now shows human-readable context: "Source live", "Source stale", "Source offline", or "Source: {status}" instead of just the raw status value. This makes the source reachability state clear without requiring hover.
+- **Model line removed when not available**: The placeholder no longer shows "Model not reported" when the backend provides no model string. The model line only appears when a model is actually populated in `identity.model`.
+- **CSS tonal classes added**: `.vacuum-no-map-chip--ready`, `.vacuum-no-map-chip--warning`, `.vacuum-no-map-chip--danger` added to the CSS, used by the updated placeholder chips.
 
-- Valetudo backend: Affected only by one regression check and docs. Runtime command/result behavior is unchanged from Milestone 2A.
-- Fixed mock Valetudo runtime: Unchanged.
-- HTTP Valetudo mock source: Unchanged.
-- MQTT Valetudo mock source: Unchanged.
-- Mapping: Unchanged. Valetudo map rendering remains unsupported.
-- Navigation/go-to: Unchanged. Detected Valetudo go-to remains diagnostics-only/detected-not-ready.
-- Clean Area: Unchanged. Coverage remains unsupported.
-- Rooms / Zones: Unchanged. Segment/zone detection remains deferred and not usable controls.
-- Fan/water/consumables: Unchanged. These remain unsupported or detected-not-ready only.
-- TurtleBot4/Nav2 simulation: Unchanged.
+### No-map status strip
 
-## 3. Ownership check
+- **Activity chip label**: The task chip for activity previously said `Activity: Idle` (with a redundant label prefix). It now shows the activity state value directly — e.g., `Idle`, `Cleaning`, `Docked` — letting the chip's icon and position in the "Task" group provide context.
+- **Dock chip label**: The dock chip previously said `Dock: Docked` (with a redundant label prefix). It now shows the dock state value directly — e.g., `Docked`, `Returning`, `Unknown`.
+- The existing simulation status strip (Map Live, Localized, Ready, Target Selected) is unchanged for map/pose/navigation-capable backends.
 
-- VM runtime owns source reachability, source freshness, fixed mock state transitions, HTTP/MQTT command routing, malformed request handling, and command audit diagnostics.
-- Backend adapter owns translation from runtime command result shapes into shared `VacuumCommandResult` / `VacuumCommandError` values.
-- Shared `vacuum_adapter` continues to own the public command error union. Raw runtime aliases do not become public shared error codes.
-- UI owns presentation of command errors and disabled reasons. It does not use diagnostics to decide whether controls render or enable.
-- Raw Valetudo capability names remain diagnostics-only. Product behavior still gates on normalized descriptors and state.
+### Basic Cleaning controls card
 
-Diagnostics remain intentionally passive and private to diagnostics surfaces. This pass did not add diagnostics UI.
+- **Removed "Runtime" badge**: The `BasicControlsCard` header previously included a "Runtime" badge beside the "Basic Cleaning" eyebrow. "Runtime" is not operator-meaningful vocabulary on a controls card. The badge was removed. The "Basic Cleaning" eyebrow remains and is sufficient to identify the card.
+- All four controls (start_cleaning, pause, stop, return_to_dock) still gate on normalized capability descriptors. Disabled reasons remain visible under disabled buttons in human-readable form.
 
-## 4. Coverage confirmed
+### Unavailable workflows summary
 
-Existing VM runtime tests already cover:
+- "Rooms / zones" → "Rooms / Zones": Capitalization made consistent with other workflow labels in the card.
+- The card structure, copy, and compactness are otherwise unchanged.
 
-- stale source blocks command dispatch
-- invalid JSON and missing command return invalid-request-shaped failures
-- source unreachable returns unavailable command results
-- fixed mock invalid-state command results for unsafe basic commands
-- missing `BasicControlCapability` returns unsupported/capability-unavailable behavior
-- HTTP mock source command routing and source command failure
-- MQTT disconnected and stale command unavailability
-- raw Valetudo capability diagnostics and capability tiers
-- last-command audit diagnostics
+## 2. Which modes are affected or unchanged
 
-Existing adapter/UI regression already covers:
+- **Valetudo no-map backend**: Affected by all operator surface changes above.
+- **TurtleBot4/Nav2 simulation**: Unchanged. The simulation layout, MapCanvas, mode switcher (Mapping/Navigate/Clean Area/Rooms), status strip (Map Live, Localized, Ready, Target Selected), and all simulation-specific cards are unchanged. The `isBasicRobotProfile` gate ensures no-map changes do not touch the simulation path.
+- **Fixed mock Valetudo runtime**: Unaffected at the runtime or adapter level. Operator surface changes apply when the normalized snapshot reaches the panel.
+- **HTTP/MQTT Valetudo mock sources**: Unaffected at the runtime or adapter level. Same as fixed mock.
 
-- Valetudo capability mapping and command mapping
-- unsupported/capability-unavailable mapping to `unsupported`
-- invalid-state mapping to `invalid_state`
-- invalid request alias mapping to `invalid_request`
-- source command failure mapping to `backend_error`
-- state-aware command availability and stale-source gating
-- runtime unavailable/malformed snapshot fallback behavior
-- readable disabled reasons instead of raw machine codes
-- raw Valetudo capability names staying out of public contract and product UI behavior
+## 3. Ownership boundaries
 
-Small gap closed in this pass:
+- UI owns presentation of chip tone, chip labels, and card header badges. No adapter contract field was added or changed.
+- Adapter still owns all normalized descriptor fields: `capabilities`, `activity`, `health`, `source`, `dock`, `battery`, `fault`, `identity`.
+- VM runtime owns source reachability, state cache, and command routing. Unchanged.
+- No raw Valetudo capability names, raw reason codes, or backend-specific identifiers are exposed in the product UI.
+- Product behavior continues to branch on normalized capability descriptors and normalized state, not on backend id.
 
-- `malformed_command_response` now has explicit adapter regression coverage mapping to `malformed_backend_response`.
+## 4. Webview close/reopen behavior
 
-## 5. Feature behavior changed
+No change. The panel hydrates from `adapter.snapshot` on mount. Normalized state from the adapter is the source of truth on re-open. No new local React state was introduced that would need to persist across closes.
 
-None in this pass.
+## 5. Real hardware compatibility
 
-Milestone 2A remains the behavior-changing hardening milestone: fixed mock invalid-state handling, stale MQTT command blocking, adapter error alias normalization, and readable disabled reason presentation.
+No hardware paths were added or changed. This milestone is UI-only polish for the normalized no-map path. Real hardware compatibility (Layer 6) remains unchanged and depends only on the adapter contract, which was not modified.
 
-Deferred capabilities remain deferred: map rendering, go-to/navigation, Clean Area, rooms/zones/segments, fan speed, water usage, consumables, OpenClaw, MQTT production hardening, real hardware support, and diagnostics drawer work.
+## 6. Feature behavior changed
 
-## 6. Files changed
+- No behavioral changes. All changes are presentation-only: chip tone, chip labels, badge removal, label capitalization.
+- No new commands were added.
+- No new capability fields were added.
+- No advanced Valetudo capabilities were added (map rendering, go-to/navigation, Clean Area, rooms/zones/segments, fan speed, water usage, consumables, OpenClaw, MQTT hardening, real hardware).
+- No diagnostics drawer was added.
 
-- `/home/shane/vscode-tensorfleet/scripts/vacuum-adapter-regression.ts`
-  Adds the missing malformed backend command-response alias regression.
-- `/home/shane/vscode-tensorfleet/review.md`
-  Marks the inventory and hardening thread closed, records final coverage, and points the next milestone toward product/UI work.
-- `/home/shane/vscode-tensorfleet/progress_report.md`
-  Replaces the Milestone 2A implementation report with this final boundary-lock wrap-up report.
+## 7. Files changed
 
-No runtime Go code changed in this pass.
-No product UI code changed in this pass.
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx`
+  - Added `noMapChipClass()` helper function for tonal chip class mapping.
+  - Rewrote `NoMapCanvasPlaceholder`: removed "Model not reported" fallback line, added tonal chip classes using `getSourceTone` and `getDockTone`, added context-aware source chip label ("Source live", "Source stale", "Source offline"), updated battery label to "Battery unknown" when percentage is null.
+  - `taskChips` for no-map case: removed `Activity: ` and `Dock: ` label prefixes; chips now show the state value directly.
+  - `BasicControlsCard`: removed the "Runtime" badge from the card head.
+  - `UnavailableWorkflowsCard`: "Rooms / zones" → "Rooms / Zones".
+- `panels-standalone/src/components/VacuumControl/VacuumControlPanel.css`
+  - Added `.vacuum-no-map-chip--ready`, `.vacuum-no-map-chip--warning`, `.vacuum-no-map-chip--danger` tonal modifier classes for the no-map placeholder chips.
 
-## 7. Next product direction
-
-Recommended next milestone: `Valetudo Milestone 3 - Basic Operator Surface Forward Pass`.
-
-Suggested focus:
-
-1. Improve product/operator UX for the existing supported no-map Valetudo path.
-2. Keep the simulation layout intact.
-3. Use only normalized adapter fields.
-4. Do not add a diagnostics drawer unless explicitly requested later.
-5. Do not add advanced controls until the runtime normalizes the required state, presets, and targets.
+No runtime Go code changed. No adapter TypeScript code changed. No regression test changed.
 
 ## 8. Tests / validation run
 
-Required because one adapter regression test changed:
-
 ```sh
-bun run test:vacuum-adapter
-go test ./...                         # in /home/shane/firecracker-vm/tensorfleet-mgr
-bun run --cwd panels-standalone build
-git diff --check                      # in /home/shane/vscode-tensorfleet
-git diff --check                      # in /home/shane/firecracker-vm/tensorfleet-mgr
+bun run test:vacuum-adapter      # passed
+bun run --cwd panels-standalone build   # passed, existing warnings only
+git diff --check                  # passed
 ```
 
-All commands passed on 2026-06-09. The panel build emitted existing Vite/browser externalization, eval, and bundle-size warnings only.
+All three commands passed on 2026-06-09. The panel build emitted only existing Vite/browser externalization, eval, and bundle-size warnings.
 
-Manual live webview validation was not run; it was not required for this boundary wrap-up.
+No regression test changes were required. The existing tests continue to verify: no backend-name branching, `NoMapCanvasPlaceholder` gated by `mapSurfaceAvailable`, normalized `health/source/activity/dock/battery/fault` props passed to the basic profile sidebar, supported controls filtering, disabled state and visible reasons, human-readable reason copy, `isBasicRobotProfile` gate with `UnavailableWorkflowsCard`, and `mapSurfaceAvailable = mapSupported`.
+
+Manual live webview validation was not run.
 Real hardware validation was not run.
 TurtleBot4/Nav2 live simulation validation was not run.

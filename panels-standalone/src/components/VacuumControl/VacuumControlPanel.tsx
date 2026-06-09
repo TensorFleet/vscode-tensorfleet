@@ -1947,7 +1947,6 @@ function BasicControlsCard(props: {
     <section className="vacuum-panel-card vacuum-panel-card--mission-lifecycle">
       <div className="vacuum-panel-card__head">
         <p className="vacuum-panel-card__eyebrow">Basic Cleaning</p>
-        <span className="vacuum-clean-area-badge">Runtime</span>
       </div>
       {props.commandError ? (
         <div className="vacuum-mapping-error" role="status">
@@ -1983,6 +1982,13 @@ function BasicControlsCard(props: {
   );
 }
 
+function noMapChipClass(tone: "ready" | "warning" | "danger" | "muted"): string {
+  if (tone === "ready") return " vacuum-no-map-chip--ready";
+  if (tone === "warning") return " vacuum-no-map-chip--warning";
+  if (tone === "danger") return " vacuum-no-map-chip--danger";
+  return "";
+}
+
 function NoMapCanvasPlaceholder(props: {
   identity: VacuumBackendIdentity;
   availability: VacuumAvailability;
@@ -1992,18 +1998,27 @@ function NoMapCanvasPlaceholder(props: {
   battery: VacuumBatteryState;
   mapDetail?: string;
 }): JSX.Element {
-  const modelLabel = props.identity.model ? `${props.identity.model}` : "Model not reported";
   const sourceStatus = props.source?.stale ? "stale" : props.source?.status ?? "unknown";
   const activityStatus = props.activity?.status ?? "unknown";
   const dockStatus = props.dock?.state ?? "unknown";
-  const batteryDetail =
+  const batteryLabel =
     props.battery.percentage == null
-      ? props.battery.detail ?? "Battery not reported"
-      : props.battery.charging == null
-        ? "Charging state unknown"
-        : props.battery.charging
-          ? "Charging"
-          : "Not charging";
+      ? "Battery unknown"
+      : `${Math.round(props.battery.percentage)}%${props.battery.charging ? " charging" : ""}`;
+
+  const availabilityTone: "ready" | "warning" | "danger" | "muted" =
+    props.availability.connected ? "ready" : props.availability.status === "connecting" ? "warning" : "danger";
+  const sourceTone = getSourceTone(props.source);
+  const dockTone = getDockTone(props.dock);
+  const batteryTone: "ready" | "warning" | "danger" | "muted" =
+    props.battery.readiness === "ready" ? "ready" : props.battery.readiness === "unavailable" ? "danger" : "muted";
+
+  const sourceChipLabel = (() => {
+    if (sourceStatus === "reachable" && !props.source?.stale) return "Source live";
+    if (sourceStatus === "stale") return "Source stale";
+    if (sourceStatus === "unreachable") return "Source offline";
+    return `Source: ${humanizeStatus(sourceStatus)}`;
+  })();
 
   return (
     <section className="vacuum-map-card" aria-label="Reserved map area">
@@ -2013,16 +2028,18 @@ function NoMapCanvasPlaceholder(props: {
           <div className="vacuum-no-map-placeholder__copy">
             <p className="vacuum-panel-card__eyebrow">Map unavailable</p>
             <h2>{props.identity.label}</h2>
-            <span>{modelLabel}</span>
+            {props.identity.model ? <span>{props.identity.model}</span> : null}
             <strong>{humanizeStatus(activityStatus)}</strong>
             <p>{props.mapDetail ?? "This backend does not expose a product map yet."}</p>
             <p>Basic cleaning controls are available from the sidebar.</p>
           </div>
           <div className="vacuum-no-map-placeholder__chips" aria-label="Basic robot state">
-            <span>{props.availability.connected ? "Connected" : humanizeStatus(props.availability.status)}</span>
-            <span>{humanizeStatus(sourceStatus)}</span>
-            <span>{humanizeStatus(dockStatus)}</span>
-            <span>{props.battery.percentage == null ? batteryDetail : `${Math.round(props.battery.percentage)}%${props.battery.charging ? " charging" : ""}`}</span>
+            <span className={noMapChipClass(availabilityTone)}>
+              {props.availability.connected ? "Connected" : humanizeStatus(props.availability.status)}
+            </span>
+            <span className={noMapChipClass(sourceTone)}>{sourceChipLabel}</span>
+            <span className={noMapChipClass(dockTone)}>{humanizeStatus(dockStatus)}</span>
+            <span className={noMapChipClass(batteryTone)}>{batteryLabel}</span>
           </div>
         </div>
       </div>
@@ -2151,7 +2168,7 @@ function UnavailableWorkflowsCard(props: { capabilities: VacuumCapabilities }): 
         "Coverage cleaning is not supported.",
     },
     {
-      label: "Rooms / zones",
+      label: "Rooms / Zones",
       available:
         props.capabilities.room_semantics.supported ||
         props.capabilities.zone_semantics.supported ||
@@ -2678,7 +2695,7 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
       ] as const
     : [
         {
-          label: `Activity: ${humanizeStatus(snapshot.activity?.status)}`,
+          label: humanizeStatus(snapshot.activity?.status ?? "unknown"),
           icon: "ready" as const,
           state: getActivityTone(snapshot.activity) === "danger" ? "inactive" as const : getChipTone(Boolean(snapshot.activity), "active"),
         },
@@ -2688,7 +2705,7 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
           state: getChipTone(snapshot.battery.readiness === "ready", "success"),
         },
         {
-          label: `Dock: ${humanizeStatus(snapshot.dock?.state)}`,
+          label: humanizeStatus(snapshot.dock?.state ?? "unknown"),
           icon: "dock" as const,
           state: getChipTone(getDockTone(snapshot.dock) === "ready", "success"),
         },
