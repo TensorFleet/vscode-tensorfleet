@@ -5,10 +5,11 @@
   margin: 0 auto;
 
   /* panel visuals */
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--vscode-widget-border, #e5e7eb);
   border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-  background: #fff;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+  background: var(--vscode-editorWidget-background, #fff);
+  color: var(--vscode-editorWidget-foreground, #111827);
 
   /* make vertically scrollable and stretch */
   min-height: 100%;
@@ -23,7 +24,7 @@
 /* Header */
 .dsp-header {
   padding: 16px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--vscode-widget-border, #e5e7eb);
   display: flex;
   gap: 8px;
   align-items: center;
@@ -31,6 +32,7 @@
 
 .dsp-title {
   font-weight: 600;
+  color: var(--vscode-editorWidget-foreground, #111827);
 }
 
 .dsp-links {
@@ -38,6 +40,7 @@
   display: flex;
   gap: 12px;
   font-size: 14px;
+  color: var(--vscode-descriptionForeground, #4b5563);
 }
 
 .dsp-link-item {
@@ -61,7 +64,7 @@
 }
 
 .dsp-row-label {
-  color: #6b7280;            /* gray-500 */
+  color: var(--vscode-descriptionForeground, #6b7280);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -70,36 +73,19 @@
 .dsp-row-value {
   text-align: right;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--vscode-editorWidget-foreground, #111827);
 }
 
 /* Dot indicator */
 .dsp-dot {
   line-height: 1;
 }
-.dsp-dot.ok { color: #16a34a; }  /* green-600 */
-.dsp-dot.bad { color: #dc2626; } /* red-600 */
+.dsp-dot.ok { color: var(--vscode-testing-iconPassed, #16a34a); }
+.dsp-dot.bad { color: var(--vscode-errorForeground, #dc2626); }
 
 /* Section separator */
 .dsp-sep {
   border: 0;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--vscode-widget-border, #e5e7eb);
   margin: 12px 0;
-}
-
-/* Light/dark tweak (optional if you have dark mode) */
-@media (prefers-color-scheme: dark) {
-  .drone-status {
-    background: #0b0b0c;
-    border-color: #1f2937;
-    box-shadow: none;
-  }
-  .dsp-header {
-    border-bottom-color: #1f2937;
-  }
-  .dsp-row-label {
-    color: #9ca3af;
-  }
-  .dsp-sep {
-    border-top-color: #1f2937;
-  }
 }

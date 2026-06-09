@@ -162,6 +162,8 @@ export const DroneMap: React.FC<Props> = ({
   activePanel = 'mission-planning',
   onSelectPanel,
 }) => {
+  const rootClassName = className ? `tf-drone-map ${className}` : 'tf-drone-map';
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<HTMLDivElement | null>(null);
 
@@ -360,7 +362,7 @@ export const DroneMap: React.FC<Props> = ({
   return (
     <div
       ref={containerRef}
-      className={className}
+      className={rootClassName}
       style={{
         position: 'relative',
         width: '100%',
@@ -370,17 +372,69 @@ export const DroneMap: React.FC<Props> = ({
         overflow: 'hidden',
       }}
     >
+      <style>{`
+        .tf-drone-map .tf-drone-map-panel-controls > div {
+          padding: 8px;
+          border-radius: 16px;
+          background: color-mix(in srgb, var(--vscode-editorWidget-background, rgba(24, 24, 24, 0.82)) 88%, transparent);
+          border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.12));
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+          backdrop-filter: blur(12px) saturate(1.15);
+          -webkit-backdrop-filter: blur(12px) saturate(1.15);
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button {
+          background: color-mix(in srgb, var(--vscode-button-secondaryBackground, rgba(255, 255, 255, 0.12)) 78%, transparent) !important;
+          border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.12)) !important;
+          box-shadow: none !important;
+          color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #e6e6e6));
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open mission planning"],
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open drone status"] {
+          color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #e6e6e6));
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open mission planning"][style*="2px solid"],
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open drone status"][style*="2px solid"] {
+          background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 24%, var(--vscode-editorWidget-background, rgba(24, 24, 24, 0.82))) !important;
+          border-color: var(--vscode-focusBorder, var(--vscode-button-background, #0e639c)) !important;
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder, #0e639c) 45%, transparent) !important;
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button svg rect,
+        .tf-drone-map .tf-drone-map-panel-controls button svg line,
+        .tf-drone-map .tf-drone-map-panel-controls button svg path {
+          stroke: currentColor !important;
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open mission planning"] svg path {
+          fill: currentColor !important;
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open mission planning"] svg rect {
+          fill: none !important;
+          opacity: 0.72;
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open drone status"] span[aria-hidden="true"] {
+          filter: grayscale(1) brightness(1.2);
+        }
+      `}</style>
+
       <div ref={mapRef} style={{ position: 'absolute', inset: 0 }} />
 
-      <FlightPathTools
-        map={olMap}
-        startRequestKey={missionPlanningRequestKey}
-        activePanel={activePanel}
-        onSelectPanel={onSelectPanel}
-        onPathChange={(coords) => {
-          // coords are in EPSG:3857
-        }}
-      />
+      <div className="tf-drone-map-panel-controls">
+        <FlightPathTools
+          map={olMap}
+          startRequestKey={missionPlanningRequestKey}
+          activePanel={activePanel}
+          onSelectPanel={onSelectPanel}
+          onPathChange={(coords) => {
+            // coords are in EPSG:3857
+          }}
+        />
+      </div>
 
       <MapButtonsStack corner="bottom-right">
         <FollowLockButton locked={isLocked} onToggle={() => setIsLocked((v) => !v)} />
