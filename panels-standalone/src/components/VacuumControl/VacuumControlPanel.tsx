@@ -13,9 +13,12 @@ import {
   type VacuumAvailability,
   type VacuumBatteryState,
   type VacuumCapabilities,
+  type VacuumCleaningSettingState,
+  type VacuumCleaningSettingsState,
   type VacuumBackendIdentity,
   type VacuumDockStatus,
   type VacuumFaultState,
+  type VacuumMaintenanceState,
   type VacuumRobotActivity,
   type VacuumRuntimeHealth,
   type VacuumSourceState,
@@ -2023,6 +2026,163 @@ function BasicControlsCard(props: {
   );
 }
 
+function CleaningSettingControl(props: {
+  label: string;
+  setting: VacuumCleaningSettingState;
+  capability: CapabilitySupport;
+  onChange: (value: string) => void;
+}): JSX.Element {
+  const currentOption = props.setting.options.find((option) => option.value === props.setting.current);
+  const currentLabel = currentOption?.label ?? (props.setting.current ? humanizeStatus(props.setting.current) : "Unknown");
+  const reason = formatCapabilityReason(props.capability) ?? props.setting.detail ?? null;
+  const disabled = props.capability.available === false || props.capability.status === "unavailable" || props.setting.readiness === "unavailable";
+
+  return (
+    <div className="vacuum-cleaning-setting">
+      <div className="vacuum-cleaning-setting__head">
+        <span>{props.label}</span>
+        <strong>{currentLabel}</strong>
+      </div>
+      <div className="vacuum-cleaning-setting__options" role="group" aria-label={props.label}>
+        {props.setting.options.map((option) => (
+          <button
+            key={option.value}
+            className={`vacuum-setting-option${option.value === props.setting.current ? " vacuum-setting-option--active" : ""}`}
+            type="button"
+            onClick={() => props.onChange(option.value)}
+            disabled={disabled || option.value === props.setting.current}
+            title={disabled && reason ? reason : undefined}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      {disabled && reason ? (
+        <p className="vacuum-action-hint vacuum-action-hint--disabled">{reason}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function CleaningSettingsCard(props: {
+  settings?: VacuumCleaningSettingsState;
+  capabilities: VacuumCapabilities;
+  commandError: string | null;
+  onSetFanSpeed: (value: string) => void;
+  onSetWaterUsage: (value: string) => void;
+}): JSX.Element | null {
+  const showFanSpeed = props.settings?.fanSpeed && props.capabilities.fan_speed.supported;
+  const showWaterUsage = props.settings?.waterUsage && props.capabilities.water_usage.supported;
+
+  if (!showFanSpeed && !showWaterUsage) {
+    return null;
+  }
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--cleaning-settings">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Cleaning Settings</p>
+      </div>
+      {props.commandError ? (
+        <div className="vacuum-mapping-error" role="status">
+          {props.commandError}
+        </div>
+      ) : null}
+      {showFanSpeed ? (
+        <CleaningSettingControl
+          label="Fan speed"
+          setting={props.settings!.fanSpeed!}
+          capability={props.capabilities.fan_speed}
+          onChange={props.onSetFanSpeed}
+        />
+      ) : null}
+      {showWaterUsage ? (
+        <CleaningSettingControl
+          label="Water usage"
+          setting={props.settings!.waterUsage!}
+          capability={props.capabilities.water_usage}
+          onChange={props.onSetWaterUsage}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function formatConsumableValue(item: VacuumMaintenanceState["consumables"][number]): string {
+  if (typeof item.remainingPercent === "number") {
+    return `${Math.round(item.remainingPercent)}%`;
+  }
+  if (typeof item.remainingMinutes === "number") {
+    if (item.remainingMinutes < 60) {
+      return `${item.remainingMinutes} min`;
+    }
+    const hours = Math.floor(item.remainingMinutes / 60);
+    return hours < 48 ? `${hours} h` : `${Math.floor(hours / 24)} d`;
+  }
+  return "Unknown";
+}
+
+function consumableTone(status: VacuumMaintenanceState["consumables"][number]["status"]): string {
+  switch (status) {
+    case "replace_now":
+      return "replace-now";
+    case "replace_soon":
+      return "replace-soon";
+    case "warning":
+      return "warning";
+    case "ok":
+      return "ok";
+    default:
+      return "unknown";
+  }
+}
+
+function MaintenanceCard(props: {
+  maintenance?: VacuumMaintenanceState;
+  capabilities: VacuumCapabilities;
+}): JSX.Element | null {
+  const consumables = props.maintenance?.consumables ?? [];
+  if (!props.capabilities.consumables.supported || consumables.length === 0) {
+    return null;
+  }
+  const reason = props.capabilities.consumables.available === false
+    ? formatCapabilityReason(props.capabilities.consumables)
+    : null;
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--maintenance">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Maintenance</p>
+      </div>
+      {reason ? (
+        <p className="vacuum-action-hint vacuum-action-hint--disabled">{reason}</p>
+      ) : null}
+      <div className="vacuum-maintenance-list">
+        {consumables.map((item) => {
+          const percent = typeof item.remainingPercent === "number"
+            ? Math.max(0, Math.min(100, item.remainingPercent))
+            : null;
+          const tone = consumableTone(item.status);
+          return (
+            <div key={item.id} className={`vacuum-consumable vacuum-consumable--${tone}`}>
+              <div className="vacuum-consumable__head">
+                <strong>{item.label}</strong>
+                <span>{formatConsumableValue(item)}</span>
+              </div>
+              {percent != null ? (
+                <div className="vacuum-consumable__track" aria-hidden="true">
+                  <span style={{ width: `${percent}%` }} />
+                </div>
+              ) : null}
+              {item.detail ? <p>{item.detail}</p> : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function NoMapCanvasPlaceholder(props: {
   identity: VacuumBackendIdentity;
   availability: VacuumAvailability;
@@ -3474,6 +3634,14 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
     }
   }
 
+  async function handleCleaningSettingCommand(command: "set_fan_speed" | "set_water_usage", value: string): Promise<void> {
+    setMissionCommandError(null);
+    const result = await adapter.sendCommand({ command, value });
+    if (!result.ok) {
+      setMissionCommandError(result.error.message);
+    }
+  }
+
   async function handleRetryCleanAreaWaypoint(): Promise<void> {
     if (!activeCoverageMission || !retryMissionStepSupported) {
       return;
@@ -3711,6 +3879,17 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
                   onPause={() => void handleBasicCommand("pause")}
                   onStop={() => void handleBasicCommand("stop")}
                   onReturnToDock={() => void handleBasicCommand("return_to_dock")}
+                />
+                <CleaningSettingsCard
+                  settings={snapshot.cleaningSettings}
+                  capabilities={snapshot.capabilities}
+                  commandError={missionCommandError}
+                  onSetFanSpeed={(value) => void handleCleaningSettingCommand("set_fan_speed", value)}
+                  onSetWaterUsage={(value) => void handleCleaningSettingCommand("set_water_usage", value)}
+                />
+                <MaintenanceCard
+                  maintenance={snapshot.maintenance}
+                  capabilities={snapshot.capabilities}
                 />
                 <BasicRobotStatusCard
                   availability={snapshot.availability}

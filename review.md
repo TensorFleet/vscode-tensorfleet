@@ -185,8 +185,9 @@ No UI behavior changes were implemented. This is a mapping foundation for later 
 | Pose/navigation/go-to | Valetudo mock has GoTo capability and map robot entity; runtime does not normalize pose or go-to workflow | Go-to raw capability may be detected, but no command path exposed product-ready | Navigation/go-to unsupported/detected-not-ready | `pose.available=false`, `navigation.active=false`, `capabilities.go_to_location.status=detected_not_ready` when detected | Navigation unavailable workflow only; no active go-to UI | Deferred |
 | Clean Area/coverage | No current Valetudo runtime coverage executor | No product response | Unsupported | `capabilities.start_coverage`, `coverage_mission` unsupported | Unavailable workflow summary | Deferred |
 | Rooms/zones/segments | Valetudo mock has map segmentation and zone cleaning capabilities; runtime only detects names | Diagnostics tiers; no segment IDs/zone geometry normalized | Segment/zone detected-not-ready when raw capabilities present | `capabilities.segment_cleaning`, `zone_cleaning` detected_not_ready/unsupported; `room_*`, `zone_semantics` unsupported | Unavailable workflow summary | Deferred |
-| Fan speed/water usage | Mock capabilities registered; HTTP properties/presets exist in Valetudo, but runtime does not fetch them | Raw capabilities/diagnostics only | Detected-not-ready if present | `capabilities.fan_speed`, `water_usage` detected_not_ready/unsupported | Not shown as controls | Deferred diagnostics-only until presets/current state/setters are normalized |
-| Consumables/statistics | Mock capabilities and events exist; runtime only detects raw capability names | Raw diagnostics/capability tier | Consumables detected-not-ready when present; current/total stats not mapped to public descriptor | `capabilities.consumables` detected_not_ready if known raw cap reaches mapper | Not visible | Deferred/diagnostics-only |
+| Fan speed/water usage | Mock capabilities registered; HTTP properties/presets exist in Valetudo | Runtime normalizes current preset and available options into `cleaningSettings`, and exposes normalized setters | Product-ready only when current value, options, command availability, and command result behavior are present | `capabilities.fan_speed`, `water_usage` supported/unavailable through normalized descriptors; `snapshot.cleaningSettings` carries current/options | Cleaning Settings card in the no-map/basic sidebar | Product-facing for mock/runtime path; raw Valetudo names remain diagnostics-only |
+| Consumables | Mock capability and HTTP consumable status/properties exist | Runtime normalizes consumable display status into `maintenance.consumables` | Product-ready for display only when normalized consumable entries exist; reset commands not implemented | `capabilities.consumables` supported/unavailable through normalized descriptor; raw capability alone remains detected-not-ready | Maintenance card in the no-map/basic sidebar | Product-facing display for mock/runtime path; raw Valetudo names remain diagnostics-only |
+| Statistics | Mock current/total statistics capabilities exist; runtime only detects raw capability names | Raw diagnostics/capability tier | Current/total stats not mapped to public descriptor | Statistics remain diagnostics-only | Not visible | Deferred/diagnostics-only |
 
 ## Command Mapping
 
@@ -201,18 +202,18 @@ No UI behavior changes were implemented. This is a mapping foundation for later 
 | `cancel_mission` | Adapter maps to runtime `stop` | Same as stop | Supported only when `stop` supported | Mission cards only in map-supported workflows | Product-facing normalized alias but not primary Valetudo no-map control |
 | `go_to_location` / `start_navigation` | Mapper contains request shape but returns unsupported because public descriptor is unsupported | No runtime command implemented | Unsupported even if raw go-to capability is detected | Navigation unavailable | Deferred |
 | `segment_cleaning`, `start_room_cleaning`, `start_zone_cleaning`, `zone_cleaning` | No runtime command implemented | No source routing | Unsupported; segment/zone requires explicit IDs/geometry mapping later | Rooms/zones unavailable | Deferred |
-| `set_fan_speed`, `set_water_usage` | Mapper has request shape but descriptors unsupported/detected-not-ready | No runtime command implemented | Unsupported even if raw capabilities detected | Not visible | Deferred |
+| `set_fan_speed`, `set_water_usage` | Runtime command `set_fan_speed` / `set_water_usage`; HTTP preset PUT to the matching Valetudo capability; fixed mock updates preset state | Requires reachable/fresh source, matching capability, payload `value`, and value in normalized options | Adapter rejects missing/invalid values as `invalid_request`, maps unsupported/unavailable/source failures to shared errors | Cleaning Settings card | Product-facing for fan/water mock-backed settings |
 | Mapping, map annotations, coverage, retry/skip/resume mission | No Valetudo runtime executor | No source routing | Unsupported | Unavailable workflows or hidden in no-map mode | Deferred |
 
 ## Capability Classification
 
 Product-facing now:
 
-- `mission_state`, `start_cleaning`, `pause`, `stop`, `return_to_dock`, `pause_mission`, `cancel_mission`, `battery`, `dock_state`, `events`, and `fault_state` as normalized descriptors/state.
+- `mission_state`, `start_cleaning`, `pause`, `stop`, `return_to_dock`, `pause_mission`, `cancel_mission`, `battery`, `dock_state`, `events`, `fault_state`, `fan_speed`, `water_usage`, and `consumables` as normalized descriptors/state for the implemented mock/runtime path.
 
 Detected or known but deferred:
 
-- Map rendering/snapshot, pose, go-to/navigation, mapping sessions, map annotations, room semantics, zone semantics, room cleaning, segment cleaning, zone cleaning, Clean Area/coverage, fan speed, water usage, consumables, current/total statistics, manual control, locate, auto-empty dock actions, carpet/carpet sensor settings, obstacle/pet/collision avoidance settings, operation mode, pending map changes, persistent maps, mop dock clean/dry actions, speaker/voice pack controls, Wi-Fi configuration/scan, key lock, and do-not-disturb.
+- Map rendering/snapshot, pose, go-to/navigation, mapping sessions, map annotations, room semantics, zone semantics, room cleaning, segment cleaning, zone cleaning, Clean Area/coverage, consumable reset commands, current/total statistics, manual control, locate, auto-empty dock actions, carpet/carpet sensor settings, obstacle/pet/collision avoidance settings, operation mode, pending map changes, persistent maps, mop dock clean/dry actions, speaker/voice pack controls, Wi-Fi configuration/scan, key lock, and do-not-disturb.
 
 Diagnostics-only fields that must not drive product behavior:
 
@@ -223,7 +224,7 @@ Diagnostics-only fields that must not drive product behavior:
 - The adapter exposes `diagnostics`, including raw capability names, capability tiers, transports, warnings, raw source state, and last command audit, but the UI has no dedicated diagnostics drawer.
 - The Valetudo mock source has map data and robot pose-like entities, but the runtime/adapter intentionally expose no product map/pose yet.
 - Valetudo mock events exist, but the runtime does not inventory/fetch them into normalized `fault`/`events` product state.
-- Fan speed, water usage, consumables, statistics, zones, segments, and go-to are detected/known but not normalized into usable commands, presets, current values, or target IDs/geometry.
+- Statistics, zones, segments, and go-to are detected/known but not normalized into usable commands, current values, or target IDs/geometry. Consumable reset commands are not implemented.
 - `resume` exists in the shared command/capability contract, but the Valetudo backend marks it unsupported and the basic UI does not expose it.
 - Runtime invalid-state command responses are normalized to `invalid_state` for fixed mock basic commands. The adapter still accepts legacy `command_invalid_state` as a compatibility alias.
 - The adapter has `snapshot.health` and `snapshot.source`; UI shows summarized normalized values, but not the full health endpoint result or source diagnostics.
@@ -239,7 +240,7 @@ Milestone 1 inventory is complete. Milestone 2A command/result hardening is comp
 
 Diagnostics remain intentionally passive. Raw Valetudo capability names, transport details, source URLs, last-command audit data, and raw runtime/source details stay diagnostics-only and must not gate product controls. Product behavior continues to branch on normalized adapter state and capability descriptors.
 
-Deferred Valetudo capabilities remain deferred: map rendering, go-to/navigation, Clean Area, rooms/zones/segments, fan speed, water usage, consumables, OpenClaw, MQTT production hardening, real hardware support, and diagnostics drawer work are outside this closed regression/diagnostics-focused thread.
+Deferred Valetudo capabilities remain deferred: map rendering, go-to/navigation, Clean Area, rooms/zones/segments, consumable reset commands, statistics, OpenClaw, MQTT production hardening beyond this feature path, real hardware support, and diagnostics drawer work are outside this closed regression/diagnostics-focused thread. Fan speed, water usage, and consumable display are no longer deferred for the mock/runtime/adapter/UI path.
 
 ## Next Product Direction
 

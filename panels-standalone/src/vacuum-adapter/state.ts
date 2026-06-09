@@ -370,6 +370,41 @@ export type VacuumDockStatus = {
   detail?: string;
 };
 
+export type VacuumCleaningSettingOption = {
+  value: string;
+  label: string;
+};
+
+export type VacuumCleaningSettingState = {
+  current?: string;
+  options: VacuumCleaningSettingOption[];
+  readiness?: VacuumReadinessState;
+  status?: string;
+  detail?: string;
+};
+
+export type VacuumCleaningSettingsState = {
+  fanSpeed?: VacuumCleaningSettingState;
+  waterUsage?: VacuumCleaningSettingState;
+};
+
+export type VacuumConsumableStatus = "ok" | "warning" | "replace_soon" | "replace_now" | "unknown";
+
+export type VacuumConsumableState = {
+  id: string;
+  label: string;
+  remainingPercent?: number;
+  remainingMinutes?: number;
+  usedMinutes?: number;
+  totalMinutes?: number;
+  status?: VacuumConsumableStatus;
+  detail?: string;
+};
+
+export type VacuumMaintenanceState = {
+  consumables: VacuumConsumableState[];
+};
+
 export type VacuumAdapterDiagnostics = {
   backend?: string;
   runtime?: unknown;
@@ -390,6 +425,8 @@ export type VacuumAdapterSnapshot = {
   health?: VacuumRuntimeHealth;
   source?: VacuumSourceState;
   dock?: VacuumDockStatus;
+  cleaningSettings?: VacuumCleaningSettingsState;
+  maintenance?: VacuumMaintenanceState;
   diagnostics?: VacuumAdapterDiagnostics;
   map: VacuumMapState;
   pose: VacuumPoseState;

@@ -96,6 +96,7 @@ export function useValetudoAdapter(client?: ValetudoRuntimeClient): VacuumAdapte
       try {
         const result = await runtimeClient.sendCommand({
           command: runtimeCommandName(command.command),
+          params: "value" in mapped.request ? { value: mapped.request.value } : undefined,
         });
         await refresh();
         return mapValetudoRuntimeCommandResult(command.command, result);

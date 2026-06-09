@@ -18,18 +18,16 @@ export const VALETUDO_CAPABILITY_MAP: Record<ValetudoBackendCapability, VacuumCa
   GoToLocationCapability: [],
   MapSegmentationCapability: [],
   ZoneCleaningCapability: [],
-  FanSpeedControlCapability: [],
-  WaterUsageControlCapability: [],
+  FanSpeedControlCapability: ["fan_speed"],
+  WaterUsageControlCapability: ["water_usage"],
 };
 
 const VALETUDO_DETECTED_BUT_UNIMPLEMENTED_CAPABILITIES: Partial<
   Record<ValetudoBackendCapability, VacuumCapabilityName[]>
 > = {
   ConsumableMonitoringCapability: ["consumables"],
-  FanSpeedControlCapability: ["fan_speed"],
   GoToLocationCapability: ["go_to_location"],
   MapSegmentationCapability: ["segment_cleaning"],
-  WaterUsageControlCapability: ["water_usage"],
   ZoneCleaningCapability: ["zone_cleaning"],
 };
 
@@ -65,6 +63,7 @@ export type ValetudoCapabilityMappingOptions = {
   commandAvailability?: Partial<Record<VacuumCapabilityName, ValetudoCapabilityAvailability>>;
   unsupportedCommands?: Partial<Record<VacuumCapabilityName, string>>;
   unavailableReason?: string;
+  consumablesSupported?: boolean;
 };
 
 function supportedCapability(
@@ -186,6 +185,14 @@ export function mapValetudoCapabilities(
     }
   }
 
+  if (options.consumablesSupported) {
+    capabilities.consumables = supportedCapability("runtime_state:consumables", {
+      attributes: ["maintenance.consumables"],
+      ...commandAvailabilityFor("consumables", options),
+      notes: "Mapped from normalized Valetudo runtime consumable state.",
+    });
+  }
+
   capabilities.map = unsupportedCapability(
     "Valetudo map rendering is not implemented in Layer 6A Milestone 2.",
   );
@@ -207,12 +214,12 @@ export function mapValetudoCapabilities(
   }
   if (!advertised.has("FanSpeedControlCapability")) {
     capabilities.fan_speed = unsupportedCapability(
-      "Valetudo fan speed controls are diagnostics-only in Layer 6A Milestone 2.",
+      "Valetudo fan speed controls are not reported by this backend.",
     );
   }
   if (!advertised.has("WaterUsageControlCapability")) {
     capabilities.water_usage = unsupportedCapability(
-      "Valetudo water controls are diagnostics-only in Layer 6A Milestone 2.",
+      "Valetudo water controls are not reported by this backend.",
     );
   }
 

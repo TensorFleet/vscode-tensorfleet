@@ -54,6 +54,19 @@ export type ValetudoRuntimeSnapshot = {
     state: string;
     docked: boolean;
   };
+  cleaningSettings?: {
+    fanSpeed?: {
+      current?: string;
+      options: string[];
+    };
+    waterUsage?: {
+      current?: string;
+      options: string[];
+    };
+  };
+  maintenance?: {
+    consumables?: ValetudoRuntimeConsumable[];
+  };
   capabilities: {
     commands: Record<string, { available: boolean; reason?: string }>;
     diagnostics: ValetudoRuntimeCapabilityDiagnostic[];
@@ -85,6 +98,17 @@ export type ValetudoRuntimeCommandResult = {
   code?: string;
   updatedAt: number;
   diagnostics?: Record<string, unknown>;
+};
+
+export type ValetudoRuntimeConsumable = {
+  id: string;
+  label: string;
+  remainingPercent?: number;
+  remainingMinutes?: number;
+  usedMinutes?: number;
+  totalMinutes?: number;
+  status?: "ok" | "warning" | "replace_soon" | "replace_now" | "unknown";
+  detail?: string;
 };
 
 export type ValetudoRuntimeCapabilityDiagnostic = {

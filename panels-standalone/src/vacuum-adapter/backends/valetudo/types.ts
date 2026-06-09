@@ -3,8 +3,10 @@ import type { VacuumCapabilityName } from "../../capabilities";
 import type { VacuumCommandErrorCode } from "../../errors";
 import type {
   VacuumAdapterDiagnostics,
+  VacuumCleaningSettingsState,
   VacuumDockStatus,
   VacuumGoalCoordinates,
+  VacuumMaintenanceState,
   VacuumMissionState,
   VacuumPoseCoordinates,
   VacuumRobotActivityStatus,
@@ -26,6 +28,8 @@ export type ValetudoRuntimeBoundary = {
   health?: VacuumRuntimeHealth;
   source?: VacuumSourceState;
   dock?: VacuumDockStatus;
+  cleaningSettings?: VacuumCleaningSettingsState;
+  maintenance?: VacuumMaintenanceState;
   diagnostics?: VacuumAdapterDiagnostics;
   lastError?: string;
 };

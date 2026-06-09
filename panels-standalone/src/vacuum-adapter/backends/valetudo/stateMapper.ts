@@ -1,7 +1,11 @@
 import type {
   VacuumAdapterDiagnostics,
+  VacuumCleaningSettingOption,
+  VacuumCleaningSettingsState,
+  VacuumConsumableState,
   VacuumAdapterSnapshot,
   VacuumDockState,
+  VacuumMaintenanceState,
   VacuumMissionSnapshot,
   VacuumMissionState,
   VacuumNavigationStatus,
@@ -42,6 +46,8 @@ const RUNTIME_COMMAND_TO_BACKEND_CAPABILITY: Record<string, ValetudoBackendCapab
   pause: "BasicControlCapability",
   stop: "BasicControlCapability",
   return_to_dock: "BasicControlCapability",
+  set_fan_speed: "FanSpeedControlCapability",
+  set_water_usage: "WaterUsageControlCapability",
 };
 
 const VALETUDO_BASIC_COMMANDS = ["start_cleaning", "pause", "stop", "return_to_dock"] as const;
@@ -64,7 +70,12 @@ function isKnownValetudoBackendCapability(value: string): value is ValetudoBacke
 }
 
 function isDiagnosticOnlyCapability(value: ValetudoBackendCapability): boolean {
-  return value !== "BasicControlCapability" && value !== "BatteryStateCapability";
+  return (
+    value !== "BasicControlCapability" &&
+    value !== "BatteryStateCapability" &&
+    value !== "FanSpeedControlCapability" &&
+    value !== "WaterUsageControlCapability"
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -250,6 +261,92 @@ function mapDiagnostics(snapshot: ValetudoRuntimeSnapshot): VacuumAdapterDiagnos
   };
 }
 
+function titleCasePreset(value: string): string {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function mapPresetOptions(options: string[] | undefined): VacuumCleaningSettingOption[] {
+  return (options ?? []).map((value) => ({
+    value,
+    label: titleCasePreset(value),
+  }));
+}
+
+function humanizeAvailabilityReason(reason: string): string {
+  const knownReasons: Record<string, string> = {
+    degraded_runtime: "Runtime degraded.",
+    runtime_offline: "Runtime offline.",
+    source_unreachable: "Source unreachable.",
+    stale_source: "Robot state is stale.",
+    unavailable: "Currently unavailable.",
+  };
+  return knownReasons[reason] ?? titleCasePreset(reason);
+}
+
+function mapCleaningSettings(snapshot: ValetudoRuntimeSnapshot): VacuumCleaningSettingsState | undefined {
+  const sourceReason = sourceUnavailableReason(snapshot);
+  const settings: VacuumCleaningSettingsState = {};
+  const fanSpeed = snapshot.cleaningSettings?.fanSpeed;
+  const waterUsage = snapshot.cleaningSettings?.waterUsage;
+  if (fanSpeed && fanSpeed.options.length > 0) {
+    settings.fanSpeed = {
+      current: fanSpeed.current || undefined,
+      options: mapPresetOptions(fanSpeed.options),
+      readiness: sourceReason ? "unavailable" : "ready",
+      status: sourceReason ?? "ready",
+      detail: sourceReason ? humanizeAvailabilityReason(sourceReason) : "Fan speed is available.",
+    };
+  }
+  if (waterUsage && waterUsage.options.length > 0) {
+    settings.waterUsage = {
+      current: waterUsage.current || undefined,
+      options: mapPresetOptions(waterUsage.options),
+      readiness: sourceReason ? "unavailable" : "ready",
+      status: sourceReason ?? "ready",
+      detail: sourceReason ? humanizeAvailabilityReason(sourceReason) : "Water usage is available.",
+    };
+  }
+  return settings.fanSpeed || settings.waterUsage ? settings : undefined;
+}
+
+function mapMaintenance(snapshot: ValetudoRuntimeSnapshot): VacuumMaintenanceState | undefined {
+  const consumables = (snapshot.maintenance?.consumables ?? [])
+    .filter((item): item is VacuumConsumableState => (
+      typeof item.id === "string" &&
+      item.id.trim() !== "" &&
+      typeof item.label === "string" &&
+      item.label.trim() !== ""
+    ))
+    .map((item) => ({
+      id: item.id,
+      label: item.label,
+      remainingPercent: typeof item.remainingPercent === "number" ? item.remainingPercent : undefined,
+      remainingMinutes: typeof item.remainingMinutes === "number" ? item.remainingMinutes : undefined,
+      usedMinutes: typeof item.usedMinutes === "number" ? item.usedMinutes : undefined,
+      totalMinutes: typeof item.totalMinutes === "number" ? item.totalMinutes : undefined,
+      status: item.status,
+      detail: item.detail,
+    }));
+  return consumables.length > 0 ? { consumables } : undefined;
+}
+
+function runtimeCommandToCapabilityName(command: string): keyof VacuumCapabilities | null {
+  if (command === "set_fan_speed") {
+    return "fan_speed";
+  }
+  if (command === "set_water_usage") {
+    return "water_usage";
+  }
+  if (command === "start_cleaning" || command === "pause" || command === "stop" || command === "return_to_dock") {
+    return command;
+  }
+  return null;
+}
+
 export function isValetudoRuntimeSnapshot(value: unknown): value is ValetudoRuntimeSnapshot {
   if (!isRecord(value)) {
     return false;
@@ -349,7 +446,10 @@ export function mapValetudoRuntimeSnapshotToBoundary(
   const runtimeCommandNames = new Set(Object.keys(snapshot.capabilities.commands));
   for (const [command, availability] of Object.entries(snapshot.capabilities.commands)) {
     const backendCapability = RUNTIME_COMMAND_TO_BACKEND_CAPABILITY[command];
-    if (backendCapability) {
+    if (
+      backendCapability &&
+      (backendCapability === "BasicControlCapability" || availability.reason !== "capability_unavailable")
+    ) {
       capabilities.add(backendCapability);
     }
     if (isBasicCommandName(command)) {
@@ -359,7 +459,11 @@ export function mapValetudoRuntimeSnapshotToBoundary(
         reason,
       };
     } else {
-      commandAvailability[command] = {
+      const capabilityName = runtimeCommandToCapabilityName(command);
+      if (!capabilityName) {
+        continue;
+      }
+      commandAvailability[capabilityName] = {
         available: availability.available && !sourceUnavailableReason(snapshot),
         reason: sourceUnavailableReason(snapshot) ?? availability.reason,
       };
@@ -382,6 +486,8 @@ export function mapValetudoRuntimeSnapshotToBoundary(
   }
 
   const sourceReason = sourceUnavailableReason(snapshot);
+  const cleaningSettings = mapCleaningSettings(snapshot);
+  const maintenance = mapMaintenance(snapshot);
   const faults = [
     ...(snapshot.source.stale ? ["Valetudo runtime source state is stale."] : []),
     ...(sourceReason === "source_unreachable" ? ["Valetudo runtime source is unreachable."] : []),
@@ -420,6 +526,8 @@ export function mapValetudoRuntimeSnapshotToBoundary(
       charging: snapshot.battery?.charging,
       detail: snapshot.dock?.state ?? (snapshot.battery?.charging ? "Charging." : "Dock state unknown."),
     },
+    cleaningSettings,
+    maintenance,
     diagnostics: mapDiagnostics(snapshot),
     lastError: snapshot.connectivity.online ? undefined : "Valetudo integration runtime is offline.",
   };
@@ -447,6 +555,8 @@ export function mapValetudoRuntimeUnavailable(message: string): ValetudoRuntimeB
       charging: undefined,
       detail: "Dock state is unavailable while the runtime is offline.",
     },
+    cleaningSettings: undefined,
+    maintenance: undefined,
     diagnostics: {
       backend: "valetudo",
       runtime: {
@@ -569,6 +679,7 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
   const capabilities = mapValetudoCapabilities(runtime.capabilities, {
     commandAvailability: runtime.commandAvailability,
     unsupportedCommands: runtime.unsupportedCommands,
+    consumablesSupported: (runtime.maintenance?.consumables.length ?? 0) > 0,
     unavailableReason:
       runtime.connectionStatus === "online" && runtime.source?.reason
         ? runtime.source.reason
@@ -576,6 +687,12 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
           ? undefined
           : "runtime_offline",
   });
+  if (runtime.cleaningSettings?.fanSpeed && capabilities.fan_speed.supported) {
+    capabilities.fan_speed.attributes = runtime.cleaningSettings.fanSpeed.options.map((option) => `option:${option.value}`);
+  }
+  if (runtime.cleaningSettings?.waterUsage && capabilities.water_usage.supported) {
+    capabilities.water_usage.attributes = runtime.cleaningSettings.waterUsage.options.map((option) => `option:${option.value}`);
+  }
   const activity = buildValetudoActivity(runtime, capabilities);
 
   return {
@@ -595,6 +712,8 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     source: runtime.source,
     dock: runtime.dock,
     diagnostics: runtime.diagnostics,
+    cleaningSettings: runtime.cleaningSettings,
+    maintenance: runtime.maintenance,
     map: {
       readiness: "unavailable",
       receiving: false,

@@ -73,6 +73,32 @@ function supportedOrUnavailable(
   return { ok: true, command: command.command, request };
 }
 
+function commandValue(command: VacuumCommand): string | null {
+  if (command.command !== "set_fan_speed" && command.command !== "set_water_usage") {
+    return null;
+  }
+  return typeof command.value === "string" && command.value.trim() !== "" ? command.value.trim() : null;
+}
+
+function capabilityOptionValues(capabilities: VacuumCapabilities, name: keyof VacuumCapabilities): string[] {
+  return (capabilities[name].attributes ?? [])
+    .map((attribute) => attribute.match(/^option:(.+)$/)?.[1])
+    .filter((value): value is string => Boolean(value));
+}
+
+function validateSelectedOption(
+  command: VacuumCommand,
+  capabilities: VacuumCapabilities,
+  name: keyof VacuumCapabilities,
+  value: string,
+): ValetudoCommandMappingResult | null {
+  const options = capabilityOptionValues(capabilities, name);
+  if (options.length > 0 && !options.includes(value)) {
+    return blocked(command.command, "invalid_request", "Selected cleaning setting is not available.");
+  }
+  return null;
+}
+
 const RICH_RUNTIME_ERROR_CODES = new Set<VacuumCommandErrorCode>([
   "unsupported",
   "unavailable",
@@ -94,7 +120,9 @@ const RUNTIME_ERROR_CODE_ALIASES: Record<string, VacuumCommandErrorCode> = {
   capability_unavailable: "unsupported",
   command_invalid_state: "invalid_state",
   invalid_json: "invalid_request",
+  invalid_value: "invalid_request",
   missing_command: "invalid_request",
+  missing_value: "invalid_request",
   source_command_failed: "backend_error",
   mqtt_publish_failure: "backend_error",
   malformed_snapshot: "malformed_backend_response",
@@ -197,14 +225,38 @@ export function mapVacuumCommandToValetudoRequest(
       : unsupported(command.command, "Valetudo go-to execution is not available.");
   }
   if (command.command === "set_fan_speed") {
-    return capabilities.fan_speed.supported
-      ? { ok: true, command: command.command, request: { type: "set_fan_speed", value: command.value } }
-      : unsupported(command.command, "Valetudo fan speed support is not available.");
+    const value = commandValue(command);
+    if (!value) {
+      return blocked(command.command, "invalid_request", "Missing fan speed value.");
+    }
+    const invalid = validateSelectedOption(command, capabilities, "fan_speed", value);
+    if (invalid) {
+      return invalid;
+    }
+    return supportedOrUnavailable(
+      command,
+      capabilities,
+      "fan_speed",
+      { type: "set_fan_speed", value },
+      "Valetudo fan speed support is not available.",
+    );
   }
   if (command.command === "set_water_usage") {
-    return capabilities.water_usage.supported
-      ? { ok: true, command: command.command, request: { type: "set_water_usage", value: command.value } }
-      : unsupported(command.command, "Valetudo water usage support is not available.");
+    const value = commandValue(command);
+    if (!value) {
+      return blocked(command.command, "invalid_request", "Missing water usage value.");
+    }
+    const invalid = validateSelectedOption(command, capabilities, "water_usage", value);
+    if (invalid) {
+      return invalid;
+    }
+    return supportedOrUnavailable(
+      command,
+      capabilities,
+      "water_usage",
+      { type: "set_water_usage", value },
+      "Valetudo water usage support is not available.",
+    );
   }
   if (command.command === "segment_cleaning") {
     return unsupported(command.command, "segment_cleaning requires explicit segment ids in a later command payload.");

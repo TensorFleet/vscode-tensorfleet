@@ -473,8 +473,10 @@ function testCapabilityCoverage(): void {
   assert.equal(valetudo.return_to_dock.supported, true);
   assert.equal(valetudo.battery.supported, true);
   assert.equal(valetudo.go_to_location.supported, false);
-  assert.equal(valetudo.fan_speed.supported, false);
-  assert.equal(valetudo.water_usage.supported, false);
+  assert.equal(valetudo.fan_speed.supported, true);
+  assert.equal(valetudo.fan_speed.commands?.includes("set_fan_speed"), true);
+  assert.equal(valetudo.water_usage.supported, true);
+  assert.equal(valetudo.water_usage.commands?.includes("set_water_usage"), true);
   assert.equal(valetudo.consumables.supported, false);
   assert.equal(valetudo.segment_cleaning.supported, false);
   assert.equal(valetudo.zone_cleaning.supported, false);
@@ -488,7 +490,7 @@ function testCapabilityCoverage(): void {
   assert.equal(valetudo.resume.supported, false);
   assert.equal(valetudo.auto_mapping.supported, false);
 
-  for (const name of ["fan_speed", "water_usage", "consumables", "segment_cleaning", "zone_cleaning"] as const) {
+  for (const name of ["consumables", "segment_cleaning", "zone_cleaning"] as const) {
     assert.equal(valetudo[name].source, "valetudo");
     assert.equal(valetudo[name].status, "detected_not_ready");
     assert.equal(valetudo[name].available, false);
@@ -497,6 +499,12 @@ function testCapabilityCoverage(): void {
       "Valetudo capability detected, but product workflow is not implemented in this slice.",
     );
   }
+
+  const valetudoWithConsumables = mapValetudoCapabilities(valetudoRawCapabilityNames, {
+    consumablesSupported: true,
+  });
+  assert.equal(valetudoWithConsumables.consumables.supported, true);
+  assert.equal(valetudoWithConsumables.consumables.available, true);
 
   const withoutBasicControl = mapValetudoCapabilities(["BatteryStateCapability"]);
   assert.equal(withoutBasicControl.start_cleaning.supported, false);
@@ -1154,8 +1162,11 @@ function testValetudoCommandStub(): void {
   const capabilities = mapValetudoCapabilities([
     "BasicControlCapability",
     "GoToLocationCapability",
+    "FanSpeedControlCapability",
     "WaterUsageControlCapability",
   ]);
+  capabilities.fan_speed.attributes = ["option:balanced", "option:turbo"];
+  capabilities.water_usage.attributes = ["option:low", "option:medium", "option:high"];
 
   assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "start_cleaning" }, capabilities), {
     ok: true,
@@ -1181,8 +1192,22 @@ function testValetudoCommandStub(): void {
     mapVacuumCommandToValetudoRequest({ command: "go_to_location", target: { x: 1, y: 2, yaw: 0 } }, capabilities).ok,
     false,
   );
-  assert.equal(mapVacuumCommandToValetudoRequest({ command: "set_water_usage", value: "medium" }, capabilities).ok, false);
-  assert.equal(mapVacuumCommandToValetudoRequest({ command: "set_fan_speed", value: "turbo" }, capabilities).ok, false);
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "set_water_usage", value: "medium" }, capabilities), {
+    ok: true,
+    command: "set_water_usage",
+    request: { type: "set_water_usage", value: "medium" },
+  });
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "set_fan_speed", value: "turbo" }, capabilities), {
+    ok: true,
+    command: "set_fan_speed",
+    request: { type: "set_fan_speed", value: "turbo" },
+  });
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "set_fan_speed", value: "max" }, capabilities), {
+    ok: false,
+    command: "set_fan_speed",
+    reason: "invalid_request",
+    message: "Selected cleaning setting is not available.",
+  });
   const zoneResult = mapVacuumCommandToValetudoRequest({
     command: "start_zone_cleaning",
     annotation: {
@@ -1404,9 +1429,25 @@ function testValetudoStateAwareCommandAvailability(): void {
             stop: { available: true },
             return_to_dock: { available: true },
           },
-          diagnostics: [],
+          diagnostics: [
+            { name: "ConsumableMonitoringCapability", detected: true, implemented: true, scope: "state" },
+          ],
         },
-        diagnostics: { mode: "valetudo_mock", rawCapabilityNames: ["BasicControlCapability"] },
+        diagnostics: { mode: "valetudo_mock", rawCapabilityNames: ["BasicControlCapability", "ConsumableMonitoringCapability"] },
+        maintenance: {
+          consumables: [
+            {
+              id: "filter:main",
+              label: "Filter",
+              remainingPercent: 52,
+              remainingMinutes: 4680,
+              usedMinutes: 4320,
+              totalMinutes: 9000,
+              status: "ok",
+              detail: "78 h remaining of 150 h",
+            },
+          ],
+        },
         updatedAt: 1,
       }),
     );
@@ -1508,6 +1549,10 @@ function testValetudoStateAwareCommandAvailability(): void {
       stop: { available: false, reason },
       return_to_dock: { available: false, reason },
     });
+    const snapshot = snapshotFor(overrides);
+    assert.equal(snapshot.capabilities.consumables.supported, true, `${label}: consumables support`);
+    assert.equal(snapshot.capabilities.consumables.available, false, `${label}: consumables availability`);
+    assert.equal(snapshot.capabilities.consumables.availabilityReason, reason, `${label}: consumables reason`);
   }
 
   const runtimeBlocked = snapshotFor({
@@ -1543,9 +1588,9 @@ function testValetudoStateAwareCommandAvailability(): void {
   assert.equal(withoutReturnHome.capabilities.return_to_dock.supported, false);
   assert.equal(withoutReturnHome.capabilities.return_to_dock.status, "unsupported");
 
-  const detectedButNotReady = mapValetudoCapabilities(["FanSpeedControlCapability", "WaterUsageControlCapability"]);
-  assert.equal(detectedButNotReady.fan_speed.status, "detected_not_ready");
-  assert.equal(detectedButNotReady.water_usage.status, "detected_not_ready");
+  const cleaningSettings = mapValetudoCapabilities(["FanSpeedControlCapability", "WaterUsageControlCapability"]);
+  assert.equal(cleaningSettings.fan_speed.status, "supported");
+  assert.equal(cleaningSettings.water_usage.status, "supported");
   assert.equal(mapValetudoCapabilities(["BasicControlCapability"]).resume.supported, false);
 
   const staleSource = snapshotFor({ sourceStale: true });
@@ -1569,9 +1614,13 @@ function testValetudoRuntimeSnapshotMapping(): void {
         pause: { available: true },
         stop: { available: true },
         return_to_dock: { available: true },
+        set_fan_speed: { available: true },
+        set_water_usage: { available: true },
       },
       diagnostics: [
+        { name: "ConsumableMonitoringCapability", detected: true, implemented: true, scope: "state" },
         { name: "FanSpeedControlCapability", detected: true, implemented: false, scope: "diagnostics" },
+        { name: "WaterUsageControlCapability", detected: true, implemented: false, scope: "diagnostics" },
         { name: "GoToLocationCapability", detected: true, implemented: false, scope: "diagnostics" },
         { name: "ZoneCleaningCapability", detected: true, implemented: false, scope: "diagnostics" },
       ],
@@ -1581,9 +1630,36 @@ function testValetudoRuntimeSnapshotMapping(): void {
       rawCapabilityNames: [
         "BasicControlCapability",
         "BatteryStateCapability",
+        "ConsumableMonitoringCapability",
         "FanSpeedControlCapability",
+        "WaterUsageControlCapability",
         "GoToLocationCapability",
         "ZoneCleaningCapability",
+      ],
+    },
+    cleaningSettings: {
+      fanSpeed: { current: "medium", options: ["off", "min", "low", "medium", "high", "turbo", "max"] },
+      waterUsage: { current: "medium", options: ["off", "min", "low", "medium", "high", "max"] },
+    },
+    maintenance: {
+      consumables: [
+        {
+          id: "brush:main",
+          label: "Main brush",
+          remainingPercent: 72,
+          remainingMinutes: 12960,
+          usedMinutes: 5040,
+          totalMinutes: 18000,
+          status: "ok",
+          detail: "216 h remaining of 300 h",
+        },
+        {
+          id: "cleaning:sensor",
+          label: "Sensor cleaning",
+          remainingPercent: 9,
+          status: "replace_soon",
+          detail: "9% remaining",
+        },
       ],
     },
     updatedAt: 1,
@@ -1606,7 +1682,33 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.capabilities.return_to_dock.supported, true);
   assert.equal(snapshot.capabilities.battery.supported, true);
   assert.equal(snapshot.capabilities.go_to_location.supported, false);
-  assert.equal(snapshot.capabilities.fan_speed.supported, false);
+  assert.equal(snapshot.capabilities.fan_speed.supported, true);
+  assert.equal(snapshot.capabilities.fan_speed.available, true);
+  assert.equal(snapshot.capabilities.water_usage.supported, true);
+  assert.equal(snapshot.capabilities.consumables.supported, true);
+  assert.equal(snapshot.capabilities.consumables.available, true);
+  assert.equal(snapshot.maintenance?.consumables.length, 2);
+  assert.equal(snapshot.maintenance?.consumables[0]?.label, "Main brush");
+  assert.equal(snapshot.maintenance?.consumables[1]?.status, "replace_soon");
+  assert.equal(snapshot.cleaningSettings?.fanSpeed?.current, "medium");
+  assert.deepEqual(snapshot.cleaningSettings?.fanSpeed?.options.map((option) => option.value), [
+    "off",
+    "min",
+    "low",
+    "medium",
+    "high",
+    "turbo",
+    "max",
+  ]);
+  assert.equal(snapshot.cleaningSettings?.waterUsage?.current, "medium");
+  assert.deepEqual(snapshot.cleaningSettings?.waterUsage?.options.map((option) => option.value), [
+    "off",
+    "min",
+    "low",
+    "medium",
+    "high",
+    "max",
+  ]);
   assert.equal(snapshot.capabilities.zone_cleaning.supported, false);
   assert.equal(snapshot.capabilities.map.supported, false);
   assert.equal(snapshot.capabilities.pose.supported, false);
@@ -1653,7 +1755,9 @@ function testValetudoRuntimeSnapshotMapping(): void {
     [
       "BasicControlCapability",
       "BatteryStateCapability",
+      "ConsumableMonitoringCapability",
       "FanSpeedControlCapability",
+      "WaterUsageControlCapability",
       "GoToLocationCapability",
       "ZoneCleaningCapability",
     ],
@@ -2099,6 +2203,33 @@ function testPublicContractAndUiBoundary(): void {
     /supportedControls = controls\.filter\(\(control\) => control\.capability\.supported\)/.test(panelContents),
     true,
     "Unsupported basic commands should not appear as active controls",
+  );
+  assert.equal(
+    /CleaningSettingsCard/.test(panelContents) &&
+      /settings=\{snapshot\.cleaningSettings\}/.test(panelContents) &&
+      /props\.capabilities\.fan_speed\.supported/.test(panelContents) &&
+      /props\.capabilities\.water_usage\.supported/.test(panelContents),
+    true,
+    "Cleaning Settings card should render from normalized settings and capability descriptors",
+  );
+  assert.equal(
+    /MaintenanceCard/.test(panelContents) &&
+      /maintenance=\{snapshot\.maintenance\}/.test(panelContents) &&
+      /props\.capabilities\.consumables\.supported/.test(panelContents) &&
+      /props\.maintenance\?\.consumables/.test(panelContents),
+    true,
+    "Maintenance card should render from normalized maintenance state and consumables descriptor",
+  );
+  assert.equal(
+    /ConsumableMonitoringCapability/.test(panelContents),
+    false,
+    "Operator UI should not render raw Valetudo consumable capability names",
+  );
+  assert.equal(
+    /handleCleaningSettingCommand\("set_fan_speed", value\)/.test(panelContents) &&
+      /handleCleaningSettingCommand\("set_water_usage", value\)/.test(panelContents),
+    true,
+    "Cleaning Settings controls should submit normalized fan and water commands",
   );
   assert.equal(
     /control\.capability\.available === false/.test(panelContents) &&
