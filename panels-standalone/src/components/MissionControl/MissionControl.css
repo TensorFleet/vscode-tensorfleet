@@ -42,6 +42,9 @@
 
 .mission-side-panel__body {
     padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 .mission-side-panel__action {
@@ -55,4 +58,75 @@
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
+}
+
+.mission-side-panel__missions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.mission-side-panel__mission-row {
+    position: relative;
+}
+
+.mission-side-panel__mission-button {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 40px 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--vscode-widget-border, #e5e7eb);
+    background: var(--vscode-editor-background, rgba(255, 255, 255, 0.04));
+    color: var(--vscode-editorWidget-foreground, #111827);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.mission-side-panel__mission-button--selected {
+    border-color: var(--vscode-focusBorder, #0e639c);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder, #0e639c) 45%, transparent);
+}
+
+.mission-side-panel__mission-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.mission-side-panel__delete-button {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--vscode-icon-foreground, var(--vscode-editorWidget-foreground, #111827));
+    border: 1px solid var(--vscode-widget-border, #e5e7eb);
+    background: var(--vscode-editorWidget-background, #fff);
+    cursor: pointer;
+    z-index: 2;
+    padding: 0;
+}
+
+.mission-side-panel__delete-button:hover {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground, rgba(0, 0, 0, 0.06)));
+}
+
+.mission-side-panel__delete-icon {
+    width: 18px;
+    height: 18px;
+    display: block;
+    stroke: currentColor;
 }

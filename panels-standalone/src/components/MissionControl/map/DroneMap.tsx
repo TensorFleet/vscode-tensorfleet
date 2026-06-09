@@ -28,8 +28,15 @@ type Props = {
   follow?: boolean;
   className?: string;
   missionPlanningRequestKey?: number;
+  flightPlans?: Array<{
+    id: string;
+    name: string;
+    path: [number, number][];
+  }>;
+  selectedFlightPlanId?: string | null;
   activePanel?: 'mission-planning' | 'drone-status';
   onSelectPanel?: (panel: 'mission-planning' | 'drone-status') => void;
+  onFlightPlanPathChange?: (flightPlanId: string, path: [number, number][]) => void;
 };
 
 function toDegreesMaybeScaled(value: number | undefined): number | undefined {
@@ -159,8 +166,11 @@ export const DroneMap: React.FC<Props> = ({
   follow = true,
   className,
   missionPlanningRequestKey = 0,
+  flightPlans = [],
+  selectedFlightPlanId = null,
   activePanel = 'mission-planning',
   onSelectPanel,
+  onFlightPlanPathChange,
 }) => {
   const rootClassName = className ? `tf-drone-map ${className}` : 'tf-drone-map';
 
@@ -428,10 +438,14 @@ export const DroneMap: React.FC<Props> = ({
         <FlightPathTools
           map={olMap}
           startRequestKey={missionPlanningRequestKey}
+          flightPlans={flightPlans}
+          selectedFlightPlanId={selectedFlightPlanId}
           activePanel={activePanel}
           onSelectPanel={onSelectPanel}
           onPathChange={(coords) => {
-            // coords are in EPSG:3857
+            if (selectedFlightPlanId) {
+              onFlightPlanPathChange?.(selectedFlightPlanId, coords);
+            }
           }}
         />
       </div>

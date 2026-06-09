@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import Feature from 'ol/Feature';
 import type Map from 'ol/Map';
 import VectorSource from 'ol/source/Vector';
 import VectorLayer from 'ol/layer/Vector';
@@ -125,42 +126,46 @@ const DroneStatusIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) =
     </span>
 );
 
-function makeFlightPathStyles(): (feature: any) => Style[] {
-    const redStroke = new Stroke({
-        color: 'rgba(255,0,0,0.95)',
-        width: 2,
-        lineCap: 'square',
-        lineJoin: 'miter',
-    });
+function makeFlightPathStyles(): (feature: Feature<LineString>) => Style[] {
+    const lineStyle = new Style();
+    const squareMarker = new Style();
+    const arrowStyle = new Style();
 
-    const lineStyle = new Style({ stroke: redStroke });
+    return (feature) => {
+        const strokeColor = feature.get('isSelected') === true
+            ? 'rgba(255,105,180,0.98)'
+            : 'rgba(255,0,0,0.95)';
 
-    const squareMarker = new Style({
-        image: new RegularShape({
+        lineStyle.setStroke(new Stroke({
+            color: strokeColor,
+            width: 3,
+            lineCap: 'square',
+            lineJoin: 'miter',
+        }));
+
+        squareMarker.setImage(new RegularShape({
             points: 4,
             radius: 5,
             angle: 0,
             fill: new Fill({ color: '#ffffff' }),
-            stroke: new Stroke({ color: 'rgba(255,0,0,0.95)', width: 2 }),
-        }),
-        geometry: (feature) => {
-            const geom = feature.getGeometry();
+            stroke: new Stroke({ color: strokeColor, width: 2 }),
+        }));
+        squareMarker.setGeometry((innerFeature) => {
+            const geom = innerFeature.getGeometry();
             if (geom instanceof LineString) return new MultiPoint(geom.getCoordinates());
             return undefined;
-        },
-        zIndex: 10,
-    });
+        });
+        squareMarker.setZIndex(10);
 
-    const arrowStyle = new Style({
-        image: new RegularShape({
+        arrowStyle.setImage(new RegularShape({
             points: 3,
             radius: 8,
             rotation: 0,
-            fill: new Fill({ color: 'rgba(255,0,0,0.95)' }),
+            fill: new Fill({ color: strokeColor }),
             stroke: new Stroke({ color: '#ffffff', width: 1 }),
-        }),
-        geometry: (feature) => {
-            const geom = feature.getGeometry();
+        }));
+        arrowStyle.setGeometry((innerFeature) => {
+            const geom = innerFeature.getGeometry();
             if (!(geom instanceof LineString)) return undefined;
             const coords = geom.getCoordinates();
             if (coords.length < 2) return undefined;
@@ -171,17 +176,45 @@ function makeFlightPathStyles(): (feature: any) => Style[] {
             const rotation = Math.atan2(dy, dx);
             (arrowStyle.getImage() as RegularShape).setRotation(rotation);
             return new Point(end);
-        },
-        zIndex: 11,
-    });
+        });
+        arrowStyle.setZIndex(11);
 
-    return () => [lineStyle, squareMarker, arrowStyle];
+        return [lineStyle, squareMarker, arrowStyle];
+    };
+}
+
+type FlightPlanRecord = {
+    id: string;
+    name: string;
+    path: [number, number][];
+};
+
+function syncFlightPlanFeatures(
+    source: VectorSource,
+    flightPlans: FlightPlanRecord[],
+    selectedFlightPlanId: string | null,
+) {
+    source.clear();
+
+    for (const flightPlan of flightPlans) {
+        if (flightPlan.id !== selectedFlightPlanId) continue;
+        if (flightPlan.path.length < 2) continue;
+
+        const feature = new Feature({
+            geometry: new LineString(flightPlan.path),
+        });
+        feature.setId(flightPlan.id);
+        feature.set('isSelected', flightPlan.id === selectedFlightPlanId);
+        source.addFeature(feature);
+    }
 }
 
 type FlightPathToolsProps = {
     map: Map | null | undefined;
     onPathChange?: (coords: [number, number][]) => void;
     startRequestKey?: number;
+    flightPlans?: FlightPlanRecord[];
+    selectedFlightPlanId?: string | null;
     activePanel?: 'mission-planning' | 'drone-status';
     onSelectPanel?: (panel: 'mission-planning' | 'drone-status') => void;
 };
@@ -190,6 +223,8 @@ export const FlightPathTools: React.FC<FlightPathToolsProps> = ({
     map,
     onPathChange,
     startRequestKey = 0,
+    flightPlans = [],
+    selectedFlightPlanId = null,
     activePanel = 'mission-planning',
     onSelectPanel,
 }) => {
@@ -221,10 +256,13 @@ export const FlightPathTools: React.FC<FlightPathToolsProps> = ({
         };
     }, [map, styleFn]);
 
+    useEffect(() => {
+        if (!sourceRef.current) return;
+        syncFlightPlanFeatures(sourceRef.current, flightPlans, selectedFlightPlanId);
+    }, [flightPlans, selectedFlightPlanId]);
+
     const startNewPath = () => {
         if (!map || !sourceRef.current) return;
-
-        sourceRef.current.clear();
 
         if (drawRef.current) {
             map.removeInteraction(drawRef.current);
