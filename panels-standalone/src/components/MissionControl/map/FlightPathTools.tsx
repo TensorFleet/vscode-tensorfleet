@@ -11,25 +11,11 @@ import Style from 'ol/style/Style';
 import Stroke from 'ol/style/Stroke';
 import Fill from 'ol/style/Fill';
 import RegularShape from 'ol/style/RegularShape';
+import { MapButtonsStack } from './MapButtons';
 
-type TopRightButtonsStackProps = { children: React.ReactNode };
-
-export const TopRightButtonsStack: React.FC<TopRightButtonsStackProps> = ({ children }) => (
-    <div
-        style={{
-            position: 'absolute',
-            top: 12,
-            right: 12,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            zIndex: 1000,
-            pointerEvents: 'none',
-        }}
-    >
-        {children}
-    </div>
-);
+const iconButtonBaseStyle: React.CSSProperties = {
+    display: 'block',
+};
 
 type IconButtonProps = {
     title?: string;
@@ -42,14 +28,14 @@ type IconButtonProps = {
 };
 
 const IconButton: React.FC<IconButtonProps> = ({
-                                                   title,
-                                                   active,
-                                                   onClick,
-                                                   icon,
-                                                   size = 44,
-                                                   iconScale = 0.8,
-                                                   iconNudge,
-                                               }) => {
+    title,
+    active,
+    onClick,
+    icon,
+    size = 44,
+    iconScale = 0.8,
+    iconNudge,
+}) => {
     const iconPx = Math.round(size * iconScale);
     const iconEl = React.isValidElement(icon)
         ? React.cloneElement(icon as React.ReactElement<any>, {
@@ -60,6 +46,7 @@ const IconButton: React.FC<IconButtonProps> = ({
 
     return (
         <button
+            type="button"
             title={title}
             onClick={onClick}
             style={{
@@ -79,14 +66,14 @@ const IconButton: React.FC<IconButtonProps> = ({
                 lineHeight: 0,
             }}
         >
-      <span
-          style={{
-              display: 'block',
-              transform: `translate(${iconNudge?.x ?? 0}px, ${iconNudge?.y ?? 0}px)`,
-          }}
-      >
-        {iconEl}
-      </span>
+            <span
+                style={{
+                    display: 'block',
+                    transform: `translate(${iconNudge?.x ?? 0}px, ${iconNudge?.y ?? 0}px)`,
+                }}
+            >
+                {iconEl}
+            </span>
         </button>
     );
 };
@@ -95,7 +82,7 @@ const SVGFlagPlusIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) =
     <svg
         xmlns="http://www.w3.org/2000/svg"
         viewBox="0 0 24 24"
-        style={style}
+        style={{ ...iconButtonBaseStyle, ...style }}
         preserveAspectRatio="xMidYMid meet"
         aria-hidden="true"
         focusable="false"
@@ -116,8 +103,26 @@ const SVGFlagPlusIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) =
             vectorEffect="non-scaling-stroke"
         />
         <line x1="15.25" y1="12" x2="17.75" y2="12" stroke="#0a66ff" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-        <line x1="16.5"  y1="10.75" x2="16.5"  y2="13.25" stroke="#0a66ff" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        <line x1="16.5" y1="10.75" x2="16.5" y2="13.25" stroke="#0a66ff" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
     </svg>
+);
+
+const DroneStatusIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) => (
+    <span
+        aria-hidden="true"
+        style={{
+            ...iconButtonBaseStyle,
+            ...style,
+            width: '100%',
+            height: '100%',
+            display: 'grid',
+            placeItems: 'center',
+            lineHeight: 1,
+            fontSize: 20,
+        }}
+    >
+        ✈️
+    </span>
 );
 
 function makeFlightPathStyles(): (feature: any) => Style[] {
@@ -176,9 +181,18 @@ function makeFlightPathStyles(): (feature: any) => Style[] {
 type FlightPathToolsProps = {
     map: Map | null | undefined;
     onPathChange?: (coords: [number, number][]) => void;
+    startRequestKey?: number;
+    activePanel?: 'mission-planning' | 'drone-status';
+    onSelectPanel?: (panel: 'mission-planning' | 'drone-status') => void;
 };
 
-export const FlightPathTools: React.FC<FlightPathToolsProps> = ({ map, onPathChange }) => {
+export const FlightPathTools: React.FC<FlightPathToolsProps> = ({
+    map,
+    onPathChange,
+    startRequestKey = 0,
+    activePanel = 'mission-planning',
+    onSelectPanel,
+}) => {
     const [isDrawing, setIsDrawing] = useState(false);
 
     const sourceRef = useRef<VectorSource | null>(null);
@@ -249,17 +263,32 @@ export const FlightPathTools: React.FC<FlightPathToolsProps> = ({ map, onPathCha
         setIsDrawing(true);
     };
 
+    useEffect(() => {
+        if (startRequestKey > 0) {
+            startNewPath();
+        }
+    }, [startRequestKey]);
+
     return (
-        <TopRightButtonsStack>
+        <MapButtonsStack corner="top-right">
             <IconButton
-                title={isDrawing ? 'Drawing flight path… (double-click to finish)' : 'Start flight path'}
-                active={isDrawing}
-                onClick={startNewPath}
+                title="Open mission planning"
+                active={activePanel === 'mission-planning'}
+                onClick={() => onSelectPanel?.('mission-planning')}
                 size={44}
                 iconScale={0.9}
                 icon={<SVGFlagPlusIcon />}
                 iconNudge={{ x: 0, y: 0 }}
             />
-        </TopRightButtonsStack>
+            <IconButton
+                title="Open drone status"
+                active={activePanel === 'drone-status'}
+                onClick={() => onSelectPanel?.('drone-status')}
+                size={44}
+                iconScale={0.72}
+                icon={<DroneStatusIcon />}
+                iconNudge={{ x: 0, y: -1 }}
+            />
+        </MapButtonsStack>
     );
 };

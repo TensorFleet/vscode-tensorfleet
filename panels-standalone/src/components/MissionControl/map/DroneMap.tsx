@@ -8,6 +8,8 @@ import OSM from 'ol/source/OSM';
 import VectorSource from 'ol/source/Vector';
 import Feature from 'ol/Feature';
 import Point from 'ol/geom/Point';
+import Draw from 'ol/interaction/Draw';
+import DoubleClickZoom from 'ol/interaction/DoubleClickZoom';
 import Style from 'ol/style/Style';
 import Icon from 'ol/style/Icon';
 import CircleStyle from 'ol/style/Circle';
@@ -17,7 +19,7 @@ import { fromLonLat } from 'ol/proj';
 import { unByKey } from 'ol/Observable';
 import type { EventsKey } from 'ol/events';
 
-import type { DroneStateModel, DroneState } from '../../../../packages/tensorfleet-util/src/drone/drone-state-model';
+import type { DroneStateModel, DroneState } from 'tensorfleet-util';
 import { MapButtonsStack, FollowLockButton } from './MapButtons';
 import { FlightPathTools } from './FlightPathTools';
 
@@ -25,6 +27,9 @@ type Props = {
   model: DroneStateModel;
   follow?: boolean;
   className?: string;
+  missionPlanningRequestKey?: number;
+  activePanel?: 'mission-planning' | 'drone-status';
+  onSelectPanel?: (panel: 'mission-planning' | 'drone-status') => void;
 };
 
 function toDegreesMaybeScaled(value: number | undefined): number | undefined {
@@ -129,7 +134,34 @@ function lerpAngleRad(a: number, b: number, t: number): number {
 const CAM_EASE_DURATION_MS = 450;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
-export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) => {
+function endMissionPlanning(map: Map, mode: 'finish' | 'cancel') {
+  const draw = map.getInteractions().getArray().find((interaction) => interaction instanceof Draw);
+  if (!(draw instanceof Draw)) return;
+
+  if (mode === 'finish') {
+    draw.finishDrawing();
+  } else {
+    draw.abortDrawing();
+  }
+
+  if (map.getInteractions().getArray().includes(draw)) {
+    map.removeInteraction(draw);
+  }
+
+  const dblZoom = map.getInteractions().getArray().find((interaction) => interaction instanceof DoubleClickZoom);
+  if (dblZoom instanceof DoubleClickZoom) {
+    dblZoom.setActive(true);
+  }
+}
+
+export const DroneMap: React.FC<Props> = ({
+  model,
+  follow = true,
+  className,
+  missionPlanningRequestKey = 0,
+  activePanel = 'mission-planning',
+  onSelectPanel,
+}) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<HTMLDivElement | null>(null);
 
@@ -193,6 +225,24 @@ export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) =
       }
     });
 
+    const viewportEl = map.getViewport();
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+      endMissionPlanning(map, 'finish');
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        endMissionPlanning(map, 'finish');
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        endMissionPlanning(map, 'cancel');
+      }
+    };
+
+    viewportEl.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('keydown', handleKeyDown);
+
     const tick = (ts: number) => {
       if (!mapObjRef.current || !droneFeatureRef.current) return;
 
@@ -242,6 +292,8 @@ export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) =
     return () => {
       if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current);
       if (panListenerKeyRef.current) unByKey(panListenerKeyRef.current);
+      viewportEl.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('keydown', handleKeyDown);
       map.setTarget(undefined);
       mapObjRef.current = null;
       vectorSourceRef.current = null;
@@ -322,6 +374,9 @@ export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) =
 
       <FlightPathTools
         map={olMap}
+        startRequestKey={missionPlanningRequestKey}
+        activePanel={activePanel}
+        onSelectPanel={onSelectPanel}
         onPathChange={(coords) => {
           // coords are in EPSG:3857
         }}

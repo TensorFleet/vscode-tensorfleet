@@ -8,8 +8,9 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "prepare:tensorfleet-util": "rm -rf .generated/tensorfleet-util && mkdir -p .generated && ./node_modules/.bin/typia generate --input packages/tensorfleet-util/src --output .generated/tensorfleet-util --project packages/tensorfleet-util/tsconfig.json",
+    "dev": "bun run prepare:tensorfleet-util && vite",
+    "build": "bun run prepare:tensorfleet-util && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

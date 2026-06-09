@@ -4,4 +4,53 @@
     width: 100%;
     height: 100%;
     display: flex;
+    position: relative;
+}
+
+.mission-control-settings-trigger {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 20;
+}
+
+.mission-side-panel {
+    width: 100%;
+    max-width: 400px;
+    margin: 0 auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    background: #fff;
+    min-height: 100%;
+    height: 100%;
+    max-height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.mission-side-panel__header {
+    padding: 16px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.mission-side-panel__title {
+    font-weight: 600;
+}
+
+.mission-side-panel__body {
+    padding: 16px;
+}
+
+.mission-side-panel__action {
+    width: 100%;
+    height: 44px;
+    padding: 0 14px;
+    border-radius: 10px;
+    background: #111827;
+    color: #fff;
+    border: 1px solid #111827;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
 }

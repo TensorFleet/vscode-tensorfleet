@@ -7,8 +7,8 @@ const rootDir = __dirname;
 const packagesDir = resolve(rootDir, "./packages");
 const typesDir = resolve(rootDir, "./packages/@types");
 
-// ✅ tensorfleet-util resolves to SOURCE in dev/build (like your @lichtblick packages)
-const tensorfleetUtilDir = resolve(rootDir, "./packages/tensorfleet-util/src");
+// tensorfleet-util uses typia transforms; consume the generated mirror, not raw submodule source.
+const tensorfleetUtilDir = resolve(rootDir, "./.generated/tensorfleet-util");
 
 // ✅ tensorfleet-ros resolves to SOURCE in dev/build
 const tensorfleetRosDir = resolve(rootDir, "./packages/tensorfleet-ros/src");

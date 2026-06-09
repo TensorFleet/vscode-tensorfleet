@@ -83,6 +83,48 @@ export function MapButton({
     );
 }
 
+export function MapTextButton({
+    title,
+    pressed,
+    onClick,
+    children,
+}: {
+    title: string;
+    pressed?: boolean;
+    onClick?: () => void;
+    children: React.ReactNode;
+}) {
+    return (
+        <button
+            type="button"
+            aria-pressed={pressed}
+            title={title}
+            onClick={onClick}
+            style={{
+                minHeight: 40,
+                padding: '0 14px',
+                borderRadius: 999,
+                border: '1px solid rgba(0,0,0,0.15)',
+                background: pressed ? 'rgba(255,255,255,0.98)' : 'rgba(255,255,255,0.92)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                userSelect: 'none',
+                backdropFilter: 'saturate(1.2) blur(2px)',
+                lineHeight: 1,
+                fontSize: 13,
+                fontWeight: 600,
+                color: '#111',
+                whiteSpace: 'nowrap',
+            }}
+        >
+            {children}
+        </button>
+    );
+}
+
 // Visually centered stretched navigation triangle icon.
 // Drawn around (0,0) and centered with viewBox so it *really* sits in the middle.
 export function NavArrowIcon({ filled = false, size = 24 }: { filled?: boolean; size?: number }) {

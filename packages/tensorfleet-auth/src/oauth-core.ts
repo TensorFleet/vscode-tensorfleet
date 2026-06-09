@@ -16,6 +16,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
+import type { AddressInfo } from 'net';
 import type {
   InitiateAuthResponse,
   VerifyTokenResponse,
@@ -24,6 +25,8 @@ import type {
   OAuthCallbacks,
   CallbackServerOptions,
   CallbackServerResult,
+  OAuthRedirectFlowOptions,
+  OAuthRedirectFlowSession,
 } from './types.js';
 
 // ============================================================================
@@ -172,12 +175,7 @@ export async function startCallbackServer(
     }});
 
     server.on('listening', () => {
-      const addressInfo = server.address();
-      const actualPort = typeof addressInfo === 'string' ? parseInt(addressInfo) : addressInfo?.port;
-      
-      const callbackBaseUrl = `http://${host}:${actualPort}/callback`;
-      
-      // Attach request handler
+      // Attach request handler once server starts listening
       server.on('request', handler);
     });
 
@@ -198,8 +196,6 @@ export async function startCallbackServer(
   // Wait for server to start and get the port
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
-      const addressInfo = server.address();
-      const actualPort = typeof addressInfo === 'string' ? parseInt(addressInfo) : addressInfo?.port;
       resolve();
     });
   });
@@ -216,6 +212,134 @@ export async function startCallbackServer(
     },
     tokenPromise,
   };
+}
+
+/**
+ * Start full OAuth login flow with local callback redirect handling.
+ *
+ * This function encapsulates the "open browser + localhost callback redirection" flow
+ * and is designed for Node.js and Electron main process usage by injecting runtime adapters.
+ */
+export async function startOAuthRedirectFlow(
+  options: OAuthRedirectFlowOptions
+): Promise<OAuthRedirectFlowSession> {
+  const {
+    backendUrl,
+    openBrowser,
+    createServer,
+    onTokenReceived,
+    onError,
+    initiatePath = '/api/auth/vscode/initiate',
+    host = '127.0.0.1',
+    port = 0,
+    callbackPath = '/callback',
+    timeoutMs = 5 * 60 * 1000,
+    fetchImpl = fetch,
+  } = options;
+
+  const response = await fetchImpl(`${backendUrl}${initiatePath}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to initiate authentication (${response.status})`);
+  }
+
+  const { state, authUrl } = (await response.json()) as InitiateAuthResponse;
+  const server = createServer();
+  let timeoutId: NodeJS.Timeout | undefined;
+  let finished = false;
+  let rejectFlow: ((error: Error) => void) | undefined;
+
+  const failFlow = (error: Error): void => {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    server.close();
+    onError?.(error);
+    rejectFlow?.(error);
+  };
+
+  const tokenPromise = new Promise<string>((resolve, reject) => {
+    rejectFlow = reject;
+
+    const handler = createCallbackHandler({
+      expectedState: state,
+      callbacks: {
+        openBrowser: async () => {},
+        onTokenReceived: async (token: string) => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          server.close();
+          await onTokenReceived?.(token);
+          resolve(token);
+        },
+        onError: (error: Error) => {
+          failFlow(error);
+        },
+      },
+    });
+
+    server.on('request', handler);
+    server.on('error', (err: Error) => {
+      failFlow(new Error(`Failed to start callback server: ${err.message}`));
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+
+  const address = server.address() as AddressInfo | null;
+  if (!address || typeof address === 'string' || typeof address.port !== 'number') {
+    failFlow(new Error('Failed to determine callback server port'));
+    throw new Error('Failed to determine callback server port');
+  }
+
+  const normalizedPath = callbackPath.startsWith('/') ? callbackPath : `/${callbackPath}`;
+  const callbackBaseUrl = `http://${host}:${address.port}${normalizedPath}`;
+  const finalAuthUrl = withCallbackBaseUrl(authUrl, callbackBaseUrl);
+
+  timeoutId = setTimeout(() => {
+    failFlow(new Error('Authentication timeout'));
+  }, timeoutMs);
+
+  try {
+    await openBrowser(finalAuthUrl);
+  } catch (error) {
+    failFlow(error instanceof Error ? error : new Error(String(error)));
+    throw error;
+  }
+
+  return {
+    tokenPromise,
+    callbackBaseUrl,
+    finalAuthUrl,
+    state,
+    cancel: (error?: Error) => {
+      failFlow(error ?? new Error('Login cancelled'));
+    },
+  };
+}
+
+function withCallbackBaseUrl(authUrl: string, callbackBaseUrl: string): string {
+  const url = new URL(authUrl);
+  url.searchParams.set('callbackBaseUrl', callbackBaseUrl);
+  return url.toString();
 }
 
 // ============================================================================
