@@ -50,6 +50,9 @@ import {
   mapValetudoState,
 } from "../panels-standalone/src/vacuum-adapter/backends/valetudo/stateMapper";
 import {
+  deriveVacuumPrimaryRobotState,
+} from "../panels-standalone/src/vacuum-adapter/primaryState";
+import {
   buildCleanAreaCoverageSnapshot,
   buildCleanAreaCoverageTarget,
   markCleanAreaCoveredCells,
@@ -2114,6 +2117,116 @@ function testValetudoRuntimeMissionStateMapping(): void {
 
   const faulted = createSnapshot({ value: "error", label: "Error", started: false, paused: false });
   assert.equal(faulted.activity?.status, "faulted");
+  assert.equal(faulted.fault.readiness, "degraded");
+  assert.deepEqual(faulted.fault.faults, ["Error"]);
+}
+
+function testPrimaryRobotStateDerivation(): void {
+  const createSnapshot = (overrides: {
+    runtimeStatus?: "online" | "degraded" | "offline";
+    source?: { status: "reachable" | "unreachable" | "unknown"; stale: boolean; reason?: string };
+    state?: { value: string; label: string; started: boolean; paused: boolean };
+    battery?: { level: number; charging: boolean };
+    dock?: { state: string; docked: boolean };
+  }) =>
+    mapValetudoState(
+      mapValetudoRuntimeSnapshotToBoundary({
+        runtime: { id: "rt", version: "v", status: overrides.runtimeStatus ?? "online" },
+        backend: "valetudo",
+        robot: { id: "primary-state", name: "Primary State Robot" },
+        source: {
+          kind: "fixed_mock",
+          status: overrides.source?.status ?? "reachable",
+          stale: overrides.source?.stale ?? false,
+          lastSeenAt: 1,
+        },
+        connectivity: {
+          reachable: overrides.source?.status !== "unreachable",
+          online: overrides.runtimeStatus !== "offline",
+        },
+        state: overrides.state ?? { value: "idle", label: "Idle", started: false, paused: false },
+        battery: overrides.battery ?? { level: 82, charging: false },
+        dock: overrides.dock ?? { state: "available", docked: false },
+        capabilities: {
+          commands: {
+            start_cleaning: { available: true },
+            pause: { available: true },
+            stop: { available: true },
+            return_to_dock: { available: true },
+          },
+          diagnostics: [],
+        },
+        diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability"] },
+        updatedAt: 1,
+      }),
+    );
+
+  const cases = [
+    {
+      name: "idle",
+      snapshot: createSnapshot({ state: { value: "idle", label: "Idle", started: false, paused: false } }),
+      want: "idle",
+    },
+    {
+      name: "docked",
+      snapshot: createSnapshot({
+        state: { value: "docked", label: "Docked", started: false, paused: false },
+        dock: { state: "docked", docked: true },
+      }),
+      want: "docked",
+    },
+    {
+      name: "charging",
+      snapshot: createSnapshot({
+        state: { value: "docked", label: "Charging", started: false, paused: false },
+        battery: { level: 55, charging: true },
+        dock: { state: "charging", docked: true },
+      }),
+      want: "charging",
+    },
+    {
+      name: "cleaning",
+      snapshot: createSnapshot({ state: { value: "cleaning", label: "Cleaning", started: true, paused: false } }),
+      want: "cleaning",
+    },
+    {
+      name: "paused",
+      snapshot: createSnapshot({ state: { value: "paused", label: "Paused", started: true, paused: true } }),
+      want: "paused",
+    },
+    {
+      name: "returning",
+      snapshot: createSnapshot({
+        state: { value: "returning_to_dock", label: "Returning to dock", started: false, paused: false },
+        dock: { state: "returning", docked: false },
+      }),
+      want: "returning_to_dock",
+    },
+    {
+      name: "offline",
+      snapshot: createSnapshot({
+        runtimeStatus: "offline",
+        source: { status: "unreachable", stale: false },
+      }),
+      want: "offline",
+    },
+    {
+      name: "unavailable stale",
+      snapshot: createSnapshot({
+        source: { status: "reachable", stale: true },
+      }),
+      want: "unavailable",
+    },
+    {
+      name: "error",
+      snapshot: createSnapshot({ state: { value: "error", label: "Maintenance warning", started: false, paused: false } }),
+      want: "error",
+    },
+  ] as const;
+
+  for (const tt of cases) {
+    assert.equal(deriveVacuumPrimaryRobotState(tt.snapshot).state, tt.want, tt.name);
+  }
 }
 
 function testValetudoChargingAndOfflineMapping(): void {
@@ -2288,11 +2401,22 @@ function testPublicContractAndUiBoundary(): void {
     assert.equal(panelContents.includes(backendName), false, `Vacuum Control should not branch on ${backendName}`);
   }
   assert.equal(/identity\.source|snapshot\.identity\.source/.test(panelContents), false);
-  assert.equal(panelContents.includes("returning_to_dock"), false, "Vacuum Control should not branch on raw Valetudo state");
   assert.equal(
-    panelContents.includes("Map unavailable") && panelContents.includes("This backend does not expose a product map yet."),
+    /snapshot\.activity\?\.status === "returning_to_dock"|snapshot\.mission\.state === "returning_to_dock"/.test(panelContents),
+    false,
+    "Vacuum Control should not branch on raw backend return-to-dock state",
+  );
+  assert.equal(
+    !panelContents.includes("Robot overview") &&
+      !panelContents.includes("vacuum-no-map-overview") &&
+      panelContents.includes("vacuum-no-map-stage-note"),
     true,
-    "Vacuum Control should render a no-map placeholder in the reserved map area",
+    "Vacuum Control should keep the no-map stage visually empty instead of rendering a robot overview dashboard",
+  );
+  assert.equal(
+    panelContents.includes("deriveVacuumPrimaryRobotState"),
+    true,
+    "Vacuum Control should derive one normalized primary robot state for compact robot status",
   );
   assert.equal(
     /vacuum-no-map-placeholder__chips/.test(panelContents),
@@ -2338,6 +2462,12 @@ function testPublicContractAndUiBoundary(): void {
     true,
     "Maintenance card should render from normalized maintenance state and consumables descriptor",
   );
+  assert.equal(
+    /vacuum-panel-card--robot-compact-status/.test(panelContents) &&
+      /vacuum-robot-battery__track/.test(panelContents),
+    true,
+    "Robot status should render as one compact status card with a battery bar",
+  );
   assert.equal(/CleaningTargetsCard|snapshot\.cleaningTargets|targetIds: \[targetId\]/.test(panelContents), false);
   assert.equal(
     /ConsumableMonitoringCapability/.test(panelContents),
@@ -2352,26 +2482,22 @@ function testPublicContractAndUiBoundary(): void {
   );
   assert.equal(
     /control\.capability\.available === false/.test(panelContents) &&
-      /formatCapabilityReason\([\s\S]*control\.capability[\s\S]*control\.key/.test(panelContents) &&
-      /vacuum-action-hint--disabled/.test(panelContents),
+      !/title=\{reason/.test(panelContents),
     true,
-    "Basic controls should render disabled state and visible reasons from normalized availability",
+    "Basic controls should disable unavailable actions without rendering inline disabled reasons",
   );
   assert.equal(
-      panelContents.includes("Robot is not cleaning.") &&
-      panelContents.includes("Nothing is running.") &&
-      panelContents.includes("Already docked.") &&
-      panelContents.includes("Robot state is stale.") &&
-      panelContents.includes("Runtime offline.") &&
-      panelContents.includes("Source unreachable.") &&
-      panelContents.includes("Not supported by this backend."),
+      !panelContents.includes("Robot is not cleaning.") &&
+      !panelContents.includes("Nothing is running.") &&
+      !panelContents.includes("Already docked.") &&
+      !panelContents.includes("Robot cannot start cleaning from this state."),
     true,
-    "UI should translate raw availability reason codes into readable operator copy",
+    "Basic Cleaning should not expose action-specific disabled explanation copy",
   );
   assert.equal(
-    /isBasicRobotProfile/.test(panelContents) && /UnavailableWorkflowsCard/.test(panelContents),
-    true,
-    "No-map basic profiles should show advanced workflows as unavailable instead of dominant mode tabs",
+    /UnavailableWorkflowsCard|Unavailable workflows|vacuum-unavailable-workflows/.test(panelContents),
+    false,
+    "No-map basic profiles should not render the unavailable workflows summary card",
   );
   assert.equal(
     /Map Live/.test(panelContents) && /Localized/.test(panelContents) && /Target Selected/.test(panelContents),
@@ -2494,6 +2620,7 @@ async function main(): Promise<void> {
   testValetudoStateAwareCommandAvailability();
   testValetudoRuntimeSnapshotMapping();
   testValetudoRuntimeMissionStateMapping();
+  testPrimaryRobotStateDerivation();
   testValetudoChargingAndOfflineMapping();
   testAdvancedSurfaceOptionality();
   testValetudoCommandStub();

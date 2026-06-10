@@ -165,6 +165,9 @@ function stateUnavailableReason(
   snapshot: ValetudoRuntimeSnapshot,
   command: ValetudoBasicCommandName,
 ): string | undefined {
+  if (hasStateToken(snapshot, "fault") || hasStateToken(snapshot, "error")) {
+    return "invalid_state";
+  }
   if (command === "start_cleaning") {
     if (isRobotCleaning(snapshot) || isRobotPaused(snapshot) || isRobotReturningToDock(snapshot)) {
       return "invalid_state";
@@ -506,6 +509,7 @@ export function mapValetudoRuntimeSnapshotToBoundary(
   const cleaningSettings = mapCleaningSettings(snapshot);
   const maintenance = mapMaintenance(snapshot);
   const faults = [
+    ...(normalizeActivityStatus(snapshot) === "faulted" ? [snapshot.state.label || "Valetudo runtime reported a robot fault."] : []),
     ...(snapshot.source.stale ? ["Valetudo runtime source state is stale."] : []),
     ...(sourceReason === "source_unreachable" ? ["Valetudo runtime source is unreachable."] : []),
     ...(snapshot.runtime.status === "degraded" ? ["Valetudo integration runtime is degraded."] : []),

@@ -4,5 +4,6 @@ export * from "./commands";
 export * from "./errors";
 export * from "./mapGrid";
 export * from "./messageUtils";
+export * from "./primaryState";
 export * from "./state";
 export * from "./useVacuumAdapter";

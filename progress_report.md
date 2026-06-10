@@ -1,33 +1,36 @@
-# Progress Report - Valetudo Readiness Source Mode Corrections
+# Progress Report - Valetudo Mock UI State and Layout Pass
 Current report date: 2026-06-10.
 
 ## 1. What changed
 
-- Preserved `valetudo_mock` in normalized adapter source state instead of collapsing mock runtime snapshots into `valetudo_http`.
-- Kept actual `valetudo_http` runtime snapshots mapped to normalized `valetudo_http`.
-- Removed production-sounding `valetudo_mqtt` support from the runtime source-mode parser and source-kind contracts.
-- Made explicit `VALETUDO_RUNTIME_SOURCE_MODE=valetudo_http` override `VALETUDO_MQTT_ENABLED=true`, so missing `VALETUDO_SOURCE_URL` stays on the HTTP missing-config path.
-- Kept intentional mock MQTT selection through `VALETUDO_RUNTIME_SOURCE_MODE=valetudo_mock_mqtt` and legacy `VALETUDO_MQTT_ENABLED=true` only when no explicit source mode is set.
-- Updated adapter and runtime tests for mock/HTTP source-kind preservation, rejected `valetudo_mqtt`, HTTP-over-MQTT env precedence, and capability-driven product behavior.
+- Added a normalized primary robot state helper that derives one UI state from adapter snapshots: offline, unavailable, idle, docked, charging, cleaning, paused, returning to dock, or error.
+- Removed the no-map robot overview dashboard from the map area so the map stage stays visually quiet when no product map exists.
+- Collapsed Robot Status into one compact card with the primary robot state and battery bar.
+- Removed inline Basic Cleaning disabled reason text such as invalid-state explanations from the visible control list.
+- Removed the unavailable-workflows summary from the basic no-map Valetudo rail.
+- Kept basic controls, fan/water settings, maintenance, and unavailable workflows behind normalized adapter state/capabilities.
+- Added fixed mock runtime scenarios for docked idle, cleaning, paused, returning to dock, charging, stale/unreachable source, and fault/maintenance warning.
+- Updated adapter/runtime regression coverage for primary state derivation, no-map map gating, capability-driven UI behavior, normalized display surfaces, and fixed mock scenarios.
 
 ## 2. Product behavior
 
-- Operators still see the existing no-map Valetudo surface driven by normalized capabilities and state.
-- Mock HTTP/MQTT runtime sources report mock-safe `valetudo_mock` source state, not future HTTP hardware source state.
-- Explicit HTTP readiness mode reports `valetudo_http` and fails safely when HTTP config is missing instead of falling through to MQTT cache data.
-- Raw transport details and Valetudo capability names remain diagnostics-only; product controls remain capability-driven.
+- Operators now see one clear main robot state in a compact Robot card instead of a stack of status rows.
+- The map area no longer displays robot overview content when no map exists.
+- Basic Cleaning buttons still disable from normalized availability, but no longer show inline invalid-state reason sentences.
+- Fan speed, water usage, maintenance/consumables, and dock/battery remain normalized product displays in the right rail.
+- No new advanced state-changing controls were added.
 
 ## 3. Still deferred
 
-- Production MQTT support.
-- Real hardware validation against a Valetudo-compatible robot.
-- Segment target normalization, map rendering, pose/go-to/navigation, Clean Area, zone cleaning, room semantics/editor, consumable reset commands, OpenClaw, scheduling, and a diagnostics drawer.
+- Real hardware behavior and production MQTT.
+- Valetudo map rendering, segment cleaning, zone cleaning, Clean Area, go-to/navigation, room semantics, and robot pose visualization.
+- Consumable reset, dock clean/dry/empty actions, robot options, map reset/export, scheduling, updater/log/system configuration UI, and diagnostics drawer.
+- Normalized attachments, dock components, and current/total statistics fields beyond the display surfaces already backed by adapter state.
 
 ## 4. Validation
 
 ```sh
 bun run test:vacuum-adapter
-go test ./...
 go test ./... # from /home/shane/firecracker-vm/tensorfleet-mgr
 bun run --cwd panels-standalone build
 git diff --check
@@ -37,7 +40,6 @@ git -C /home/shane/firecracker-vm diff --check
 Result:
 
 * `bun run test:vacuum-adapter` passed.
-* `go test ./...` from `/home/shane/vscode-tensorfleet` failed with the known caveat: no Go module exists at the repo root.
 * `go test ./...` from `/home/shane/firecracker-vm/tensorfleet-mgr` passed.
 * `bun run --cwd panels-standalone build` passed with existing Vite browser-externalization, eval, and chunk-size warnings.
 * `git diff --check` passed.

@@ -7,6 +7,7 @@ import {
   readConfiguredVacuumAdapterBackend,
   useVacuumAdapter,
   VACUUM_ADAPTER_BACKENDS,
+  deriveVacuumPrimaryRobotState,
   type CapabilitySupport,
   type VacuumCommandResult,
   type VacuumAdapterBackendId,
@@ -15,7 +16,6 @@ import {
   type VacuumCapabilities,
   type VacuumCleaningSettingState,
   type VacuumCleaningSettingsState,
-  type VacuumBackendIdentity,
   type VacuumDockStatus,
   type VacuumFaultState,
   type VacuumMaintenanceState,
@@ -29,6 +29,7 @@ import {
   type VacuumMissionSnapshot,
   type VacuumNavigationState,
   type VacuumPoseCoordinates,
+  type VacuumPrimaryRobotStateSummary,
   type VacuumSavedMapSummary,
 } from "../../vacuum-adapter";
 import {
@@ -1764,23 +1765,9 @@ function formatTimestamp(value: number | string | null | undefined): string {
   return new Date(timestamp).toLocaleString();
 }
 
-function formatCapabilityReason(capability: CapabilitySupport, command?: "start_cleaning" | "pause" | "stop" | "return_to_dock"): string | null {
+function formatCapabilityReason(capability: CapabilitySupport, _command?: "start_cleaning" | "pause" | "stop" | "return_to_dock"): string | null {
   const structuredReason = capability.reasons?.[0]?.message ?? null;
   const reasonCode = capability.reasons?.[0]?.code ?? capability.availabilityReason ?? null;
-  if (reasonCode === "invalid_state") {
-    if (command === "pause") {
-      return "Robot is not cleaning.";
-    }
-    if (command === "stop") {
-      return "Nothing is running.";
-    }
-    if (command === "return_to_dock") {
-      return "Already docked.";
-    }
-    if (command === "start_cleaning") {
-      return "Robot cannot start cleaning from this state.";
-    }
-  }
   const readableReason = structuredReason ?? humanizeReasonCode(reasonCode);
   if (!capability.supported) {
     return readableReason ?? capability.notes ?? "Not supported by this backend.";
@@ -1795,33 +1782,6 @@ function formatCapabilityReason(capability: CapabilitySupport, command?: "start_
     return structuredReason ?? capability.notes ?? "Detected, but this product workflow is not implemented yet.";
   }
   return null;
-}
-
-function StatusRow(props: { label: string; value: string; detail?: string | null; tone?: "ready" | "warning" | "danger" | "muted" }): JSX.Element {
-  return (
-    <div className={`vacuum-basic-status-row vacuum-basic-status-row--${props.tone ?? "muted"}`}>
-      <span>{props.label}</span>
-      <div>
-        <strong>{props.value}</strong>
-        {props.detail ? <small>{props.detail}</small> : null}
-      </div>
-    </div>
-  );
-}
-
-function getHealthTone(status: VacuumRuntimeHealth["runtimeStatus"] | undefined): "ready" | "warning" | "danger" | "muted" {
-  if (status === "online") return "ready";
-  if (status === "degraded") return "warning";
-  if (status === "offline") return "danger";
-  return "muted";
-}
-
-function getSourceTone(source: VacuumSourceState | undefined): "ready" | "warning" | "danger" | "muted" {
-  if (!source?.status) return "muted";
-  if (source.stale || source.status === "stale") return "warning";
-  if (source.status === "reachable") return "ready";
-  if (source.status === "unreachable") return "danger";
-  return "muted";
 }
 
 function getActivityTone(activity: VacuumRobotActivity | undefined): "ready" | "warning" | "danger" | "muted" {
@@ -1865,23 +1825,27 @@ function formatDockBatterySummary(
   return parts.length > 0 ? parts.join(" · ") : "Battery unknown";
 }
 
-function formatNoMapPlaceholderSummary(
-  activity: VacuumRobotActivity | undefined,
-  dock: VacuumDockStatus | undefined,
-  battery: VacuumBatteryState,
-): string {
-  if (activity?.status === "returning") {
-    const batteryLevel = formatBatteryLevel(battery);
-    return ["Returning to dock", batteryLevel].filter(Boolean).join(" · ");
+function getPrimaryStateTone(primary: VacuumPrimaryRobotStateSummary): "ready" | "warning" | "danger" | "muted" {
+  if (primary.state === "offline" || primary.state === "unavailable" || primary.state === "error") {
+    return "danger";
   }
-  return formatDockBatterySummary(activity, dock, battery);
+  if (primary.state === "cleaning" || primary.state === "paused" || primary.state === "returning_to_dock") {
+    return "warning";
+  }
+  if (primary.state === "docked" || primary.state === "charging" || primary.state === "idle") {
+    return "ready";
+  }
+  return "muted";
 }
 
-function getFaultTone(fault: VacuumFaultState): "ready" | "warning" | "danger" | "muted" {
-  if (fault.faults.length > 0) return "danger";
-  if (fault.readiness === "degraded" || fault.readiness === "waiting") return "warning";
-  if (fault.readiness === "ready") return "ready";
-  return "muted";
+function formatCompactStateDetail(primary: VacuumPrimaryRobotStateSummary, fault: VacuumFaultState): string | null {
+  if (primary.state === "error") {
+    return fault.faults[0] ?? primary.detail;
+  }
+  if (primary.state === "offline" || primary.state === "unavailable") {
+    return primary.detail;
+  }
+  return null;
 }
 
 function MissionLifecycleCard(props: {
@@ -1999,10 +1963,6 @@ function BasicControlsCard(props: {
       ) : null}
       <div className="vacuum-actions vacuum-basic-actions">
         {supportedControls.map((control) => {
-          const reason = formatCapabilityReason(
-            control.capability,
-            control.key as "start_cleaning" | "pause" | "stop" | "return_to_dock",
-          );
           const disabled = control.capability.available === false || control.capability.status === "unavailable";
           return (
             <div key={control.key} className="vacuum-basic-action-row">
@@ -2011,13 +1971,9 @@ function BasicControlsCard(props: {
                 type="button"
                 onClick={control.onClick}
                 disabled={disabled}
-                title={reason ?? undefined}
               >
                 {control.label}
               </button>
-              {disabled && reason ? (
-                <p className="vacuum-action-hint vacuum-action-hint--disabled">{reason}</p>
-              ) : null}
             </div>
           );
         })}
@@ -2184,29 +2140,12 @@ function MaintenanceCard(props: {
 }
 
 function NoMapCanvasPlaceholder(props: {
-  identity: VacuumBackendIdentity;
-  availability: VacuumAvailability;
-  source?: VacuumSourceState;
-  activity?: VacuumRobotActivity;
-  dock?: VacuumDockStatus;
-  battery: VacuumBatteryState;
   mapDetail?: string;
 }): JSX.Element {
-  const statusSummary = formatNoMapPlaceholderSummary(props.activity, props.dock, props.battery);
-
   return (
     <section className="vacuum-map-card" aria-label="Reserved map area">
       <div className="vacuum-map-stage vacuum-map-stage--no-map">
-        <div className="vacuum-no-map-placeholder">
-          <VacuumMark className="vacuum-no-map-placeholder__mark" />
-          <div className="vacuum-no-map-placeholder__copy">
-            <p className="vacuum-panel-card__eyebrow">Map unavailable</p>
-            <h2>{props.identity.label}</h2>
-            <strong>{statusSummary}</strong>
-            <p>{props.mapDetail ?? "This backend does not expose a product map yet."}</p>
-            <p>Basic cleaning controls are available from the sidebar.</p>
-          </div>
-        </div>
+        <span className="vacuum-no-map-stage-note">{props.mapDetail ?? "Map unavailable."}</span>
       </div>
     </section>
   );
@@ -2221,159 +2160,28 @@ function BasicRobotStatusCard(props: {
   battery: VacuumBatteryState;
   fault: VacuumFaultState;
 }): JSX.Element {
-  const healthStatus = props.health?.runtimeStatus ?? "unknown";
-  const sourceStatus = props.source?.stale ? "stale" : props.source?.status ?? "unknown";
-  const activityStatus = props.activity?.status ?? "unknown";
-  const dockStatus = props.dock?.state ?? "unknown";
-  const faultSummary =
-    props.fault.faults.length > 0
-      ? props.fault.faults.slice(0, 2).join("; ")
-      : props.fault.detail ?? "No active faults";
-  const batteryDetail =
-    props.battery.percentage == null
-      ? props.battery.detail ?? "Battery not reported"
-      : props.battery.charging == null
-        ? "Charging state unknown"
-        : props.battery.charging
-          ? "Charging"
-          : "Not charging";
-  const sourceDetail = [
-    humanizeReasonCode(props.source?.reason),
-    props.source?.lastSeenAt != null ? `Last seen ${formatTimestamp(props.source.lastSeenAt)}` : null,
-  ].filter(Boolean).join(" · ");
-  const activityDetail = [
-    props.activity?.label,
-    humanizeReasonCode(props.activity?.reason),
-    props.activity?.updatedAt != null ? `Updated ${formatTimestamp(props.activity.updatedAt)}` : null,
-  ].filter(Boolean).join(" · ");
+  const primary = deriveVacuumPrimaryRobotState(props);
+  const batteryPercent = typeof props.battery.percentage === "number"
+    ? Math.max(0, Math.min(100, props.battery.percentage))
+    : null;
+  const compactDetail = formatCompactStateDetail(primary, props.fault);
 
   return (
-    <section className="vacuum-panel-card vacuum-panel-card--basic-status" aria-label="Robot status">
+    <section className="vacuum-panel-card vacuum-panel-card--robot-compact-status" aria-label="Robot status">
       <div className="vacuum-panel-card__head">
-        <p className="vacuum-panel-card__eyebrow">Robot Status</p>
-        <span className="vacuum-clean-area-badge">{humanizeStatus(activityStatus)}</span>
+        <p className="vacuum-panel-card__eyebrow">Robot</p>
       </div>
-      <div className="vacuum-basic-status-grid" aria-label="Robot status details">
-        <StatusRow
-          label="Connection"
-          value={humanizeStatus(props.availability.status)}
-          detail={props.availability.detail ?? (props.availability.connected ? "Adapter connected" : "Adapter disconnected")}
-          tone={props.availability.status === "online" ? "ready" : props.availability.status === "connecting" ? "warning" : "danger"}
-        />
-        <StatusRow
-          label="Runtime"
-          value={humanizeStatus(healthStatus)}
-          detail={props.health?.detail ?? (props.health?.updatedAt != null ? `Updated ${formatTimestamp(props.health.updatedAt)}` : null)}
-          tone={getHealthTone(props.health?.runtimeStatus)}
-        />
-        <StatusRow
-          label="Source"
-          value={humanizeStatus(sourceStatus)}
-          detail={sourceDetail || "Source state not reported"}
-          tone={getSourceTone(props.source)}
-        />
-        <StatusRow
-          label="Activity"
-          value={humanizeStatus(activityStatus)}
-          detail={activityDetail || "Activity state not reported"}
-          tone={getActivityTone(props.activity)}
-        />
-        <StatusRow
-          label="Dock"
-          value={humanizeStatus(dockStatus)}
-          detail={props.dock?.detail ?? (props.dock?.charging == null ? "Charging not reported" : props.dock.charging ? "Charging" : "Not charging")}
-          tone={getDockTone(props.dock)}
-        />
-        <StatusRow
-          label="Battery"
-          value={props.battery.percentage == null ? "Unknown" : `${Math.round(props.battery.percentage)}%`}
-          detail={batteryDetail}
-          tone={props.battery.readiness === "ready" ? "ready" : props.battery.readiness === "unavailable" ? "danger" : "warning"}
-        />
-        <StatusRow
-          label="Fault"
-          value={props.fault.faults.length > 0 ? `${props.fault.faults.length} active` : humanizeStatus(props.fault.readiness)}
-          detail={faultSummary}
-          tone={getFaultTone(props.fault)}
-        />
-      </div>
-    </section>
-  );
-}
-
-function UnavailableWorkflowsCard(props: { capabilities: VacuumCapabilities }): JSX.Element {
-  const workflows = [
-    {
-      label: "Map",
-      available: props.capabilities.map.supported,
-      reason: formatCapabilityReason(props.capabilities.map) ?? "No map surface is supported.",
-    },
-    {
-      label: "Navigation",
-      available: props.capabilities.start_navigation.supported || props.capabilities.go_to_location.supported,
-      reason:
-        formatCapabilityReason(props.capabilities.start_navigation) ??
-        formatCapabilityReason(props.capabilities.go_to_location) ??
-        "Navigation is not supported.",
-    },
-    {
-      label: "Mapping",
-      available: props.capabilities.mapping_session.supported || props.capabilities.auto_mapping.supported,
-      reason:
-        formatCapabilityReason(props.capabilities.mapping_session) ??
-        formatCapabilityReason(props.capabilities.auto_mapping) ??
-        "Mapping is not supported.",
-    },
-    {
-      label: "Clean Area",
-      available: props.capabilities.start_coverage.supported || props.capabilities.coverage_mission.supported,
-      reason:
-        formatCapabilityReason(props.capabilities.start_coverage) ??
-        formatCapabilityReason(props.capabilities.coverage_mission) ??
-        "Coverage cleaning is not supported.",
-    },
-    {
-      label: "Rooms / Zones",
-      available:
-        props.capabilities.room_semantics.supported ||
-        props.capabilities.zone_semantics.supported ||
-        props.capabilities.room_cleaning.supported ||
-        props.capabilities.zone_cleaning.supported,
-      reason:
-        formatCapabilityReason(props.capabilities.room_cleaning) ??
-        formatCapabilityReason(props.capabilities.zone_cleaning) ??
-        formatCapabilityReason(props.capabilities.room_semantics) ??
-        formatCapabilityReason(props.capabilities.zone_semantics) ??
-        "Rooms and zones are not supported.",
-    },
-    {
-      label: "Manual control",
-      available: props.capabilities.manual_control.supported,
-      reason: formatCapabilityReason(props.capabilities.manual_control) ?? "Manual control is not supported.",
-    },
-    {
-      label: "Camera",
-      available: false,
-      reason: "Camera feed is not exposed by the normalized vacuum adapter.",
-    },
-  ].filter((workflow) => !workflow.available);
-
-  return (
-    <section className="vacuum-panel-card vacuum-panel-card--progress-idle vacuum-unavailable-workflows">
-      <div className="vacuum-panel-card__head">
-        <p className="vacuum-panel-card__eyebrow">Unavailable workflows</p>
-        <span className="vacuum-clean-area-badge">{workflows.length}</span>
-      </div>
-      <p className="vacuum-progress-idle-hint">
-        Advanced workflows are hidden until this backend reports support.
-      </p>
-      <div className="vacuum-unavailable-workflows__list">
-        {workflows.map((workflow) => (
-          <div key={workflow.label} className="vacuum-unavailable-workflows__item">
-            <strong>{workflow.label}</strong>
-            <span>{workflow.reason}</span>
+      <div className="vacuum-robot-compact-status">
+        <strong className={`vacuum-robot-state vacuum-robot-state--${getPrimaryStateTone(primary)}`}>
+          {primary.label.toUpperCase()}
+        </strong>
+        {compactDetail ? <p>{compactDetail}</p> : null}
+        <div className="vacuum-robot-battery">
+          <span>Battery: {batteryPercent == null ? "Unknown" : `${Math.round(batteryPercent)}%`}</span>
+          <div className="vacuum-robot-battery__track" aria-hidden="true">
+            <span style={{ width: `${batteryPercent ?? 0}%` }} />
           </div>
-        ))}
+        </div>
       </div>
     </section>
   );
@@ -3859,12 +3667,6 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
             />
           ) : (
             <NoMapCanvasPlaceholder
-              identity={snapshot.identity}
-              availability={snapshot.availability}
-              source={snapshot.source}
-              activity={snapshot.activity}
-              dock={snapshot.dock}
-              battery={snapshot.battery}
               mapDetail={snapshot.map.detail}
             />
           )}
@@ -3900,7 +3702,6 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
                   battery={snapshot.battery}
                   fault={snapshot.fault}
                 />
-                <UnavailableWorkflowsCard capabilities={snapshot.capabilities} />
               </div>
             ) : (
               <>
