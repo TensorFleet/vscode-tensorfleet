@@ -1208,6 +1208,15 @@ function testValetudoCommandStub(): void {
     reason: "invalid_request",
     message: "Selected cleaning setting is not available.",
   });
+  assert.deepEqual(
+    mapVacuumCommandToValetudoRequest({ command: "segment_cleaning" }, mapValetudoCapabilities(["MapSegmentationCapability"])),
+    {
+      ok: false,
+      command: "segment_cleaning",
+      reason: "unsupported",
+      message: "Valetudo segment cleaning is diagnostics-only until segment targets are normalized.",
+    },
+  );
   const zoneResult = mapVacuumCommandToValetudoRequest({
     command: "start_zone_cleaning",
     annotation: {
@@ -1394,6 +1403,7 @@ function testValetudoStateAwareCommandAvailability(): void {
     dock?: { state: string; docked: boolean };
     battery?: { level: number; charging: boolean };
     runtimeStatus?: "online" | "degraded" | "offline";
+    sourceKind?: "fixed_mock" | "valetudo_mock" | "valetudo_http" | "real_robot" | "unknown";
     sourceStatus?: "reachable" | "unreachable" | "unknown";
     sourceStale?: boolean;
     reachable?: boolean;
@@ -1410,7 +1420,7 @@ function testValetudoStateAwareCommandAvailability(): void {
         backend: "valetudo",
         robot: { id: "valetudo-command-rules", name: "Valetudo Command Rules" },
         source: {
-          kind: "valetudo_mock",
+          kind: overrides.sourceKind ?? "valetudo_mock",
           status: overrides.sourceStatus ?? "reachable",
           stale: overrides.sourceStale ?? false,
           lastSeenAt: 1,
@@ -1596,6 +1606,42 @@ function testValetudoStateAwareCommandAvailability(): void {
   const staleSource = snapshotFor({ sourceStale: true });
   assert.equal(staleSource.capabilities.start_cleaning.reasons?.[0]?.code, "stale_source");
   assert.equal(staleSource.capabilities.start_cleaning.reasons?.[0]?.message, "Robot state is stale.");
+
+  const missingHTTPSourceConfig = snapshotFor({
+    sourceKind: "valetudo_http",
+    sourceStatus: "unknown",
+    sourceStale: true,
+    reachable: false,
+    online: false,
+    commands: {
+      start_cleaning: { available: false, reason: "source_unreachable" },
+      pause: { available: false, reason: "source_unreachable" },
+      stop: { available: false, reason: "source_unreachable" },
+      return_to_dock: { available: false, reason: "source_unreachable" },
+    },
+  });
+  assert.equal(missingHTTPSourceConfig.availability.status, "offline");
+  assert.equal(missingHTTPSourceConfig.source?.kind, "valetudo_http");
+  assert.equal(missingHTTPSourceConfig.source?.status, "stale");
+  assert.equal(missingHTTPSourceConfig.source?.reason, "stale_source");
+  assert.equal(missingHTTPSourceConfig.capabilities.start_cleaning.available, false);
+
+  const reachableWithoutBasicControl = snapshotFor({
+    commands: {
+      start_cleaning: { available: false, reason: "capability_unavailable" },
+      pause: { available: false, reason: "capability_unavailable" },
+      stop: { available: false, reason: "capability_unavailable" },
+      return_to_dock: { available: false, reason: "capability_unavailable" },
+    },
+  });
+  assert.equal(reachableWithoutBasicControl.capabilities.start_cleaning.available, false);
+  assert.equal(reachableWithoutBasicControl.capabilities.start_cleaning.availabilityReason, "capability_unavailable");
+
+  const segmentationDetected = mapValetudoCapabilities(["MapSegmentationCapability"]);
+  assert.equal(segmentationDetected.segment_cleaning.supported, false);
+  assert.equal(segmentationDetected.segment_cleaning.status, "detected_not_ready");
+  assert.equal(segmentationDetected.room_semantics.supported, false);
+  assert.equal(segmentationDetected.room_cleaning.supported, false);
 }
 
 function testValetudoRuntimeSnapshotMapping(): void {
@@ -1621,6 +1667,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
         { name: "ConsumableMonitoringCapability", detected: true, implemented: true, scope: "state" },
         { name: "FanSpeedControlCapability", detected: true, implemented: false, scope: "diagnostics" },
         { name: "WaterUsageControlCapability", detected: true, implemented: false, scope: "diagnostics" },
+        { name: "MapSegmentationCapability", detected: true, implemented: false, scope: "diagnostics" },
         { name: "GoToLocationCapability", detected: true, implemented: false, scope: "diagnostics" },
         { name: "ZoneCleaningCapability", detected: true, implemented: false, scope: "diagnostics" },
       ],
@@ -1633,9 +1680,20 @@ function testValetudoRuntimeSnapshotMapping(): void {
         "ConsumableMonitoringCapability",
         "FanSpeedControlCapability",
         "WaterUsageControlCapability",
+        "MapSegmentationCapability",
         "GoToLocationCapability",
         "ZoneCleaningCapability",
       ],
+      readiness: {
+        runtimeOnline: true,
+        sourceReachable: true,
+        sourceStale: false,
+        supportedCapabilities: ["BasicControlCapability"],
+        detectedNotProductReady: ["MapSegmentationCapability", "GoToLocationCapability", "ZoneCleaningCapability"],
+        basicCommandsAvailable: true,
+        segmentTargetsAvailable: false,
+        segmentTargetCount: 0,
+      },
     },
     cleaningSettings: {
       fanSpeed: { current: "medium", options: ["off", "min", "low", "medium", "high", "turbo", "max"] },
@@ -1674,6 +1732,10 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.dock?.supported, true);
   assert.equal(snapshot.dock?.state, "docked");
   assert.equal(snapshot.diagnostics?.backend, "valetudo");
+  assert.deepEqual(
+    (snapshot.diagnostics?.raw as { readiness?: unknown })?.readiness,
+    (boundary.diagnostics?.raw as { readiness?: unknown })?.readiness,
+  );
   assert.equal(snapshot.capabilities.start_cleaning.supported, true);
   assert.equal(snapshot.capabilities.start_cleaning.status, "supported");
   assert.equal(snapshot.capabilities.start_cleaning.available, true);
@@ -1687,6 +1749,10 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.capabilities.water_usage.supported, true);
   assert.equal(snapshot.capabilities.consumables.supported, true);
   assert.equal(snapshot.capabilities.consumables.available, true);
+  assert.equal(snapshot.capabilities.segment_cleaning.supported, false);
+  assert.equal(snapshot.capabilities.segment_cleaning.status, "detected_not_ready");
+  assert.equal(snapshot.capabilities.room_semantics.supported, false);
+  assert.equal(snapshot.capabilities.room_cleaning.supported, false);
   assert.equal(snapshot.maintenance?.consumables.length, 2);
   assert.equal(snapshot.maintenance?.consumables[0]?.label, "Main brush");
   assert.equal(snapshot.maintenance?.consumables[1]?.status, "replace_soon");
@@ -1758,6 +1824,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
       "ConsumableMonitoringCapability",
       "FanSpeedControlCapability",
       "WaterUsageControlCapability",
+      "MapSegmentationCapability",
       "GoToLocationCapability",
       "ZoneCleaningCapability",
     ],
@@ -1766,6 +1833,57 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal((snapshot.diagnostics?.pose as { supported?: boolean } | undefined)?.supported, false);
   assert.equal((snapshot.diagnostics?.navigation as { supported?: boolean } | undefined)?.supported, false);
   assert.equal((snapshot.diagnostics?.mapping as { supported?: boolean } | undefined)?.supported, false);
+
+  const mockHTTPBoundary = mapValetudoRuntimeSnapshotToBoundary({
+    runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-mock-http-robot", name: "Valetudo Mock HTTP Source" },
+    source: { kind: "valetudo_mock", status: "reachable", stale: false, lastSeenAt: 2 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "idle", label: "Idle", started: false, paused: false },
+    capabilities: {
+      commands: {
+        start_cleaning: { available: true },
+        pause: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      },
+      diagnostics: [],
+    },
+    diagnostics: { mode: "valetudo_mock_http", rawCapabilityNames: ["BasicControlCapability"] },
+    updatedAt: 2,
+  });
+  const mockHTTPSnapshot = mapValetudoState(mockHTTPBoundary);
+  assert.equal(mockHTTPSnapshot.identity.label, "Valetudo Mock HTTP Source");
+  assert.equal(mockHTTPSnapshot.source?.kind, "valetudo_mock");
+  assert.equal(mockHTTPSnapshot.capabilities.start_cleaning.supported, true);
+  assert.equal(mockHTTPSnapshot.capabilities.start_cleaning.available, true);
+  assert.equal(mockHTTPSnapshot.capabilities.start_navigation.supported, false);
+
+  const httpBoundary = mapValetudoRuntimeSnapshotToBoundary({
+    runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-http-robot", name: "Valetudo HTTP Source" },
+    source: { kind: "valetudo_http", status: "reachable", stale: false, lastSeenAt: 2 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "idle", label: "Idle", started: false, paused: false },
+    capabilities: {
+      commands: {
+        start_cleaning: { available: true },
+        pause: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      },
+      diagnostics: [],
+    },
+    diagnostics: { mode: "valetudo_http", rawCapabilityNames: ["BasicControlCapability"] },
+    updatedAt: 2,
+  });
+  const httpSnapshot = mapValetudoState(httpBoundary);
+  assert.equal(httpSnapshot.identity.label, "Valetudo HTTP Source");
+  assert.equal(httpSnapshot.source?.kind, "valetudo_http");
+  assert.equal(httpSnapshot.capabilities.start_cleaning.supported, true);
+  assert.equal(httpSnapshot.capabilities.start_cleaning.available, true);
 
   const mqttBoundary = mapValetudoRuntimeSnapshotToBoundary({
     runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
@@ -2220,6 +2338,7 @@ function testPublicContractAndUiBoundary(): void {
     true,
     "Maintenance card should render from normalized maintenance state and consumables descriptor",
   );
+  assert.equal(/CleaningTargetsCard|snapshot\.cleaningTargets|targetIds: \[targetId\]/.test(panelContents), false);
   assert.equal(
     /ConsumableMonitoringCapability/.test(panelContents),
     false,

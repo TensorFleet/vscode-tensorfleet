@@ -35,7 +35,7 @@ function unavailableReasonCode(capabilities: VacuumCapabilities, name: keyof Vac
   const capability = capabilities[name];
   const structuredCode = capability.reasons?.find((reason) => isVacuumCommandErrorCode(reason.code))?.code;
   if (structuredCode) {
-    return structuredCode;
+    return structuredCode as VacuumCommandErrorCode;
   }
   if (isVacuumCommandErrorCode(capability.availabilityReason)) {
     return capability.availabilityReason;
@@ -259,7 +259,7 @@ export function mapVacuumCommandToValetudoRequest(
     );
   }
   if (command.command === "segment_cleaning") {
-    return unsupported(command.command, "segment_cleaning requires explicit segment ids in a later command payload.");
+    return unsupported(command.command, "Valetudo segment cleaning is diagnostics-only until segment targets are normalized.");
   }
   if (command.command === "start_room_cleaning") {
     return unsupported(command.command, "Room cleaning requires explicit Valetudo segment or annotation mapping in Layer 6.");

@@ -23,6 +23,13 @@ function runtimeCommandName(command: VacuumCommand["command"]): string {
   return command;
 }
 
+function runtimeCommandParams(mappedRequest: Extract<ReturnType<typeof mapVacuumCommandToValetudoRequest>, { ok: true }>["request"]): Record<string, unknown> | undefined {
+  if ("value" in mappedRequest) {
+    return { value: mappedRequest.value };
+  }
+  return undefined;
+}
+
 export function useValetudoAdapter(client?: ValetudoRuntimeClient): VacuumAdapter {
   const runtimeClient = useMemo(() => client ?? createValetudoRuntimeClient(), [client]);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<ValetudoRuntimeSnapshot | null>(null);
@@ -96,7 +103,7 @@ export function useValetudoAdapter(client?: ValetudoRuntimeClient): VacuumAdapte
       try {
         const result = await runtimeClient.sendCommand({
           command: runtimeCommandName(command.command),
-          params: "value" in mapped.request ? { value: mapped.request.value } : undefined,
+          params: runtimeCommandParams(mapped.request),
         });
         await refresh();
         return mapValetudoRuntimeCommandResult(command.command, result);

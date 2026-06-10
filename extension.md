@@ -521,10 +521,10 @@ VS Code extension / product UI
      -> TurtleBot4/Nav2 backend adapter
         -> VM TurtleBot4 simulation runtime
 
-     -> Valetudo backend adapter
-        -> VM-managed Valetudo integration runtime
-           -> Valetudo mock source or fixed mock runtime data
-           -> real Valetudo-compatible vacuum on local network later
+	     -> Valetudo backend adapter
+	        -> VM-managed Valetudo integration runtime
+	           -> Valetudo mock source or fixed mock runtime data
+	           -> future Valetudo-compatible vacuum validation path
 ```
 
 Layer 3 extension facts:
@@ -554,10 +554,11 @@ Layer 3 extension facts:
 - TurtleBot4/Nav2 reports unsupported vacuum-only operations explicitly.
 - Valetudo backend adapter code exists for Layer 6A. It polls the VM-managed
   Valetudo runtime API, maps snapshots into `vacuum_adapter`, and routes the
-  basic normalized commands `start_cleaning`, `pause`, `stop`, and
-  `return_to_dock`.
-- Valetudo hardware connectivity is still not implemented; the current path is
-  mock source or fixed mock data through the VM runtime.
+  normalized commands `start_cleaning`, `pause`, `stop`, `return_to_dock`,
+  `set_fan_speed`, and `set_water_usage`.
+- Valetudo hardware validation is still deferred; the current path is fixed mock
+  data, local mock HTTP/MQTT sources, or a readiness-only HTTP source config path
+  through the VM runtime.
 
 Capability model and Valetudo planning details are documented in
 `VACUUM_STACK_PLAN.md`.
@@ -577,7 +578,7 @@ Vacuum Control
   -> Valetudo runtime client
   -> vm-manager /vms/self/tensorfleet/... proxy by default
   -> VM-managed Valetudo integration runtime
-  -> Valetudo mock HTTP source or fixed mock runtime data
+  -> fixed mock, Valetudo mock HTTP source, MQTT cache, or future Valetudo HTTP source config
 ```
 
 Runtime endpoints consumed by the adapter:
@@ -607,33 +608,84 @@ window.TENSORFLEET_VACUUM_BACKEND
 window.TENSORFLEET_JWT
 ```
 
+VM runtime source configuration:
+
+```text
+VALETUDO_RUNTIME_SOURCE_MODE=fixed_mock | valetudo_mock_http | valetudo_mock_mqtt | valetudo_http
+VALETUDO_MOCK_SOURCE_URL=http://172.16.0.1:8081
+VALETUDO_SOURCE_URL=http://<valetudo-hostname-or-ip>
+VALETUDO_SOURCE_TIMEOUT_MS=2000
+VALETUDO_SOURCE_STALE_TIMEOUT_MS=15000
+VALETUDO_MQTT_ENABLED=false
+VALETUDO_MQTT_BROKER_URL=tcp://172.16.0.1:1883
+VALETUDO_MQTT_TOPIC_PREFIX=valetudo
+VALETUDO_MQTT_IDENTIFIER=robot
+VALETUDO_MQTT_COMMANDS_ENABLED=false
+```
+
+`valetudo_http` intentionally has no default source address. Valetudo runs on
+the robot; the VM hosts only the TensorFleet Valetudo integration runtime. If
+the source URL is missing, unreachable, stale, or malformed, the runtime returns
+a stable unavailable snapshot and passive diagnostics instead of crashing the
+adapter or UI.
+
+Runtime diagnostics include a passive readiness summary for hardware prep:
+runtime online, source reachable/stale, supported normalized capability inputs,
+detected-but-not-product-ready Valetudo capabilities, basic command
+availability, and segment-target availability. Product controls still branch on
+normalized adapter state and capability descriptors, not raw diagnostics.
+
 Supported Valetudo product behavior in Layer 6A:
 
 - identity
 - availability
-- state
-- battery when available
-- dock/charging when available
+- runtime/source health and stale, unreachable, and offline source handling
+- activity/state
+- battery
+- dock/charging
 - capabilities mapped into public `vacuum_adapter` descriptors
 - `start_cleaning`
 - `pause`
 - `stop`
 - `return_to_dock`
+- `set_fan_speed`
+- `set_water_usage`
+- fan speed current value/options from normalized
+  `snapshot.cleaningSettings` and `snapshot.capabilities.fan_speed`
+- water usage current value/options from normalized
+  `snapshot.cleaningSettings` and `snapshot.capabilities.water_usage`
+- maintenance/consumables display from normalized `snapshot.maintenance` and
+  `snapshot.capabilities.consumables`
 - explicit unsupported operations
-- runtime/source health and stale source handling
+
+Current no-map/basic Valetudo Vacuum Control behavior:
+
+- reserves the main canvas area and shows a map-unavailable placeholder
+- uses a no-map status strip based on basic robot state instead of Map Live,
+  Localized, and Target Selected
+- renders sidebar cards for Basic Cleaning, Cleaning Settings, and Maintenance
+- renders compact unavailable workflows instead of making unsupported
+  simulation-heavy modes the main control surface
+- shows readable disabled reasons for unavailable commands
+- does not mount `MapCanvas` when `snapshot.capabilities.map.supported` is
+  false
+
+Product UI still consumes `useVacuumAdapter`, adapter snapshots, and normalized
+commands. It does not call raw Valetudo HTTP/MQTT endpoints or VM runtime
+endpoints directly.
 
 Unsupported or deferred Valetudo behavior:
 
-- real hardware
+- hardware validation
 - Valetudo map rendering
 - robot movement visualization
-- room/segment cleaning
+- go-to/navigation
 - zone cleaning
-- go-to-location
 - Clean Area execution through Valetudo
-- ROS2 bridge support for Valetudo
-- OpenClaw integration
-- MQTT production hardening
+- room semantics, room cleaning, room editor, and map annotation editing for
+  Valetudo targets
+- consumable reset
+- diagnostics drawer
 
 Raw Valetudo capability names may appear in runtime diagnostics and adapter
 fixtures, but product UI behavior must continue branching only on normalized
@@ -851,7 +903,6 @@ Do not make these the next extension milestone:
 
 - docking workflow UI
 - simulated battery/charging behavior
-- consumables UI
 - scheduling UI
 - OpenClaw workflow integration
 

@@ -343,7 +343,13 @@ export type VacuumBatteryState = {
 
 export type VacuumRuntimeHealthStatus = "online" | "degraded" | "offline" | "unknown";
 
-export type VacuumSourceKind = "turtlebot4_nav2" | "fixed_mock" | "valetudo_mock" | "real_robot" | "unknown";
+export type VacuumSourceKind =
+  | "turtlebot4_nav2"
+  | "fixed_mock"
+  | "valetudo_mock"
+  | "valetudo_http"
+  | "real_robot"
+  | "unknown";
 
 export type VacuumSourceStatus = "reachable" | "unreachable" | "stale" | "unknown";
 

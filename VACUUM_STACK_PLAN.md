@@ -76,9 +76,9 @@ VS Code extension / product UI
      -> TurtleBot4/Nav2 backend adapter
         -> VM TurtleBot4 simulation runtime
 
-     -> Valetudo backend adapter
-        -> VM-managed Valetudo integration runtime
-           -> real Valetudo-compatible vacuum on local network
+	     -> Valetudo backend adapter
+	        -> VM-managed Valetudo integration runtime
+	           -> future Valetudo-compatible vacuum validation path
 ```
 
 VM boundary:
@@ -254,7 +254,8 @@ Current position:
 - The Layer 4 prerequisite, Mapping + Whole Map View, is implemented.
 - Layer 4 Clean Area MVP exists above the adapter.
 - Layer 5 Room / Zone Semantics prototype is implemented.
-- Layer 6 is planned.
+- Layer 6A is implemented for the Valetudo mock/runtime/adapter/UI path.
+- Layer 6 Valetudo hardware validation remains planned.
 
 ## Current Layer Structure
 
@@ -274,7 +275,7 @@ Layer 5 — Room / Zone Semantics     prototype implemented:
                                     room/zone cleaning, recovery controls,
                                     hydration, result details, and recent
                                     summaries
-Layer 6A — Valetudo Mock Through VM implemented through documentation summary
+Layer 6A — Valetudo Mock Through VM implemented for mock/runtime/adapter/UI
 Layer 6 — Real Hardware (Valetudo)  deferred until Layer 6A remains stable
 ```
 
@@ -340,8 +341,8 @@ behavior belongs to Layer 4 mission execution, not Layer 2 navigation closure.
 
 ## Layer 3: Vacuum Adapter
 
-Status: closed for TurtleBot4/Nav2 simulation; Valetudo backend interface stub
-reserved for Layer 6.
+Status: closed for TurtleBot4/Nav2 simulation; Valetudo mock/runtime/adapter/UI
+path implemented for Layer 6A.
 
 Purpose:
 
@@ -367,8 +368,8 @@ Current implementation:
   `/vacuum_mission/status` topic and `/vacuum_mission/get_snapshot` service
 - command dispatch is extracted into a pure helper for regression tests
 - vacuum-only commands unsupported by TurtleBot4/Nav2 fail explicitly
-- Valetudo backend stub defines capability, state, command, and runtime-boundary
-  mapper shapes
+- Valetudo backend maps VM-managed runtime snapshots and commands into
+  normalized adapter state for the mock-backed Layer 6A path
 - `bun run test:vacuum-adapter` covers the adapter boundary
 
 Layer 3 acceptance criterion:
@@ -384,7 +385,7 @@ Out of Layer 3:
 - dock / undock and battery-aware execution beyond what the contract models
 - room / zone naming and segmentation UI
 - Valetudo VM service plan and MQTT vs HTTP/client API decisions
-- first real hardware validation
+- first hardware validation
 
 ## Layer 4 Prerequisite: Mapping + Whole Map View
 
@@ -549,7 +550,7 @@ Still pending after the prototype:
 
 ## Layer 6A: Valetudo Mock Through VM
 
-Status: implemented through the mock/runtime/adapter documentation slice.
+Status: implemented for the mock/runtime/adapter/UI path.
 
 Purpose:
 
@@ -585,37 +586,79 @@ Supported Layer 6A behavior:
 
 - robot identity
 - availability/connectivity
-- state
-- battery when available
-- dock/charging when available
-- conservative capability mapping
 - runtime/source health
-- stale source handling
-- explicit unsupported, unavailable, failed, and successful command results
+- stale, unreachable, and offline source handling
+- activity/state
+- battery
+- dock/charging
+- conservative capability mapping
+- command result normalization for unsupported, unavailable, invalid-state,
+  failed, and successful outcomes
 - `start_cleaning`
 - `pause`
 - `stop`
 - `return_to_dock`
+- fan speed current value and options
+- water usage current value and options
+- `set_fan_speed`
+- `set_water_usage`
+- maintenance/consumables display:
+  - main brush
+  - side brush
+  - filter
+  - sensor cleaning
+  - mop pad when present in mock data
+- no-map Vacuum Control UI cards:
+  - Basic Cleaning
+  - Cleaning Settings
+  - Maintenance
+  - compact unavailable workflows
 
 Deferred or unsupported in Layer 6A:
 
-- real Valetudo-compatible robot hardware
-- ROS2 bridge support for Valetudo
-- OpenClaw integration
-- production MQTT hardening
+- Valetudo-compatible robot hardware validation
 - Valetudo map rendering
 - Valetudo robot movement visualization
-- go-to-location execution
-- room/segment cleaning
+- go-to/navigation
+- mapping
+- Clean Area execution
 - zone cleaning
-- Clean Area execution through Valetudo
-- fan and water setters as product-ready controls
-- consumables UI polish
+- room editor and map annotation editing for Valetudo targets
+- consumable reset commands
+- diagnostics drawer
+- OpenClaw
+- MQTT production hardening
+- production hardware support
 
-The runtime currently supports HTTP-backed mock source mode and fixed mock mode.
-Optional MQTT state caching exists behind the VM runtime boundary, but the
-adapter and UI do not know whether runtime state came from HTTP, MQTT, or fixed
-mock data.
+The runtime source modes are explicit:
+
+- `fixed_mock`: VM-owned fixed mock state.
+- `valetudo_mock_http`: HTTP mock source; may use `VALETUDO_MOCK_SOURCE_URL`
+  and keeps the local mock default.
+- `valetudo_mock_mqtt`: MQTT cache/source diagnostics for mock-shaped data.
+- `valetudo_http`: future Valetudo HTTP source config path; requires
+  `VALETUDO_SOURCE_URL` and has no hardcoded robot address.
+
+Valetudo runs on the robot. The VM hosts only the TensorFleet Valetudo
+integration runtime. Missing HTTP source config, unreachable source, stale
+source, malformed source responses, missing capability data, and reachable
+sources without `BasicControlCapability` map to stable unavailable/degraded
+runtime snapshots and passive diagnostics.
+
+Runtime diagnostics expose a readiness summary for hardware prep:
+
+- runtime online
+- source reachable
+- source stale
+- supported normalized capability inputs
+- detected Valetudo capabilities that are not product-ready
+- basic command availability
+- segment target availability
+
+The adapter and UI do not know whether runtime state came from HTTP, MQTT, or
+fixed mock data except through normalized `availability`, `health`, `source`,
+`capabilities`, `battery`, `dock`, `activity`, `cleaningSettings`,
+and `maintenance`.
 
 Later real-hardware target path:
 
@@ -637,12 +680,36 @@ Valetudo robot reachable
 -> one basic command works
 ```
 
-Good first commands:
+First real-hardware validation checklist:
 
-- start
-- pause
-- stop
-- return_to_dock
+- Network assumptions:
+  - robot is running Valetudo on the local network
+  - VM can reach the robot IP or hostname
+  - no cloud dependency is required
+- Runtime startup:
+  - set `VALETUDO_RUNTIME_SOURCE_MODE=valetudo_http`
+  - set `VALETUDO_SOURCE_URL` to the robot Valetudo HTTP base URL
+  - start the Valetudo integration runtime in the VM
+  - confirm `GET /api/v1/valetudo/health`
+- Adapter/UI validation:
+  - extension connects through the VM runtime route
+  - robot identity appears
+  - runtime/source health appears
+  - battery, dock, and activity appear if exposed
+  - normalized capabilities appear
+  - unsupported operations remain explicit
+- First safe command:
+  - prefer `pause`, `stop`, or `return_to_dock` depending on robot state
+  - use `start_cleaning` only if the robot is in a safe open area
+- Segment validation:
+  - validate segment targets only after a later implementation maps them into
+    normalized product state
+  - do not assume room labels exist
+  - treat segment IDs as opaque
+- Rollback and safety:
+  - know how to stop the robot
+  - keep physical access to the robot
+  - avoid testing near stairs, cables, fragile objects, pets, or people
 
 Only after that basic reachability slice works should Layer 6 exercise Layer 4
 coverage and Layer 5 room/zone flows against real hardware.
@@ -877,9 +944,12 @@ Payload rules:
   generation and progress snapshots remain runtime-owned after start
 - `save_map_annotation` and `delete_map_annotation` carry product-level map
   annotation state, not backend room/segment identifiers
-- `start_room_cleaning` and `start_zone_cleaning` carry saved map annotations;
-  backend route generation and mission progress remain runtime-owned after
-  start
+- `segment_cleaning` remains unsupported until backend-provided segment targets
+  are normalized in a later implementation
+- `start_room_cleaning` carries saved map annotations for annotation-backed
+  workflows
+- `start_zone_cleaning` carries saved map annotations; backend route generation
+  and mission progress remain runtime-owned after start
 - mapping commands carry mode/name where needed
 - setter commands carry selected values explicitly
 - unsupported commands fail predictably
@@ -1015,7 +1085,8 @@ Completed scope:
 3. Migrate `Vacuum Control` to consume the contract.
 4. Add mission state machine.
 5. Add adapter regression harness.
-6. Add Valetudo adapter interface stub.
+6. Add the Valetudo adapter boundary, then extend it through the mock-backed
+   Layer 6A runtime path.
 
 Completed exit validation:
 

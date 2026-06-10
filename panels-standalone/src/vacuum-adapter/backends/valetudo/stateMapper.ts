@@ -99,6 +99,22 @@ function normalizeSourceStatus(snapshot: ValetudoRuntimeSnapshot): VacuumSourceS
   return "unknown";
 }
 
+function normalizeSourceKind(kind: string): VacuumSourceState["kind"] {
+  if (kind === "fixed_mock") {
+    return "fixed_mock";
+  }
+  if (kind === "valetudo_mock") {
+    return "valetudo_mock";
+  }
+  if (kind === "valetudo_http") {
+    return "valetudo_http";
+  }
+  if (kind === "real_robot") {
+    return "real_robot";
+  }
+  return "unknown";
+}
+
 function sourceUnavailableReason(snapshot: ValetudoRuntimeSnapshot): string | undefined {
   if (snapshot.source.stale) {
     return "stale_source";
@@ -253,6 +269,7 @@ function mapDiagnostics(snapshot: ValetudoRuntimeSnapshot): VacuumAdapterDiagnos
     raw: {
       valetudoState: snapshot.state.value,
       rawCapabilityNames: snapshot.diagnostics.rawCapabilityNames,
+      readiness: snapshot.diagnostics.readiness,
       capabilityTiers: snapshot.diagnostics.capabilityTiers,
       transports: snapshot.diagnostics.transports,
       lastCommand: snapshot.diagnostics.lastCommand,
@@ -514,7 +531,7 @@ export function mapValetudoRuntimeSnapshotToBoundary(
     },
     health: mapHealth(snapshot),
     source: {
-      kind: snapshot.source.kind,
+      kind: normalizeSourceKind(snapshot.source.kind),
       status: normalizeSourceStatus(snapshot),
       stale: snapshot.source.stale,
       lastSeenAt: snapshot.source.lastSeenAt,

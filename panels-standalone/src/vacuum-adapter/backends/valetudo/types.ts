@@ -59,10 +59,6 @@ export type ValetudoCommandRequest =
       target: VacuumGoalCoordinates;
     }
   | {
-      type: "segment_cleaning";
-      segmentIds: string[];
-    }
-  | {
       type: "zone_cleaning";
       zones: string[];
     }

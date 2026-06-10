@@ -1,6 +1,11 @@
 export type ValetudoRuntimeStatus = "online" | "degraded" | "offline";
 
-export type ValetudoRuntimeSourceKind = "fixed_mock" | "valetudo_mock" | "real_robot";
+export type ValetudoRuntimeSourceKind =
+  | "fixed_mock"
+  | "valetudo_mock"
+  | "valetudo_http"
+  | "real_robot"
+  | "unknown";
 
 export type ValetudoRuntimeSourceStatus = "reachable" | "unreachable" | "unknown";
 
@@ -11,6 +16,7 @@ export type ValetudoRuntimeCommandName =
   | "pause"
   | "stop"
   | "return_to_dock"
+  | "segment_cleaning"
   | string;
 
 export type ValetudoRuntimeHealth = {
@@ -75,6 +81,7 @@ export type ValetudoRuntimeSnapshot = {
     mode: string;
     rawCapabilityNames: string[];
     source?: ValetudoRuntimeSourceDiagnostic;
+    readiness?: ValetudoRuntimeReadinessSummary;
     lastCommand?: ValetudoRuntimeCommandAudit;
     capabilityTiers?: ValetudoRuntimeCapabilityTier[];
     transports?: ValetudoRuntimeTransportDiagnostic[];
@@ -82,6 +89,18 @@ export type ValetudoRuntimeSnapshot = {
   };
   rawDiagnostics?: Record<string, unknown>;
   updatedAt: number;
+};
+
+export type ValetudoRuntimeReadinessSummary = {
+  runtimeOnline: boolean;
+  sourceReachable: boolean;
+  sourceStale: boolean;
+  supportedCapabilities: string[];
+  detectedNotProductReady: string[];
+  basicCommandsAvailable: boolean;
+  segmentTargetsAvailable: boolean;
+  segmentTargetCount: number;
+  missingProductRequirements?: string[];
 };
 
 export type ValetudoRuntimeCommandRequest = {

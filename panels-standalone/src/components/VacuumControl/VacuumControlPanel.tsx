@@ -2502,7 +2502,7 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
   const navigationSupported = startNavigationSupported || snapshot.capabilities.go_to_location.supported;
   const cleanAreaSupported = startCoverageSupported || snapshot.capabilities.coverage_mission.supported;
   const roomsZonesSupported =
-    roomSemanticsSupported || zoneSemanticsSupported || roomCleaningSupported || zoneCleaningSupported;
+    mapSurfaceAvailable && (roomSemanticsSupported || zoneSemanticsSupported || roomCleaningSupported || zoneCleaningSupported);
   const manualControlSupported = snapshot.capabilities.manual_control.supported;
   const isBasicRobotProfile =
     !mapSurfaceAvailable &&
