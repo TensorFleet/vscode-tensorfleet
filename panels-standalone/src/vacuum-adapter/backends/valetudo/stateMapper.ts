@@ -44,13 +44,14 @@ const EMPTY_NAVIGATION: VacuumNavigationStatus = {
 const RUNTIME_COMMAND_TO_BACKEND_CAPABILITY: Record<string, ValetudoBackendCapability> = {
   start_cleaning: "BasicControlCapability",
   pause: "BasicControlCapability",
+  resume: "BasicControlCapability",
   stop: "BasicControlCapability",
   return_to_dock: "BasicControlCapability",
   set_fan_speed: "FanSpeedControlCapability",
   set_water_usage: "WaterUsageControlCapability",
 };
 
-const VALETUDO_BASIC_COMMANDS = ["start_cleaning", "pause", "stop", "return_to_dock"] as const;
+const VALETUDO_BASIC_COMMANDS = ["start_cleaning", "pause", "resume", "stop", "return_to_dock"] as const;
 
 type ValetudoBasicCommandName = (typeof VALETUDO_BASIC_COMMANDS)[number];
 
@@ -178,6 +179,9 @@ function stateUnavailableReason(
     return isRobotCleaning(snapshot) && !isRobotPaused(snapshot) && !isRobotReturningToDock(snapshot)
       ? undefined
       : "invalid_state";
+  }
+  if (command === "resume") {
+    return isRobotPaused(snapshot) ? undefined : "invalid_state";
   }
   if (command === "stop") {
     return isRobotCleaning(snapshot) || isRobotPaused(snapshot) || isRobotReturningToDock(snapshot)
@@ -361,7 +365,7 @@ function runtimeCommandToCapabilityName(command: string): keyof VacuumCapabiliti
   if (command === "set_water_usage") {
     return "water_usage";
   }
-  if (command === "start_cleaning" || command === "pause" || command === "stop" || command === "return_to_dock") {
+  if (command === "start_cleaning" || command === "pause" || command === "resume" || command === "stop" || command === "return_to_dock") {
     return command;
   }
   return null;
@@ -489,8 +493,34 @@ export function mapValetudoRuntimeSnapshotToBoundary(
       };
     }
   }
-  if (capabilities.has("BasicControlCapability") && !runtimeCommandNames.has("return_to_dock")) {
-    unsupportedCommands.return_to_dock = "Valetudo return-to-dock support is not reported by this runtime.";
+  if (
+    capabilities.has("BasicControlCapability") &&
+    !runtimeCommandNames.has("resume") &&
+    runtimeCommandNames.has("start_cleaning")
+  ) {
+    const startAvailability = snapshot.capabilities.commands.start_cleaning;
+    const reason = commandUnavailableReason(
+      snapshot,
+      "resume",
+      startAvailability?.available ?? false,
+      startAvailability?.reason,
+    );
+    commandAvailability.resume = {
+      available: reason ? false : true,
+      reason,
+    };
+  }
+  if (capabilities.has("BasicControlCapability")) {
+    for (const command of VALETUDO_BASIC_COMMANDS) {
+      if (!runtimeCommandNames.has(command)) {
+        if (command === "resume" && commandAvailability.resume) {
+          continue;
+        }
+        unsupportedCommands[command] = command === "resume"
+          ? "Valetudo resume support is not reported by this runtime."
+          : `Valetudo ${command.replace(/_/g, "-")} support is not reported by this runtime.`;
+      }
+    }
   }
   if (snapshot.battery) {
     capabilities.add("BatteryStateCapability");
@@ -612,6 +642,7 @@ export function mapValetudoRuntimeUnavailable(message: string): ValetudoRuntimeB
 const VALETUDO_ACTIVITY_ACTIONS = [
   "start_cleaning",
   "pause",
+  "resume",
   "stop",
   "return_to_dock",
 ] as const satisfies readonly VacuumRobotActivityAction[];
@@ -681,7 +712,11 @@ function buildValetudoActiveMission(runtime: ValetudoRuntimeBoundary): VacuumMis
       areaCoveredSqM: null,
       areaRemainingSqM: null,
     },
-    availableActions: status === "running" ? ["pause_mission", "cancel_mission", "return_to_dock"] : [],
+    availableActions: status === "running"
+      ? ["pause_mission", "cancel_mission", "return_to_dock"]
+      : status === "paused"
+        ? ["resume_mission", "cancel_mission"]
+        : [],
     result: null,
     error: null,
     target: null,

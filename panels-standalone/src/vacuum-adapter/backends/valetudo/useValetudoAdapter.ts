@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { VacuumAdapter } from "../../adapter";
 import type { VacuumCommand, VacuumCommandResult } from "../../commands";
 import { mapVacuumCommandToValetudoRequest, mapValetudoRuntimeCommandResult } from "./commandMapper";
+import { mapVacuumCommandToValetudoRuntimeCommandName } from "./runtimeCommandMapper";
 import { createValetudoRuntimeClient, type ValetudoRuntimeClient } from "./runtimeClient";
 import type { ValetudoRuntimeSnapshot } from "./runtimeContract";
 import {
@@ -12,16 +13,6 @@ import {
 } from "./stateMapper";
 
 const POLL_INTERVAL_MS = 3000;
-
-function runtimeCommandName(command: VacuumCommand["command"]): string {
-  if (command === "pause_mission") {
-    return "pause";
-  }
-  if (command === "cancel_mission") {
-    return "stop";
-  }
-  return command;
-}
 
 function runtimeCommandParams(mappedRequest: Extract<ReturnType<typeof mapVacuumCommandToValetudoRequest>, { ok: true }>["request"]): Record<string, unknown> | undefined {
   if ("value" in mappedRequest) {
@@ -102,7 +93,7 @@ export function useValetudoAdapter(client?: ValetudoRuntimeClient): VacuumAdapte
       }
       try {
         const result = await runtimeClient.sendCommand({
-          command: runtimeCommandName(command.command),
+          command: mapVacuumCommandToValetudoRuntimeCommandName(command.command, runtimeSnapshot),
           params: runtimeCommandParams(mapped.request),
         });
         await refresh();
@@ -120,7 +111,7 @@ export function useValetudoAdapter(client?: ValetudoRuntimeClient): VacuumAdapte
         };
       }
     },
-    [refresh, runtimeClient, snapshot.capabilities],
+    [refresh, runtimeClient, runtimeSnapshot, snapshot.capabilities],
   );
 
   return useMemo(

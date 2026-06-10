@@ -12,7 +12,7 @@ export type ValetudoBackendCapability =
   | "WaterUsageControlCapability";
 
 export const VALETUDO_CAPABILITY_MAP: Record<ValetudoBackendCapability, VacuumCapabilityName[]> = {
-  BasicControlCapability: ["start_cleaning", "pause", "stop", "return_to_dock"],
+  BasicControlCapability: ["start_cleaning", "pause", "resume", "stop", "return_to_dock"],
   BatteryStateCapability: ["battery"],
   ConsumableMonitoringCapability: [],
   GoToLocationCapability: [],
@@ -44,6 +44,7 @@ const VALETUDO_BASE_CAPABILITIES: VacuumCapabilityName[] = [
 const VALETUDO_BACKEND_COMMANDS: Partial<Record<VacuumCapabilityName, string[]>> = {
   start_cleaning: ["start_cleaning"],
   pause: ["pause"],
+  resume: ["resume"],
   stop: ["stop"],
   return_to_dock: ["return_to_dock"],
   go_to_location: ["go_to_location"],
@@ -223,9 +224,6 @@ export function mapValetudoCapabilities(
     );
   }
 
-  capabilities.resume = unsupportedCapability(
-    "Valetudo resume support must be mapped explicitly once the selected robot capability surface is known.",
-  );
   capabilities.cancel_navigation = unsupportedCapability(
     "Valetudo go-to cancellation must be mapped explicitly by the Layer 6 backend integration.",
   );
@@ -271,9 +269,16 @@ export function mapValetudoCapabilities(
         notes: "Mapped to backend pause by the Valetudo integration runtime when a mission is active.",
       })
     : unsupportedCapability("Valetudo pause support is not available.");
-  capabilities.resume_mission = unsupportedCapability(
-    "Valetudo resume support must be mapped explicitly once the selected robot capability surface is known.",
-  );
+  capabilities.resume_mission = capabilities.resume.supported
+    ? supportedCapability("runtime_command:resume", {
+        commands: ["resume_mission"],
+        available: capabilities.resume.available,
+        status: capabilities.resume.status,
+        availabilityReason: capabilities.resume.availabilityReason,
+        reasons: capabilities.resume.reasons,
+        notes: "Mapped to backend start by the Valetudo integration runtime when paused.",
+      })
+    : unsupportedCapability("Valetudo resume support is not available.");
   capabilities.cancel_mission = capabilities.stop.supported
     ? supportedCapability("runtime_command:stop", {
         commands: ["cancel_mission"],

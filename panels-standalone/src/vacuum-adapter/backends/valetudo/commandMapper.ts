@@ -210,6 +210,9 @@ export function mapVacuumCommandToValetudoRequest(
   if (command.command === "pause_mission") {
     return supportedOrUnavailable(command, capabilities, "pause_mission", { type: "basic_control", action: "pause" }, "Valetudo mission pause support is not available.");
   }
+  if (command.command === "resume") {
+    return supportedOrUnavailable(command, capabilities, "resume", { type: "basic_control", action: "start" }, "Valetudo resume support is not available.");
+  }
   if (command.command === "stop") {
     return supportedOrUnavailable(command, capabilities, "stop", { type: "basic_control", action: "stop" }, "Valetudo stop support is not available.");
   }
@@ -283,11 +286,13 @@ export function mapVacuumCommandToValetudoRequest(
   }
   if (
     command.command === "start_coverage" ||
-    command.command === "resume_mission" ||
     command.command === "retry_mission_step" ||
     command.command === "skip_mission_step"
   ) {
     return unsupported(command.command, "Mission lifecycle commands require a runtime-owned mission executor.");
+  }
+  if (command.command === "resume_mission") {
+    return supportedOrUnavailable(command, capabilities, "resume_mission", { type: "basic_control", action: "start" }, "Valetudo mission resume support is not available.");
   }
   return unsupported(command.command, `Command ${command.command} is not mapped for the Valetudo backend stub.`);
 }

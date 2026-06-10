@@ -1912,6 +1912,7 @@ function BasicControlsCard(props: {
   commandError: string | null;
   onStart: () => void;
   onPause: () => void;
+  onResume: () => void;
   onStop: () => void;
   onReturnToDock: () => void;
 }): JSX.Element | null {
@@ -1929,6 +1930,13 @@ function BasicControlsCard(props: {
       className: "vacuum-action vacuum-action--ghost",
       capability: props.capabilities.pause,
       onClick: props.onPause,
+    },
+    {
+      key: "resume",
+      label: "Resume",
+      className: "vacuum-action vacuum-action--primary",
+      capability: props.capabilities.resume,
+      onClick: props.onResume,
     },
     {
       key: "stop",
@@ -3434,7 +3442,7 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
     }
   }
 
-  async function handleBasicCommand(command: "start_cleaning" | "pause" | "stop" | "return_to_dock"): Promise<void> {
+  async function handleBasicCommand(command: "start_cleaning" | "pause" | "resume" | "stop" | "return_to_dock"): Promise<void> {
     setMissionCommandError(null);
     const result = await adapter.sendCommand({ command });
     if (!result.ok) {
@@ -3679,6 +3687,7 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
                   commandError={missionCommandError}
                   onStart={() => void handleBasicCommand("start_cleaning")}
                   onPause={() => void handleBasicCommand("pause")}
+                  onResume={() => void handleBasicCommand("resume")}
                   onStop={() => void handleBasicCommand("stop")}
                   onReturnToDock={() => void handleBasicCommand("return_to_dock")}
                 />

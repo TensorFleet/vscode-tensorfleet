@@ -41,8 +41,14 @@ import {
   mapValetudoRuntimeCommandResult,
 } from "../panels-standalone/src/vacuum-adapter/backends/valetudo/commandMapper";
 import {
+  mapVacuumCommandToValetudoRuntimeCommandName,
+} from "../panels-standalone/src/vacuum-adapter/backends/valetudo/runtimeCommandMapper";
+import {
   mapValetudoCapabilities,
 } from "../panels-standalone/src/vacuum-adapter/backends/valetudo/capabilityMapper";
+import type {
+  ValetudoRuntimeSnapshot,
+} from "../panels-standalone/src/vacuum-adapter/backends/valetudo/runtimeContract";
 import {
   isValetudoRuntimeSnapshot,
   mapValetudoRuntimeSnapshotToBoundary,
@@ -472,6 +478,7 @@ function testCapabilityCoverage(): void {
   assert.equal(valetudo.start_cleaning.status, "supported");
   assert.equal(valetudo.start_cleaning.available, true);
   assert.equal(valetudo.pause.supported, true);
+  assert.equal(valetudo.resume.supported, true);
   assert.equal(valetudo.stop.supported, true);
   assert.equal(valetudo.return_to_dock.supported, true);
   assert.equal(valetudo.battery.supported, true);
@@ -490,7 +497,6 @@ function testCapabilityCoverage(): void {
   assert.equal(valetudo.map_annotations.supported, false);
   assert.equal(valetudo.room_semantics.supported, false);
   assert.equal(valetudo.zone_semantics.supported, false);
-  assert.equal(valetudo.resume.supported, false);
   assert.equal(valetudo.auto_mapping.supported, false);
 
   for (const name of ["consumables", "segment_cleaning", "zone_cleaning"] as const) {
@@ -512,6 +518,7 @@ function testCapabilityCoverage(): void {
   const withoutBasicControl = mapValetudoCapabilities(["BatteryStateCapability"]);
   assert.equal(withoutBasicControl.start_cleaning.supported, false);
   assert.equal(withoutBasicControl.pause.supported, false);
+  assert.equal(withoutBasicControl.resume.supported, false);
   assert.equal(withoutBasicControl.stop.supported, false);
   assert.equal(withoutBasicControl.return_to_dock.supported, false);
   assert.equal(withoutBasicControl.battery.supported, true);
@@ -1181,6 +1188,11 @@ function testValetudoCommandStub(): void {
     command: "pause",
     request: { type: "basic_control", action: "pause" },
   });
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "resume" }, capabilities), {
+    ok: true,
+    command: "resume",
+    request: { type: "basic_control", action: "start" },
+  });
   assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "stop" }, capabilities), {
     ok: true,
     command: "stop",
@@ -1248,7 +1260,7 @@ function testValetudoCommandStub(): void {
   assert.equal(mappingResult.ok, false);
 
   const missingBasicControl = mapValetudoCapabilities([]);
-  for (const command of ["start_cleaning", "pause", "stop", "return_to_dock"] as const) {
+  for (const command of ["start_cleaning", "pause", "resume", "stop", "return_to_dock"] as const) {
     const result = mapVacuumCommandToValetudoRequest({ command }, missingBasicControl);
     assert.equal(result.ok, false, `${command} should be unsupported without BasicControlCapability`);
   }
@@ -1439,6 +1451,7 @@ function testValetudoStateAwareCommandAvailability(): void {
           commands: overrides.commands ?? {
             start_cleaning: { available: true },
             pause: { available: true },
+            resume: { available: true },
             stop: { available: true },
             return_to_dock: { available: true },
           },
@@ -1468,9 +1481,9 @@ function testValetudoStateAwareCommandAvailability(): void {
   const assertAvailability = (
     label: string,
     snapshot: ReturnType<typeof snapshotFor>,
-    expected: Record<"start_cleaning" | "pause" | "stop" | "return_to_dock", { available: boolean; reason?: string }>,
+    expected: Record<"start_cleaning" | "pause" | "resume" | "stop" | "return_to_dock", { available: boolean; reason?: string }>,
   ) => {
-    for (const command of ["start_cleaning", "pause", "stop", "return_to_dock"] as const) {
+    for (const command of ["start_cleaning", "pause", "resume", "stop", "return_to_dock"] as const) {
       assert.equal(
         snapshot.capabilities[command].available,
         expected[command].available,
@@ -1492,6 +1505,7 @@ function testValetudoStateAwareCommandAvailability(): void {
   assertAvailability("idle away from dock", snapshotFor({}), {
     start_cleaning: { available: true },
     pause: { available: false, reason: "invalid_state" },
+    resume: { available: false, reason: "invalid_state" },
     stop: { available: false, reason: "invalid_state" },
     return_to_dock: { available: true },
   });
@@ -1499,6 +1513,7 @@ function testValetudoStateAwareCommandAvailability(): void {
   assertAvailability("idle docked", snapshotFor({ dock: { state: "available", docked: true } }), {
     start_cleaning: { available: true },
     pause: { available: false, reason: "invalid_state" },
+    resume: { available: false, reason: "invalid_state" },
     stop: { available: false, reason: "invalid_state" },
     return_to_dock: { available: false, reason: "invalid_state" },
   });
@@ -1509,6 +1524,7 @@ function testValetudoStateAwareCommandAvailability(): void {
     {
       start_cleaning: { available: false, reason: "invalid_state" },
       pause: { available: true },
+      resume: { available: false, reason: "invalid_state" },
       stop: { available: true },
       return_to_dock: { available: true },
     },
@@ -1520,9 +1536,79 @@ function testValetudoStateAwareCommandAvailability(): void {
     {
       start_cleaning: { available: false, reason: "invalid_state" },
       pause: { available: false, reason: "invalid_state" },
+      resume: { available: true },
       stop: { available: true },
       return_to_dock: { available: true },
     },
+  );
+
+  const legacyPausedRuntime = snapshotFor({
+    state: { value: "paused", label: "Paused", started: true, paused: true },
+    commands: {
+      start_cleaning: { available: true },
+      pause: { available: true },
+      stop: { available: true },
+      return_to_dock: { available: true },
+    },
+  });
+  assert.equal(legacyPausedRuntime.capabilities.resume.supported, true);
+  assert.equal(legacyPausedRuntime.capabilities.resume.available, true);
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "resume" }, legacyPausedRuntime.capabilities), {
+    ok: true,
+    command: "resume",
+    request: { type: "basic_control", action: "start" },
+  });
+
+  const rawPausedRuntime = (
+    commands: ValetudoRuntimeSnapshot["capabilities"]["commands"],
+  ): ValetudoRuntimeSnapshot => ({
+    runtime: {
+      id: "tensorfleet-valetudo-runtime",
+      version: "0.6.0",
+      status: "online",
+    },
+    backend: "valetudo",
+    robot: { id: "valetudo-command-rules", name: "Valetudo Command Rules" },
+    source: {
+      kind: "valetudo_mock",
+      status: "reachable",
+      stale: false,
+      lastSeenAt: 1,
+    },
+    connectivity: {
+      reachable: true,
+      online: true,
+    },
+    state: { value: "paused", label: "Paused", started: true, paused: true },
+    battery: { level: 82, charging: false },
+    dock: { state: "available", docked: false },
+    capabilities: {
+      commands,
+      diagnostics: [],
+    },
+    diagnostics: { mode: "valetudo_mock", rawCapabilityNames: ["BasicControlCapability"] },
+    updatedAt: 1,
+  });
+  const normalizedPausedRuntime = rawPausedRuntime({
+    start_cleaning: { available: false, reason: "invalid_state" },
+    pause: { available: false, reason: "invalid_state" },
+    resume: { available: true },
+    stop: { available: true },
+    return_to_dock: { available: true },
+  });
+  assert.equal(mapVacuumCommandToValetudoRuntimeCommandName("resume", normalizedPausedRuntime), "resume");
+  assert.equal(mapVacuumCommandToValetudoRuntimeCommandName("resume_mission", normalizedPausedRuntime), "resume");
+  assert.equal(
+    mapVacuumCommandToValetudoRuntimeCommandName(
+      "resume",
+      rawPausedRuntime({
+        start_cleaning: { available: true },
+        pause: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      }),
+    ),
+    "start_cleaning",
   );
 
   assertAvailability(
@@ -1534,6 +1620,7 @@ function testValetudoStateAwareCommandAvailability(): void {
     {
       start_cleaning: { available: false, reason: "invalid_state" },
       pause: { available: false, reason: "invalid_state" },
+      resume: { available: false, reason: "invalid_state" },
       stop: { available: true },
       return_to_dock: { available: false, reason: "invalid_state" },
     },
@@ -1545,6 +1632,7 @@ function testValetudoStateAwareCommandAvailability(): void {
     {
       start_cleaning: { available: true },
       pause: { available: false, reason: "invalid_state" },
+      resume: { available: false, reason: "invalid_state" },
       stop: { available: false, reason: "invalid_state" },
       return_to_dock: { available: true },
     },
@@ -1559,6 +1647,7 @@ function testValetudoStateAwareCommandAvailability(): void {
     assertAvailability(label, snapshotFor(overrides), {
       start_cleaning: { available: false, reason },
       pause: { available: false, reason },
+      resume: { available: false, reason },
       stop: { available: false, reason },
       return_to_dock: { available: false, reason },
     });
@@ -1572,6 +1661,7 @@ function testValetudoStateAwareCommandAvailability(): void {
     commands: {
       start_cleaning: { available: false, reason: "unavailable" },
       pause: { available: false, reason: "unavailable" },
+      resume: { available: false, reason: "unavailable" },
       stop: { available: false, reason: "unavailable" },
       return_to_dock: { available: false, reason: "unavailable" },
     },
@@ -1582,7 +1672,7 @@ function testValetudoStateAwareCommandAvailability(): void {
   assert.equal(runtimeBlocked.capabilities.start_cleaning.reasons?.[0]?.message, "Currently unavailable.");
 
   const withoutBasicControl = mapValetudoCapabilities([]);
-  for (const command of ["start_cleaning", "pause", "stop", "return_to_dock"] as const) {
+  for (const command of ["start_cleaning", "pause", "resume", "stop", "return_to_dock"] as const) {
     const result = mapVacuumCommandToValetudoRequest({ command }, withoutBasicControl);
     assert.equal(withoutBasicControl[command].supported, false, `${command} should be unsupported`);
     assert.equal(result.ok, false, `${command} should be blocked without BasicControlCapability`);
@@ -1595,6 +1685,7 @@ function testValetudoStateAwareCommandAvailability(): void {
     commands: {
       start_cleaning: { available: true },
       pause: { available: true },
+      resume: { available: true },
       stop: { available: true },
     },
   });
@@ -1604,7 +1695,7 @@ function testValetudoStateAwareCommandAvailability(): void {
   const cleaningSettings = mapValetudoCapabilities(["FanSpeedControlCapability", "WaterUsageControlCapability"]);
   assert.equal(cleaningSettings.fan_speed.status, "supported");
   assert.equal(cleaningSettings.water_usage.status, "supported");
-  assert.equal(mapValetudoCapabilities(["BasicControlCapability"]).resume.supported, false);
+  assert.equal(mapValetudoCapabilities(["BasicControlCapability"]).resume.supported, true);
 
   const staleSource = snapshotFor({ sourceStale: true });
   assert.equal(staleSource.capabilities.start_cleaning.reasons?.[0]?.code, "stale_source");
@@ -1619,6 +1710,7 @@ function testValetudoStateAwareCommandAvailability(): void {
     commands: {
       start_cleaning: { available: false, reason: "source_unreachable" },
       pause: { available: false, reason: "source_unreachable" },
+      resume: { available: false, reason: "source_unreachable" },
       stop: { available: false, reason: "source_unreachable" },
       return_to_dock: { available: false, reason: "source_unreachable" },
     },
@@ -1633,6 +1725,7 @@ function testValetudoStateAwareCommandAvailability(): void {
     commands: {
       start_cleaning: { available: false, reason: "capability_unavailable" },
       pause: { available: false, reason: "capability_unavailable" },
+      resume: { available: false, reason: "capability_unavailable" },
       stop: { available: false, reason: "capability_unavailable" },
       return_to_dock: { available: false, reason: "capability_unavailable" },
     },
@@ -1661,6 +1754,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
       commands: {
         start_cleaning: { available: true },
         pause: { available: true },
+        resume: { available: true },
         stop: { available: true },
         return_to_dock: { available: true },
         set_fan_speed: { available: true },
@@ -1848,6 +1942,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
       commands: {
         start_cleaning: { available: true },
         pause: { available: true },
+        resume: { available: true },
         stop: { available: true },
         return_to_dock: { available: true },
       },
@@ -1874,6 +1969,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
       commands: {
         start_cleaning: { available: true },
         pause: { available: true },
+        resume: { available: true },
         stop: { available: true },
         return_to_dock: { available: true },
       },
@@ -1901,6 +1997,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
       commands: {
         start_cleaning: { available: true },
         pause: { available: true },
+        resume: { available: true },
         stop: { available: true },
         return_to_dock: { available: true },
       },
@@ -1947,6 +2044,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
         commands: {
           start_cleaning: { available: false, reason: "capability_unavailable" },
           pause: { available: false, reason: "capability_unavailable" },
+          resume: { available: false, reason: "capability_unavailable" },
           stop: { available: false, reason: "capability_unavailable" },
           return_to_dock: { available: false, reason: "capability_unavailable" },
         },
@@ -1985,6 +2083,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
         commands: {
           start_cleaning: { available: false, reason: "source_unreachable" },
           pause: { available: false, reason: "source_unreachable" },
+          resume: { available: false, reason: "source_unreachable" },
           stop: { available: false, reason: "source_unreachable" },
           return_to_dock: { available: false, reason: "source_unreachable" },
         },
@@ -2022,6 +2121,7 @@ function testValetudoRuntimeSnapshotMapping(): void {
         commands: {
           start_cleaning: { available: false, reason: "source_unreachable" },
           pause: { available: false, reason: "source_unreachable" },
+          resume: { available: false, reason: "source_unreachable" },
           stop: { available: false, reason: "source_unreachable" },
           return_to_dock: { available: false, reason: "source_unreachable" },
         },
@@ -2086,6 +2186,7 @@ function testValetudoRuntimeMissionStateMapping(): void {
           commands: {
             start_cleaning: { available: true },
             pause: { available: true },
+            resume: { available: true },
             stop: { available: true },
             return_to_dock: { available: true },
           },
@@ -2151,6 +2252,7 @@ function testPrimaryRobotStateDerivation(): void {
           commands: {
             start_cleaning: { available: true },
             pause: { available: true },
+            resume: { available: true },
             stop: { available: true },
             return_to_dock: { available: true },
           },
@@ -2323,6 +2425,7 @@ function testAdvancedSurfaceOptionality(): void {
         commands: {
           start_cleaning: { available: true },
           pause: { available: true },
+          resume: { available: true },
           stop: { available: true },
           return_to_dock: { available: true },
         },
