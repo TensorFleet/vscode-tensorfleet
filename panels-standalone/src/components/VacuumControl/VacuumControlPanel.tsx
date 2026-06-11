@@ -2159,37 +2159,130 @@ function NoMapCanvasPlaceholder(props: {
   );
 }
 
-function BasicRobotStatusCard(props: {
+function RobotOverviewCard(props: {
+  identity: { label: string; model?: string };
   availability: VacuumAvailability;
+  battery?: VacuumBatteryState;
+  dock?: VacuumDockStatus;
   health?: VacuumRuntimeHealth;
   source?: VacuumSourceState;
   activity?: VacuumRobotActivity;
-  dock?: VacuumDockStatus;
-  battery: VacuumBatteryState;
   fault: VacuumFaultState;
 }): JSX.Element {
   const primary = deriveVacuumPrimaryRobotState(props);
-  const batteryPercent = typeof props.battery.percentage === "number"
-    ? Math.max(0, Math.min(100, props.battery.percentage))
-    : null;
   const compactDetail = formatCompactStateDetail(primary, props.fault);
+  const activityDetail = props.activity?.detail ?? null;
 
   return (
-    <section className="vacuum-panel-card vacuum-panel-card--robot-compact-status" aria-label="Robot status">
+    <section className="vacuum-panel-card vacuum-panel-card--robot-overview" aria-label="Robot status">
       <div className="vacuum-panel-card__head">
-        <p className="vacuum-panel-card__eyebrow">Robot</p>
+        <p className="vacuum-panel-card__eyebrow">Robot Overview</p>
       </div>
-      <div className="vacuum-robot-compact-status">
+      <div className="vacuum-robot-overview">
+        <div className="vacuum-robot-overview__identity">
+          <strong>{props.identity.label}</strong>
+          {props.identity.model ? <span>{props.identity.model}</span> : null}
+        </div>
         <strong className={`vacuum-robot-state vacuum-robot-state--${getPrimaryStateTone(primary)}`}>
           {primary.label.toUpperCase()}
         </strong>
         {compactDetail ? <p>{compactDetail}</p> : null}
-        <div className="vacuum-robot-battery">
-          <span>Battery: {batteryPercent == null ? "Unknown" : `${Math.round(batteryPercent)}%`}</span>
-          <div className="vacuum-robot-battery__track" aria-hidden="true">
-            <span style={{ width: `${batteryPercent ?? 0}%` }} />
-          </div>
+        {!compactDetail && activityDetail ? <p>{activityDetail}</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function BatteryDockCard(props: {
+  battery: VacuumBatteryState;
+  dock?: VacuumDockStatus;
+  capabilities: VacuumCapabilities;
+}): JSX.Element | null {
+  const batteryCapability = props.capabilities.battery;
+  const dockCapability = props.capabilities.dock_state;
+  const hasBatteryState = props.battery.percentage != null || props.battery.detail;
+  const hasDockState = Boolean(props.dock?.state && props.dock.state !== "unknown") || props.dock?.detail;
+
+  if (!batteryCapability.supported && !dockCapability.supported && !hasBatteryState && !hasDockState) {
+    return null;
+  }
+
+  const batteryPercent = typeof props.battery.percentage === "number"
+    ? Math.max(0, Math.min(100, props.battery.percentage))
+    : null;
+  const batteryReason = formatCapabilityReason(batteryCapability) ?? props.battery.detail ?? null;
+  const dockReason = formatCapabilityReason(dockCapability) ?? props.dock?.detail ?? null;
+  const dockLabel = props.dock?.state && props.dock.state !== "unknown" ? humanizeStatus(props.dock.state) : "Unknown";
+  const charging =
+    props.battery.charging ?? props.dock?.charging ?? null;
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--battery-dock" aria-label="Battery and dock">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Battery and Dock</p>
+      </div>
+      <div className="vacuum-battery-dock-grid">
+        <div className="vacuum-battery-dock-row">
+          <span>Battery</span>
+          <strong>{batteryPercent == null ? "Unknown" : `${Math.round(batteryPercent)}%`}</strong>
         </div>
+        <div className="vacuum-robot-battery__track" aria-hidden="true">
+          <span style={{ width: `${batteryPercent ?? 0}%` }} />
+        </div>
+        {batteryReason && batteryPercent == null ? (
+          <p className="vacuum-action-hint vacuum-action-hint--disabled">{batteryReason}</p>
+        ) : null}
+        <div className="vacuum-battery-dock-row">
+          <span>Dock</span>
+          <strong className={`vacuum-battery-dock-state vacuum-battery-dock-state--${getDockTone(props.dock)}`}>
+            {dockLabel}
+          </strong>
+        </div>
+        <div className="vacuum-battery-dock-row">
+          <span>Charging</span>
+          <strong>{charging == null ? "Unknown" : charging ? "Yes" : "No"}</strong>
+        </div>
+        {dockReason && dockLabel === "Unknown" ? (
+          <p className="vacuum-action-hint vacuum-action-hint--disabled">{dockReason}</p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function SourceHealthCard(props: {
+  availability: VacuumAvailability;
+  health?: VacuumRuntimeHealth;
+  source?: VacuumSourceState;
+  fault: VacuumFaultState;
+}): JSX.Element | null {
+  if (!props.health && !props.source && !props.availability.detail && props.fault.faults.length === 0) {
+    return null;
+  }
+
+  const runtimeLabel = props.health?.runtimeStatus ? humanizeStatus(props.health.runtimeStatus) : "Unknown";
+  const sourceStatus = props.source?.stale ? "Stale" : props.source?.status ? humanizeStatus(props.source.status) : "Unknown";
+  const sourceDetail = props.source?.reason ?? props.fault.faults[0] ?? props.health?.detail ?? null;
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--source-health" aria-label="Source and health">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Source / Health</p>
+      </div>
+      <div className="vacuum-source-health-grid">
+        <div className="vacuum-source-health-row">
+          <span>Connection</span>
+          <strong>{humanizeStatus(props.availability.status)}</strong>
+        </div>
+        <div className="vacuum-source-health-row">
+          <span>Runtime</span>
+          <strong>{runtimeLabel}</strong>
+        </div>
+        <div className="vacuum-source-health-row">
+          <span>Robot source</span>
+          <strong>{sourceStatus}</strong>
+        </div>
+        {sourceDetail ? <p>{sourceDetail}</p> : null}
       </div>
     </section>
   );
@@ -3682,6 +3775,16 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
           <div className="vacuum-sidebar">
             {isBasicRobotProfile ? (
               <div className="vacuum-mode-content">
+                <RobotOverviewCard
+                  identity={snapshot.identity}
+                  availability={snapshot.availability}
+                  battery={snapshot.battery}
+                  dock={snapshot.dock}
+                  health={snapshot.health}
+                  source={snapshot.source}
+                  activity={snapshot.activity}
+                  fault={snapshot.fault}
+                />
                 <BasicControlsCard
                   capabilities={snapshot.capabilities}
                   commandError={missionCommandError}
@@ -3690,6 +3793,11 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
                   onResume={() => void handleBasicCommand("resume")}
                   onStop={() => void handleBasicCommand("stop")}
                   onReturnToDock={() => void handleBasicCommand("return_to_dock")}
+                />
+                <BatteryDockCard
+                  battery={snapshot.battery}
+                  dock={snapshot.dock}
+                  capabilities={snapshot.capabilities}
                 />
                 <CleaningSettingsCard
                   settings={snapshot.cleaningSettings}
@@ -3702,13 +3810,10 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
                   maintenance={snapshot.maintenance}
                   capabilities={snapshot.capabilities}
                 />
-                <BasicRobotStatusCard
+                <SourceHealthCard
                   availability={snapshot.availability}
                   health={snapshot.health}
                   source={snapshot.source}
-                  activity={snapshot.activity}
-                  dock={snapshot.dock}
-                  battery={snapshot.battery}
                   fault={snapshot.fault}
                 />
               </div>

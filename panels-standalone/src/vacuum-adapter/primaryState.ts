@@ -70,13 +70,20 @@ function primaryStateLabel(state: VacuumPrimaryRobotState): string {
   }
 }
 
-function batteryText(battery: VacuumBatteryState): string {
-  return battery.percentage == null ? "battery unknown" : `${Math.round(battery.percentage)}% battery`;
+const UNKNOWN_BATTERY: VacuumBatteryState = {
+  readiness: "waiting",
+  percentage: null,
+  charging: null,
+  detail: "Battery state unavailable.",
+};
+
+function batteryText(battery: VacuumBatteryState | undefined): string {
+  return battery?.percentage == null ? "battery unknown" : `${Math.round(battery.percentage)}% battery`;
 }
 
 function supportingDetail(
   state: VacuumPrimaryRobotState,
-  battery: VacuumBatteryState,
+  battery: VacuumBatteryState | undefined,
   dock: VacuumDockStatus | undefined,
   health: VacuumRuntimeHealth | undefined,
   source: VacuumSourceState | undefined,
@@ -117,9 +124,12 @@ function supportingDetail(
 }
 
 export function deriveVacuumPrimaryRobotState(
-  snapshot: Pick<VacuumAdapterSnapshot, "availability" | "health" | "source" | "activity" | "dock" | "battery" | "fault">,
+  snapshot: Pick<VacuumAdapterSnapshot, "availability" | "health" | "source" | "activity" | "dock" | "fault"> & {
+    battery?: VacuumBatteryState;
+  },
 ): VacuumPrimaryRobotStateSummary {
   let state: VacuumPrimaryRobotState;
+  const battery = snapshot.battery ?? UNKNOWN_BATTERY;
 
   if (snapshot.availability.status === "offline" || snapshot.health?.runtimeStatus === "offline") {
     state = "offline";
@@ -133,7 +143,7 @@ export function deriveVacuumPrimaryRobotState(
     state = "paused";
   } else if (snapshot.activity?.status === "cleaning" || snapshot.activity?.status === "covering") {
     state = "cleaning";
-  } else if (snapshot.activity?.status === "charging" || snapshot.dock?.state === "charging" || snapshot.battery.charging === true) {
+  } else if (snapshot.activity?.status === "charging" || snapshot.dock?.state === "charging" || battery.charging === true) {
     state = "charging";
   } else if (snapshot.activity?.status === "docked" || snapshot.dock?.state === "docked") {
     state = "docked";
@@ -144,7 +154,7 @@ export function deriveVacuumPrimaryRobotState(
   return {
     state,
     label: primaryStateLabel(state),
-    detail: supportingDetail(state, snapshot.battery, snapshot.dock, snapshot.health, snapshot.source, snapshot.activity),
+    detail: supportingDetail(state, battery, snapshot.dock, snapshot.health, snapshot.source, snapshot.activity),
     reason: snapshot.source?.reason ?? snapshot.activity?.reason,
   };
 }

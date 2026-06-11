@@ -3175,14 +3175,42 @@ body {
   white-space: nowrap;
 }
 
-.vacuum-panel-card--robot-compact-status {
+.vacuum-panel-card--robot-overview,
+.vacuum-panel-card--battery-dock,
+.vacuum-panel-card--source-health {
   gap: 12px;
 }
 
-.vacuum-robot-compact-status {
+.vacuum-robot-overview {
   min-width: 0;
   display: grid;
-  gap: 14px;
+  gap: 10px;
+}
+
+.vacuum-robot-overview__identity {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.vacuum-robot-overview__identity strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vacuum-text);
+  font-size: 16px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-robot-overview__identity span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vacuum-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .vacuum-robot-state {
@@ -3205,7 +3233,7 @@ body {
   color: #ff7461;
 }
 
-.vacuum-robot-compact-status p {
+.vacuum-robot-overview p {
   margin: -6px 0 0;
   overflow-wrap: anywhere;
   color: var(--vacuum-text-soft);
@@ -3213,17 +3241,90 @@ body {
   line-height: 1.4;
 }
 
-.vacuum-robot-battery {
+.vacuum-battery-dock-grid {
+  min-width: 0;
   display: grid;
-  gap: 7px;
+  gap: 9px;
 }
 
-.vacuum-robot-battery span {
-  color: var(--vacuum-accent);
-  font-size: 11px;
+.vacuum-battery-dock-row {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.vacuum-battery-dock-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vacuum-text-soft);
+  font-size: 12px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-battery-dock-row strong {
+  flex: 0 0 auto;
+  color: var(--vacuum-text);
+  font-size: 12px;
   font-weight: 850;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+}
+
+.vacuum-battery-dock-state--ready {
+  color: var(--vacuum-accent);
+}
+
+.vacuum-battery-dock-state--warning {
+  color: var(--vacuum-warning);
+}
+
+.vacuum-battery-dock-state--danger {
+  color: var(--vacuum-danger);
+}
+
+.vacuum-battery-dock-state--muted {
+  color: var(--vacuum-text-muted);
+}
+
+.vacuum-source-health-grid {
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+}
+
+.vacuum-source-health-row {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.vacuum-source-health-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vacuum-text-soft);
+  font-size: 12px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-source-health-row strong {
+  flex: 0 0 auto;
+  color: var(--vacuum-text);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.vacuum-source-health-grid p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--vacuum-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .vacuum-robot-battery__track {

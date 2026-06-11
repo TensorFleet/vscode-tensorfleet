@@ -2329,6 +2329,15 @@ function testPrimaryRobotStateDerivation(): void {
   for (const tt of cases) {
     assert.equal(deriveVacuumPrimaryRobotState(tt.snapshot).state, tt.want, tt.name);
   }
+
+  const noBatteryPrimary = deriveVacuumPrimaryRobotState({
+    ...createSnapshot({
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+    }),
+    battery: undefined,
+  });
+  assert.equal(noBatteryPrimary.state, "idle");
+  assert.equal(noBatteryPrimary.detail.includes("battery unknown"), true);
 }
 
 function testValetudoChargingAndOfflineMapping(): void {
@@ -2566,10 +2575,11 @@ function testPublicContractAndUiBoundary(): void {
     "Maintenance card should render from normalized maintenance state and consumables descriptor",
   );
   assert.equal(
-    /vacuum-panel-card--robot-compact-status/.test(panelContents) &&
+    /vacuum-panel-card--robot-overview/.test(panelContents) &&
+      /vacuum-panel-card--battery-dock/.test(panelContents) &&
       /vacuum-robot-battery__track/.test(panelContents),
     true,
-    "Robot status should render as one compact status card with a battery bar",
+    "No-map sidebar should split robot overview from battery and dock while keeping a battery bar",
   );
   assert.equal(/CleaningTargetsCard|snapshot\.cleaningTargets|targetIds: \[targetId\]/.test(panelContents), false);
   assert.equal(
