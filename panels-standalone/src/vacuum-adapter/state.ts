@@ -411,6 +411,18 @@ export type VacuumMaintenanceState = {
   consumables: VacuumConsumableState[];
 };
 
+export type VacuumCurrentStatisticsState = {
+  durationSeconds?: number;
+  areaSquareMeters?: number;
+  startedAt?: number | string;
+  updatedAt?: number | string;
+  detail?: string;
+};
+
+export type VacuumStatisticsState = {
+  current?: VacuumCurrentStatisticsState;
+};
+
 export type VacuumAdapterDiagnostics = {
   backend?: string;
   runtime?: unknown;
@@ -433,6 +445,7 @@ export type VacuumAdapterSnapshot = {
   dock?: VacuumDockStatus;
   cleaningSettings?: VacuumCleaningSettingsState;
   maintenance?: VacuumMaintenanceState;
+  statistics?: VacuumStatisticsState;
   diagnostics?: VacuumAdapterDiagnostics;
   map: VacuumMapState;
   pose: VacuumPoseState;

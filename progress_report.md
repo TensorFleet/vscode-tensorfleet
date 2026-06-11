@@ -1,46 +1,42 @@
-# Progress Report - Valetudo Mock UI State and Layout Pass
-Current report date: 2026-06-10.
+# Progress Report - Current Statistics Normalization
+Current report date: 2026-06-12.
 
 ## 1. What changed
 
-- Added a normalized primary robot state helper that derives one UI state from adapter snapshots: offline, unavailable, idle, docked, charging, cleaning, paused, returning to dock, or error.
-- Removed the no-map robot overview dashboard from the map area so the map stage stays visually quiet when no product map exists.
-- Collapsed Robot Status into one compact card with the primary robot state and battery bar.
-- Removed inline Basic Cleaning disabled reason text such as invalid-state explanations from the visible control list.
-- Removed the unavailable-workflows summary from the basic no-map Valetudo rail.
-- Kept basic controls, fan/water settings, maintenance, and unavailable workflows behind normalized adapter state/capabilities.
-- Added fixed mock runtime scenarios for docked idle, cleaning, paused, returning to dock, charging, stale/unreachable source, and fault/maintenance warning.
-- Updated adapter/runtime regression coverage for primary state derivation, no-map map gating, capability-driven UI behavior, normalized display surfaces, and fixed mock scenarios.
+- Extended the VM-managed Valetudo integration runtime snapshot with `statistics.current`, including deterministic fixed mock values for current run duration and cleaned area.
+- Added HTTP-source normalization for `CurrentStatisticsCapability` when the source reports parseable current statistics, including Valetudo-style `ValetudoDataPoint` arrays for `time` and `area`; missing or malformed source statistics are omitted without failing the snapshot.
+- Extended the normalized `vacuum_adapter` contract with `snapshot.statistics.current` and a backend-neutral `statistics` capability with `attributes: ["current"]` and no commands.
+- Mapped Valetudo runtime current statistics into the adapter snapshot only when the source is fresh and reachable; stale, unreachable, offline, or malformed statistics are absent and unsupported.
+- Added a compact Current Statistics card to the Valetudo/no-map Vacuum Control sidebar, gated only by normalized `snapshot.statistics.current` plus `capabilities.statistics`.
+- Updated `firecracker-vm/tensorfleet-mgr` runtime structs, fixed mock snapshot construction, HTTP source normalization, capability tier diagnostics, and handler tests.
+- Synced the updated `tensorfleet-mgr` binary to the live VM at `172.16.0.10`, backed up the prior binary, restarted `tensorfleet-mgr.service`, and verified the live Valetudo runtime snapshot now includes `statistics.current`.
+- No VS Code `vm-manager` proxy changes were required after inspection: the panel runtime client already uses the generic `/vms/self/tensorfleet/api/v1/valetudo` proxy path, and there is no typed Valetudo snapshot schema in `src/vm-manager.ts`.
+- Updated adapter regression tests for fixed mock statistics, supported statistics capability, omitted statistics, malformed statistics, stale/unreachable source handling, and existing Valetudo controls/settings/maintenance coverage.
 
 ## 2. Product behavior
 
-- Operators now see one clear main robot state in a compact Robot card instead of a stack of status rows.
-- The map area no longer displays robot overview content when no map exists.
-- Basic Cleaning buttons still disable from normalized availability, but no longer show inline invalid-state reason sentences.
-- Fan speed, water usage, maintenance/consumables, and dock/battery remain normalized product displays in the right rail.
-- No new advanced state-changing controls were added.
+- Operators using the Valetudo/no-map Vacuum Control sidebar now see a Current Statistics card with current run duration and cleaned area when normalized current statistics are available.
+- The card appears only when `capabilities.statistics.supported` is true and `snapshot.statistics.current` contains finite duration or area data.
+- Missing, malformed, stale, unreachable, or offline statistics do not crash the runtime or UI and do not show a misleading card.
+- The feature is read-only and backend-neutral: product UI does not depend on raw Valetudo capability names, HTTP routes, MQTT topics, source URLs, cache internals, or backend-specific response shapes.
 
 ## 3. Still deferred
 
-- Real hardware behavior and production MQTT.
-- Valetudo map rendering, segment cleaning, zone cleaning, Clean Area, go-to/navigation, room semantics, and robot pose visualization.
-- Consumable reset, dock clean/dry/empty actions, robot options, map reset/export, scheduling, updater/log/system configuration UI, and diagnostics drawer.
-- Normalized attachments, dock components, and current/total statistics fields beyond the display surfaces already backed by adapter state.
+- Total statistics.
+- Statistics history/charts/export.
+- Attachments and dock components.
+- Advanced dock actions.
+- Consumable reset commands.
+- Map rendering and segment/room/zone/go-to behavior.
+- Valetudo Clean Area behavior.
+- Hardware validation.
 
 ## 4. Validation
 
 ```sh
 bun run test:vacuum-adapter
-go test ./... # from /home/shane/firecracker-vm/tensorfleet-mgr
 bun run --cwd panels-standalone build
+go test ./...
 git diff --check
-git -C /home/shane/firecracker-vm diff --check
+curl -fsS -H 'Authorization: Bearer default-tensorfleet-token' http://172.16.0.10:9090/api/v1/valetudo/snapshot
 ```
-
-Result:
-
-* `bun run test:vacuum-adapter` passed.
-* `go test ./...` from `/home/shane/firecracker-vm/tensorfleet-mgr` passed.
-* `bun run --cwd panels-standalone build` passed with existing Vite browser-externalization, eval, and chunk-size warnings.
-* `git diff --check` passed.
-* `git -C /home/shane/firecracker-vm diff --check` passed.

@@ -65,6 +65,7 @@ export type ValetudoCapabilityMappingOptions = {
   unsupportedCommands?: Partial<Record<VacuumCapabilityName, string>>;
   unavailableReason?: string;
   consumablesSupported?: boolean;
+  currentStatisticsSupported?: boolean;
 };
 
 function supportedCapability(
@@ -191,6 +192,15 @@ export function mapValetudoCapabilities(
       attributes: ["maintenance.consumables"],
       ...commandAvailabilityFor("consumables", options),
       notes: "Mapped from normalized Valetudo runtime consumable state.",
+    });
+  }
+
+  if (options.currentStatisticsSupported) {
+    capabilities.statistics = supportedCapability("runtime_state:statistics", {
+      attributes: ["current"],
+      commands: [],
+      ...commandAvailabilityFor("statistics", options),
+      notes: "Mapped from normalized Valetudo runtime current cleaning statistics.",
     });
   }
 

@@ -41,6 +41,7 @@ export const VACUUM_CAPABILITY_NAMES = [
   "water_usage",
   "battery",
   "consumables",
+  "statistics",
   "events",
   "fault_state",
 ] as const;

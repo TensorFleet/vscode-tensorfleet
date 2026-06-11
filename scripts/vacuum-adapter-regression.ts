@@ -1817,6 +1817,14 @@ function testValetudoRuntimeSnapshotMapping(): void {
         },
       ],
     },
+    statistics: {
+      current: {
+        durationSeconds: 1440,
+        areaSquareMeters: 63,
+        updatedAt: 1,
+        detail: "Fixed mock current cleaning statistics.",
+      },
+    },
     updatedAt: 1,
   });
   const snapshot = mapValetudoState(boundary);
@@ -1846,6 +1854,13 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.capabilities.water_usage.supported, true);
   assert.equal(snapshot.capabilities.consumables.supported, true);
   assert.equal(snapshot.capabilities.consumables.available, true);
+  assert.equal(snapshot.capabilities.statistics.supported, true);
+  assert.equal(snapshot.capabilities.statistics.available, true);
+  assert.deepEqual(snapshot.capabilities.statistics.commands, []);
+  assert.deepEqual(snapshot.capabilities.statistics.attributes, ["current"]);
+  assert.equal(snapshot.statistics?.current?.durationSeconds, 1440);
+  assert.equal(snapshot.statistics?.current?.areaSquareMeters, 63);
+  assert.equal(snapshot.statistics?.current?.updatedAt, 1);
   assert.equal(snapshot.capabilities.segment_cleaning.supported, false);
   assert.equal(snapshot.capabilities.segment_cleaning.status, "detected_not_ready");
   assert.equal(snapshot.capabilities.room_semantics.supported, false);
@@ -1957,6 +1972,8 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(mockHTTPSnapshot.capabilities.start_cleaning.supported, true);
   assert.equal(mockHTTPSnapshot.capabilities.start_cleaning.available, true);
   assert.equal(mockHTTPSnapshot.capabilities.start_navigation.supported, false);
+  assert.equal(mockHTTPSnapshot.capabilities.statistics.supported, false);
+  assert.equal(mockHTTPSnapshot.statistics, undefined);
 
   const httpBoundary = mapValetudoRuntimeSnapshotToBoundary({
     runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
@@ -2090,6 +2107,9 @@ function testValetudoRuntimeSnapshotMapping(): void {
         diagnostics: [],
       },
       diagnostics: { mode: "real_robot", rawCapabilityNames: ["BasicControlCapability"] },
+      statistics: {
+        current: { durationSeconds: 1440, areaSquareMeters: 63, updatedAt: 10 },
+      },
       updatedAt: 10,
     }),
   );
@@ -2102,6 +2122,8 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(unreachable.capabilities.start_cleaning.status, "unavailable");
   assert.equal(unreachable.capabilities.start_cleaning.available, false);
   assert.equal(unreachable.capabilities.start_cleaning.availabilityReason, "source_unreachable");
+  assert.equal(unreachable.capabilities.statistics.supported, false);
+  assert.equal(unreachable.statistics, undefined);
   const unreachableCommand = mapVacuumCommandToValetudoRequest(
     { command: "start_cleaning" },
     unreachable.capabilities,
@@ -2153,6 +2175,9 @@ function testValetudoRuntimeSnapshotMapping(): void {
         diagnostics: [{ name: "BasicControlCapability", detected: true, implemented: true, scope: "control" }],
       },
       diagnostics: { mode: "valetudo_mock", rawCapabilityNames: ["BasicControlCapability"] },
+      statistics: {
+        current: { durationSeconds: 1440, areaSquareMeters: 63, updatedAt: 11 },
+      },
       updatedAt: 11,
     }),
   );
@@ -2163,6 +2188,35 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(stale.capabilities.start_cleaning.supported, true);
   assert.equal(stale.capabilities.start_cleaning.status, "unavailable");
   assert.equal(stale.capabilities.start_cleaning.availabilityReason, "stale_source");
+  assert.equal(stale.capabilities.statistics.supported, false);
+  assert.equal(stale.statistics, undefined);
+
+  const malformedStatistics = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0", status: "online" },
+      backend: "valetudo",
+      robot: { id: "valetudo-malformed-stats", name: "Valetudo Malformed Stats" },
+      source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 12 },
+      connectivity: { reachable: true, online: true },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: true },
+        },
+        diagnostics: [{ name: "CurrentStatisticsCapability", detected: true, implemented: true, scope: "state" }],
+      },
+      diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability", "CurrentStatisticsCapability"] },
+      statistics: {
+        current: {
+          durationSeconds: Number.NaN,
+          areaSquareMeters: Number.POSITIVE_INFINITY,
+        },
+      },
+      updatedAt: 12,
+    }),
+  );
+  assert.equal(malformedStatistics.capabilities.statistics.supported, false);
+  assert.equal(malformedStatistics.statistics, undefined);
 }
 
 function testValetudoRuntimeMissionStateMapping(): void {

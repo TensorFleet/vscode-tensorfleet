@@ -22,6 +22,7 @@ import {
   type VacuumRobotActivity,
   type VacuumRuntimeHealth,
   type VacuumSourceState,
+  type VacuumStatisticsState,
   type VacuumMapAnnotation,
   type VacuumMapAnnotationKind,
   type VacuumMappingStatus,
@@ -149,6 +150,19 @@ function formatPercent(value: number): string {
 
 function formatArea(value: number): string {
   return Number.isFinite(value) ? `${value.toFixed(1)} m²` : "n/a";
+}
+
+function formatCurrentStatisticsDuration(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return "n/a";
+  }
+  const totalSeconds = Math.round(value);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const paddedMinutes = String(minutes).padStart(hours > 0 ? 2 : 1, "0");
+  const paddedSeconds = String(seconds).padStart(2, "0");
+  return hours > 0 ? `${String(hours).padStart(2, "0")}h ${paddedMinutes}m ${paddedSeconds}s` : `${paddedMinutes}m ${paddedSeconds}s`;
 }
 
 function formatDimension(value: number): string {
@@ -2147,6 +2161,40 @@ function MaintenanceCard(props: {
   );
 }
 
+function CurrentStatisticsCard(props: {
+  statistics?: VacuumStatisticsState;
+  capabilities: VacuumCapabilities;
+}): JSX.Element | null {
+  const current = props.statistics?.current;
+  if (!props.capabilities.statistics.supported || !current) {
+    return null;
+  }
+  const hasDuration = typeof current.durationSeconds === "number" && Number.isFinite(current.durationSeconds);
+  const hasArea = typeof current.areaSquareMeters === "number" && Number.isFinite(current.areaSquareMeters);
+  const areaSquareMeters = hasArea ? current.areaSquareMeters : null;
+  if (!hasDuration && !hasArea) {
+    return null;
+  }
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--current-statistics" aria-label="Current statistics">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Current Statistics</p>
+      </div>
+      <div className="vacuum-current-statistics">
+        <div>
+          <span>Duration</span>
+          <strong>{formatCurrentStatisticsDuration(current.durationSeconds)}</strong>
+        </div>
+        <div>
+          <span>Area</span>
+          <strong>{areaSquareMeters == null ? "n/a" : formatArea(areaSquareMeters)}</strong>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function NoMapCanvasPlaceholder(props: {
   mapDetail?: string;
 }): JSX.Element {
@@ -3805,6 +3853,10 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
                   commandError={missionCommandError}
                   onSetFanSpeed={(value) => void handleCleaningSettingCommand("set_fan_speed", value)}
                   onSetWaterUsage={(value) => void handleCleaningSettingCommand("set_water_usage", value)}
+                />
+                <CurrentStatisticsCard
+                  statistics={snapshot.statistics}
+                  capabilities={snapshot.capabilities}
                 />
                 <MaintenanceCard
                   maintenance={snapshot.maintenance}

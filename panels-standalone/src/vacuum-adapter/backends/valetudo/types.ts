@@ -12,6 +12,7 @@ import type {
   VacuumRobotActivityStatus,
   VacuumRuntimeHealth,
   VacuumSourceState,
+  VacuumStatisticsState,
 } from "../../state";
 import type { ValetudoCapabilityAvailability } from "./capabilityMapper";
 import type { ValetudoBackendCapability } from "./capabilityMapper";
@@ -30,6 +31,7 @@ export type ValetudoRuntimeBoundary = {
   dock?: VacuumDockStatus;
   cleaningSettings?: VacuumCleaningSettingsState;
   maintenance?: VacuumMaintenanceState;
+  statistics?: VacuumStatisticsState;
   diagnostics?: VacuumAdapterDiagnostics;
   lastError?: string;
 };

@@ -73,6 +73,9 @@ export type ValetudoRuntimeSnapshot = {
   maintenance?: {
     consumables?: ValetudoRuntimeConsumable[];
   };
+  statistics?: {
+    current?: ValetudoRuntimeCurrentStatistics;
+  };
   capabilities: {
     commands: Record<string, { available: boolean; reason?: string }>;
     diagnostics: ValetudoRuntimeCapabilityDiagnostic[];
@@ -127,6 +130,14 @@ export type ValetudoRuntimeConsumable = {
   usedMinutes?: number;
   totalMinutes?: number;
   status?: "ok" | "warning" | "replace_soon" | "replace_now" | "unknown";
+  detail?: string;
+};
+
+export type ValetudoRuntimeCurrentStatistics = {
+  durationSeconds?: number;
+  areaSquareMeters?: number;
+  startedAt?: number | string;
+  updatedAt?: number | string;
   detail?: string;
 };
 

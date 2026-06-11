@@ -14,6 +14,7 @@ import type {
   VacuumRobotActivityStatus,
   VacuumRuntimeHealth,
   VacuumSourceState,
+  VacuumStatisticsState,
 } from "../../state";
 import type { VacuumCapabilities } from "../../capabilities";
 import { buildVacuumMapMetadata } from "../../mapGrid";
@@ -358,6 +359,49 @@ function mapMaintenance(snapshot: ValetudoRuntimeSnapshot): VacuumMaintenanceSta
   return consumables.length > 0 ? { consumables } : undefined;
 }
 
+function mapStatistics(snapshot: ValetudoRuntimeSnapshot): VacuumStatisticsState | undefined {
+  if (sourceUnavailableReason(snapshot)) {
+    return undefined;
+  }
+  const current = snapshot.statistics?.current;
+  if (!current) {
+    return undefined;
+  }
+  const durationSeconds = typeof current.durationSeconds === "number" && Number.isFinite(current.durationSeconds)
+    ? current.durationSeconds
+    : undefined;
+  const areaSquareMeters = typeof current.areaSquareMeters === "number" && Number.isFinite(current.areaSquareMeters)
+    ? current.areaSquareMeters
+    : undefined;
+  const startedAt = typeof current.startedAt === "number" || typeof current.startedAt === "string"
+    ? current.startedAt
+    : undefined;
+  const updatedAt = typeof current.updatedAt === "number" || typeof current.updatedAt === "string"
+    ? current.updatedAt
+    : undefined;
+  const detail = typeof current.detail === "string" && current.detail.trim() !== ""
+    ? current.detail
+    : undefined;
+  if (
+    durationSeconds == null &&
+    areaSquareMeters == null &&
+    startedAt == null &&
+    updatedAt == null &&
+    detail == null
+  ) {
+    return undefined;
+  }
+  return {
+    current: {
+      durationSeconds,
+      areaSquareMeters,
+      startedAt,
+      updatedAt,
+      detail,
+    },
+  };
+}
+
 function runtimeCommandToCapabilityName(command: string): keyof VacuumCapabilities | null {
   if (command === "set_fan_speed") {
     return "fan_speed";
@@ -538,6 +582,7 @@ export function mapValetudoRuntimeSnapshotToBoundary(
   const sourceReason = sourceUnavailableReason(snapshot);
   const cleaningSettings = mapCleaningSettings(snapshot);
   const maintenance = mapMaintenance(snapshot);
+  const statistics = mapStatistics(snapshot);
   const faults = [
     ...(normalizeActivityStatus(snapshot) === "faulted" ? [snapshot.state.label || "Valetudo runtime reported a robot fault."] : []),
     ...(snapshot.source.stale ? ["Valetudo runtime source state is stale."] : []),
@@ -579,6 +624,7 @@ export function mapValetudoRuntimeSnapshotToBoundary(
     },
     cleaningSettings,
     maintenance,
+    statistics,
     diagnostics: mapDiagnostics(snapshot),
     lastError: snapshot.connectivity.online ? undefined : "Valetudo integration runtime is offline.",
   };
@@ -608,6 +654,7 @@ export function mapValetudoRuntimeUnavailable(message: string): ValetudoRuntimeB
     },
     cleaningSettings: undefined,
     maintenance: undefined,
+    statistics: undefined,
     diagnostics: {
       backend: "valetudo",
       runtime: {
@@ -736,6 +783,7 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     commandAvailability: runtime.commandAvailability,
     unsupportedCommands: runtime.unsupportedCommands,
     consumablesSupported: (runtime.maintenance?.consumables.length ?? 0) > 0,
+    currentStatisticsSupported: runtime.statistics?.current != null,
     unavailableReason:
       runtime.connectionStatus === "online" && runtime.source?.reason
         ? runtime.source.reason
@@ -770,6 +818,7 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     diagnostics: runtime.diagnostics,
     cleaningSettings: runtime.cleaningSettings,
     maintenance: runtime.maintenance,
+    statistics: runtime.statistics,
     map: {
       readiness: "unavailable",
       receiving: false,
