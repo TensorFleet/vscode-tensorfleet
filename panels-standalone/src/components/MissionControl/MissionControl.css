@@ -73,7 +73,7 @@
 .mission-side-panel__mission-button {
     width: 100%;
     min-height: 44px;
-    padding: 10px 40px 10px 12px;
+    padding: 10px 82px 10px 12px;
     border-radius: 10px;
     border: 1px solid var(--vscode-widget-border, #e5e7eb);
     background: var(--vscode-editor-background, rgba(255, 255, 255, 0.04));
@@ -101,11 +101,18 @@
     font-weight: 600;
 }
 
-.mission-side-panel__delete-button {
+.mission-side-panel__mission-actions {
     position: absolute;
     top: 50%;
     right: 10px;
     transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 2;
+}
+
+.mission-side-panel__icon-button {
     width: 32px;
     height: 28px;
     border-radius: 6px;
@@ -116,17 +123,25 @@
     border: 1px solid var(--vscode-widget-border, #e5e7eb);
     background: var(--vscode-editorWidget-background, #fff);
     cursor: pointer;
-    z-index: 2;
     padding: 0;
 }
 
-.mission-side-panel__delete-button:hover {
+.mission-side-panel__icon-button:hover:not(:disabled) {
     background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground, rgba(0, 0, 0, 0.06)));
 }
 
+.mission-side-panel__icon-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.mission-side-panel__action-icon,
 .mission-side-panel__delete-icon {
     width: 18px;
     height: 18px;
     display: block;
+}
+
+.mission-side-panel__delete-icon {
     stroke: currentColor;
 }

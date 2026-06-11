@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ros2Bridge } from 'tensorfleet-ros';
 import { DroneStateModel } from 'tensorfleet-util/drone/drone-state-model';
+import { MavrosMissionCommand, MavrosMissionWaypoint, type MavrosMsgsWaypoint } from 'tensorfleet-util/ros/ros-types/mavros-msgs-waypoint';
+import { toLonLat } from 'ol/proj';
 import { DroneMap } from './map/DroneMap';
 import './MissionControl.css';
 import { DroneStatusPanel } from './drone/DroneStatusPanel';
@@ -20,6 +22,8 @@ type FlightPlanRecord = {
     name: string;
     path: [number, number][];
 };
+
+const DEFAULT_MISSION_ALTITUDE_METERS = 3;
 
 function loadPersistedFlightPlans(): FlightPlanRecord[] {
     return [];
@@ -43,6 +47,20 @@ function getNextFlightPlanNumber(flightPlans: FlightPlanRecord[]): number {
     }
 
     return maxMissionNumber + 1;
+}
+
+function buildMissionFromFlightPlan(flightPlan: FlightPlanRecord): MavrosMsgsWaypoint[] {
+    return flightPlan.path.map(([x, y], index) => {
+        const [longitude, latitude] = toLonLat([x, y]);
+
+        return new MavrosMissionWaypoint({
+            command: MavrosMissionCommand.GO_TO,
+            latitude,
+            longitude,
+            altitude: DEFAULT_MISSION_ALTITUDE_METERS,
+            isCurrent: index === 0,
+        });
+    });
 }
 
 export const MissionControlPanel: React.FC = () => {
@@ -115,6 +133,18 @@ export const MissionControlPanel: React.FC = () => {
         );
     };
 
+    const handleSendFlightPlan = (flightPlanId: string) => {
+        const flightPlan = flightPlans.find((plan) => plan.id === flightPlanId);
+        if (!flightPlan || flightPlan.path.length === 0) {
+            return;
+        }
+
+        const mission = buildMissionFromFlightPlan(flightPlan);
+        void droneController.sendMissionRequest(mission).catch((error) => {
+            console.error(`Failed to send mission "${flightPlan.name}"`, error);
+        });
+    };
+
     return (
       <ConnectionSettingsProvider onSettingsChange={(settings) => {
         // Handle connection settings changes - could trigger reconnection
@@ -140,6 +170,7 @@ export const MissionControlPanel: React.FC = () => {
               selectedFlightPlanId={selectedFlightPlanId}
               onStartNewPlan={handleStartNewPlan}
               onSelectFlightPlan={handleSelectFlightPlan}
+              onSendFlightPlan={handleSendFlightPlan}
               onDeleteFlightPlan={handleDeleteFlightPlan}
             />
           ) : (

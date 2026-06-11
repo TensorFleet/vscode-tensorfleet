@@ -11,8 +11,24 @@ type MissionPlanningPanelProps = {
   selectedFlightPlanId: string | null;
   onStartNewPlan: () => void;
   onSelectFlightPlan: (flightPlanId: string) => void;
+  onSendFlightPlan: (flightPlanId: string) => void;
   onDeleteFlightPlan: (flightPlanId: string) => void;
 };
+
+function PlayIcon() {
+  return (
+    <svg
+      className="mission-side-panel__action-icon"
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M8 6.75v10.5a.75.75 0 0 0 1.15.64l8.12-5.25a.75.75 0 0 0 0-1.28L9.15 6.11A.75.75 0 0 0 8 6.75Z" fill="currentColor" />
+    </svg>
+  );
+}
 
 function TrashIcon() {
   return (
@@ -38,6 +54,7 @@ export function MissionPlanningPanel({
   selectedFlightPlanId,
   onStartNewPlan,
   onSelectFlightPlan,
+  onSendFlightPlan,
   onDeleteFlightPlan,
 }: MissionPlanningPanelProps) {
   return (
@@ -77,17 +94,33 @@ export function MissionPlanningPanel({
                 >
                   <span className="mission-side-panel__mission-name">{flightPlan.name}</span>
                 </div>
-                <button
-                  type="button"
-                  className="mission-side-panel__delete-button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDeleteFlightPlan(flightPlan.id);
-                  }}
-                  aria-label={`Delete ${flightPlan.name}`}
-                >
-                  <TrashIcon />
-                </button>
+                <div className="mission-side-panel__mission-actions">
+                  <button
+                    type="button"
+                    className="mission-side-panel__icon-button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSendFlightPlan(flightPlan.id);
+                    }}
+                    aria-label={`Send ${flightPlan.name}`}
+                    title={`Send ${flightPlan.name}`}
+                    disabled={flightPlan.path.length === 0}
+                  >
+                    <PlayIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="mission-side-panel__icon-button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onDeleteFlightPlan(flightPlan.id);
+                    }}
+                    aria-label={`Delete ${flightPlan.name}`}
+                    title={`Delete ${flightPlan.name}`}
+                  >
+                    <TrashIcon />
+                  </button>
+                </div>
               </div>
             );
           })}

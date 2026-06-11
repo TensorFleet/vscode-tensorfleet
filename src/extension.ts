@@ -949,14 +949,6 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize environment/mode detection first (must be before any isDev() calls)
   initializeEnv(context);
 
-  // Periodic debug console print
-  const debugInterval = setInterval(() => {
-    console.log('[TensorFleet][DEBUG] dummy text print');
-  }, 5000);
-
-  context.subscriptions.push(new vscode.Disposable(() => clearInterval(debugInterval)));
-
-
   env.log('Extension activating in', getMode(), 'mode');
 
   telemetryService = new TelemetryService(context);
@@ -3279,7 +3271,6 @@ async function initializeStatusBarItems(context: vscode.ExtensionContext) {
 
 async function isTensorFleetProject(): Promise<boolean> {
   if (!vscode.workspace.workspaceFolders) {
-    console.log('[TensorFleet] No workspace folders open');
     return false;
   }
 
@@ -3718,14 +3709,11 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
  * Update unified auth status
  */
 async function updateUnifiedAuthStatus(context: vscode.ExtensionContext) {
-  console.log('[TensorFleet] updateUnifiedAuthStatus called');
   if (!unifiedStatusCoordinator) {
-    console.log('[TensorFleet] No unified status coordinator');
     return;
   }
 
   const isAuth = await auth.isAuthenticated(context);
-  console.log('[TensorFleet] Setting auth status to:', isAuth ? 'authenticated' : 'not_authenticated');
   unifiedStatusCoordinator.updateAuth(isAuth ? 'authenticated' : 'not_authenticated');
 }
 
