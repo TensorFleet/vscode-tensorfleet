@@ -10,6 +10,7 @@ import {
   deriveVacuumPrimaryRobotState,
   type CapabilitySupport,
   type VacuumCommandResult,
+  type VacuumAttachmentState,
   type VacuumAttachmentsState,
   type VacuumAdapterBackendId,
   type VacuumAvailability,
@@ -2102,6 +2103,74 @@ function formatConsumableValue(item: VacuumMaintenanceState["consumables"][numbe
   return "Unknown";
 }
 
+function isAttachmentAttentionWorthy(item: VacuumAttachmentState): boolean {
+  const { kind, status } = item;
+  if (status === "missing" || status === "error") return true;
+  if (status === "full" && kind === "dustbin") return true;
+  if (status === "empty" && kind === "water_tank") return true;
+  if (status === "low" && (kind === "water_tank" || kind === "detergent")) return true;
+  return false;
+}
+
+function isDockComponentAttentionWorthy(component: VacuumDockComponentState): boolean {
+  const { kind, status } = component;
+  if (status === "missing" || status === "error") return true;
+  if (status === "full" && (kind === "wastewater" || kind === "dustbag")) return true;
+  if (status === "empty" && kind === "freshwater") return true;
+  if (status === "low" && (kind === "freshwater" || kind === "detergent")) return true;
+  return false;
+}
+
+function isConsumableAttentionWorthy(consumable: VacuumMaintenanceState["consumables"][number]): boolean {
+  return consumable.status === "warning" || consumable.status === "replace_now" || consumable.status === "replace_soon";
+}
+
+function formatAttachmentAttentionLabel(item: VacuumAttachmentState): string {
+  if (item.status === "full" && item.kind === "dustbin") return "Dustbin full";
+  if (item.status === "empty" && item.kind === "water_tank") return "Water tank empty";
+  if (item.status === "low" && item.kind === "water_tank") return "Water tank low";
+  if (item.status === "low" && item.kind === "detergent") return "Detergent low";
+  if (item.status === "missing") return `${item.label} missing`;
+  if (item.status === "error") return `${item.label} error`;
+  return item.label;
+}
+
+function formatDockComponentAttentionLabel(component: VacuumDockComponentState): string {
+  if (component.status === "full" && (component.kind === "wastewater" || component.kind === "dustbag")) return `${component.label} full`;
+  if (component.status === "empty" && component.kind === "freshwater") return "Freshwater empty";
+  if (component.status === "low" && component.kind === "freshwater") return "Freshwater low";
+  if (component.status === "low" && component.kind === "detergent") return "Dock detergent low";
+  if (component.status === "missing") return `${component.label} missing`;
+  if (component.status === "error") return `${component.label} error`;
+  return component.label;
+}
+
+function derivePeripheralAttentionLine(
+  attachments: VacuumAttachmentsState | undefined,
+  dockComponents: VacuumDockComponentState[] | undefined,
+  consumables: VacuumMaintenanceState["consumables"],
+): string | null {
+  const items: string[] = [];
+  for (const item of (attachments?.items ?? [])) {
+    if (isAttachmentAttentionWorthy(item)) {
+      items.push(formatAttachmentAttentionLabel(item));
+    }
+  }
+  for (const component of (dockComponents ?? [])) {
+    if (isDockComponentAttentionWorthy(component)) {
+      items.push(formatDockComponentAttentionLabel(component));
+    }
+  }
+  for (const consumable of consumables) {
+    if (isConsumableAttentionWorthy(consumable)) {
+      items.push(consumable.label);
+    }
+  }
+  if (items.length === 0) return null;
+  if (items.length <= 3) return items.join(" · ");
+  return `${items.slice(0, 2).join(" · ")} · +${items.length - 2} more`;
+}
+
 function consumableTone(status: VacuumMaintenanceState["consumables"][number]["status"]): string {
   switch (status) {
     case "replace_now":
@@ -2128,11 +2197,15 @@ function MaintenanceCard(props: {
   const reason = props.capabilities.consumables.available === false
     ? formatCapabilityReason(props.capabilities.consumables)
     : null;
+  const attentionCount = consumables.filter(isConsumableAttentionWorthy).length;
 
   return (
     <section className="vacuum-panel-card vacuum-panel-card--maintenance">
       <div className="vacuum-panel-card__head">
         <p className="vacuum-panel-card__eyebrow">Maintenance</p>
+        {attentionCount > 0 ? (
+          <span className="vacuum-state-badge vacuum-state-badge--warning">{attentionCount}</span>
+        ) : null}
       </div>
       {reason ? (
         <p className="vacuum-action-hint vacuum-action-hint--disabled">{reason}</p>
@@ -2207,6 +2280,7 @@ function formatReadinessRowValue(status: string, levelPercent?: number): string 
 function ReadinessListCard(props: {
   title: string;
   items: Array<{ id: string; label: string; status: string; levelPercent?: number; detail?: string }>;
+  attentionCount?: number;
 }): JSX.Element | null {
   if (props.items.length === 0) {
     return null;
@@ -2215,6 +2289,9 @@ function ReadinessListCard(props: {
     <section className="vacuum-panel-card vacuum-panel-card--readiness-list" aria-label={props.title}>
       <div className="vacuum-panel-card__head">
         <p className="vacuum-panel-card__eyebrow">{props.title}</p>
+        {props.attentionCount != null && props.attentionCount > 0 ? (
+          <span className="vacuum-state-badge vacuum-state-badge--warning">{props.attentionCount}</span>
+        ) : null}
       </div>
       <div className="vacuum-readiness-list">
         {props.items.map((item) => (
@@ -2239,7 +2316,8 @@ function AttachmentsCard(props: {
   if (!props.capabilities.attachments.supported || items.length === 0) {
     return null;
   }
-  return <ReadinessListCard title="Attachments" items={items} />;
+  const attentionCount = items.filter(isAttachmentAttentionWorthy).length;
+  return <ReadinessListCard title="Attachments" items={items} attentionCount={attentionCount} />;
 }
 
 function DockComponentsCard(props: {
@@ -2250,7 +2328,8 @@ function DockComponentsCard(props: {
   if (!props.capabilities.dock_components.supported || components.length === 0) {
     return null;
   }
-  return <ReadinessListCard title="Dock Components" items={components} />;
+  const attentionCount = components.filter(isDockComponentAttentionWorthy).length;
+  return <ReadinessListCard title="Dock Components" items={components} attentionCount={attentionCount} />;
 }
 
 function NoMapCanvasPlaceholder(props: {
@@ -2274,6 +2353,7 @@ function RobotOverviewCard(props: {
   source?: VacuumSourceState;
   activity?: VacuumRobotActivity;
   fault: VacuumFaultState;
+  peripheralAttentionLine?: string | null;
 }): JSX.Element {
   const primary = deriveVacuumPrimaryRobotState(props);
   const compactDetail = formatCompactStateDetail(primary, props.fault);
@@ -2294,6 +2374,9 @@ function RobotOverviewCard(props: {
         </strong>
         {compactDetail ? <p>{compactDetail}</p> : null}
         {!compactDetail && activityDetail ? <p>{activityDetail}</p> : null}
+        {!compactDetail && props.peripheralAttentionLine ? (
+          <p className="vacuum-robot-overview__peripheral-attention">{props.peripheralAttentionLine}</p>
+        ) : null}
       </div>
     </section>
   );
@@ -3750,6 +3833,29 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
     : cleanAreaVisualState;
   const mapCleanAreaPreviewPoints = activeMode === "rooms" ? activeRoomZoneMission ? cleanAreaPreviewPoints : selectedRoomZoneWaypoints : cleanAreaPreviewPoints;
 
+  // ── Sidebar group gate conditions (basic robot profile only) ──
+  const sidebarAttachmentItems = snapshot.attachments?.items ?? [];
+  const sidebarDockComponentItems = snapshot.dock?.components ?? [];
+  const sidebarConsumableItems = snapshot.maintenance?.consumables ?? [];
+  const sidebarShowAttachments = snapshot.capabilities.attachments.supported && sidebarAttachmentItems.length > 0;
+  const sidebarShowDockComponents = snapshot.capabilities.dock_components.supported && sidebarDockComponentItems.length > 0;
+  const sidebarShowFanSpeed = !!(snapshot.cleaningSettings?.fanSpeed && snapshot.capabilities.fan_speed.supported);
+  const sidebarShowWaterUsage = !!(snapshot.cleaningSettings?.waterUsage && snapshot.capabilities.water_usage.supported);
+  const sidebarShowCleaningSettings = sidebarShowFanSpeed || sidebarShowWaterUsage;
+  const sidebarStatsCurrentData = snapshot.statistics?.current;
+  const sidebarShowCurrentStats =
+    snapshot.capabilities.statistics.supported &&
+    sidebarStatsCurrentData != null &&
+    ((typeof sidebarStatsCurrentData.durationSeconds === "number" && Number.isFinite(sidebarStatsCurrentData.durationSeconds)) ||
+      (typeof sidebarStatsCurrentData.areaSquareMeters === "number" && Number.isFinite(sidebarStatsCurrentData.areaSquareMeters)));
+  const sidebarShowMaintenance = snapshot.capabilities.consumables.supported && sidebarConsumableItems.length > 0;
+  const sidebarShowSourceHealth = !!(snapshot.health ?? snapshot.source ?? snapshot.availability.detail ?? snapshot.fault.faults[0]);
+  const sidebarPeripheralAttentionLine = derivePeripheralAttentionLine(
+    snapshot.attachments,
+    sidebarDockComponentItems,
+    sidebarConsumableItems,
+  );
+
   return (
     <div className="vacuum-shell">
       <aside className="vacuum-rail">
@@ -3881,59 +3987,116 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
           <div className="vacuum-sidebar">
             {isBasicRobotProfile ? (
               <div className="vacuum-mode-content">
-                <RobotOverviewCard
-                  identity={snapshot.identity}
-                  availability={snapshot.availability}
-                  battery={snapshot.battery}
-                  dock={snapshot.dock}
-                  health={snapshot.health}
-                  source={snapshot.source}
-                  activity={snapshot.activity}
-                  fault={snapshot.fault}
-                />
-                <BasicControlsCard
-                  capabilities={snapshot.capabilities}
-                  commandError={missionCommandError}
-                  onStart={() => void handleBasicCommand("start_cleaning")}
-                  onPause={() => void handleBasicCommand("pause")}
-                  onResume={() => void handleBasicCommand("resume")}
-                  onStop={() => void handleBasicCommand("stop")}
-                  onReturnToDock={() => void handleBasicCommand("return_to_dock")}
-                />
-                <BatteryDockCard
-                  battery={snapshot.battery}
-                  dock={snapshot.dock}
-                  capabilities={snapshot.capabilities}
-                />
-                <AttachmentsCard
-                  attachments={snapshot.attachments}
-                  capabilities={snapshot.capabilities}
-                />
-                <DockComponentsCard
-                  components={snapshot.dock?.components}
-                  capabilities={snapshot.capabilities}
-                />
-                <CleaningSettingsCard
-                  settings={snapshot.cleaningSettings}
-                  capabilities={snapshot.capabilities}
-                  commandError={missionCommandError}
-                  onSetFanSpeed={(value) => void handleCleaningSettingCommand("set_fan_speed", value)}
-                  onSetWaterUsage={(value) => void handleCleaningSettingCommand("set_water_usage", value)}
-                />
-                <CurrentStatisticsCard
-                  statistics={snapshot.statistics}
-                  capabilities={snapshot.capabilities}
-                />
-                <MaintenanceCard
-                  maintenance={snapshot.maintenance}
-                  capabilities={snapshot.capabilities}
-                />
-                <SourceHealthCard
-                  availability={snapshot.availability}
-                  health={snapshot.health}
-                  source={snapshot.source}
-                  fault={snapshot.fault}
-                />
+                {/* ── Operate ─────────────────────────── */}
+                <div className="vacuum-card-group">
+                  <div className="vacuum-card-group__head vacuum-card-group__head--static" aria-label="Operate group">
+                    <span className="vacuum-card-group__title">Operate</span>
+                  </div>
+                  <div className="vacuum-card-group__body">
+                    <RobotOverviewCard
+                      identity={snapshot.identity}
+                      availability={snapshot.availability}
+                      battery={snapshot.battery}
+                      dock={snapshot.dock}
+                      health={snapshot.health}
+                      source={snapshot.source}
+                      activity={snapshot.activity}
+                      fault={snapshot.fault}
+                      peripheralAttentionLine={sidebarPeripheralAttentionLine}
+                    />
+                    <BasicControlsCard
+                      capabilities={snapshot.capabilities}
+                      commandError={missionCommandError}
+                      onStart={() => void handleBasicCommand("start_cleaning")}
+                      onPause={() => void handleBasicCommand("pause")}
+                      onResume={() => void handleBasicCommand("resume")}
+                      onStop={() => void handleBasicCommand("stop")}
+                      onReturnToDock={() => void handleBasicCommand("return_to_dock")}
+                    />
+                    {sidebarShowCurrentStats ? (
+                      <CurrentStatisticsCard
+                        statistics={snapshot.statistics}
+                        capabilities={snapshot.capabilities}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* ── Readiness ────────────────────────── */}
+                <div className="vacuum-card-group">
+                  <div className="vacuum-card-group__head vacuum-card-group__head--static" aria-label="Readiness group">
+                    <span className="vacuum-card-group__title">Readiness</span>
+                  </div>
+                  <div className="vacuum-card-group__body">
+                    <BatteryDockCard
+                      battery={snapshot.battery}
+                      dock={snapshot.dock}
+                      capabilities={snapshot.capabilities}
+                    />
+                    {sidebarShowAttachments ? (
+                      <AttachmentsCard
+                        attachments={snapshot.attachments}
+                        capabilities={snapshot.capabilities}
+                      />
+                    ) : null}
+                    {sidebarShowDockComponents ? (
+                      <DockComponentsCard
+                        components={snapshot.dock?.components}
+                        capabilities={snapshot.capabilities}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* ── Configure ────────────────────────── */}
+                {sidebarShowCleaningSettings ? (
+                  <div className="vacuum-card-group">
+                    <div className="vacuum-card-group__head vacuum-card-group__head--static" aria-label="Configure group">
+                      <span className="vacuum-card-group__title">Configure</span>
+                    </div>
+                    <div className="vacuum-card-group__body">
+                      <CleaningSettingsCard
+                        settings={snapshot.cleaningSettings}
+                        capabilities={snapshot.capabilities}
+                        commandError={missionCommandError}
+                        onSetFanSpeed={(value) => void handleCleaningSettingCommand("set_fan_speed", value)}
+                        onSetWaterUsage={(value) => void handleCleaningSettingCommand("set_water_usage", value)}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* ── Maintain ─────────────────────────── */}
+                {sidebarShowMaintenance ? (
+                  <div className="vacuum-card-group">
+                    <div className="vacuum-card-group__head vacuum-card-group__head--static" aria-label="Maintain group">
+                      <span className="vacuum-card-group__title">Maintain</span>
+                    </div>
+                    <div className="vacuum-card-group__body">
+                      <MaintenanceCard
+                        maintenance={snapshot.maintenance}
+                        capabilities={snapshot.capabilities}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* ── Context ──────────────────────────── */}
+                {sidebarShowSourceHealth ? (
+                  <div className="vacuum-card-group">
+                    <div className="vacuum-card-group__head vacuum-card-group__head--static" aria-label="Context group">
+                      <span className="vacuum-card-group__title">Context</span>
+                    </div>
+                    <div className="vacuum-card-group__body">
+                      <SourceHealthCard
+                        availability={snapshot.availability}
+                        health={snapshot.health}
+                        source={snapshot.source}
+                        fault={snapshot.fault}
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <>
