@@ -2361,8 +2361,144 @@ function formatMapTargetGeometry(geometry: VacuumMapTarget["geometry"]): string 
   return "Area available";
 }
 
-function mapPreviewLayerClass(layer: VacuumMapLayer, index: number): string {
-  const segmentTone = layer.kind === "segment" ? ` vacuum-map-preview-layer--segment-${index % 6}` : "";
+type MapPreviewBounds = {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+};
+
+type MapPreviewRunRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type MapPreviewTransform = {
+  pixelSize: number;
+  viewBox: MapPreviewBounds;
+  markerSize: number;
+};
+
+type MapPreviewRenderableLayer = {
+  layer: VacuumMapLayer;
+  originalIndex: number;
+  segmentToneIndex: number;
+};
+
+const MAP_PREVIEW_LAYER_ORDER: Record<VacuumMapLayer["kind"], number> = {
+  floor: 0,
+  segment: 1,
+  unknown: 2,
+  path: 3,
+  wall: 4,
+};
+
+function expandMapPreviewBounds(bounds: MapPreviewBounds | null, next: MapPreviewBounds): MapPreviewBounds {
+  if (!bounds) {
+    return next;
+  }
+  return {
+    minX: Math.min(bounds.minX, next.minX),
+    minY: Math.min(bounds.minY, next.minY),
+    maxX: Math.max(bounds.maxX, next.maxX),
+    maxY: Math.max(bounds.maxY, next.maxY),
+  };
+}
+
+function mapPreviewRunRect(run: NonNullable<VacuumMapLayer["runs"]>[number], pixelSize: number): MapPreviewRunRect {
+  return {
+    x: run.x * pixelSize,
+    y: run.y * pixelSize,
+    width: run.count * pixelSize,
+    height: pixelSize,
+  };
+}
+
+function mapPreviewPointBounds(points: Array<{ x: number; y: number }>, padding = 0): MapPreviewBounds | null {
+  let bounds: MapPreviewBounds | null = null;
+  for (const point of points) {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+      continue;
+    }
+    bounds = expandMapPreviewBounds(bounds, {
+      minX: point.x - padding,
+      minY: point.y - padding,
+      maxX: point.x + padding,
+      maxY: point.y + padding,
+    });
+  }
+  return bounds;
+}
+
+function mapPreviewLayerBounds(layer: VacuumMapLayer, pixelSize: number): MapPreviewBounds | null {
+  let bounds: MapPreviewBounds | null = null;
+  for (const run of layer.runs ?? []) {
+    const rect = mapPreviewRunRect(run, pixelSize);
+    bounds = expandMapPreviewBounds(bounds, {
+      minX: rect.x,
+      minY: rect.y,
+      maxX: rect.x + rect.width,
+      maxY: rect.y + rect.height,
+    });
+  }
+  const pointBounds = mapPreviewPointBounds(layer.points ?? []);
+  return pointBounds ? expandMapPreviewBounds(bounds, pointBounds) : bounds;
+}
+
+function mapPreviewContentBounds(preview: VacuumLayeredMapPreview, pixelSize: number): MapPreviewBounds | null {
+  let bounds: MapPreviewBounds | null = null;
+  for (const layer of preview.layers) {
+    const layerBounds = mapPreviewLayerBounds(layer, pixelSize);
+    if (layerBounds) {
+      bounds = expandMapPreviewBounds(bounds, layerBounds);
+    }
+  }
+  for (const entity of preview.entities) {
+    const pointPadding = entity.kind === "robot" || entity.kind === "charger" ? 12 : 0;
+    const entityBounds = mapPreviewPointBounds(entity.points ?? [], pointPadding);
+    if (entityBounds) {
+      bounds = expandMapPreviewBounds(bounds, entityBounds);
+    }
+  }
+  return bounds && bounds.maxX > bounds.minX && bounds.maxY > bounds.minY ? bounds : null;
+}
+
+function clampMapPreviewBounds(bounds: MapPreviewBounds, preview: VacuumLayeredMapPreview): MapPreviewBounds {
+  const minX = clamp(bounds.minX, 0, preview.width);
+  const minY = clamp(bounds.minY, 0, preview.height);
+  const maxX = clamp(bounds.maxX, minX, preview.width);
+  const maxY = clamp(bounds.maxY, minY, preview.height);
+  return maxX > minX && maxY > minY ? { minX, minY, maxX, maxY } : { minX: 0, minY: 0, maxX: preview.width, maxY: preview.height };
+}
+
+function buildMapPreviewTransform(preview: VacuumLayeredMapPreview): MapPreviewTransform {
+  const pixelSize = preview.pixelSize && preview.pixelSize > 0 ? preview.pixelSize : 1;
+  const fallbackBounds = { minX: 0, minY: 0, maxX: preview.width, maxY: preview.height };
+  const contentBounds = mapPreviewContentBounds(preview, pixelSize) ?? fallbackBounds;
+  const contentWidth = Math.max(1, contentBounds.maxX - contentBounds.minX);
+  const contentHeight = Math.max(1, contentBounds.maxY - contentBounds.minY);
+  const padding = Math.max(4, Math.min(16, Math.min(contentWidth, contentHeight) * 0.04));
+  const viewBox = clampMapPreviewBounds(
+    {
+      minX: contentBounds.minX - padding,
+      minY: contentBounds.minY - padding,
+      maxX: contentBounds.maxX + padding,
+      maxY: contentBounds.maxY + padding,
+    },
+    preview,
+  );
+  const viewBoxMinDimension = Math.min(viewBox.maxX - viewBox.minX, viewBox.maxY - viewBox.minY);
+  return {
+    pixelSize,
+    viewBox,
+    markerSize: clamp(viewBoxMinDimension * 0.04, 6, 14),
+  };
+}
+
+function mapPreviewLayerClass(layer: VacuumMapLayer, segmentToneIndex: number): string {
+  const segmentTone = layer.kind === "segment" ? ` vacuum-map-preview-layer--segment-${segmentToneIndex % 6}` : "";
   return `vacuum-map-preview-layer vacuum-map-preview-layer--${layer.kind}${segmentTone}`;
 }
 
@@ -2370,23 +2506,74 @@ function mapPreviewPointList(points: Array<{ x: number; y: number }>): string {
   return points.map((point) => `${point.x},${point.y}`).join(" ");
 }
 
+function mapPreviewViewBox(bounds: MapPreviewBounds): string {
+  return `${bounds.minX} ${bounds.minY} ${bounds.maxX - bounds.minX} ${bounds.maxY - bounds.minY}`;
+}
+
+function mapPreviewAspectRatio(bounds: MapPreviewBounds): string {
+  return `${Math.max(1, bounds.maxX - bounds.minX)} / ${Math.max(1, bounds.maxY - bounds.minY)}`;
+}
+
+function prepareMapPreviewLayers(layers: VacuumMapLayer[]): MapPreviewRenderableLayer[] {
+  let segmentCount = 0;
+  return layers
+    .map((layer, originalIndex) => {
+      const segmentToneIndex = layer.kind === "segment" ? segmentCount++ : 0;
+      return { layer, originalIndex, segmentToneIndex };
+    })
+    .sort((a, b) => {
+      const orderDelta = MAP_PREVIEW_LAYER_ORDER[a.layer.kind] - MAP_PREVIEW_LAYER_ORDER[b.layer.kind];
+      return orderDelta !== 0 ? orderDelta : a.originalIndex - b.originalIndex;
+    });
+}
+
+function mapPreviewLegendItems(preview: VacuumLayeredMapPreview): string[] {
+  const present = new Set<string>();
+  for (const layer of preview.layers) {
+    if (layer.kind === "floor") {
+      present.add("Floor");
+    } else if (layer.kind === "wall") {
+      present.add("Walls");
+    } else if (layer.kind === "segment") {
+      present.add("Segments");
+    } else if (layer.kind === "path") {
+      present.add("Path");
+    }
+  }
+  for (const entity of preview.entities) {
+    if (entity.kind === "robot") {
+      present.add("Robot");
+    } else if (entity.kind === "charger") {
+      present.add("Charger");
+    } else if (entity.kind === "zone") {
+      present.add("Zone");
+    } else if (entity.kind === "path") {
+      present.add("Path");
+    }
+  }
+  return ["Floor", "Walls", "Segments", "Robot", "Charger", "Zone", "Path"].filter((item) => present.has(item));
+}
+
 function MapPreviewLayer(props: {
   layer: VacuumMapLayer;
-  index: number;
-  pixelSize: number;
+  segmentToneIndex: number;
+  transform: MapPreviewTransform;
 }): JSX.Element {
-  const className = mapPreviewLayerClass(props.layer, props.index);
+  const className = mapPreviewLayerClass(props.layer, props.segmentToneIndex);
   return (
     <g className={className}>
-      {(props.layer.runs ?? []).map((run, index) => (
-        <rect
-          key={`${props.layer.id}:run:${index}`}
-          x={run.x * props.pixelSize}
-          y={run.y * props.pixelSize}
-          width={run.count * props.pixelSize}
-          height={props.pixelSize}
-        />
-      ))}
+      {(props.layer.runs ?? []).map((run, index) => {
+        const rect = mapPreviewRunRect(run, props.transform.pixelSize);
+        return (
+          <rect
+            key={`${props.layer.id}:run:${index}`}
+            x={rect.x}
+            y={rect.y}
+            width={rect.width}
+            height={rect.height}
+          />
+        );
+      })}
       {props.layer.points && props.layer.points.length >= 2 ? (
         <polyline points={mapPreviewPointList(props.layer.points)} />
       ) : null}
@@ -2396,6 +2583,7 @@ function MapPreviewLayer(props: {
 
 function MapPreviewEntity(props: {
   entity: VacuumMapEntity;
+  markerSize: number;
 }): JSX.Element | null {
   const points = props.entity.points ?? [];
   if (points.length === 0) {
@@ -2410,22 +2598,25 @@ function MapPreviewEntity(props: {
   const point = points[0]!;
   if (props.entity.kind === "robot") {
     const angle = props.entity.angle ?? 0;
+    const radius = props.markerSize;
     return (
       <g className="vacuum-map-preview-entity vacuum-map-preview-entity--robot" transform={`translate(${point.x} ${point.y}) rotate(${angle})`}>
-        <circle r="8" />
-        <path d="M 10 0 L -5 -6 L -3 0 L -5 6 Z" />
+        <circle r={radius} />
+        <path d={`M ${radius * 1.35} 0 L ${radius * -0.62} ${radius * -0.75} L ${radius * -0.38} 0 L ${radius * -0.62} ${radius * 0.75} Z`} />
       </g>
     );
   }
   if (props.entity.kind === "charger") {
+    const width = props.markerSize * 1.8;
+    const height = props.markerSize * 1.28;
     return (
       <g className="vacuum-map-preview-entity vacuum-map-preview-entity--charger" transform={`translate(${point.x} ${point.y})`}>
-        <rect x="-7" y="-5" width="14" height="10" rx="2" />
-        <path d="M -3 -5 L -3 -10 M 3 -5 L 3 -10" />
+        <rect x={width / -2} y={height / -2} width={width} height={height} rx={Math.max(1.5, props.markerSize * 0.22)} />
+        <path d={`M ${props.markerSize * -0.38} ${height / -2} L ${props.markerSize * -0.38} ${height / -2 - props.markerSize * 0.62} M ${props.markerSize * 0.38} ${height / -2} L ${props.markerSize * 0.38} ${height / -2 - props.markerSize * 0.62}`} />
       </g>
     );
   }
-  return <circle className={`vacuum-map-preview-entity vacuum-map-preview-entity--${props.entity.kind}`} cx={point.x} cy={point.y} r="4" />;
+  return <circle className={`vacuum-map-preview-entity vacuum-map-preview-entity--${props.entity.kind}`} cx={point.x} cy={point.y} r={props.markerSize * 0.58} />;
 }
 
 function MapPreviewCard(props: {
@@ -2435,25 +2626,35 @@ function MapPreviewCard(props: {
   if (!preview || preview.width <= 0 || preview.height <= 0 || (preview.layers.length === 0 && preview.entities.length === 0)) {
     return null;
   }
-  const pixelSize = preview.pixelSize && preview.pixelSize > 0 ? preview.pixelSize : 1;
-  const viewBox = `0 0 ${preview.width} ${preview.height}`;
+  const transform = buildMapPreviewTransform(preview);
+  const renderableLayers = prepareMapPreviewLayers(preview.layers);
+  const legendItems = mapPreviewLegendItems(preview);
 
   return (
     <section className="vacuum-panel-card vacuum-panel-card--map-preview" aria-label="Map preview">
       <div className="vacuum-panel-card__head">
         <p className="vacuum-panel-card__eyebrow">Map Preview</p>
       </div>
-      <div className="vacuum-map-preview-frame">
-        <svg className="vacuum-map-preview-svg" viewBox={viewBox} role="img" aria-label="Static normalized map preview">
+      <div className="vacuum-map-preview-frame" style={{ aspectRatio: mapPreviewAspectRatio(transform.viewBox) }}>
+        <svg className="vacuum-map-preview-svg" viewBox={mapPreviewViewBox(transform.viewBox)} role="img" aria-label="Static normalized map preview">
           <rect className="vacuum-map-preview-bg" x="0" y="0" width={preview.width} height={preview.height} />
-          {preview.layers.map((layer, index) => (
-            <MapPreviewLayer key={layer.id} layer={layer} index={index} pixelSize={pixelSize} />
+          {renderableLayers.map(({ layer, segmentToneIndex }) => (
+            <MapPreviewLayer key={layer.id} layer={layer} segmentToneIndex={segmentToneIndex} transform={transform} />
           ))}
           {preview.entities.map((entity) => (
-            <MapPreviewEntity key={entity.id} entity={entity} />
+            <MapPreviewEntity key={entity.id} entity={entity} markerSize={transform.markerSize} />
           ))}
         </svg>
       </div>
+      {legendItems.length > 0 ? (
+        <div className="vacuum-map-preview-legend" aria-hidden="true">
+          {legendItems.map((item) => (
+            <span key={item} className={`vacuum-map-preview-legend__item vacuum-map-preview-legend__item--${item.toLowerCase()}`}>
+              {item}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <p className="vacuum-action-hint">Static preview from normalized map data. Cleaning commands are not enabled.</p>
     </section>
   );

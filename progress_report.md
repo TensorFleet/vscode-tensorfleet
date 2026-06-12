@@ -1,3 +1,51 @@
+# Progress Report - Valetudo Static Map Preview Visual Validation
+Current report date: 2026-06-12.
+
+## 1. What changed
+- Improved the sidebar `MapPreviewCard` SVG renderer so it derives meaningful content bounds from normalized preview layers/entities, fits those bounds into the compact preview frame, and preserves aspect ratio with an explicit `viewBox` transform.
+- Added contained coordinate helpers for normalized run-to-map-pixel conversion, point bounds, content bounds, layer ordering, marker sizing, and legend generation inside the preview renderer.
+- Rendered floor, segment, path, and wall layers in a deliberate visual order so walls stay legible over segment/floor fills.
+- Strengthened robot and charger markers with scale-aware sizing and higher contrast; zone polygons and path-style entities remain rendered when normalized data exists.
+- Added a compact read-only legend for present map concepts without adding any controls.
+- Updated preview CSS so floor, walls, segment tones, robot, charger, zone, and path all use distinct styling instead of reading as one gray block.
+- Confirmed the real fixed mock runtime fixture in `/home/shane/firecracker-vm/tensorfleet-mgr` already has floor, wall, three segment layers, robot, charger, and zone geometry; no vm-manager/firecracker-vm changes were required.
+- Updated the adapter regression fixture and assertions so normalized preview coverage includes floor, wall, three segment layers, robot, charger, and zone polygon data.
+- Added/updated regression checks for unreachable preview suppression, all-invalid preview suppression, UI consumption of only normalized `snapshot.map.layeredPreview`, explicit renderer transforms, and visual style coverage.
+
+## 2. Product behavior
+- The sidebar Map Preview now makes floor, walls, segment areas, robot, charger, zone polygons, and path-style data visually distinguishable when those normalized records are present.
+- The preview remains read-only: no buttons, target selection, drawing, dragging, runtime route calls, ROS subscriptions, or map commands were added.
+- The preview still lives in the sidebar and the full `MapCanvas` Valetudo path remains untouched.
+- Valetudo map commands remain disabled: `capabilities.map.supported` is still false, and segment cleaning, zone cleaning, room cleaning, go-to, and Clean Area remain unsupported.
+- When preview data is missing, malformed, stale, or unreachable, `snapshot.map.layeredPreview` remains absent and the card is omitted.
+
+## 3. Still deferred
+- Main canvas Valetudo map preview.
+- Full interactive map rendering.
+- Segment selection.
+- Segment cleaning command.
+- Zone cleaning command.
+- Go-to command.
+- User-created zone drawing.
+- Map SSE/live streaming.
+- Hardware validation.
+
+## 4. Validation
+
+```sh
+bun run test:vacuum-adapter
+bun run --cwd panels-standalone build
+git diff --check
+```
+
+Result:
+
+- `bun run test:vacuum-adapter`: passed - `vacuum_adapter regression harness passed`.
+- `bun run --cwd panels-standalone build`: passed; Vite emitted existing browser-externalization, eval, and chunk-size warnings.
+- `git diff --check`: passed.
+
+---
+
 # Progress Report - Valetudo Static Map Preview Foundation
 
 Current report date: 2026-06-12.

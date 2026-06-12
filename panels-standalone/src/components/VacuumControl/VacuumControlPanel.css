@@ -3091,8 +3091,8 @@ body {
   aspect-ratio: 3 / 2;
   overflow: hidden;
   border-radius: 8px;
-  border: 1px solid rgba(232, 226, 214, 0.1);
-  background: #101413;
+  border: 1px solid rgba(232, 226, 214, 0.14);
+  background: #0f1211;
 }
 
 .vacuum-map-preview-svg {
@@ -3102,57 +3102,67 @@ body {
 }
 
 .vacuum-map-preview-bg {
-  fill: #101413;
+  fill: #0f1211;
 }
 
 .vacuum-map-preview-layer rect,
 .vacuum-map-preview-layer polyline,
-.vacuum-map-preview-entity {
+.vacuum-map-preview-entity,
+.vacuum-map-preview-entity rect,
+.vacuum-map-preview-entity circle,
+.vacuum-map-preview-entity path,
+.vacuum-map-preview-entity polygon,
+.vacuum-map-preview-entity polyline {
   vector-effect: non-scaling-stroke;
 }
 
 .vacuum-map-preview-layer--floor rect {
-  fill: rgba(232, 226, 214, 0.18);
+  fill: rgba(214, 212, 199, 0.24);
 }
 
 .vacuum-map-preview-layer--wall rect {
-  fill: rgba(235, 238, 237, 0.62);
+  fill: rgba(244, 242, 235, 0.9);
+  stroke: rgba(8, 10, 10, 0.42);
+  stroke-width: 0.55;
 }
 
 .vacuum-map-preview-layer--segment rect {
-  opacity: 0.74;
+  opacity: 0.82;
+  stroke: rgba(10, 14, 14, 0.22);
+  stroke-width: 0.35;
 }
 
 .vacuum-map-preview-layer--segment-0 rect {
-  fill: rgba(56, 200, 176, 0.34);
+  fill: rgba(56, 200, 176, 0.46);
 }
 
 .vacuum-map-preview-layer--segment-1 rect {
-  fill: rgba(115, 182, 242, 0.32);
+  fill: rgba(115, 182, 242, 0.44);
 }
 
 .vacuum-map-preview-layer--segment-2 rect {
-  fill: rgba(255, 179, 92, 0.28);
+  fill: rgba(255, 179, 92, 0.4);
 }
 
 .vacuum-map-preview-layer--segment-3 rect {
-  fill: rgba(88, 211, 141, 0.28);
+  fill: rgba(88, 211, 141, 0.4);
 }
 
 .vacuum-map-preview-layer--segment-4 rect {
-  fill: rgba(255, 116, 97, 0.24);
+  fill: rgba(255, 116, 97, 0.36);
 }
 
 .vacuum-map-preview-layer--segment-5 rect {
-  fill: rgba(186, 158, 255, 0.24);
+  fill: rgba(186, 158, 255, 0.36);
 }
 
 .vacuum-map-preview-layer--path polyline {
   fill: none;
-  stroke: rgba(115, 182, 242, 0.74);
-  stroke-width: 2;
+  stroke: rgba(115, 182, 242, 0.86);
+  stroke-width: 2.4;
   stroke-linecap: round;
   stroke-linejoin: round;
+  stroke-dasharray: 5 4;
 }
 
 .vacuum-map-preview-layer--unknown rect {
@@ -3160,40 +3170,40 @@ body {
 }
 
 .vacuum-map-preview-entity--zone {
-  fill: rgba(255, 179, 92, 0.12);
-  stroke: rgba(255, 179, 92, 0.78);
-  stroke-width: 2;
+  fill: rgba(255, 179, 92, 0.16);
+  stroke: rgba(255, 190, 110, 0.92);
+  stroke-width: 2.3;
   stroke-linejoin: round;
 }
 
 .vacuum-map-preview-entity--path {
   fill: none;
-  stroke: rgba(56, 200, 176, 0.84);
-  stroke-width: 2.2;
+  stroke: rgba(56, 200, 176, 0.95);
+  stroke-width: 2.8;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .vacuum-map-preview-entity--robot circle {
-  fill: rgba(56, 200, 176, 0.95);
-  stroke: rgba(240, 237, 230, 0.9);
-  stroke-width: 2;
+  fill: rgba(56, 200, 176, 1);
+  stroke: rgba(250, 248, 241, 0.96);
+  stroke-width: 2.4;
 }
 
 .vacuum-map-preview-entity--robot path {
-  fill: rgba(9, 26, 24, 0.9);
+  fill: rgba(6, 18, 18, 0.96);
 }
 
 .vacuum-map-preview-entity--charger rect {
-  fill: rgba(115, 182, 242, 0.9);
-  stroke: rgba(240, 237, 230, 0.82);
-  stroke-width: 1.5;
+  fill: rgba(115, 182, 242, 0.96);
+  stroke: rgba(250, 248, 241, 0.9);
+  stroke-width: 1.8;
 }
 
 .vacuum-map-preview-entity--charger path {
   fill: none;
-  stroke: rgba(240, 237, 230, 0.82);
-  stroke-width: 1.5;
+  stroke: rgba(250, 248, 241, 0.92);
+  stroke-width: 1.8;
   stroke-linecap: round;
 }
 
@@ -3202,6 +3212,52 @@ body {
   fill: rgba(255, 116, 97, 0.78);
   stroke: rgba(240, 237, 230, 0.7);
   stroke-width: 1.5;
+}
+
+.vacuum-map-preview-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.vacuum-map-preview-legend__item {
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(232, 226, 214, 0.1);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--vacuum-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.vacuum-map-preview-legend__item--floor {
+  color: #d6d4c7;
+}
+
+.vacuum-map-preview-legend__item--walls {
+  color: #f4f2eb;
+}
+
+.vacuum-map-preview-legend__item--segments {
+  color: var(--vacuum-accent);
+}
+
+.vacuum-map-preview-legend__item--robot {
+  color: var(--vacuum-success);
+}
+
+.vacuum-map-preview-legend__item--charger {
+  color: var(--vacuum-info);
+}
+
+.vacuum-map-preview-legend__item--zone {
+  color: var(--vacuum-warning);
+}
+
+.vacuum-map-preview-legend__item--path {
+  color: #7edccd;
 }
 
 .vacuum-current-statistics {

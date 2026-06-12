@@ -98,6 +98,21 @@ function collectFiles(dir: string, predicate: (path: string) => boolean): string
   return files;
 }
 
+function mapPreviewRunsForRows(x: number, yStart: number, yEnd: number, count: number): Array<{ x: number; y: number; count: number }> {
+  return Array.from({ length: yEnd - yStart + 1 }, (_, index) => ({ x, y: yStart + index, count }));
+}
+
+function mapPreviewWallRuns(widthInCells: number, heightInCells: number): Array<{ x: number; y: number; count: number }> {
+  return [
+    { x: 0, y: 0, count: widthInCells },
+    { x: 0, y: heightInCells - 1, count: widthInCells },
+    ...Array.from({ length: Math.max(0, heightInCells - 2) }, (_, index) => index + 1).flatMap((y) => [
+      { x: 0, y, count: 1 },
+      { x: widthInCells - 1, y, count: 1 },
+    ]),
+  ];
+}
+
 function installMockLocalStorage(): Map<string, string> {
   const storage = new Map<string, string>();
   Object.defineProperty(globalThis, "window", {
@@ -1862,29 +1877,33 @@ function testValetudoRuntimeSnapshotMapping(): void {
           {
             id: "floor_1",
             kind: "floor",
-            runs: [{ x: 1, y: 1, count: 58 }],
+            runs: mapPreviewRunsForRows(1, 1, 38, 58),
           },
           {
             id: "wall_1",
             kind: "wall",
-            runs: [{ x: 0, y: 0, count: 60 }],
+            runs: mapPreviewWallRuns(60, 40),
           },
           {
             id: "kitchen",
             kind: "segment",
             label: "Kitchen",
             segmentId: "kitchen",
-            runs: [{ x: 5, y: 5, count: 16 }],
+            runs: mapPreviewRunsForRows(5, 5, 18, 16),
           },
           {
-            id: "",
+            id: "living_room",
             kind: "segment",
-            runs: [{ x: 1, y: 1, count: 1 }],
+            label: "Living Room",
+            segmentId: "living_room",
+            runs: mapPreviewRunsForRows(22, 5, 22, 24),
           },
           {
-            id: "bad_run",
-            kind: "wall",
-            runs: [{ x: 1, y: 1, count: 0 }],
+            id: "bedroom",
+            kind: "segment",
+            label: "Bedroom",
+            segmentId: "bedroom",
+            runs: mapPreviewRunsForRows(5, 20, 34, 20),
           },
         ],
         entities: [
@@ -2016,13 +2035,21 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.map.layeredPreview?.width, 300);
   assert.equal(snapshot.map.layeredPreview?.height, 200);
   assert.equal(snapshot.map.layeredPreview?.pixelSize, 5);
-  assert.equal(snapshot.map.layeredPreview?.layers.length, 3);
+  assert.equal(snapshot.map.layeredPreview?.layers.length, 5);
   assert.equal(snapshot.map.layeredPreview?.layers[0]?.kind, "floor");
   assert.equal(snapshot.map.layeredPreview?.layers[2]?.segmentId, "kitchen");
+  assert.equal(snapshot.map.layeredPreview?.layers.filter((layer) => layer.kind === "segment").length, 3);
+  assert.deepEqual(
+    snapshot.map.layeredPreview?.layers
+      .filter((layer) => layer.kind === "segment")
+      .map((layer) => layer.segmentId),
+    ["kitchen", "living_room", "bedroom"],
+  );
   assert.equal(snapshot.map.layeredPreview?.entities.length, 3);
   assert.equal(snapshot.map.layeredPreview?.entities[0]?.kind, "robot");
   assert.equal(snapshot.map.layeredPreview?.entities[0]?.angle, 90);
   assert.equal(snapshot.map.layeredPreview?.entities[2]?.kind, "zone");
+  assert.equal(snapshot.map.layeredPreview?.entities[2]?.points?.length, 4);
   assert.equal(snapshot.map.targets?.segments?.length, 3);
   assert.equal(snapshot.map.targets?.segments?.[0]?.id, "kitchen");
   assert.deepEqual(snapshot.map.targets?.segments?.[0]?.geometry, {
@@ -2123,6 +2150,14 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(stalePreviewSnapshot.map.layeredPreview, undefined);
   assert.equal(stalePreviewSnapshot.map.targets, undefined);
 
+  const unreachablePreviewSnapshot = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary({
+    ...runtimeSnapshot,
+    source: { kind: "fixed_mock", status: "unreachable", stale: false, lastSeenAt: 1 },
+    connectivity: { reachable: false, online: true },
+  }));
+  assert.equal(unreachablePreviewSnapshot.map.layeredPreview, undefined);
+  assert.equal(unreachablePreviewSnapshot.map.targets, undefined);
+
   const invalidMetadataPreviewSnapshot = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary({
     ...runtimeSnapshot,
     map: runtimeSnapshot.map
@@ -2136,6 +2171,20 @@ function testValetudoRuntimeSnapshotMapping(): void {
       : undefined,
   }));
   assert.equal(invalidMetadataPreviewSnapshot.map.layeredPreview, undefined);
+
+  const malformedPreviewSnapshot = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary({
+    ...runtimeSnapshot,
+    map: runtimeSnapshot.map
+      ? {
+          ...runtimeSnapshot.map,
+          preview: {
+            layers: [{ id: "bad_layer", kind: "segment", runs: [{ x: 1, y: 1, count: 0 }] }],
+            entities: [{ id: "bad_zone", kind: "zone", points: [{ x: 1, y: 1 }] }],
+          },
+        }
+      : undefined,
+  }));
+  assert.equal(malformedPreviewSnapshot.map.layeredPreview, undefined);
 
   const mockHTTPBoundary = mapValetudoRuntimeSnapshotToBoundary({
     runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
@@ -2852,6 +2901,10 @@ function testPublicContractAndUiBoundary(): void {
     resolve(repoRoot, "panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx"),
     "utf8",
   );
+  const panelStyles = readFileSync(
+    resolve(repoRoot, "panels-standalone/src/components/VacuumControl/VacuumControlPanel.css"),
+    "utf8",
+  );
   for (const backendName of ["turtlebot4_nav2", "valetudo"]) {
     assert.equal(panelContents.includes(backendName), false, `Vacuum Control should not branch on ${backendName}`);
   }
@@ -2931,7 +2984,7 @@ function testPublicContractAndUiBoundary(): void {
     true,
     "Map Preview card should render only from normalized layered preview presence",
   );
-  const mapPreviewUiStart = panelContents.indexOf("function mapPreviewLayerClass");
+  const mapPreviewUiStart = panelContents.indexOf("function buildMapPreviewTransform");
   const mapPreviewUiEnd = panelContents.indexOf("function MapTargetSection");
   assert.equal(mapPreviewUiStart >= 0 && mapPreviewUiEnd > mapPreviewUiStart, true);
   const mapPreviewUi = panelContents.slice(mapPreviewUiStart, mapPreviewUiEnd);
@@ -2941,6 +2994,25 @@ function testPublicContractAndUiBoundary(): void {
     "Map Preview card should consume normalized adapter data without raw Valetudo payload names or direct runtime calls",
   );
   assert.equal(
+    /buildMapPreviewTransform/.test(mapPreviewUi) &&
+      /mapPreviewRunRect/.test(mapPreviewUi) &&
+      /prepareMapPreviewLayers/.test(mapPreviewUi) &&
+      /mapPreviewLegendItems/.test(mapPreviewUi),
+    true,
+    "Map Preview card should keep coordinate transforms, layer ordering, and visual legend inside the normalized renderer",
+  );
+  assert.equal(
+    /vacuum-map-preview-layer--floor/.test(panelStyles) &&
+      /vacuum-map-preview-layer--wall/.test(panelStyles) &&
+      /vacuum-map-preview-layer--segment/.test(panelStyles) &&
+      /vacuum-map-preview-entity--robot/.test(panelStyles) &&
+      /vacuum-map-preview-entity--charger/.test(panelStyles) &&
+      /vacuum-map-preview-entity--zone/.test(panelStyles) &&
+      /vacuum-map-preview-entity--path/.test(panelStyles),
+    true,
+    "Map Preview styles should distinguish floor, walls, segments, robot, charger, zone, and path entities",
+  );
+  assert.equal(
     /MapTargetSection title="Segments \/ Rooms"/.test(panelContents) &&
       /MapTargetSection title="Zones"/.test(panelContents) &&
       panelContents.includes("Map Targets"),
@@ -2948,7 +3020,7 @@ function testPublicContractAndUiBoundary(): void {
     "Map Targets card should keep product-owned generic labels",
   );
   const mapTargetsUiStart = panelContents.indexOf("function formatMapTargetKind");
-  const mapTargetsUiEnd = panelContents.indexOf("function mapPreviewLayerClass");
+  const mapTargetsUiEnd = panelContents.indexOf("type MapPreviewBounds");
   assert.equal(mapTargetsUiStart >= 0 && mapTargetsUiEnd > mapTargetsUiStart, true);
   const mapTargetsUi = panelContents.slice(mapTargetsUiStart, mapTargetsUiEnd);
   assert.equal(
