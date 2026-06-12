@@ -2394,6 +2394,17 @@ type MapPreviewRenderLayer = {
   pointList: string | null;
 };
 
+type MapTargetSelectionKey = `${VacuumMapTarget["kind"]}:${string}`;
+type MapPreviewHighlightTone = "hovered" | "selected";
+type MapPreviewResolvedHighlight = {
+  key: MapTargetSelectionKey;
+  tone: MapPreviewHighlightTone;
+  label: string;
+  layerIds: string[];
+  entityIds: string[];
+  geometry: VacuumMapTarget["geometry"] | null;
+};
+
 type MapPreviewRenderData = {
   transform: MapPreviewTransform;
   viewBox: string;
@@ -2544,6 +2555,108 @@ function mapPreviewAspectRatio(bounds: MapPreviewBounds): string {
   return `${Math.max(1, bounds.maxX - bounds.minX)} / ${Math.max(1, bounds.maxY - bounds.minY)}`;
 }
 
+function mapTargetSelectionKey(target: VacuumMapTarget): MapTargetSelectionKey {
+  return `${target.kind}:${target.id}`;
+}
+
+function flattenMapTargets(targets: VacuumMapTargets | undefined): VacuumMapTarget[] {
+  return [...(targets?.segments ?? []), ...(targets?.zones ?? [])];
+}
+
+function findMapTargetByKey(targets: VacuumMapTargets | undefined, targetKey: MapTargetSelectionKey | null): VacuumMapTarget | null {
+  if (!targetKey) {
+    return null;
+  }
+  return flattenMapTargets(targets).find((target) => mapTargetSelectionKey(target) === targetKey) ?? null;
+}
+
+function isFiniteMapPoint(point: { x: number; y: number }): boolean {
+  return Number.isFinite(point.x) && Number.isFinite(point.y);
+}
+
+function isFiniteMapBounds(bounds: { x: number; y: number; width: number; height: number }): boolean {
+  return Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height) && bounds.width > 0 && bounds.height > 0;
+}
+
+function renderableMapTargetGeometry(geometry: VacuumMapTarget["geometry"] | undefined): VacuumMapTarget["geometry"] | null {
+  if (!geometry) {
+    return null;
+  }
+  if (geometry.type === "polygon" && geometry.points.length >= 3 && geometry.points.every(isFiniteMapPoint)) {
+    return geometry;
+  }
+  if (geometry.type === "rectangle" && isFiniteMapBounds(geometry.bounds)) {
+    return geometry;
+  }
+  if (geometry.type === "unknown") {
+    if (geometry.points && geometry.points.length >= 3 && geometry.points.every(isFiniteMapPoint)) {
+      return geometry;
+    }
+    if (geometry.bounds && isFiniteMapBounds(geometry.bounds)) {
+      return geometry;
+    }
+  }
+  return null;
+}
+
+function resolveMapTargetHighlight(preview: VacuumLayeredMapPreview, target: VacuumMapTarget, tone: MapPreviewHighlightTone): MapPreviewResolvedHighlight | null {
+  const layerIds = preview.layers
+    .filter((layer) => layer.id === target.id || layer.segmentId === target.id)
+    .map((layer) => layer.id);
+  const entityIds = preview.entities
+    .filter((entity) => entity.id === target.id)
+    .map((entity) => entity.id);
+  const geometry = renderableMapTargetGeometry(target.geometry);
+  if (layerIds.length === 0 && entityIds.length === 0 && !geometry) {
+    return null;
+  }
+  return {
+    key: mapTargetSelectionKey(target),
+    tone,
+    label: target.label,
+    layerIds,
+    entityIds,
+    geometry,
+  };
+}
+
+function buildMapPreviewHighlights(
+  preview: VacuumLayeredMapPreview | undefined,
+  selectedTarget: VacuumMapTarget | null,
+  hoveredTarget: VacuumMapTarget | null,
+): MapPreviewResolvedHighlight[] {
+  if (!hasRenderableLayeredMapPreview(preview)) {
+    return [];
+  }
+  const highlights: MapPreviewResolvedHighlight[] = [];
+  if (selectedTarget) {
+    const selected = resolveMapTargetHighlight(preview, selectedTarget, "selected");
+    if (selected) {
+      highlights.push(selected);
+    }
+  }
+  if (hoveredTarget && (!selectedTarget || mapTargetSelectionKey(hoveredTarget) !== mapTargetSelectionKey(selectedTarget))) {
+    const hovered = resolveMapTargetHighlight(preview, hoveredTarget, "hovered");
+    if (hovered) {
+      highlights.push(hovered);
+    }
+  }
+  return highlights;
+}
+
+function mapPreviewTargetGeometryLabel(geometry: VacuumMapTarget["geometry"] | undefined): string {
+  if (!renderableMapTargetGeometry(geometry)) {
+    return "No geometry link";
+  }
+  if (geometry?.type === "polygon") {
+    return "Polygon";
+  }
+  if (geometry?.type === "rectangle") {
+    return "Rectangle";
+  }
+  return "Area bounds";
+}
+
 function prepareMapPreviewLayers(layers: VacuumMapLayer[]): MapPreviewRenderableLayer[] {
   let segmentCount = 0;
   return layers
@@ -2640,6 +2753,80 @@ const MapPreviewLayer = memo(function MapPreviewLayer(props: {
   );
 });
 
+function MapPreviewTargetGeometry(props: {
+  geometry: VacuumMapTarget["geometry"];
+  className: string;
+}): JSX.Element | null {
+  const geometry = renderableMapTargetGeometry(props.geometry);
+  if (!geometry) {
+    return null;
+  }
+  if (geometry.points && geometry.points.length >= 3) {
+    return <polygon className={props.className} points={mapPreviewPointList(geometry.points)} />;
+  }
+  if (geometry.bounds) {
+    return (
+      <rect
+        className={props.className}
+        x={geometry.bounds.x}
+        y={geometry.bounds.y}
+        width={geometry.bounds.width}
+        height={geometry.bounds.height}
+      />
+    );
+  }
+  return null;
+}
+
+const MapPreviewHighlights = memo(function MapPreviewHighlights(props: {
+  highlights: MapPreviewResolvedHighlight[];
+  renderData: MapPreviewRenderData;
+}): JSX.Element | null {
+  if (props.highlights.length === 0) {
+    return null;
+  }
+  const renderLayerById = new Map(props.renderData.layers.map((layer) => [layer.id, layer]));
+  const entityById = new Map(props.renderData.entities.map((entity) => [entity.id, entity]));
+
+  return (
+    <g className="vacuum-map-preview-target-highlights" aria-hidden="true">
+      {props.highlights.map((highlight) => {
+        const className = `vacuum-map-preview-target-highlight vacuum-map-preview-target-highlight--${highlight.tone}`;
+        return (
+          <g key={`${highlight.tone}:${highlight.key}`} className={className}>
+            {highlight.layerIds.map((layerId) => {
+              const layer = renderLayerById.get(layerId);
+              if (!layer) {
+                return null;
+              }
+              return (
+                <g key={layerId} className="vacuum-map-preview-target-highlight__layer">
+                  {layer.runPath ? <path d={layer.runPath} /> : null}
+                  {layer.pointList ? <polyline points={layer.pointList} /> : null}
+                </g>
+              );
+            })}
+            {highlight.entityIds.map((entityId) => {
+              const entity = entityById.get(entityId);
+              const points = entity?.points ?? [];
+              if (points.length < 3) {
+                return null;
+              }
+              return <polygon key={entityId} className="vacuum-map-preview-target-highlight__geometry" points={mapPreviewPointList(points)} />;
+            })}
+            {highlight.geometry ? (
+              <MapPreviewTargetGeometry
+                geometry={highlight.geometry}
+                className="vacuum-map-preview-target-highlight__geometry"
+              />
+            ) : null}
+          </g>
+        );
+      })}
+    </g>
+  );
+});
+
 const MapPreviewEntity = memo(function MapPreviewEntity(props: {
   entity: VacuumMapEntity;
   markerSize: number;
@@ -2690,6 +2877,7 @@ const MapPreviewEntity = memo(function MapPreviewEntity(props: {
 const ValetudoLayeredMapSvg = memo(function ValetudoLayeredMapSvg(props: {
   preview?: VacuumLayeredMapPreview;
   renderData?: MapPreviewRenderData | null;
+  highlights?: MapPreviewResolvedHighlight[];
   className?: string;
   ariaLabel: string;
 }): JSX.Element | null {
@@ -2712,6 +2900,9 @@ const ValetudoLayeredMapSvg = memo(function ValetudoLayeredMapSvg(props: {
       {renderData.layers.map((layer) => (
         <MapPreviewLayer key={layer.id} layer={layer} />
       ))}
+      {props.highlights && props.highlights.length > 0 ? (
+        <MapPreviewHighlights highlights={props.highlights} renderData={renderData} />
+      ) : null}
       {renderData.entities.map((entity) => (
         <MapPreviewEntity key={entity.id} entity={entity} markerSize={renderData.markerSize} />
       ))}
@@ -2752,9 +2943,15 @@ function MapPreviewCard(props: {
 
 function ValetudoMainMapPreview(props: {
   preview?: VacuumLayeredMapPreview;
+  selectedTarget?: VacuumMapTarget | null;
+  hoveredTarget?: VacuumMapTarget | null;
 }): JSX.Element | null {
   const preview = props.preview;
   const renderData = useMapPreviewRenderData(preview);
+  const highlights = useMemo(
+    () => buildMapPreviewHighlights(preview, props.selectedTarget ?? null, props.hoveredTarget ?? null),
+    [props.hoveredTarget, preview, props.selectedTarget],
+  );
   if (!hasRenderableLayeredMapPreview(preview) || !renderData) {
     return null;
   }
@@ -2766,6 +2963,7 @@ function ValetudoMainMapPreview(props: {
           <ValetudoLayeredMapSvg
             preview={preview}
             renderData={renderData}
+            highlights={highlights}
             className="vacuum-map-preview-svg vacuum-map-preview-svg--main"
             ariaLabel="Large static normalized map preview"
           />
@@ -2778,6 +2976,10 @@ function ValetudoMainMapPreview(props: {
 function MapTargetSection(props: {
   title: string;
   targets: VacuumMapTarget[];
+  selectedTargetKey: MapTargetSelectionKey | null;
+  hoveredTargetKey: MapTargetSelectionKey | null;
+  onTargetHover: (targetKey: MapTargetSelectionKey | null) => void;
+  onTargetSelect: (targetKey: MapTargetSelectionKey) => void;
 }): JSX.Element | null {
   if (props.targets.length === 0) {
     return null;
@@ -2788,15 +2990,28 @@ function MapTargetSection(props: {
       <div className="vacuum-map-target-list">
         {props.targets.map((target) => {
           const geometryLabel = formatMapTargetGeometry(target.geometry);
+          const targetKey = mapTargetSelectionKey(target);
+          const selected = props.selectedTargetKey === targetKey;
+          const hovered = props.hoveredTargetKey === targetKey;
           return (
-            <div key={target.id} className="vacuum-map-target-row">
+            <button
+              key={targetKey}
+              className={`vacuum-map-target-row${selected ? " vacuum-map-target-row--selected" : ""}${hovered ? " vacuum-map-target-row--hovered" : ""}`}
+              type="button"
+              aria-pressed={selected}
+              onBlur={() => props.onTargetHover(null)}
+              onClick={() => props.onTargetSelect(targetKey)}
+              onFocus={() => props.onTargetHover(targetKey)}
+              onMouseEnter={() => props.onTargetHover(targetKey)}
+              onMouseLeave={() => props.onTargetHover(null)}
+            >
               <div>
                 <strong>{target.label}</strong>
                 {target.detail ? <p>{target.detail}</p> : null}
                 {geometryLabel ? <p>{geometryLabel}</p> : null}
               </div>
               <span>{`${formatMapTargetKind(target.kind)} - ${target.available ? "Available" : "Unavailable"}`}</span>
-            </div>
+            </button>
           );
         })}
       </div>
@@ -2804,11 +3019,50 @@ function MapTargetSection(props: {
   );
 }
 
+function SelectedMapTargetDetails(props: {
+  target: VacuumMapTarget | null;
+  onClear: () => void;
+}): JSX.Element | null {
+  if (!props.target) {
+    return null;
+  }
+  return (
+    <div className="vacuum-map-target-selected" aria-label="Selected target">
+      <div className="vacuum-map-target-selected__head">
+        <p>Selected target</p>
+        <button type="button" onClick={props.onClear}>Clear</button>
+      </div>
+      <strong>{props.target.label}</strong>
+      <dl>
+        <div>
+          <dt>Kind</dt>
+          <dd>{formatMapTargetKind(props.target.kind)}</dd>
+        </div>
+        <div>
+          <dt>Availability</dt>
+          <dd>{props.target.available ? "Available" : "Unavailable"}</dd>
+        </div>
+        <div>
+          <dt>Geometry</dt>
+          <dd>{mapPreviewTargetGeometryLabel(props.target.geometry)}</dd>
+        </div>
+      </dl>
+      {props.target.detail ? <p>{props.target.detail}</p> : null}
+    </div>
+  );
+}
+
 function MapTargetsCard(props: {
   targets?: VacuumMapTargets;
+  selectedTargetKey: MapTargetSelectionKey | null;
+  hoveredTargetKey: MapTargetSelectionKey | null;
+  onTargetHover: (targetKey: MapTargetSelectionKey | null) => void;
+  onTargetSelect: (targetKey: MapTargetSelectionKey) => void;
+  onTargetClear: () => void;
 }): JSX.Element | null {
   const segments = props.targets?.segments ?? [];
   const zones = props.targets?.zones ?? [];
+  const selectedTarget = findMapTargetByKey(props.targets, props.selectedTargetKey);
   if (segments.length === 0 && zones.length === 0) {
     return null;
   }
@@ -2821,8 +3075,23 @@ function MapTargetsCard(props: {
       <p className="vacuum-action-hint">
         Saved map targets discovered from normalized map data. Cleaning commands are not enabled yet.
       </p>
-      <MapTargetSection title="Segments / Rooms" targets={segments} />
-      <MapTargetSection title="Zones" targets={zones} />
+      <SelectedMapTargetDetails target={selectedTarget} onClear={props.onTargetClear} />
+      <MapTargetSection
+        title="Segments / Rooms"
+        targets={segments}
+        selectedTargetKey={props.selectedTargetKey}
+        hoveredTargetKey={props.hoveredTargetKey}
+        onTargetHover={props.onTargetHover}
+        onTargetSelect={props.onTargetSelect}
+      />
+      <MapTargetSection
+        title="Zones"
+        targets={zones}
+        selectedTargetKey={props.selectedTargetKey}
+        hoveredTargetKey={props.hoveredTargetKey}
+        onTargetHover={props.onTargetHover}
+        onTargetSelect={props.onTargetSelect}
+      />
     </section>
   );
 }
@@ -3051,6 +3320,8 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
   const [roomZoneValidation, setRoomZoneValidation] = useState<CleanAreaValidation | null>(null);
   const [selectedRoomZoneId, setSelectedRoomZoneId] = useState<string | null>(null);
   const [roomZoneCommandError, setRoomZoneCommandError] = useState<string | null>(null);
+  const [hoveredMapTargetKey, setHoveredMapTargetKey] = useState<MapTargetSelectionKey | null>(null);
+  const [selectedMapTargetKey, setSelectedMapTargetKey] = useState<MapTargetSelectionKey | null>(null);
   const [activeMode, setActiveMode] = useState<VacuumControlMode>("navigation");
   const [dismissedNavigationTargetKey, setDismissedNavigationTargetKey] = useState<string | null>(null);
   const [dismissedCoverageMissionId, setDismissedCoverageMissionId] = useState<string | null>(null);
@@ -3113,6 +3384,32 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
       }),
     [mapMetadata],
   );
+  const normalizedMapTargetKeys = useMemo(
+    () => new Set(flattenMapTargets(snapshot.map.targets).map(mapTargetSelectionKey)),
+    [snapshot.map.targets],
+  );
+  useEffect(() => {
+    if (hoveredMapTargetKey && !normalizedMapTargetKeys.has(hoveredMapTargetKey)) {
+      setHoveredMapTargetKey(null);
+    }
+    if (selectedMapTargetKey && !normalizedMapTargetKeys.has(selectedMapTargetKey)) {
+      setSelectedMapTargetKey(null);
+    }
+  }, [hoveredMapTargetKey, normalizedMapTargetKeys, selectedMapTargetKey]);
+  const hoveredMapTarget = useMemo(
+    () => findMapTargetByKey(snapshot.map.targets, hoveredMapTargetKey),
+    [hoveredMapTargetKey, snapshot.map.targets],
+  );
+  const selectedMapTarget = useMemo(
+    () => findMapTargetByKey(snapshot.map.targets, selectedMapTargetKey),
+    [selectedMapTargetKey, snapshot.map.targets],
+  );
+  const handleMapTargetSelect = useCallback((targetKey: MapTargetSelectionKey) => {
+    setSelectedMapTargetKey((current) => current === targetKey ? null : targetKey);
+  }, []);
+  const handleMapTargetClear = useCallback(() => {
+    setSelectedMapTargetKey(null);
+  }, []);
   const liveCleanAreaCoverageTarget = useMemo(
     () =>
       buildCleanAreaCoverageTarget(cleanAreaRect, snapshot.map.grid, {
@@ -4483,6 +4780,8 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
           ) : layeredMapPreviewAvailable ? (
             <ValetudoMainMapPreview
               preview={snapshot.map.layeredPreview}
+              hoveredTarget={hoveredMapTarget}
+              selectedTarget={selectedMapTarget}
             />
           ) : (
             <NoMapCanvasPlaceholder
@@ -4529,7 +4828,14 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
                       <MapPreviewCard preview={snapshot.map.layeredPreview} />
                     ) : null}
                     {sidebarShowMapTargets ? (
-                      <MapTargetsCard targets={snapshot.map.targets} />
+                      <MapTargetsCard
+                        targets={snapshot.map.targets}
+                        hoveredTargetKey={hoveredMapTargetKey}
+                        selectedTargetKey={selectedMapTargetKey}
+                        onTargetHover={setHoveredMapTargetKey}
+                        onTargetSelect={handleMapTargetSelect}
+                        onTargetClear={handleMapTargetClear}
+                      />
                     ) : null}
                   </div>
                 </div>

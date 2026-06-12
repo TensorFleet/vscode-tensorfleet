@@ -1,3 +1,46 @@
+# Progress Report - Valetudo Target Hover and Selection
+Current report date: 2026-06-12.
+
+## 1. What changed
+- Added local `hoveredMapTargetKey` and `selectedMapTargetKey` state in the Vacuum Control panel.
+- Added read-only target row hover/focus and click selection in the Map Targets card.
+- Added normalized map highlight resolution for target geometry, `target.id -> layer.id`, `target.id -> layer.segmentId`, and `target.id -> entity.id`.
+- Added selected target details in the Map Targets card with label, kind, availability, geometry summary, and optional normalized detail.
+- Did not change adapter/runtime/vm-manager/firecracker-vm; the existing normalized target and preview links were sufficient.
+- Updated the vacuum adapter regression harness for hover/selection state, renderer highlight plumbing, normalized ID/geometry usage, command non-enablement, sidebar preview deduplication, and unchanged MapCanvas gating.
+
+## 2. Product behavior
+- Hovering a normalized target row temporarily highlights matching geometry on the main static layered preview when a normalized link exists.
+- Clicking a target row selects it, keeps its highlight visible, and shows selected target details; clicking it again or Clear deselects it.
+- This remains read-only: no cleaning, go-to, drawing, editing, target execution, runtime route calls, ROS subscriptions, or SSE/live streaming were added.
+- No map, segment, zone, room, go-to, or Clean Area commands were enabled; `capabilities.map.supported` remains false for Valetudo full interactive map support.
+- If a target has no normalized geometry and no normalized preview ID/link, the row can still be selected and described, but no fake map highlight is drawn.
+
+## 3. Still deferred
+- Segment cleaning command.
+- Zone cleaning command.
+- Room cleaning command.
+- Go-to command.
+- User-created zone drawing.
+- Map SSE/live streaming.
+- Hardware validation.
+
+## 4. Validation
+
+```sh
+bun run test:vacuum-adapter
+bun run --cwd panels-standalone build
+git diff --check
+```
+
+Result:
+
+- `bun run test:vacuum-adapter`: passed - `vacuum_adapter regression harness passed`.
+- `bun run --cwd panels-standalone build`: passed; Vite emitted existing browser-externalization, eval, and chunk-size warnings.
+- `git diff --check`: passed.
+
+---
+
 # Progress Report - Valetudo Map Preview Performance and Sidebar Dedup
 Current report date: 2026-06-12.
 

@@ -3111,6 +3111,20 @@ function testPublicContractAndUiBoundary(): void {
     "Map Targets card should render only from normalized map target presence",
   );
   assert.equal(
+    /const \[hoveredMapTargetKey, setHoveredMapTargetKey\] = useState<MapTargetSelectionKey \| null>\(null\)/.test(panelContents) &&
+      /const \[selectedMapTargetKey, setSelectedMapTargetKey\] = useState<MapTargetSelectionKey \| null>\(null\)/.test(panelContents) &&
+      /onMouseEnter=\{\(\) => props\.onTargetHover\(targetKey\)\}/.test(panelContents) &&
+      /onClick=\{\(\) => props\.onTargetSelect\(targetKey\)\}/.test(panelContents) &&
+      /aria-pressed=\{selected\}/.test(panelContents),
+    true,
+    "Map Targets rows should support local hover and selection state without command actions",
+  );
+  assert.equal(
+    /<ValetudoMainMapPreview[\s\S]*preview=\{snapshot\.map\.layeredPreview\}[\s\S]*hoveredTarget=\{hoveredMapTarget\}[\s\S]*selectedTarget=\{selectedMapTarget\}/.test(panelContents),
+    true,
+    "Hovered and selected normalized targets should be passed into the main layered preview renderer",
+  );
+  assert.equal(
     /MapPreviewCard/.test(panelContents) &&
       /preview=\{snapshot\.map\.layeredPreview\}/.test(panelContents) &&
       /const mainLayeredMapPreviewVisible = !mapSurfaceAvailable && layeredMapPreviewAvailable/.test(panelContents) &&
@@ -3147,10 +3161,14 @@ function testPublicContractAndUiBoundary(): void {
       /mapPreviewRunPath/.test(mapPreviewUi) &&
       /prepareMapPreviewLayers/.test(mapPreviewUi) &&
       /mapPreviewLegendItems/.test(mapPreviewUi) &&
+      /resolveMapTargetHighlight[\s\S]*layer\.id === target\.id \|\| layer\.segmentId === target\.id/.test(mapPreviewUi) &&
+      /entity\.id === target\.id/.test(mapPreviewUi) &&
+      /renderableMapTargetGeometry\(target\.geometry\)/.test(mapPreviewUi) &&
+      /MapPreviewHighlights/.test(mapPreviewUi) &&
       /useMapPreviewRenderData/.test(mapPreviewUi) &&
       /preserveAspectRatio="xMidYMid meet"/.test(mapPreviewUi),
     true,
-    "Map Preview renderer should keep memoized coordinate transforms, layer ordering, run path conversion, aspect-ratio preservation, and visual legend inside the normalized renderer",
+    "Map Preview renderer should keep memoized coordinate transforms, layer ordering, run path conversion, target highlighting, aspect-ratio preservation, and visual legend inside the normalized renderer",
   );
   assert.equal(
     /<rect[\s\S]*run:/.test(mapPreviewUi),
@@ -3185,11 +3203,12 @@ function testPublicContractAndUiBoundary(): void {
     "Map Preview styles should distinguish floor, walls, segments, robot, charger, zones, restrictions, obstacles, and paths",
   );
   assert.equal(
-    /MapTargetSection title="Segments \/ Rooms"/.test(panelContents) &&
-      /MapTargetSection title="Zones"/.test(panelContents) &&
+    /title="Segments \/ Rooms"/.test(panelContents) &&
+      /title="Zones"/.test(panelContents) &&
+      /SelectedMapTargetDetails/.test(panelContents) &&
       panelContents.includes("Map Targets"),
     true,
-    "Map Targets card should keep product-owned generic labels",
+    "Map Targets card should keep product-owned generic labels and selected target details",
   );
   const mapTargetsUiStart = panelContents.indexOf("function formatMapTargetKind");
   const mapTargetsUiEnd = panelContents.indexOf("type MapPreviewBounds");
@@ -3204,6 +3223,11 @@ function testPublicContractAndUiBoundary(): void {
     /Valetudo|lovelace|Home Assistant|compressedPixels/.test(mapTargetsUi),
     false,
     "Map Targets card should not render raw Valetudo, lovelace, Home Assistant, or payload vocabulary",
+  );
+  assert.equal(
+    /targetIds|start_room_cleaning|start_zone_cleaning|segment_cleaning|zone_cleaning|go_to_location/.test(mapTargetsUi),
+    false,
+    "Map Targets hover and selection UI should not expose target execution or map command actions",
   );
   assert.equal(
     /vacuum-panel-card--robot-overview/.test(panelContents) &&
