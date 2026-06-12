@@ -1,3 +1,58 @@
+# Progress Report - Valetudo Static Map Preview Foundation
+
+Current report date: 2026-06-12.
+
+## 1. What changed
+
+* Extended the Valetudo runtime map normalization in `/home/shane/firecracker-vm/tensorfleet-mgr` with a conservative `map.preview` section containing product-owned layer/entity kinds, normalized RLE-style runs, normalized points, robot/charger/zone entities, and map diagnostics for omitted malformed rows.
+* Fixed mock preview data now exposes renderable floor, wall, three segment layers, robot, charger, and one zone-like polygon from the embedded map fixture.
+* Added adapter fields `snapshot.map.layeredPreview` plus typed normalized map layers, entities, and runs; `snapshot.map.grid` remains the ROS/Nav2 occupancy-grid surface and stays `null` for Valetudo.
+* Added a compact read-only `MapPreviewCard` in the no-map/basic robot sidebar, before the existing `MapTargetsCard`, rendering only from normalized adapter preview data.
+* Capabilities did not enable interactive map behavior: `capabilities.map.supported` remains `false`, and no segment, room, zone, go-to, or Clean Area commands were enabled.
+* No vm-manager proxy change was required; the expanded runtime snapshot JSON remains forwarded through the existing flow. Firecracker runtime changes were required in `tensorfleet-mgr`.
+* Added/updated tests for fixed mock preview normalization, malformed preview row omission, stale/unreachable preview suppression, invalid metadata preview suppression, adapter preview mapping, UI boundary checks, and existing Valetudo command disablement.
+* No live VM deployment was performed.
+
+## 2. Product behavior
+
+* When fresh normalized Valetudo layered preview data exists, the basic/no-map sidebar shows a static **Map Preview** card with floor, wall, segment, robot, charger, path/zone-style geometry if present.
+* The preview is read-only: no buttons, target selection, drawing, dragging, route calls, Valetudo HTTP calls, or ROS subscriptions were added.
+* Existing TurtleBot4/Nav2 simulation `MapCanvas` behavior is unchanged; `MapCanvas` still depends on the existing normalized map capability/grid path.
+* If preview data is missing, metadata-only, malformed, stale, or unreachable, the preview is omitted and the existing no-map placeholder behavior remains.
+* Segment cleaning, zone cleaning, room cleaning, go-to, and Clean Area remain unsupported for Valetudo.
+
+## 3. Still deferred
+
+* Full interactive map rendering.
+* MapCanvas Valetudo support.
+* Segment selection.
+* Segment cleaning command.
+* Zone cleaning command.
+* Go-to command.
+* User-created zone drawing.
+* Map SSE/live streaming.
+* Hardware validation.
+
+## 4. Validation
+
+```sh
+cd /home/shane/firecracker-vm/tensorfleet-mgr && go test ./...
+cd /home/shane/firecracker-vm/tensorfleet-mgr && git diff --check
+bun run test:vacuum-adapter
+bun run --cwd panels-standalone build
+git diff --check
+```
+
+Result:
+
+* `cd /home/shane/firecracker-vm/tensorfleet-mgr && go test ./...`: passed.
+* `cd /home/shane/firecracker-vm/tensorfleet-mgr && git diff --check`: passed.
+* `bun run test:vacuum-adapter`: passed - `vacuum_adapter regression harness passed`.
+* `bun run --cwd panels-standalone build`: passed; Vite emitted existing browser-externalization/eval/chunk-size warnings.
+* `git diff --check`: passed.
+
+---
+
 # Progress Report - Valetudo Map Target Inventory UI
 Current report date: 2026-06-12.
 

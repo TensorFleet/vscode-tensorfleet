@@ -260,6 +260,43 @@ export type VacuumLayeredMapMetadata = {
   source?: VacuumSourceKind;
 };
 
+export type VacuumMapLayerKind = "floor" | "wall" | "segment" | "path" | "unknown";
+export type VacuumMapEntityKind = "robot" | "charger" | "path" | "zone" | "obstacle" | "unknown";
+
+export type VacuumMapRun = {
+  x: number;
+  y: number;
+  count: number;
+};
+
+export type VacuumMapLayer = {
+  id: string;
+  kind: VacuumMapLayerKind;
+  label?: string;
+  segmentId?: string;
+  runs?: VacuumMapRun[];
+  points?: Array<{ x: number; y: number }>;
+};
+
+export type VacuumMapEntity = {
+  id: string;
+  kind: VacuumMapEntityKind;
+  label?: string;
+  points?: Array<{ x: number; y: number }>;
+  angle?: number;
+  detail?: string;
+};
+
+export type VacuumLayeredMapPreview = {
+  width: number;
+  height: number;
+  pixelSize?: number;
+  coordinateSystem: "valetudo_pixel" | "unknown";
+  layers: VacuumMapLayer[];
+  entities: VacuumMapEntity[];
+  updatedAt?: number | string;
+};
+
 export type VacuumMapTargets = {
   segments?: VacuumMapTarget[];
   zones?: VacuumMapTarget[];
@@ -280,6 +317,7 @@ export type VacuumMapState = {
   grid: VacuumMapGrid | null;
   metadata: VacuumMapMetadata;
   layeredMetadata?: VacuumLayeredMapMetadata;
+  layeredPreview?: VacuumLayeredMapPreview;
   targets?: VacuumMapTargets;
   annotations: VacuumMapAnnotation[];
 };

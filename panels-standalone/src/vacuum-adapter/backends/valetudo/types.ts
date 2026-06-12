@@ -10,6 +10,7 @@ import type {
   VacuumMaintenanceState,
   VacuumMissionState,
   VacuumLayeredMapMetadata,
+  VacuumLayeredMapPreview,
   VacuumMapTargets,
   VacuumPoseCoordinates,
   VacuumRobotActivityStatus,
@@ -38,6 +39,7 @@ export type ValetudoRuntimeBoundary = {
   attachments?: VacuumAttachmentsState;
   map?: {
     layeredMetadata?: VacuumLayeredMapMetadata;
+    layeredPreview?: VacuumLayeredMapPreview;
     targets?: VacuumMapTargets;
     detail?: string;
   };

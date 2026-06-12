@@ -1741,7 +1741,7 @@ function testValetudoStateAwareCommandAvailability(): void {
 }
 
 function testValetudoRuntimeSnapshotMapping(): void {
-  const boundary = mapValetudoRuntimeSnapshotToBoundary({
+  const runtimeSnapshot: ValetudoRuntimeSnapshot = {
     runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.1.0-layer6a-m1", status: "online" },
     backend: "valetudo",
     robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
@@ -1857,6 +1857,66 @@ function testValetudoRuntimeSnapshotMapping(): void {
         segmentCount: 3,
         zoneCount: 1,
       },
+      preview: {
+        layers: [
+          {
+            id: "floor_1",
+            kind: "floor",
+            runs: [{ x: 1, y: 1, count: 58 }],
+          },
+          {
+            id: "wall_1",
+            kind: "wall",
+            runs: [{ x: 0, y: 0, count: 60 }],
+          },
+          {
+            id: "kitchen",
+            kind: "segment",
+            label: "Kitchen",
+            segmentId: "kitchen",
+            runs: [{ x: 5, y: 5, count: 16 }],
+          },
+          {
+            id: "",
+            kind: "segment",
+            runs: [{ x: 1, y: 1, count: 1 }],
+          },
+          {
+            id: "bad_run",
+            kind: "wall",
+            runs: [{ x: 1, y: 1, count: 0 }],
+          },
+        ],
+        entities: [
+          {
+            id: "robot_1",
+            kind: "robot",
+            label: "Robot",
+            points: [{ x: 80, y: 60 }],
+            angle: 90,
+          },
+          {
+            id: "charger_1",
+            kind: "charger",
+            points: [{ x: 35, y: 35 }],
+          },
+          {
+            id: "zone_spill_001",
+            kind: "zone",
+            points: [
+              { x: 115, y: 110 },
+              { x: 200, y: 110 },
+              { x: 200, y: 160 },
+              { x: 115, y: 160 },
+            ],
+          },
+          {
+            id: "bad_zone",
+            kind: "zone",
+            points: [{ x: 1, y: 1 }],
+          },
+        ],
+      },
       targets: {
         segments: [
           {
@@ -1891,7 +1951,8 @@ function testValetudoRuntimeSnapshotMapping(): void {
       detail: "Valetudo map metadata and target inventory normalized; renderable map surfaces are not exposed yet.",
     },
     updatedAt: 1,
-  });
+  };
+  const boundary = mapValetudoRuntimeSnapshotToBoundary(runtimeSnapshot);
   const snapshot = mapValetudoState(boundary);
   assert.equal(snapshot.identity.label, "Valetudo Fixed Mock");
   assert.equal(snapshot.availability.status, "online");
@@ -1952,6 +2013,16 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.map.layeredMetadata?.coordinateSystem, "valetudo_pixel");
   assert.equal(snapshot.map.layeredMetadata?.segmentCount, 3);
   assert.equal(snapshot.map.layeredMetadata?.zoneCount, 1);
+  assert.equal(snapshot.map.layeredPreview?.width, 300);
+  assert.equal(snapshot.map.layeredPreview?.height, 200);
+  assert.equal(snapshot.map.layeredPreview?.pixelSize, 5);
+  assert.equal(snapshot.map.layeredPreview?.layers.length, 3);
+  assert.equal(snapshot.map.layeredPreview?.layers[0]?.kind, "floor");
+  assert.equal(snapshot.map.layeredPreview?.layers[2]?.segmentId, "kitchen");
+  assert.equal(snapshot.map.layeredPreview?.entities.length, 3);
+  assert.equal(snapshot.map.layeredPreview?.entities[0]?.kind, "robot");
+  assert.equal(snapshot.map.layeredPreview?.entities[0]?.angle, 90);
+  assert.equal(snapshot.map.layeredPreview?.entities[2]?.kind, "zone");
   assert.equal(snapshot.map.targets?.segments?.length, 3);
   assert.equal(snapshot.map.targets?.segments?.[0]?.id, "kitchen");
   assert.deepEqual(snapshot.map.targets?.segments?.[0]?.geometry, {
@@ -2044,6 +2115,27 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal((snapshot.diagnostics?.pose as { supported?: boolean } | undefined)?.supported, false);
   assert.equal((snapshot.diagnostics?.navigation as { supported?: boolean } | undefined)?.supported, false);
   assert.equal((snapshot.diagnostics?.mapping as { supported?: boolean } | undefined)?.supported, false);
+
+  const stalePreviewSnapshot = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary({
+    ...runtimeSnapshot,
+    source: { kind: "fixed_mock", status: "reachable", stale: true, lastSeenAt: 1 },
+  }));
+  assert.equal(stalePreviewSnapshot.map.layeredPreview, undefined);
+  assert.equal(stalePreviewSnapshot.map.targets, undefined);
+
+  const invalidMetadataPreviewSnapshot = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary({
+    ...runtimeSnapshot,
+    map: runtimeSnapshot.map
+      ? {
+          ...runtimeSnapshot.map,
+          metadata: {
+            ...runtimeSnapshot.map.metadata,
+            width: 0,
+          },
+        }
+      : undefined,
+  }));
+  assert.equal(invalidMetadataPreviewSnapshot.map.layeredPreview, undefined);
 
   const mockHTTPBoundary = mapValetudoRuntimeSnapshotToBoundary({
     runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
@@ -2833,6 +2925,22 @@ function testPublicContractAndUiBoundary(): void {
     "Map Targets card should render only from normalized map target presence",
   );
   assert.equal(
+    /MapPreviewCard/.test(panelContents) &&
+      /preview=\{snapshot\.map\.layeredPreview\}/.test(panelContents) &&
+      /const sidebarShowMapPreview = !!snapshot\.map\.layeredPreview/.test(panelContents),
+    true,
+    "Map Preview card should render only from normalized layered preview presence",
+  );
+  const mapPreviewUiStart = panelContents.indexOf("function mapPreviewLayerClass");
+  const mapPreviewUiEnd = panelContents.indexOf("function MapTargetSection");
+  assert.equal(mapPreviewUiStart >= 0 && mapPreviewUiEnd > mapPreviewUiStart, true);
+  const mapPreviewUi = panelContents.slice(mapPreviewUiStart, mapPreviewUiEnd);
+  assert.equal(
+    /compressedPixels|Valetudo|fetch\(|XMLHttpRequest|EventSource/.test(mapPreviewUi),
+    false,
+    "Map Preview card should consume normalized adapter data without raw Valetudo payload names or direct runtime calls",
+  );
+  assert.equal(
     /MapTargetSection title="Segments \/ Rooms"/.test(panelContents) &&
       /MapTargetSection title="Zones"/.test(panelContents) &&
       panelContents.includes("Map Targets"),
@@ -2840,7 +2948,7 @@ function testPublicContractAndUiBoundary(): void {
     "Map Targets card should keep product-owned generic labels",
   );
   const mapTargetsUiStart = panelContents.indexOf("function formatMapTargetKind");
-  const mapTargetsUiEnd = panelContents.indexOf("function NoMapCanvasPlaceholder");
+  const mapTargetsUiEnd = panelContents.indexOf("function mapPreviewLayerClass");
   assert.equal(mapTargetsUiStart >= 0 && mapTargetsUiEnd > mapTargetsUiStart, true);
   const mapTargetsUi = panelContents.slice(mapTargetsUiStart, mapTargetsUiEnd);
   assert.equal(

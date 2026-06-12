@@ -172,6 +172,7 @@ export type ValetudoRuntimeMap = {
   source: "fixed_mock" | "valetudo_http" | "valetudo_mock" | string;
   updatedAt?: number | string;
   metadata?: ValetudoRuntimeMapMetadata;
+  preview?: ValetudoRuntimeMapPreview;
   targets?: ValetudoRuntimeMapTargets;
   detail?: string;
   diagnostics?: string[];
@@ -192,6 +193,35 @@ export type ValetudoRuntimeMapMetadata = {
 export type ValetudoRuntimeMapTargets = {
   segments?: ValetudoRuntimeMapTarget[];
   zones?: ValetudoRuntimeMapTarget[];
+};
+
+export type ValetudoRuntimeMapPreview = {
+  layers?: ValetudoRuntimeMapLayer[];
+  entities?: ValetudoRuntimeMapEntity[];
+};
+
+export type ValetudoRuntimeMapLayer = {
+  id: string;
+  kind: "floor" | "wall" | "segment" | "path" | "unknown" | string;
+  label?: string;
+  segmentId?: string;
+  runs?: ValetudoRuntimeMapRun[];
+  points?: Array<{ x: number; y: number }>;
+};
+
+export type ValetudoRuntimeMapEntity = {
+  id: string;
+  kind: "robot" | "charger" | "path" | "zone" | "obstacle" | "unknown" | string;
+  label?: string;
+  points?: Array<{ x: number; y: number }>;
+  angle?: number;
+  detail?: string;
+};
+
+export type ValetudoRuntimeMapRun = {
+  x: number;
+  y: number;
+  count: number;
 };
 
 export type ValetudoRuntimeMapTarget = {

@@ -21,6 +21,9 @@ import {
   type VacuumDockComponentState,
   type VacuumDockStatus,
   type VacuumFaultState,
+  type VacuumLayeredMapPreview,
+  type VacuumMapEntity,
+  type VacuumMapLayer,
   type VacuumMaintenanceState,
   type VacuumRobotActivity,
   type VacuumRuntimeHealth,
@@ -2358,6 +2361,104 @@ function formatMapTargetGeometry(geometry: VacuumMapTarget["geometry"]): string 
   return "Area available";
 }
 
+function mapPreviewLayerClass(layer: VacuumMapLayer, index: number): string {
+  const segmentTone = layer.kind === "segment" ? ` vacuum-map-preview-layer--segment-${index % 6}` : "";
+  return `vacuum-map-preview-layer vacuum-map-preview-layer--${layer.kind}${segmentTone}`;
+}
+
+function mapPreviewPointList(points: Array<{ x: number; y: number }>): string {
+  return points.map((point) => `${point.x},${point.y}`).join(" ");
+}
+
+function MapPreviewLayer(props: {
+  layer: VacuumMapLayer;
+  index: number;
+  pixelSize: number;
+}): JSX.Element {
+  const className = mapPreviewLayerClass(props.layer, props.index);
+  return (
+    <g className={className}>
+      {(props.layer.runs ?? []).map((run, index) => (
+        <rect
+          key={`${props.layer.id}:run:${index}`}
+          x={run.x * props.pixelSize}
+          y={run.y * props.pixelSize}
+          width={run.count * props.pixelSize}
+          height={props.pixelSize}
+        />
+      ))}
+      {props.layer.points && props.layer.points.length >= 2 ? (
+        <polyline points={mapPreviewPointList(props.layer.points)} />
+      ) : null}
+    </g>
+  );
+}
+
+function MapPreviewEntity(props: {
+  entity: VacuumMapEntity;
+}): JSX.Element | null {
+  const points = props.entity.points ?? [];
+  if (points.length === 0) {
+    return null;
+  }
+  if (props.entity.kind === "zone" && points.length >= 3) {
+    return <polygon className="vacuum-map-preview-entity vacuum-map-preview-entity--zone" points={mapPreviewPointList(points)} />;
+  }
+  if (props.entity.kind === "path" && points.length >= 2) {
+    return <polyline className="vacuum-map-preview-entity vacuum-map-preview-entity--path" points={mapPreviewPointList(points)} />;
+  }
+  const point = points[0]!;
+  if (props.entity.kind === "robot") {
+    const angle = props.entity.angle ?? 0;
+    return (
+      <g className="vacuum-map-preview-entity vacuum-map-preview-entity--robot" transform={`translate(${point.x} ${point.y}) rotate(${angle})`}>
+        <circle r="8" />
+        <path d="M 10 0 L -5 -6 L -3 0 L -5 6 Z" />
+      </g>
+    );
+  }
+  if (props.entity.kind === "charger") {
+    return (
+      <g className="vacuum-map-preview-entity vacuum-map-preview-entity--charger" transform={`translate(${point.x} ${point.y})`}>
+        <rect x="-7" y="-5" width="14" height="10" rx="2" />
+        <path d="M -3 -5 L -3 -10 M 3 -5 L 3 -10" />
+      </g>
+    );
+  }
+  return <circle className={`vacuum-map-preview-entity vacuum-map-preview-entity--${props.entity.kind}`} cx={point.x} cy={point.y} r="4" />;
+}
+
+function MapPreviewCard(props: {
+  preview?: VacuumLayeredMapPreview;
+}): JSX.Element | null {
+  const preview = props.preview;
+  if (!preview || preview.width <= 0 || preview.height <= 0 || (preview.layers.length === 0 && preview.entities.length === 0)) {
+    return null;
+  }
+  const pixelSize = preview.pixelSize && preview.pixelSize > 0 ? preview.pixelSize : 1;
+  const viewBox = `0 0 ${preview.width} ${preview.height}`;
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--map-preview" aria-label="Map preview">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Map Preview</p>
+      </div>
+      <div className="vacuum-map-preview-frame">
+        <svg className="vacuum-map-preview-svg" viewBox={viewBox} role="img" aria-label="Static normalized map preview">
+          <rect className="vacuum-map-preview-bg" x="0" y="0" width={preview.width} height={preview.height} />
+          {preview.layers.map((layer, index) => (
+            <MapPreviewLayer key={layer.id} layer={layer} index={index} pixelSize={pixelSize} />
+          ))}
+          {preview.entities.map((entity) => (
+            <MapPreviewEntity key={entity.id} entity={entity} />
+          ))}
+        </svg>
+      </div>
+      <p className="vacuum-action-hint">Static preview from normalized map data. Cleaning commands are not enabled.</p>
+    </section>
+  );
+}
+
 function MapTargetSection(props: {
   title: string;
   targets: VacuumMapTarget[];
@@ -3918,6 +4019,8 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
   const sidebarMapTargetSegments = snapshot.map.targets?.segments ?? [];
   const sidebarMapTargetZones = snapshot.map.targets?.zones ?? [];
   const sidebarShowMapTargets = sidebarMapTargetSegments.length > 0 || sidebarMapTargetZones.length > 0;
+  const sidebarShowMapPreview = !!snapshot.map.layeredPreview &&
+    (snapshot.map.layeredPreview.layers.length > 0 || snapshot.map.layeredPreview.entities.length > 0);
   const sidebarShowAttachments = snapshot.capabilities.attachments.supported && sidebarAttachmentItems.length > 0;
   const sidebarShowDockComponents = snapshot.capabilities.dock_components.supported && sidebarDockComponentItems.length > 0;
   const sidebarShowFanSpeed = !!(snapshot.cleaningSettings?.fanSpeed && snapshot.capabilities.fan_speed.supported);
@@ -4099,6 +4202,9 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
                         statistics={snapshot.statistics}
                         capabilities={snapshot.capabilities}
                       />
+                    ) : null}
+                    {sidebarShowMapPreview ? (
+                      <MapPreviewCard preview={snapshot.map.layeredPreview} />
                     ) : null}
                     {sidebarShowMapTargets ? (
                       <MapTargetsCard targets={snapshot.map.targets} />

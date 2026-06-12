@@ -12,7 +12,13 @@ import type {
   VacuumDockComponentStatus,
   VacuumAdapterSnapshot,
   VacuumDockState,
+  VacuumLayeredMapPreview,
   VacuumLayeredMapMetadata,
+  VacuumMapEntity,
+  VacuumMapEntityKind,
+  VacuumMapLayer,
+  VacuumMapLayerKind,
+  VacuumMapRun,
   VacuumMaintenanceState,
   VacuumMapTarget,
   VacuumMapTargetGeometry,
@@ -31,7 +37,7 @@ import type { VacuumCapabilities } from "../../capabilities";
 import { buildVacuumMapMetadata } from "../../mapGrid";
 import type { ValetudoBackendCapability } from "./capabilityMapper";
 import { mapValetudoCapabilities } from "./capabilityMapper";
-import type { ValetudoRuntimeMapTarget, ValetudoRuntimeSnapshot } from "./runtimeContract";
+import type { ValetudoRuntimeMapEntity, ValetudoRuntimeMapLayer, ValetudoRuntimeMapTarget, ValetudoRuntimeSnapshot } from "./runtimeContract";
 import type { ValetudoRuntimeBoundary } from "./types";
 
 const EMPTY_NAVIGATION: VacuumNavigationStatus = {
@@ -571,6 +577,138 @@ function normalizeMapMetadata(snapshot: ValetudoRuntimeSnapshot): VacuumLayeredM
   };
 }
 
+function normalizeMapPreview(snapshot: ValetudoRuntimeSnapshot): VacuumLayeredMapPreview | undefined {
+  if (sourceUnavailableReason(snapshot) || snapshot.map?.available !== true || !snapshot.map.metadata || !snapshot.map.preview) {
+    return undefined;
+  }
+  const width = normalizePositiveInteger(snapshot.map.metadata.width);
+  const height = normalizePositiveInteger(snapshot.map.metadata.height);
+  if (width == null || height == null) {
+    return undefined;
+  }
+  const layers = normalizeMapPreviewLayers(snapshot.map.preview.layers);
+  const entities = normalizeMapPreviewEntities(snapshot.map.preview.entities);
+  if (layers.length === 0 && entities.length === 0) {
+    return undefined;
+  }
+  return {
+    width,
+    height,
+    pixelSize: normalizePositiveInteger(snapshot.map.metadata.pixelSize),
+    coordinateSystem: normalizeMapCoordinateSystem(snapshot.map.metadata.coordinateSystem),
+    layers,
+    entities,
+    updatedAt: normalizeTimestamp(snapshot.map.updatedAt),
+  };
+}
+
+function normalizeMapPreviewLayers(values: ValetudoRuntimeMapLayer[] | undefined): VacuumMapLayer[] {
+  const seen = new Set<string>();
+  return (values ?? [])
+    .filter((item): item is ValetudoRuntimeMapLayer => isRecord(item))
+    .map((item): VacuumMapLayer | null => {
+      const id = typeof item.id === "string" && item.id.trim() !== "" ? item.id.trim() : null;
+      if (!id) {
+        return null;
+      }
+      const kind = normalizeMapLayerKind(item.kind);
+      const runs = normalizeMapRuns(item.runs);
+      const points = normalizeMapPoints(item.points);
+      if (!runs && !points) {
+        return null;
+      }
+      const layer: VacuumMapLayer = {
+        id,
+        kind,
+      };
+      if (typeof item.label === "string" && item.label.trim() !== "") {
+        layer.label = item.label.trim();
+      }
+      if (typeof item.segmentId === "string" && item.segmentId.trim() !== "") {
+        layer.segmentId = item.segmentId.trim();
+      }
+      if (runs) {
+        layer.runs = runs;
+      }
+      if (points) {
+        layer.points = points;
+      }
+      return layer;
+    })
+    .filter((item): item is VacuumMapLayer => {
+      if (!item || seen.has(item.id)) {
+        return false;
+      }
+      seen.add(item.id);
+      return true;
+    });
+}
+
+function normalizeMapPreviewEntities(values: ValetudoRuntimeMapEntity[] | undefined): VacuumMapEntity[] {
+  const seen = new Set<string>();
+  return (values ?? [])
+    .filter((item): item is ValetudoRuntimeMapEntity => isRecord(item))
+    .map((item): VacuumMapEntity | null => {
+      const id = typeof item.id === "string" && item.id.trim() !== "" ? item.id.trim() : null;
+      if (!id) {
+        return null;
+      }
+      const kind = normalizeMapEntityKind(item.kind);
+      const points = normalizeMapPoints(item.points);
+      const requiredPoints = kind === "zone" ? 3 : kind === "path" ? 2 : 1;
+      if (!points || points.length < requiredPoints) {
+        return null;
+      }
+      const entity: VacuumMapEntity = {
+        id,
+        kind,
+        points,
+      };
+      if (typeof item.label === "string" && item.label.trim() !== "") {
+        entity.label = item.label.trim();
+      }
+      if (typeof item.angle === "number" && Number.isFinite(item.angle)) {
+        entity.angle = item.angle;
+      }
+      if (typeof item.detail === "string" && item.detail.trim() !== "") {
+        entity.detail = item.detail.trim();
+      }
+      return entity;
+    })
+    .filter((item): item is VacuumMapEntity => {
+      if (!item || seen.has(item.id)) {
+        return false;
+      }
+      seen.add(item.id);
+      return true;
+    });
+}
+
+function normalizeMapLayerKind(value: unknown): VacuumMapLayerKind {
+  return value === "floor" || value === "wall" || value === "segment" || value === "path" ? value : "unknown";
+}
+
+function normalizeMapEntityKind(value: unknown): VacuumMapEntityKind {
+  return value === "robot" || value === "charger" || value === "path" || value === "zone" || value === "obstacle"
+    ? value
+    : "unknown";
+}
+
+function normalizeMapRuns(value: unknown): VacuumMapRun[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const runs = value
+    .filter((run): run is Record<string, unknown> => isRecord(run))
+    .map((run) => ({
+      x: typeof run.x === "number" && Number.isFinite(run.x) ? run.x : null,
+      y: typeof run.y === "number" && Number.isFinite(run.y) ? run.y : null,
+      count: typeof run.count === "number" && Number.isFinite(run.count) && run.count > 0 ? run.count : null,
+    }))
+    .filter((run): run is VacuumMapRun => run.x != null && run.y != null && run.count != null);
+  return runs.length > 0 ? runs : undefined;
+}
+
 function normalizeMapTargets(snapshot: ValetudoRuntimeSnapshot): VacuumMapTargets | undefined {
   if (sourceUnavailableReason(snapshot) || snapshot.map?.available !== true) {
     return undefined;
@@ -853,6 +991,7 @@ export function mapValetudoRuntimeSnapshotToBoundary(
   const attachments = mapAttachments(snapshot);
   const dockComponents = mapDockComponents(snapshot);
   const mapMetadata = normalizeMapMetadata(snapshot);
+  const mapPreview = normalizeMapPreview(snapshot);
   const mapTargets = normalizeMapTargets(snapshot);
   const faults = [
     ...(normalizeActivityStatus(snapshot) === "faulted" ? [snapshot.state.label || "Valetudo runtime reported a robot fault."] : []),
@@ -898,9 +1037,10 @@ export function mapValetudoRuntimeSnapshotToBoundary(
     maintenance,
     statistics,
     attachments,
-    map: mapMetadata || mapTargets
+    map: mapMetadata || mapPreview || mapTargets
       ? {
           layeredMetadata: mapMetadata,
+          layeredPreview: mapPreview,
           targets: mapTargets,
           detail: snapshot.map?.detail,
         }
@@ -1113,6 +1253,7 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
       grid: null,
       metadata: buildVacuumMapMetadata(null, null),
       layeredMetadata: runtime.map?.layeredMetadata,
+      layeredPreview: runtime.map?.layeredPreview,
       targets: runtime.map?.targets,
       annotations: [],
     },
