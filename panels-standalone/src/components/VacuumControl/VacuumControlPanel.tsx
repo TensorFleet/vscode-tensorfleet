@@ -2375,8 +2375,15 @@ type MapPreviewRunRect = {
   height: number;
 };
 
+type MapPreviewMergedRun = {
+  x: number;
+  y: number;
+  count: number;
+};
+
 type MapPreviewTransform = {
   pixelSize: number;
+  runScale: number;
   viewBox: MapPreviewBounds;
   markerSize: number;
 };
@@ -2435,13 +2442,44 @@ function expandMapPreviewBounds(bounds: MapPreviewBounds | null, next: MapPrevie
   };
 }
 
-function mapPreviewRunRect(run: NonNullable<VacuumMapLayer["runs"]>[number], pixelSize: number): MapPreviewRunRect {
+function mapPreviewRunRect(run: NonNullable<VacuumMapLayer["runs"]>[number], runScale: number): MapPreviewRunRect {
   return {
-    x: run.x * pixelSize,
-    y: run.y * pixelSize,
-    width: run.count * pixelSize,
-    height: pixelSize,
+    x: run.x * runScale,
+    y: run.y * runScale,
+    width: run.count * runScale,
+    height: runScale,
   };
+}
+
+function mergeMapPreviewRuns(runs: NonNullable<VacuumMapLayer["runs"]>): MapPreviewMergedRun[] {
+  const runsByRow = new Map<number, MapPreviewMergedRun[]>();
+  for (const run of runs) {
+    const rowRuns = runsByRow.get(run.y) ?? [];
+    rowRuns.push({ x: run.x, y: run.y, count: run.count });
+    runsByRow.set(run.y, rowRuns);
+  }
+  const mergedRuns: MapPreviewMergedRun[] = [];
+  for (const rowRuns of runsByRow.values()) {
+    rowRuns.sort((a, b) => a.x - b.x);
+    let current: MapPreviewMergedRun | null = null;
+    for (const run of rowRuns) {
+      if (!current) {
+        current = { ...run };
+        continue;
+      }
+      const currentEnd = current.x + current.count;
+      if (run.x <= currentEnd) {
+        current.count = Math.max(current.count, run.x + run.count - current.x);
+        continue;
+      }
+      mergedRuns.push(current);
+      current = { ...run };
+    }
+    if (current) {
+      mergedRuns.push(current);
+    }
+  }
+  return mergedRuns;
 }
 
 function mapPreviewPointBounds(points: Array<{ x: number; y: number }>, padding = 0): MapPreviewBounds | null {
@@ -2475,6 +2513,48 @@ function mapPreviewLayerBounds(layer: VacuumMapLayer, pixelSize: number): MapPre
   return pointBounds ? expandMapPreviewBounds(bounds, pointBounds) : bounds;
 }
 
+function mapPreviewRunBounds(preview: VacuumLayeredMapPreview, runScale: number): MapPreviewBounds | null {
+  let bounds: MapPreviewBounds | null = null;
+  for (const layer of preview.layers) {
+    for (const run of layer.runs ?? []) {
+      const rect = mapPreviewRunRect(run, runScale);
+      bounds = expandMapPreviewBounds(bounds, {
+        minX: rect.x,
+        minY: rect.y,
+        maxX: rect.x + rect.width,
+        maxY: rect.y + rect.height,
+      });
+    }
+  }
+  return bounds;
+}
+
+function mapPreviewBoundsSpan(bounds: MapPreviewBounds | null, axis: "x" | "y"): number {
+  if (!bounds) {
+    return 0;
+  }
+  return axis === "x" ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY;
+}
+
+function inferMapPreviewRunScale(preview: VacuumLayeredMapPreview, pixelSize: number): number {
+  if (pixelSize <= 1) {
+    return 1;
+  }
+  const rawBounds = mapPreviewRunBounds(preview, 1);
+  if (!rawBounds) {
+    return 1;
+  }
+  const scaledBounds = mapPreviewRunBounds(preview, pixelSize);
+  if (!scaledBounds) {
+    return 1;
+  }
+  const fitsScaledBounds = scaledBounds.maxX <= preview.width && scaledBounds.maxY <= preview.height;
+  const fillsPreviewWhenScaled =
+    mapPreviewBoundsSpan(scaledBounds, "x") >= preview.width * 0.45 ||
+    mapPreviewBoundsSpan(scaledBounds, "y") >= preview.height * 0.45;
+  return fitsScaledBounds && fillsPreviewWhenScaled ? pixelSize : 1;
+}
+
 function mapPreviewContentBounds(preview: VacuumLayeredMapPreview, pixelSize: number): MapPreviewBounds | null {
   let bounds: MapPreviewBounds | null = null;
   for (const layer of preview.layers) {
@@ -2503,8 +2583,9 @@ function clampMapPreviewBounds(bounds: MapPreviewBounds, preview: VacuumLayeredM
 
 function buildMapPreviewTransform(preview: VacuumLayeredMapPreview): MapPreviewTransform {
   const pixelSize = preview.pixelSize && preview.pixelSize > 0 ? preview.pixelSize : 1;
+  const runScale = inferMapPreviewRunScale(preview, pixelSize);
   const fallbackBounds = { minX: 0, minY: 0, maxX: preview.width, maxY: preview.height };
-  const contentBounds = mapPreviewContentBounds(preview, pixelSize) ?? fallbackBounds;
+  const contentBounds = mapPreviewContentBounds(preview, runScale) ?? fallbackBounds;
   const contentWidth = Math.max(1, contentBounds.maxX - contentBounds.minX);
   const contentHeight = Math.max(1, contentBounds.maxY - contentBounds.minY);
   const padding = Math.max(4, Math.min(16, Math.min(contentWidth, contentHeight) * 0.04));
@@ -2520,6 +2601,7 @@ function buildMapPreviewTransform(preview: VacuumLayeredMapPreview): MapPreviewT
   const viewBoxMinDimension = Math.min(viewBox.maxX - viewBox.minX, viewBox.maxY - viewBox.minY);
   return {
     pixelSize,
+    runScale,
     viewBox,
     markerSize: clamp(viewBoxMinDimension * 0.04, 6, 14),
   };
@@ -2534,13 +2616,13 @@ function mapPreviewPointList(points: Array<{ x: number; y: number }>): string {
   return points.map((point) => `${point.x},${point.y}`).join(" ");
 }
 
-function mapPreviewRunPath(runs: NonNullable<VacuumMapLayer["runs"]> | undefined, pixelSize: number): string | null {
+function mapPreviewRunPath(runs: NonNullable<VacuumMapLayer["runs"]> | undefined, runScale: number): string | null {
   if (!runs || runs.length === 0) {
     return null;
   }
-  const path = runs
+  const path = mergeMapPreviewRuns(runs)
     .map((run) => {
-      const rect = mapPreviewRunRect(run, pixelSize);
+      const rect = mapPreviewRunRect(run, runScale);
       return `M ${rect.x} ${rect.y} h ${rect.width} v ${rect.height} h ${-rect.width} Z`;
     })
     .join(" ");
@@ -2719,7 +2801,7 @@ function buildMapPreviewRenderData(preview: VacuumLayeredMapPreview): MapPreview
   const layers = prepareMapPreviewLayers(preview.layers).map(({ layer, segmentToneIndex }) => ({
     id: layer.id,
     className: mapPreviewLayerClass(layer, segmentToneIndex),
-    runPath: mapPreviewRunPath(layer.runs, transform.pixelSize),
+    runPath: mapPreviewRunPath(layer.runs, transform.runScale),
     pointList: layer.points && layer.points.length >= 2 ? mapPreviewPointList(layer.points) : null,
   }));
   return {

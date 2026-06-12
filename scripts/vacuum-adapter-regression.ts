@@ -3146,7 +3146,7 @@ function testPublicContractAndUiBoundary(): void {
     true,
     "Main preview should be gated directly by normalized layeredPreview presence",
   );
-  const mapPreviewUiStart = panelContents.indexOf("function buildMapPreviewTransform");
+  const mapPreviewUiStart = panelContents.indexOf("function mapPreviewRunRect");
   const mapPreviewUiEnd = panelContents.indexOf("function MapTargetSection");
   assert.equal(mapPreviewUiStart >= 0 && mapPreviewUiEnd > mapPreviewUiStart, true);
   const mapPreviewUi = panelContents.slice(mapPreviewUiStart, mapPreviewUiEnd);
@@ -3158,6 +3158,9 @@ function testPublicContractAndUiBoundary(): void {
   assert.equal(
     /buildMapPreviewTransform/.test(mapPreviewUi) &&
       /mapPreviewRunRect/.test(mapPreviewUi) &&
+      /mergeMapPreviewRuns/.test(mapPreviewUi) &&
+      /inferMapPreviewRunScale/.test(mapPreviewUi) &&
+      /runPath: mapPreviewRunPath\(layer\.runs, transform\.runScale\)/.test(mapPreviewUi) &&
       /mapPreviewRunPath/.test(mapPreviewUi) &&
       /prepareMapPreviewLayers/.test(mapPreviewUi) &&
       /mapPreviewLegendItems/.test(mapPreviewUi) &&
@@ -3168,7 +3171,7 @@ function testPublicContractAndUiBoundary(): void {
       /useMapPreviewRenderData/.test(mapPreviewUi) &&
       /preserveAspectRatio="xMidYMid meet"/.test(mapPreviewUi),
     true,
-    "Map Preview renderer should keep memoized coordinate transforms, layer ordering, run path conversion, target highlighting, aspect-ratio preservation, and visual legend inside the normalized renderer",
+    "Map Preview renderer should keep memoized coordinate transforms, inferred run scaling, run compaction, layer ordering, run path conversion, target highlighting, aspect-ratio preservation, and visual legend inside the normalized renderer",
   );
   assert.equal(
     /<rect[\s\S]*run:/.test(mapPreviewUi),
