@@ -1,29 +1,29 @@
-# Progress Report - Valetudo Main Canvas Static Map Preview
+# Progress Report - Valetudo Map Preview Performance and Sidebar Dedup
 Current report date: 2026-06-12.
 
 ## 1. What changed
-- Added a main-canvas Valetudo layered-preview fallback that renders when normalized `snapshot.map.layeredPreview` is present and the normal map-capable `MapCanvas` path is unavailable.
-- Kept the existing TurtleBot4/Nav2 `MapCanvas` behavior gated by `capabilities.map.supported`; the interactive map path still owns occupancy-grid rendering and navigation/clean-area interactions.
-- Extracted the shared SVG renderer into `ValetudoLayeredMapSvg` and reused it from both the compact sidebar `MapPreviewCard` and the large center `ValetudoMainMapPreview`.
-- Preserved map aspect ratio with the renderer `viewBox`, explicit SVG `preserveAspectRatio`, and main-canvas fit styling for the larger read-only preview frame.
-- Kept the preview read-only: no segment selection, zone selection, hover targets, drawing tools, route calls, command buttons, SSE subscriptions, or map interactions were added.
-- Kept the small sidebar Map Preview as a compact confirmation card because it shares the renderer and sits next to the read-only Map Targets inventory.
-- Updated the adapter regression harness to assert the main preview branch, shared renderer reuse, normalized `layeredPreview` gating, and unchanged map capability gate.
+- Added an explicit sidebar deduplication gate: when the main canvas layered Valetudo preview is visible, the compact sidebar `MapPreviewCard` is not mounted.
+- Kept `MapPreviewCard` as a fallback for the case where normalized preview data exists but the main layered preview branch is absent.
+- Memoized expensive layered-preview render data with `useMemo`, including content bounds, `viewBox`, aspect ratio, layer ordering, converted run paths, marker sizing, and legend items.
+- Reduced SVG node count by converting each layer's run rectangles into one compound SVG path per layer, while preserving optional point polylines and entity markers.
+- Kept the sidebar `MapTargetsCard` visible and unchanged apart from sharing the existing Operate group spacing.
+- Did not change the adapter, runtime, vm-manager, or `/home/shane/firecracker-vm/tensorfleet-mgr`; this was a UI/test/report-only pass.
+- Updated the adapter regression harness to assert sidebar preview deduplication, shared memoized renderer use, run-to-path conversion, normalized UI boundaries, disabled command gates, and unchanged `MapCanvas` capability gating.
 
 ## 2. Product behavior
-- When a Valetudo snapshot includes normalized layered preview data, the main canvas now shows a large static saved-map preview with rooms, zones, robot, charger, paths, restrictions, virtual wall, and obstacle styling when those normalized records exist.
-- The sidebar still shows Map Targets, and the compact Map Preview remains available for quick context in the Operate group.
-- `capabilities.map.supported` remains false for Valetudo full interactive map support.
-- Segment cleaning, zone cleaning, room cleaning, go-to, Clean Area, map annotations, and mapping-session capabilities remain unsupported or detected-not-ready.
-- Raw Valetudo payload fields are still not consumed by UI; the preview path uses only normalized adapter data.
+- The main canvas static Valetudo preview remains visible when normalized `snapshot.map.layeredPreview` exists and the normal map-capable `MapCanvas` path is unavailable.
+- The duplicate sidebar Map Preview no longer renders when the main layered preview is visible, so the full SVG renderer is mounted once by default.
+- Map Targets remains available in the sidebar from normalized `snapshot.map.targets`.
+- The preview remains read-only: no target hover, selection, drawing, editing, runtime route calls, ROS subscriptions, SSE streaming, or command controls were added.
+- Commands/capabilities remain disabled for Valetudo interactive map work: segment cleaning, zone cleaning, room cleaning, go-to, Clean Area, and full map support were not enabled.
+- Missing, malformed, stale, or unreachable preview data still omits `snapshot.map.layeredPreview`, which falls back to the existing no-map placeholder behavior; malformed/unavailable targets continue to render only when normalized targets exist.
 
 ## 3. Still deferred
-- Full interactive map rendering.
-- Segment selection.
-- Zone selection.
 - Target hover interaction.
+- Target selection.
 - Segment cleaning command.
 - Zone cleaning command.
+- Room cleaning command.
 - Go-to command.
 - User-created zone drawing.
 - Map SSE/live streaming.

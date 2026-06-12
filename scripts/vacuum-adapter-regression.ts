@@ -3113,17 +3113,18 @@ function testPublicContractAndUiBoundary(): void {
   assert.equal(
     /MapPreviewCard/.test(panelContents) &&
       /preview=\{snapshot\.map\.layeredPreview\}/.test(panelContents) &&
-      /const sidebarShowMapPreview = layeredMapPreviewAvailable/.test(panelContents),
+      /const mainLayeredMapPreviewVisible = !mapSurfaceAvailable && layeredMapPreviewAvailable/.test(panelContents) &&
+      /const sidebarShowMapPreview = layeredMapPreviewAvailable && !mainLayeredMapPreviewVisible/.test(panelContents),
     true,
-    "Map Preview card should render only from normalized layered preview presence",
+    "Sidebar Map Preview card should stay hidden while the main layered preview is visible",
   );
   assert.equal(
-    /function ValetudoLayeredMapSvg/.test(panelContents) &&
-      /<ValetudoLayeredMapSvg[\s\S]*preview=\{preview\}/.test(panelContents) &&
+    /const ValetudoLayeredMapSvg = memo/.test(panelContents) &&
+      /<ValetudoLayeredMapSvg[\s\S]*preview=\{preview\}[\s\S]*renderData=\{renderData\}/.test(panelContents) &&
       /function ValetudoMainMapPreview/.test(panelContents) &&
       /className="vacuum-map-preview-svg vacuum-map-preview-svg--main"/.test(panelContents),
     true,
-    "Main and sidebar previews should reuse the shared normalized layered-map SVG renderer",
+    "Main and sidebar previews should reuse the shared normalized layered-map SVG renderer with memoized render data",
   );
   assert.equal(
     /const layeredMapPreviewAvailable = hasRenderableLayeredMapPreview\(snapshot\.map\.layeredPreview\)/.test(panelContents) &&
@@ -3143,11 +3144,18 @@ function testPublicContractAndUiBoundary(): void {
   assert.equal(
     /buildMapPreviewTransform/.test(mapPreviewUi) &&
       /mapPreviewRunRect/.test(mapPreviewUi) &&
+      /mapPreviewRunPath/.test(mapPreviewUi) &&
       /prepareMapPreviewLayers/.test(mapPreviewUi) &&
       /mapPreviewLegendItems/.test(mapPreviewUi) &&
+      /useMapPreviewRenderData/.test(mapPreviewUi) &&
       /preserveAspectRatio="xMidYMid meet"/.test(mapPreviewUi),
     true,
-    "Map Preview renderer should keep coordinate transforms, layer ordering, aspect-ratio preservation, and visual legend inside the normalized renderer",
+    "Map Preview renderer should keep memoized coordinate transforms, layer ordering, run path conversion, aspect-ratio preservation, and visual legend inside the normalized renderer",
+  );
+  assert.equal(
+    /<rect[\s\S]*run:/.test(mapPreviewUi),
+    false,
+    "Map Preview layers should avoid rendering one SVG rect per normalized run",
   );
   assert.equal(
     /vacuum-map-stage--layered-preview/.test(panelStyles) &&

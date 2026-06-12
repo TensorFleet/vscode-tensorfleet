@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConnectionSettings } from "../ConnectionSettingsProvider";
 import { ros2Bridge } from "tensorfleet-ros";
 import {
@@ -2387,6 +2387,23 @@ type MapPreviewRenderableLayer = {
   segmentToneIndex: number;
 };
 
+type MapPreviewRenderLayer = {
+  id: string;
+  className: string;
+  runPath: string | null;
+  pointList: string | null;
+};
+
+type MapPreviewRenderData = {
+  transform: MapPreviewTransform;
+  viewBox: string;
+  aspectRatio: string;
+  layers: MapPreviewRenderLayer[];
+  entities: VacuumMapEntity[];
+  markerSize: number;
+  legendItems: string[];
+};
+
 const MAP_PREVIEW_LAYER_ORDER: Record<VacuumMapLayer["kind"], number> = {
   floor: 0,
   segment: 1,
@@ -2506,6 +2523,19 @@ function mapPreviewPointList(points: Array<{ x: number; y: number }>): string {
   return points.map((point) => `${point.x},${point.y}`).join(" ");
 }
 
+function mapPreviewRunPath(runs: NonNullable<VacuumMapLayer["runs"]> | undefined, pixelSize: number): string | null {
+  if (!runs || runs.length === 0) {
+    return null;
+  }
+  const path = runs
+    .map((run) => {
+      const rect = mapPreviewRunRect(run, pixelSize);
+      return `M ${rect.x} ${rect.y} h ${rect.width} v ${rect.height} h ${-rect.width} Z`;
+    })
+    .join(" ");
+  return path.length > 0 ? path : null;
+}
+
 function mapPreviewViewBox(bounds: MapPreviewBounds): string {
   return `${bounds.minX} ${bounds.minY} ${bounds.maxX - bounds.minX} ${bounds.maxY - bounds.minY}`;
 }
@@ -2571,34 +2601,46 @@ function hasRenderableLayeredMapPreview(preview: VacuumLayeredMapPreview | undef
   return !!preview && preview.width > 0 && preview.height > 0 && (preview.layers.length > 0 || preview.entities.length > 0);
 }
 
-function MapPreviewLayer(props: {
-  layer: VacuumMapLayer;
-  segmentToneIndex: number;
-  transform: MapPreviewTransform;
-}): JSX.Element {
-  const className = mapPreviewLayerClass(props.layer, props.segmentToneIndex);
-  return (
-    <g className={className}>
-      {(props.layer.runs ?? []).map((run, index) => {
-        const rect = mapPreviewRunRect(run, props.transform.pixelSize);
-        return (
-          <rect
-            key={`${props.layer.id}:run:${index}`}
-            x={rect.x}
-            y={rect.y}
-            width={rect.width}
-            height={rect.height}
-          />
-        );
-      })}
-      {props.layer.points && props.layer.points.length >= 2 ? (
-        <polyline points={mapPreviewPointList(props.layer.points)} />
-      ) : null}
-    </g>
-  );
+function buildMapPreviewRenderData(preview: VacuumLayeredMapPreview): MapPreviewRenderData {
+  const transform = buildMapPreviewTransform(preview);
+  const layers = prepareMapPreviewLayers(preview.layers).map(({ layer, segmentToneIndex }) => ({
+    id: layer.id,
+    className: mapPreviewLayerClass(layer, segmentToneIndex),
+    runPath: mapPreviewRunPath(layer.runs, transform.pixelSize),
+    pointList: layer.points && layer.points.length >= 2 ? mapPreviewPointList(layer.points) : null,
+  }));
+  return {
+    transform,
+    viewBox: mapPreviewViewBox(transform.viewBox),
+    aspectRatio: mapPreviewAspectRatio(transform.viewBox),
+    layers,
+    entities: preview.entities,
+    markerSize: transform.markerSize,
+    legendItems: mapPreviewLegendItems(preview),
+  };
 }
 
-function MapPreviewEntity(props: {
+function useMapPreviewRenderData(preview: VacuumLayeredMapPreview | undefined): MapPreviewRenderData | null {
+  return useMemo(() => {
+    if (!hasRenderableLayeredMapPreview(preview)) {
+      return null;
+    }
+    return buildMapPreviewRenderData(preview);
+  }, [preview]);
+}
+
+const MapPreviewLayer = memo(function MapPreviewLayer(props: {
+  layer: MapPreviewRenderLayer;
+}): JSX.Element {
+  return (
+    <g className={props.layer.className}>
+      {props.layer.runPath ? <path d={props.layer.runPath} /> : null}
+      {props.layer.pointList ? <polyline points={props.layer.pointList} /> : null}
+    </g>
+  );
+});
+
+const MapPreviewEntity = memo(function MapPreviewEntity(props: {
   entity: VacuumMapEntity;
   markerSize: number;
 }): JSX.Element | null {
@@ -2643,60 +2685,60 @@ function MapPreviewEntity(props: {
     );
   }
   return <circle className={`vacuum-map-preview-entity vacuum-map-preview-entity--${props.entity.kind}`} cx={point.x} cy={point.y} r={props.markerSize * 0.58} />;
-}
+});
 
-function ValetudoLayeredMapSvg(props: {
+const ValetudoLayeredMapSvg = memo(function ValetudoLayeredMapSvg(props: {
   preview?: VacuumLayeredMapPreview;
+  renderData?: MapPreviewRenderData | null;
   className?: string;
   ariaLabel: string;
 }): JSX.Element | null {
   const preview = props.preview;
-  if (!hasRenderableLayeredMapPreview(preview)) {
+  const fallbackRenderData = useMapPreviewRenderData(props.renderData ? undefined : preview);
+  const renderData = props.renderData ?? fallbackRenderData;
+  if (!hasRenderableLayeredMapPreview(preview) || !renderData) {
     return null;
   }
-  const transform = buildMapPreviewTransform(preview);
-  const renderableLayers = prepareMapPreviewLayers(preview.layers);
 
   return (
     <svg
       className={props.className ?? "vacuum-map-preview-svg"}
-      viewBox={mapPreviewViewBox(transform.viewBox)}
+      viewBox={renderData.viewBox}
       preserveAspectRatio="xMidYMid meet"
       role="img"
       aria-label={props.ariaLabel}
     >
       <rect className="vacuum-map-preview-bg" x="0" y="0" width={preview.width} height={preview.height} />
-      {renderableLayers.map(({ layer, segmentToneIndex }) => (
-        <MapPreviewLayer key={layer.id} layer={layer} segmentToneIndex={segmentToneIndex} transform={transform} />
+      {renderData.layers.map((layer) => (
+        <MapPreviewLayer key={layer.id} layer={layer} />
       ))}
-      {preview.entities.map((entity) => (
-        <MapPreviewEntity key={entity.id} entity={entity} markerSize={transform.markerSize} />
+      {renderData.entities.map((entity) => (
+        <MapPreviewEntity key={entity.id} entity={entity} markerSize={renderData.markerSize} />
       ))}
     </svg>
   );
-}
+});
 
 function MapPreviewCard(props: {
   preview?: VacuumLayeredMapPreview;
 }): JSX.Element | null {
   const preview = props.preview;
-  if (!hasRenderableLayeredMapPreview(preview)) {
+  const renderData = useMapPreviewRenderData(preview);
+  if (!hasRenderableLayeredMapPreview(preview) || !renderData) {
     return null;
   }
-  const transform = buildMapPreviewTransform(preview);
-  const legendItems = mapPreviewLegendItems(preview);
 
   return (
     <section className="vacuum-panel-card vacuum-panel-card--map-preview" aria-label="Map preview">
       <div className="vacuum-panel-card__head">
         <p className="vacuum-panel-card__eyebrow">Map Preview</p>
       </div>
-      <div className="vacuum-map-preview-frame" style={{ aspectRatio: mapPreviewAspectRatio(transform.viewBox) }}>
-        <ValetudoLayeredMapSvg preview={preview} ariaLabel="Static normalized map preview" />
+      <div className="vacuum-map-preview-frame" style={{ aspectRatio: renderData.aspectRatio }}>
+        <ValetudoLayeredMapSvg preview={preview} renderData={renderData} ariaLabel="Static normalized map preview" />
       </div>
-      {legendItems.length > 0 ? (
+      {renderData.legendItems.length > 0 ? (
         <div className="vacuum-map-preview-legend" aria-hidden="true">
-          {legendItems.map((item) => (
+          {renderData.legendItems.map((item) => (
             <span key={item} className={`vacuum-map-preview-legend__item vacuum-map-preview-legend__item--${mapPreviewLegendClass(item)}`}>
               {item}
             </span>
@@ -2712,17 +2754,18 @@ function ValetudoMainMapPreview(props: {
   preview?: VacuumLayeredMapPreview;
 }): JSX.Element | null {
   const preview = props.preview;
-  if (!hasRenderableLayeredMapPreview(preview)) {
+  const renderData = useMapPreviewRenderData(preview);
+  if (!hasRenderableLayeredMapPreview(preview) || !renderData) {
     return null;
   }
-  const transform = buildMapPreviewTransform(preview);
 
   return (
     <section className="vacuum-map-card vacuum-map-card--layered-preview" aria-label="Main map preview">
       <div className="vacuum-map-stage vacuum-map-stage--layered-preview">
-        <div className="vacuum-layered-map-preview-frame" style={{ aspectRatio: mapPreviewAspectRatio(transform.viewBox) }}>
+        <div className="vacuum-layered-map-preview-frame" style={{ aspectRatio: renderData.aspectRatio }}>
           <ValetudoLayeredMapSvg
             preview={preview}
+            renderData={renderData}
             className="vacuum-map-preview-svg vacuum-map-preview-svg--main"
             ariaLabel="Large static normalized map preview"
           />
@@ -4293,7 +4336,9 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
   const sidebarMapTargetZones = snapshot.map.targets?.zones ?? [];
   const sidebarShowMapTargets = sidebarMapTargetSegments.length > 0 || sidebarMapTargetZones.length > 0;
   const layeredMapPreviewAvailable = hasRenderableLayeredMapPreview(snapshot.map.layeredPreview);
-  const sidebarShowMapPreview = layeredMapPreviewAvailable;
+  const mainLayeredMapPreviewVisible = !mapSurfaceAvailable && layeredMapPreviewAvailable;
+  // Avoid mounting the full layered SVG twice; keep the sidebar card only as a fallback when the main preview is absent.
+  const sidebarShowMapPreview = layeredMapPreviewAvailable && !mainLayeredMapPreviewVisible;
   const sidebarShowAttachments = snapshot.capabilities.attachments.supported && sidebarAttachmentItems.length > 0;
   const sidebarShowDockComponents = snapshot.capabilities.dock_components.supported && sidebarDockComponentItems.length > 0;
   const sidebarShowFanSpeed = !!(snapshot.cleaningSettings?.fanSpeed && snapshot.capabilities.fan_speed.supported);

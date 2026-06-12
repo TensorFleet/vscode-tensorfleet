@@ -3132,7 +3132,7 @@ body {
   fill: #0f1211;
 }
 
-.vacuum-map-preview-layer rect,
+.vacuum-map-preview-layer path,
 .vacuum-map-preview-layer polyline,
 .vacuum-map-preview-entity,
 .vacuum-map-preview-entity rect,
@@ -3143,43 +3143,43 @@ body {
   vector-effect: non-scaling-stroke;
 }
 
-.vacuum-map-preview-layer--floor rect {
+.vacuum-map-preview-layer--floor path {
   fill: rgba(214, 212, 199, 0.24);
 }
 
-.vacuum-map-preview-layer--wall rect {
+.vacuum-map-preview-layer--wall path {
   fill: rgba(244, 242, 235, 0.9);
   stroke: rgba(8, 10, 10, 0.42);
   stroke-width: 0.55;
 }
 
-.vacuum-map-preview-layer--segment rect {
+.vacuum-map-preview-layer--segment path {
   opacity: 0.82;
   stroke: rgba(10, 14, 14, 0.22);
   stroke-width: 0.35;
 }
 
-.vacuum-map-preview-layer--segment-0 rect {
+.vacuum-map-preview-layer--segment-0 path {
   fill: rgba(56, 200, 176, 0.46);
 }
 
-.vacuum-map-preview-layer--segment-1 rect {
+.vacuum-map-preview-layer--segment-1 path {
   fill: rgba(115, 182, 242, 0.44);
 }
 
-.vacuum-map-preview-layer--segment-2 rect {
+.vacuum-map-preview-layer--segment-2 path {
   fill: rgba(255, 179, 92, 0.4);
 }
 
-.vacuum-map-preview-layer--segment-3 rect {
+.vacuum-map-preview-layer--segment-3 path {
   fill: rgba(88, 211, 141, 0.4);
 }
 
-.vacuum-map-preview-layer--segment-4 rect {
+.vacuum-map-preview-layer--segment-4 path {
   fill: rgba(255, 116, 97, 0.36);
 }
 
-.vacuum-map-preview-layer--segment-5 rect {
+.vacuum-map-preview-layer--segment-5 path {
   fill: rgba(186, 158, 255, 0.36);
 }
 
@@ -3192,7 +3192,7 @@ body {
   stroke-dasharray: 5 4;
 }
 
-.vacuum-map-preview-layer--unknown rect {
+.vacuum-map-preview-layer--unknown path {
   fill: rgba(185, 177, 163, 0.18);
 }
 
