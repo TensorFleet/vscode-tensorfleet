@@ -3074,6 +3074,10 @@ body {
   gap: 10px;
 }
 
+.vacuum-panel-card--readiness-list {
+  gap: 10px;
+}
+
 .vacuum-current-statistics {
   min-width: 0;
   display: grid;
@@ -3117,6 +3121,57 @@ body {
   min-width: 0;
   display: grid;
   gap: 10px;
+}
+
+.vacuum-readiness-list {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.vacuum-readiness-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 8px 0;
+  border-top: 1px solid rgba(232, 226, 214, 0.07);
+}
+
+.vacuum-readiness-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.vacuum-readiness-row strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vacuum-text);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-readiness-row span {
+  max-width: 112px;
+  overflow: hidden;
+  color: var(--vacuum-text-soft);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacuum-readiness-row p {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--vacuum-text-muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .vacuum-consumable {

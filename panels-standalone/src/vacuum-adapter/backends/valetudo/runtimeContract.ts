@@ -59,6 +59,7 @@ export type ValetudoRuntimeSnapshot = {
   dock?: {
     state: string;
     docked: boolean;
+    components?: ValetudoRuntimeDockComponent[];
   };
   cleaningSettings?: {
     fanSpeed?: {
@@ -75,6 +76,9 @@ export type ValetudoRuntimeSnapshot = {
   };
   statistics?: {
     current?: ValetudoRuntimeCurrentStatistics;
+  };
+  attachments?: {
+    items?: ValetudoRuntimeAttachment[];
   };
   capabilities: {
     commands: Record<string, { available: boolean; reason?: string }>;
@@ -139,6 +143,27 @@ export type ValetudoRuntimeCurrentStatistics = {
   startedAt?: number | string;
   updatedAt?: number | string;
   detail?: string;
+};
+
+export type ValetudoRuntimeAttachment = {
+  id: string;
+  label: string;
+  kind: string;
+  status: string;
+  available?: boolean;
+  levelPercent?: number;
+  detail?: string;
+  updatedAt?: number | string;
+};
+
+export type ValetudoRuntimeDockComponent = {
+  id: string;
+  label: string;
+  kind: string;
+  status: string;
+  levelPercent?: number;
+  detail?: string;
+  updatedAt?: number | string;
 };
 
 export type ValetudoRuntimeCapabilityDiagnostic = {

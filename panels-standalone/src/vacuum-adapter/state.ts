@@ -355,6 +355,54 @@ export type VacuumSourceStatus = "reachable" | "unreachable" | "stale" | "unknow
 
 export type VacuumDockState = "unknown" | "docked" | "undocked" | "returning" | "charging" | "error";
 
+export type VacuumAttachmentKind = "dustbin" | "water_tank" | "mop" | "detergent" | "unknown";
+
+export type VacuumAttachmentStatus =
+  | "installed"
+  | "missing"
+  | "full"
+  | "empty"
+  | "low"
+  | "ok"
+  | "unknown"
+  | "error";
+
+export type VacuumAttachmentState = {
+  id: string;
+  label: string;
+  kind: VacuumAttachmentKind;
+  status: VacuumAttachmentStatus;
+  available?: boolean;
+  levelPercent?: number;
+  detail?: string;
+  updatedAt?: number | string;
+};
+
+export type VacuumAttachmentsState = {
+  items: VacuumAttachmentState[];
+};
+
+export type VacuumDockComponentKind = "freshwater" | "wastewater" | "detergent" | "dustbag" | "unknown";
+
+export type VacuumDockComponentStatus =
+  | "ok"
+  | "missing"
+  | "full"
+  | "empty"
+  | "low"
+  | "unknown"
+  | "error";
+
+export type VacuumDockComponentState = {
+  id: string;
+  label: string;
+  kind: VacuumDockComponentKind;
+  status: VacuumDockComponentStatus;
+  levelPercent?: number;
+  detail?: string;
+  updatedAt?: number | string;
+};
+
 export type VacuumRuntimeHealth = {
   runtimeStatus: VacuumRuntimeHealthStatus;
   updatedAt?: number | string;
@@ -374,6 +422,7 @@ export type VacuumDockStatus = {
   state?: VacuumDockState;
   charging?: boolean;
   detail?: string;
+  components?: VacuumDockComponentState[];
 };
 
 export type VacuumCleaningSettingOption = {
@@ -446,6 +495,7 @@ export type VacuumAdapterSnapshot = {
   cleaningSettings?: VacuumCleaningSettingsState;
   maintenance?: VacuumMaintenanceState;
   statistics?: VacuumStatisticsState;
+  attachments?: VacuumAttachmentsState;
   diagnostics?: VacuumAdapterDiagnostics;
   map: VacuumMapState;
   pose: VacuumPoseState;

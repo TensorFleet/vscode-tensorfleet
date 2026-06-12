@@ -1749,7 +1749,16 @@ function testValetudoRuntimeSnapshotMapping(): void {
     connectivity: { reachable: true, online: true },
     state: { value: "idle", label: "Idle", started: false, paused: false },
     battery: { level: 82, charging: false },
-    dock: { state: "available", docked: true },
+    dock: {
+      state: "available",
+      docked: true,
+      components: [
+        { id: "freshwater", label: "Freshwater", kind: "freshwater", status: "ok", levelPercent: 76, detail: "Freshwater ready.", updatedAt: 1 },
+        { id: "wastewater", label: "Wastewater", kind: "wastewater", status: "empty", levelPercent: 18, detail: "Wastewater tank has capacity.", updatedAt: 1 },
+        { id: "detergent", label: "Dock detergent", kind: "detergent", status: "ok", levelPercent: 64, detail: "Dock detergent ready.", updatedAt: 1 },
+        { id: "dustbag", label: "Dustbag", kind: "dustbag", status: "ok", detail: "Dustbag installed.", updatedAt: 1 },
+      ],
+    },
     capabilities: {
       commands: {
         start_cleaning: { available: true },
@@ -1825,6 +1834,14 @@ function testValetudoRuntimeSnapshotMapping(): void {
         detail: "Fixed mock current cleaning statistics.",
       },
     },
+    attachments: {
+      items: [
+        { id: "dustbin", label: "Dustbin", kind: "dustbin", status: "installed", detail: "Dustbin installed.", updatedAt: 1 },
+        { id: "water_tank", label: "Water tank", kind: "water_tank", status: "ok", levelPercent: 68, detail: "Robot water tank ready.", updatedAt: 1 },
+        { id: "mop", label: "Mop", kind: "mop", status: "installed", detail: "Mop attached.", updatedAt: 1 },
+        { id: "detergent", label: "Detergent", kind: "detergent", status: "ok", levelPercent: 74, detail: "Robot detergent present.", updatedAt: 1 },
+      ],
+    },
     updatedAt: 1,
   });
   const snapshot = mapValetudoState(boundary);
@@ -1858,9 +1875,27 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.capabilities.statistics.available, true);
   assert.deepEqual(snapshot.capabilities.statistics.commands, []);
   assert.deepEqual(snapshot.capabilities.statistics.attributes, ["current"]);
+  assert.equal(snapshot.capabilities.attachments.supported, true);
+  assert.equal(snapshot.capabilities.attachments.available, true);
+  assert.deepEqual(snapshot.capabilities.attachments.commands, []);
+  assert.equal(snapshot.capabilities.attachments.attributes?.includes("items"), true);
+  assert.equal(snapshot.capabilities.attachments.attributes?.includes("kind:dustbin"), true);
+  assert.equal(snapshot.capabilities.attachments.attributes?.includes("kind:water_tank"), true);
+  assert.equal(snapshot.capabilities.dock_components.supported, true);
+  assert.equal(snapshot.capabilities.dock_components.available, true);
+  assert.deepEqual(snapshot.capabilities.dock_components.commands, []);
+  assert.equal(snapshot.capabilities.dock_components.attributes?.includes("components"), true);
+  assert.equal(snapshot.capabilities.dock_components.attributes?.includes("kind:freshwater"), true);
+  assert.equal(snapshot.capabilities.dock_components.attributes?.includes("kind:dustbag"), true);
   assert.equal(snapshot.statistics?.current?.durationSeconds, 1440);
   assert.equal(snapshot.statistics?.current?.areaSquareMeters, 63);
   assert.equal(snapshot.statistics?.current?.updatedAt, 1);
+  assert.equal(snapshot.attachments?.items.length, 4);
+  assert.equal(snapshot.attachments?.items[0]?.label, "Dustbin");
+  assert.equal(snapshot.attachments?.items[1]?.levelPercent, 68);
+  assert.equal(snapshot.dock?.components?.length, 4);
+  assert.equal(snapshot.dock?.components?.[0]?.label, "Freshwater");
+  assert.equal(snapshot.dock?.components?.[1]?.status, "empty");
   assert.equal(snapshot.capabilities.segment_cleaning.supported, false);
   assert.equal(snapshot.capabilities.segment_cleaning.status, "detected_not_ready");
   assert.equal(snapshot.capabilities.room_semantics.supported, false);
@@ -2217,6 +2252,94 @@ function testValetudoRuntimeSnapshotMapping(): void {
   );
   assert.equal(malformedStatistics.capabilities.statistics.supported, false);
   assert.equal(malformedStatistics.statistics, undefined);
+}
+
+function testValetudoAttachmentsAndDockComponentGuards(): void {
+  const baseRuntime: ValetudoRuntimeSnapshot = {
+    runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.8.2", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
+    source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 1 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "idle", label: "Idle", started: false, paused: false },
+    battery: { level: 82, charging: false },
+    dock: { state: "available", docked: true },
+    capabilities: {
+      commands: {
+        start_cleaning: { available: true },
+        pause: { available: true },
+        resume: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      },
+      diagnostics: [],
+    },
+    diagnostics: {
+      mode: "fixed_mock",
+      rawCapabilityNames: ["BasicControlCapability"],
+    },
+    updatedAt: 1,
+  };
+
+  const missing = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary(baseRuntime));
+  assert.equal(missing.attachments, undefined);
+  assert.equal(missing.dock?.components, undefined);
+  assert.equal(missing.capabilities.attachments.supported, false);
+  assert.equal(missing.capabilities.dock_components.supported, false);
+
+  const malformed = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      ...baseRuntime,
+      attachments: {
+        items: [
+          { id: "", label: "Missing id", kind: "dustbin", status: "ok" },
+          { id: "mystery_tool", label: "Mystery tool", kind: "surprise", status: "present", levelPercent: 140 },
+          { id: "water_tank", label: "Water tank", kind: "water_tank", status: "low", levelPercent: 12 },
+        ],
+      },
+      dock: {
+        state: "available",
+        docked: true,
+        components: [
+          { id: "", label: "Missing id", kind: "freshwater", status: "ok" },
+          { id: "unknown_bin", label: "Unknown bin", kind: "bin", status: "strange", levelPercent: -1 },
+          { id: "dustbag", label: "Dustbag", kind: "dustbag", status: "missing" },
+        ],
+      },
+    }),
+  );
+  assert.equal(malformed.attachments?.items.length, 2);
+  assert.equal(malformed.attachments?.items[0]?.kind, "unknown");
+  assert.equal(malformed.attachments?.items[0]?.status, "unknown");
+  assert.equal(malformed.attachments?.items[0]?.levelPercent, undefined);
+  assert.equal(malformed.attachments?.items[1]?.kind, "water_tank");
+  assert.equal(malformed.attachments?.items[1]?.levelPercent, 12);
+  assert.equal(malformed.dock?.components?.length, 2);
+  assert.equal(malformed.dock?.components?.[0]?.kind, "unknown");
+  assert.equal(malformed.dock?.components?.[0]?.status, "unknown");
+  assert.equal(malformed.dock?.components?.[0]?.levelPercent, undefined);
+  assert.equal(malformed.dock?.components?.[1]?.kind, "dustbag");
+  assert.equal(malformed.capabilities.attachments.supported, true);
+  assert.equal(malformed.capabilities.dock_components.supported, true);
+
+  const stale = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      ...baseRuntime,
+      source: { kind: "fixed_mock", status: "reachable", stale: true, lastSeenAt: 1 },
+      attachments: {
+        items: [{ id: "dustbin", label: "Dustbin", kind: "dustbin", status: "installed" }],
+      },
+      dock: {
+        state: "available",
+        docked: true,
+        components: [{ id: "freshwater", label: "Freshwater", kind: "freshwater", status: "ok" }],
+      },
+    }),
+  );
+  assert.equal(stale.attachments, undefined);
+  assert.equal(stale.dock?.components, undefined);
+  assert.equal(stale.capabilities.attachments.supported, false);
+  assert.equal(stale.capabilities.dock_components.supported, false);
 }
 
 function testValetudoRuntimeMissionStateMapping(): void {
@@ -2786,6 +2909,7 @@ async function main(): Promise<void> {
   testCoverageProfileAndDecomposition();
   testValetudoStateAwareCommandAvailability();
   testValetudoRuntimeSnapshotMapping();
+  testValetudoAttachmentsAndDockComponentGuards();
   testValetudoRuntimeMissionStateMapping();
   testPrimaryRobotStateDerivation();
   testValetudoChargingAndOfflineMapping();

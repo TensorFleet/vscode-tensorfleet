@@ -58,6 +58,8 @@ const UNSUPPORTED_VACUUM_FEATURES: VacuumCapabilityName[] = [
   "water_usage",
   "battery",
   "consumables",
+  "attachments",
+  "dock_components",
   "events",
 ];
 

@@ -66,6 +66,10 @@ export type ValetudoCapabilityMappingOptions = {
   unavailableReason?: string;
   consumablesSupported?: boolean;
   currentStatisticsSupported?: boolean;
+  attachmentsSupported?: boolean;
+  attachmentKinds?: string[];
+  dockComponentsSupported?: boolean;
+  dockComponentKinds?: string[];
 };
 
 function supportedCapability(
@@ -201,6 +205,24 @@ export function mapValetudoCapabilities(
       commands: [],
       ...commandAvailabilityFor("statistics", options),
       notes: "Mapped from normalized Valetudo runtime current cleaning statistics.",
+    });
+  }
+
+  if (options.attachmentsSupported) {
+    capabilities.attachments = supportedCapability("runtime_state:attachments", {
+      attributes: ["items", ...(options.attachmentKinds ?? []).map((kind) => `kind:${kind}`)],
+      commands: [],
+      ...commandAvailabilityFor("attachments", options),
+      notes: "Mapped from normalized Valetudo runtime robot attachment state.",
+    });
+  }
+
+  if (options.dockComponentsSupported) {
+    capabilities.dock_components = supportedCapability("runtime_state:dock.components", {
+      attributes: ["components", ...(options.dockComponentKinds ?? []).map((kind) => `kind:${kind}`)],
+      commands: [],
+      ...commandAvailabilityFor("dock_components", options),
+      notes: "Mapped from normalized Valetudo runtime dock component state.",
     });
   }
 

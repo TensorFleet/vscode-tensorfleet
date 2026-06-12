@@ -1,8 +1,15 @@
 import type {
   VacuumAdapterDiagnostics,
+  VacuumAttachmentKind,
+  VacuumAttachmentState,
+  VacuumAttachmentStatus,
+  VacuumAttachmentsState,
   VacuumCleaningSettingOption,
   VacuumCleaningSettingsState,
   VacuumConsumableState,
+  VacuumDockComponentKind,
+  VacuumDockComponentState,
+  VacuumDockComponentStatus,
   VacuumAdapterSnapshot,
   VacuumDockState,
   VacuumMaintenanceState,
@@ -402,6 +409,124 @@ function mapStatistics(snapshot: ValetudoRuntimeSnapshot): VacuumStatisticsState
   };
 }
 
+const ATTACHMENT_KINDS = new Set<VacuumAttachmentKind>(["dustbin", "water_tank", "mop", "detergent", "unknown"]);
+const ATTACHMENT_STATUSES = new Set<VacuumAttachmentStatus>([
+  "installed",
+  "missing",
+  "full",
+  "empty",
+  "low",
+  "ok",
+  "unknown",
+  "error",
+]);
+const DOCK_COMPONENT_KINDS = new Set<VacuumDockComponentKind>([
+  "freshwater",
+  "wastewater",
+  "detergent",
+  "dustbag",
+  "unknown",
+]);
+const DOCK_COMPONENT_STATUSES = new Set<VacuumDockComponentStatus>([
+  "ok",
+  "missing",
+  "full",
+  "empty",
+  "low",
+  "unknown",
+  "error",
+]);
+
+function normalizePercent(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
+    return undefined;
+  }
+  return value;
+}
+
+function normalizeTimestamp(value: unknown): number | string | undefined {
+  return typeof value === "number" || typeof value === "string" ? value : undefined;
+}
+
+function normalizeAttachmentKind(value: unknown): VacuumAttachmentKind {
+  return ATTACHMENT_KINDS.has(value as VacuumAttachmentKind) ? (value as VacuumAttachmentKind) : "unknown";
+}
+
+function normalizeAttachmentStatus(value: unknown): VacuumAttachmentStatus {
+  return ATTACHMENT_STATUSES.has(value as VacuumAttachmentStatus) ? (value as VacuumAttachmentStatus) : "unknown";
+}
+
+function normalizeDockComponentKind(value: unknown): VacuumDockComponentKind {
+  return DOCK_COMPONENT_KINDS.has(value as VacuumDockComponentKind) ? (value as VacuumDockComponentKind) : "unknown";
+}
+
+function normalizeDockComponentStatus(value: unknown): VacuumDockComponentStatus {
+  return DOCK_COMPONENT_STATUSES.has(value as VacuumDockComponentStatus) ? (value as VacuumDockComponentStatus) : "unknown";
+}
+
+function hasMeaningfulIdentity(item: unknown): item is Record<string, unknown> {
+  return (
+    isRecord(item) &&
+    typeof item.id === "string" &&
+    item.id.trim() !== "" &&
+    typeof item.label === "string" &&
+    item.label.trim() !== ""
+  );
+}
+
+function mapAttachments(snapshot: ValetudoRuntimeSnapshot): VacuumAttachmentsState | undefined {
+  if (sourceUnavailableReason(snapshot)) {
+    return undefined;
+  }
+  const seen = new Set<string>();
+  const items = (snapshot.attachments?.items ?? [])
+    .filter(hasMeaningfulIdentity)
+    .map((item): VacuumAttachmentState => ({
+      id: item.id.trim(),
+      label: item.label.trim(),
+      kind: normalizeAttachmentKind(item.kind),
+      status: normalizeAttachmentStatus(item.status),
+      available: typeof item.available === "boolean" ? item.available : undefined,
+      levelPercent: normalizePercent(item.levelPercent),
+      detail: typeof item.detail === "string" && item.detail.trim() !== "" ? item.detail : undefined,
+      updatedAt: normalizeTimestamp(item.updatedAt),
+    }))
+    .filter((item) => {
+      if (seen.has(item.id)) {
+        return false;
+      }
+      seen.add(item.id);
+      return true;
+    });
+  return items.length > 0 ? { items } : undefined;
+}
+
+function mapDockComponents(snapshot: ValetudoRuntimeSnapshot): VacuumDockComponentState[] | undefined {
+  if (sourceUnavailableReason(snapshot)) {
+    return undefined;
+  }
+  const seen = new Set<string>();
+  const components = (snapshot.dock?.components ?? [])
+    .filter(hasMeaningfulIdentity)
+    .map((item): VacuumDockComponentState => ({
+      id: item.id.trim(),
+      label: item.label.trim(),
+      kind: normalizeDockComponentKind(item.kind),
+      status: normalizeDockComponentStatus(item.status),
+      levelPercent: normalizePercent(item.levelPercent),
+      detail: typeof item.detail === "string" && item.detail.trim() !== "" ? item.detail : undefined,
+      updatedAt: normalizeTimestamp(item.updatedAt),
+    }))
+    .filter((item) => {
+      if (seen.has(item.id)) {
+        return false;
+      }
+      seen.add(item.id);
+      return true;
+    });
+  return components.length > 0 ? components : undefined;
+}
+
 function runtimeCommandToCapabilityName(command: string): keyof VacuumCapabilities | null {
   if (command === "set_fan_speed") {
     return "fan_speed";
@@ -583,6 +708,8 @@ export function mapValetudoRuntimeSnapshotToBoundary(
   const cleaningSettings = mapCleaningSettings(snapshot);
   const maintenance = mapMaintenance(snapshot);
   const statistics = mapStatistics(snapshot);
+  const attachments = mapAttachments(snapshot);
+  const dockComponents = mapDockComponents(snapshot);
   const faults = [
     ...(normalizeActivityStatus(snapshot) === "faulted" ? [snapshot.state.label || "Valetudo runtime reported a robot fault."] : []),
     ...(snapshot.source.stale ? ["Valetudo runtime source state is stale."] : []),
@@ -621,10 +748,12 @@ export function mapValetudoRuntimeSnapshotToBoundary(
       state: mapDockState(snapshot),
       charging: snapshot.battery?.charging,
       detail: snapshot.dock?.state ?? (snapshot.battery?.charging ? "Charging." : "Dock state unknown."),
+      components: dockComponents,
     },
     cleaningSettings,
     maintenance,
     statistics,
+    attachments,
     diagnostics: mapDiagnostics(snapshot),
     lastError: snapshot.connectivity.online ? undefined : "Valetudo integration runtime is offline.",
   };
@@ -655,6 +784,7 @@ export function mapValetudoRuntimeUnavailable(message: string): ValetudoRuntimeB
     cleaningSettings: undefined,
     maintenance: undefined,
     statistics: undefined,
+    attachments: undefined,
     diagnostics: {
       backend: "valetudo",
       runtime: {
@@ -784,6 +914,10 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     unsupportedCommands: runtime.unsupportedCommands,
     consumablesSupported: (runtime.maintenance?.consumables.length ?? 0) > 0,
     currentStatisticsSupported: runtime.statistics?.current != null,
+    attachmentsSupported: (runtime.attachments?.items.length ?? 0) > 0,
+    attachmentKinds: [...new Set((runtime.attachments?.items ?? []).map((item) => item.kind))],
+    dockComponentsSupported: (runtime.dock?.components?.length ?? 0) > 0,
+    dockComponentKinds: [...new Set((runtime.dock?.components ?? []).map((item) => item.kind))],
     unavailableReason:
       runtime.connectionStatus === "online" && runtime.source?.reason
         ? runtime.source.reason
@@ -819,6 +953,7 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     cleaningSettings: runtime.cleaningSettings,
     maintenance: runtime.maintenance,
     statistics: runtime.statistics,
+    attachments: runtime.attachments,
     map: {
       readiness: "unavailable",
       receiving: false,

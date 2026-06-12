@@ -1,32 +1,41 @@
-# Progress Report - Current Statistics Normalization
+# Progress Report - Attachments and Dock Components Normalization
 Current report date: 2026-06-12.
 
-## 1. What changed
+We are adding read-only normalized Attachments and Dock Components surfaces for the Valetudo path. Attachments represent robot-side installed/present equipment and material state, while Dock Components represent dock-side material readiness. The UI must only consume normalized vacuum_adapter state and capabilities, never raw Valetudo capability names, HTTP routes, MQTT topics, source URLs, SSE/cache internals, or backend-specific payloads.
 
-- Extended the VM-managed Valetudo integration runtime snapshot with `statistics.current`, including deterministic fixed mock values for current run duration and cleaned area.
-- Added HTTP-source normalization for `CurrentStatisticsCapability` when the source reports parseable current statistics, including Valetudo-style `ValetudoDataPoint` arrays for `time` and `area`; missing or malformed source statistics are omitted without failing the snapshot.
-- Extended the normalized `vacuum_adapter` contract with `snapshot.statistics.current` and a backend-neutral `statistics` capability with `attributes: ["current"]` and no commands.
-- Mapped Valetudo runtime current statistics into the adapter snapshot only when the source is fresh and reachable; stale, unreachable, offline, or malformed statistics are absent and unsupported.
-- Added a compact Current Statistics card to the Valetudo/no-map Vacuum Control sidebar, gated only by normalized `snapshot.statistics.current` plus `capabilities.statistics`.
-- Updated `firecracker-vm/tensorfleet-mgr` runtime structs, fixed mock snapshot construction, HTTP source normalization, capability tier diagnostics, and handler tests.
-- Synced the updated `tensorfleet-mgr` binary to the live VM at `172.16.0.10`, backed up the prior binary, restarted `tensorfleet-mgr.service`, and verified the live Valetudo runtime snapshot now includes `statistics.current`.
-- No VS Code `vm-manager` proxy changes were required after inspection: the panel runtime client already uses the generic `/vms/self/tensorfleet/api/v1/valetudo` proxy path, and there is no typed Valetudo snapshot schema in `src/vm-manager.ts`.
-- Updated adapter regression tests for fixed mock statistics, supported statistics capability, omitted statistics, malformed statistics, stale/unreachable source handling, and existing Valetudo controls/settings/maintenance coverage.
+## 1. What changed
+- Extended the VM-managed Valetudo runtime snapshot with optional `attachments.items[]` and `dock.components[]`.
+- Added fixed mock default data for dustbin, water tank, mop, detergent, freshwater, wastewater, dock detergent, and dustbag.
+- Added an attention fixed mock scenario for full dustbin, low water tank, missing mop, low detergent, empty freshwater, full wastewater, and missing dustbag.
+- Added conservative HTTP-source normalization for explicit attachment/component state attributes only; raw capability names and model names do not imply support.
+- Added malformed-row handling: rows without meaningful identity are dropped, unknown kinds/statuses normalize to `unknown`, and invalid percentages are omitted.
+- Extended the normalized `vacuum_adapter` contract with `snapshot.attachments` and `snapshot.dock.components`.
+- Added read-only `attachments` and `dock_components` capabilities with empty command lists and kind attributes when trusted rows exist.
+- Added compact read-only Attachments and Dock Components cards in the Valetudo/no-map Vacuum Control sidebar.
+- Updated `firecracker-vm/tensorfleet-mgr` runtime structs, fixed mock construction, HTTP source normalization, and handler tests.
+- No `vm-manager` code change was required after inspection; `/vms/self/tensorfleet/...` uses a generic reverse proxy to the guest runtime and forwards expanded JSON without typed schema changes.
+- Synced the updated `tensorfleet-mgr` binary to the live VM at `172.16.0.11`, backed up the previous binary as `/usr/local/bin/tensorfleet-mgr.backup-20260612T033851Z`, and restarted `tensorfleet-mgr`.
+- Verified the live service is active on port `9090`; the current `valetudo_mock_http` source does not provide trusted attachment/component rows, so the live service correctly omits populated readiness rows.
+- Verified the deployed binary on the VM with a temporary fixed-mock smoke on port `19090`; it returned 4 attachment rows and 4 dock component rows, then the temporary process was stopped.
+- Added/updated regression tests for fixed mock data, capability support, malformed data, stale/unreachable omission, and existing adapter behavior.
 
 ## 2. Product behavior
-
-- Operators using the Valetudo/no-map Vacuum Control sidebar now see a Current Statistics card with current run duration and cleaned area when normalized current statistics are available.
-- The card appears only when `capabilities.statistics.supported` is true and `snapshot.statistics.current` contains finite duration or area data.
-- Missing, malformed, stale, unreachable, or offline statistics do not crash the runtime or UI and do not show a misleading card.
-- The feature is read-only and backend-neutral: product UI does not depend on raw Valetudo capability names, HTTP routes, MQTT topics, source URLs, cache internals, or backend-specific response shapes.
+- Operators on the Valetudo/no-map path can now see compact Attachments and Dock Components readiness cards when fresh normalized data exists.
+- Attachments show robot-side installed/present/material state such as dustbin, water tank, mop, and detergent.
+- Dock Components show dock-side readiness such as freshwater, wastewater, detergent, and dustbag.
+- Cards appear only when normalized capabilities are supported and normalized rows exist.
+- Missing, stale, unreachable, or offline data omits the new surfaces and leaves capabilities unsupported/unavailable rather than showing stale readiness as current truth.
+- Malformed rows do not crash snapshot mapping and do not expose misleading rows.
+- The feature is read-only and backend-neutral; no dock action, reset, wash, dry, refill, or empty commands were added.
 
 ## 3. Still deferred
-
+- Dock action commands.
+- Auto-empty command implementation.
+- Mop wash/dry command implementation.
+- Water refill command implementation.
+- Consumable reset commands.
 - Total statistics.
 - Statistics history/charts/export.
-- Attachments and dock components.
-- Advanced dock actions.
-- Consumable reset commands.
 - Map rendering and segment/room/zone/go-to behavior.
 - Valetudo Clean Area behavior.
 - Hardware validation.
@@ -36,7 +45,10 @@ Current report date: 2026-06-12.
 ```sh
 bun run test:vacuum-adapter
 bun run --cwd panels-standalone build
-go test ./...
 git diff --check
-curl -fsS -H 'Authorization: Bearer default-tensorfleet-token' http://172.16.0.10:9090/api/v1/valetudo/snapshot
+cd /home/shane/firecracker-vm/tensorfleet-mgr && go test ./...
+cd /home/shane/firecracker-vm/tensorfleet-mgr && git diff --check
+curl -fsS -H 'Authorization: Bearer default-tensorfleet-token' http://172.16.0.11:9090/api/v1/valetudo/snapshot
+PORT=19090 VALETUDO_RUNTIME_SOURCE_MODE=fixed_mock /usr/local/bin/tensorfleet-mgr
+curl -fsS -H 'Authorization: Bearer default-tensorfleet-token' http://172.16.0.11:19090/api/v1/valetudo/snapshot
 ```

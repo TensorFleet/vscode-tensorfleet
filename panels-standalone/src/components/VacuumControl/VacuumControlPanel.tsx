@@ -10,12 +10,14 @@ import {
   deriveVacuumPrimaryRobotState,
   type CapabilitySupport,
   type VacuumCommandResult,
+  type VacuumAttachmentsState,
   type VacuumAdapterBackendId,
   type VacuumAvailability,
   type VacuumBatteryState,
   type VacuumCapabilities,
   type VacuumCleaningSettingState,
   type VacuumCleaningSettingsState,
+  type VacuumDockComponentState,
   type VacuumDockStatus,
   type VacuumFaultState,
   type VacuumMaintenanceState,
@@ -2195,6 +2197,62 @@ function CurrentStatisticsCard(props: {
   );
 }
 
+function formatReadinessRowValue(status: string, levelPercent?: number): string {
+  const label = humanizeStatus(status);
+  return typeof levelPercent === "number" && Number.isFinite(levelPercent)
+    ? `${label} - ${Math.round(Math.max(0, Math.min(100, levelPercent)))}%`
+    : label;
+}
+
+function ReadinessListCard(props: {
+  title: string;
+  items: Array<{ id: string; label: string; status: string; levelPercent?: number; detail?: string }>;
+}): JSX.Element | null {
+  if (props.items.length === 0) {
+    return null;
+  }
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--readiness-list" aria-label={props.title}>
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">{props.title}</p>
+      </div>
+      <div className="vacuum-readiness-list">
+        {props.items.map((item) => (
+          <div key={item.id} className="vacuum-readiness-row">
+            <div>
+              <strong>{item.label}</strong>
+              {item.detail ? <p>{item.detail}</p> : null}
+            </div>
+            <span>{formatReadinessRowValue(item.status, item.levelPercent)}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AttachmentsCard(props: {
+  attachments?: VacuumAttachmentsState;
+  capabilities: VacuumCapabilities;
+}): JSX.Element | null {
+  const items = props.attachments?.items ?? [];
+  if (!props.capabilities.attachments.supported || items.length === 0) {
+    return null;
+  }
+  return <ReadinessListCard title="Attachments" items={items} />;
+}
+
+function DockComponentsCard(props: {
+  components?: VacuumDockComponentState[];
+  capabilities: VacuumCapabilities;
+}): JSX.Element | null {
+  const components = props.components ?? [];
+  if (!props.capabilities.dock_components.supported || components.length === 0) {
+    return null;
+  }
+  return <ReadinessListCard title="Dock Components" items={components} />;
+}
+
 function NoMapCanvasPlaceholder(props: {
   mapDetail?: string;
 }): JSX.Element {
@@ -3845,6 +3903,14 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
                 <BatteryDockCard
                   battery={snapshot.battery}
                   dock={snapshot.dock}
+                  capabilities={snapshot.capabilities}
+                />
+                <AttachmentsCard
+                  attachments={snapshot.attachments}
+                  capabilities={snapshot.capabilities}
+                />
+                <DockComponentsCard
+                  components={snapshot.dock?.components}
                   capabilities={snapshot.capabilities}
                 />
                 <CleaningSettingsCard
