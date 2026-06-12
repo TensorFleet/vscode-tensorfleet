@@ -9,6 +9,8 @@ import type {
   VacuumGoalCoordinates,
   VacuumMaintenanceState,
   VacuumMissionState,
+  VacuumLayeredMapMetadata,
+  VacuumMapTargets,
   VacuumPoseCoordinates,
   VacuumRobotActivityStatus,
   VacuumRuntimeHealth,
@@ -34,6 +36,11 @@ export type ValetudoRuntimeBoundary = {
   maintenance?: VacuumMaintenanceState;
   statistics?: VacuumStatisticsState;
   attachments?: VacuumAttachmentsState;
+  map?: {
+    layeredMetadata?: VacuumLayeredMapMetadata;
+    targets?: VacuumMapTargets;
+    detail?: string;
+  };
   diagnostics?: VacuumAdapterDiagnostics;
   lastError?: string;
 };

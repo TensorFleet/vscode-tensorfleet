@@ -217,6 +217,54 @@ export type VacuumMapAnnotation = {
   updatedAt: number;
 };
 
+export type VacuumMapTargetKind = "segment" | "room" | "zone";
+
+export type VacuumMapTargetGeometry =
+  | {
+      type: "polygon";
+      points: Array<{ x: number; y: number }>;
+      bounds?: never;
+    }
+  | {
+      type: "rectangle";
+      bounds: { x: number; y: number; width: number; height: number };
+      points?: never;
+    }
+  | {
+      type: "unknown";
+      points?: Array<{ x: number; y: number }>;
+      bounds?: { x: number; y: number; width: number; height: number };
+    };
+
+export type VacuumMapTarget = {
+  id: string;
+  label: string;
+  kind: VacuumMapTargetKind;
+  source: "runtime" | "user";
+  available: boolean;
+  geometry?: VacuumMapTargetGeometry;
+  detail?: string;
+};
+
+export type VacuumLayeredMapMetadata = {
+  id?: string;
+  width?: number;
+  height?: number;
+  pixelSize?: number;
+  coordinateSystem?: "valetudo_pixel" | "unknown";
+  layerCount?: number;
+  entityCount?: number;
+  segmentCount?: number;
+  zoneCount?: number;
+  updatedAt?: number | string;
+  source?: VacuumSourceKind;
+};
+
+export type VacuumMapTargets = {
+  segments?: VacuumMapTarget[];
+  zones?: VacuumMapTarget[];
+};
+
 export type VacuumAvailability = {
   status: VacuumAvailabilityStatus;
   connected: boolean;
@@ -231,6 +279,8 @@ export type VacuumMapState = {
   detail?: string;
   grid: VacuumMapGrid | null;
   metadata: VacuumMapMetadata;
+  layeredMetadata?: VacuumLayeredMapMetadata;
+  targets?: VacuumMapTargets;
   annotations: VacuumMapAnnotation[];
 };
 

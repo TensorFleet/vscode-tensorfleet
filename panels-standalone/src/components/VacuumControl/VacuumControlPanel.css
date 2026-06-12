@@ -3078,6 +3078,10 @@ body {
   gap: 10px;
 }
 
+.vacuum-panel-card--map-targets {
+  gap: 10px;
+}
+
 .vacuum-current-statistics {
   min-width: 0;
   display: grid;
@@ -3169,6 +3173,75 @@ body {
 .vacuum-readiness-row p {
   margin: 3px 0 0;
   overflow-wrap: anywhere;
+  color: var(--vacuum-text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.vacuum-map-target-section {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.vacuum-map-target-section__title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--vacuum-text-muted);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.vacuum-map-target-list {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.vacuum-map-target-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid rgba(232, 226, 214, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.vacuum-map-target-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.vacuum-map-target-row strong,
+.vacuum-map-target-row span,
+.vacuum-map-target-row p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.vacuum-map-target-row strong {
+  color: var(--vacuum-text);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.vacuum-map-target-row span {
+  color: var(--vacuum-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.vacuum-map-target-row p {
+  margin: 0;
   color: var(--vacuum-text-muted);
   font-size: 11px;
   line-height: 1.35;

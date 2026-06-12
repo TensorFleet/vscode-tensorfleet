@@ -1842,6 +1842,54 @@ function testValetudoRuntimeSnapshotMapping(): void {
         { id: "detergent", label: "Detergent", kind: "detergent", status: "ok", levelPercent: 74, detail: "Robot detergent present.", updatedAt: 1 },
       ],
     },
+    map: {
+      available: true,
+      source: "fixed_mock",
+      updatedAt: 1,
+      metadata: {
+        id: "tensorfleet-fixed-map-001",
+        width: 300,
+        height: 200,
+        pixelSize: 5,
+        coordinateSystem: "valetudo_pixel",
+        layerCount: 5,
+        entityCount: 3,
+        segmentCount: 3,
+        zoneCount: 1,
+      },
+      targets: {
+        segments: [
+          {
+            id: "kitchen",
+            label: "Kitchen",
+            kind: "segment",
+            available: true,
+            geometry: { type: "unknown", bounds: { x: 5, y: 5, width: 16, height: 14 } },
+            detail: "Valetudo segment layer target.",
+          },
+          { id: "living_room", label: "Living Room", kind: "segment", available: true },
+          { id: "bedroom", label: "Bedroom", kind: "segment", available: true },
+        ],
+        zones: [
+          {
+            id: "zone_spill_001",
+            label: "Kitchen spill zone",
+            kind: "zone",
+            available: true,
+            geometry: {
+              type: "polygon",
+              points: [
+                { x: 115, y: 110 },
+                { x: 200, y: 110 },
+                { x: 200, y: 160 },
+                { x: 115, y: 160 },
+              ],
+            },
+          },
+        ],
+      },
+      detail: "Valetudo map metadata and target inventory normalized; renderable map surfaces are not exposed yet.",
+    },
     updatedAt: 1,
   });
   const snapshot = mapValetudoState(boundary);
@@ -1896,6 +1944,22 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.dock?.components?.length, 4);
   assert.equal(snapshot.dock?.components?.[0]?.label, "Freshwater");
   assert.equal(snapshot.dock?.components?.[1]?.status, "empty");
+  assert.equal(snapshot.capabilities.map.supported, false);
+  assert.equal(snapshot.map.grid, null);
+  assert.equal(snapshot.map.metadata.hasMap, false);
+  assert.equal(snapshot.map.readiness, "unavailable");
+  assert.equal(snapshot.map.layeredMetadata?.id, "tensorfleet-fixed-map-001");
+  assert.equal(snapshot.map.layeredMetadata?.coordinateSystem, "valetudo_pixel");
+  assert.equal(snapshot.map.layeredMetadata?.segmentCount, 3);
+  assert.equal(snapshot.map.layeredMetadata?.zoneCount, 1);
+  assert.equal(snapshot.map.targets?.segments?.length, 3);
+  assert.equal(snapshot.map.targets?.segments?.[0]?.id, "kitchen");
+  assert.deepEqual(snapshot.map.targets?.segments?.[0]?.geometry, {
+    type: "unknown",
+    bounds: { x: 5, y: 5, width: 16, height: 14 },
+  });
+  assert.equal(snapshot.map.targets?.zones?.[0]?.label, "Kitchen spill zone");
+  assert.equal(snapshot.map.targets?.zones?.[0]?.geometry?.type, "polygon");
   assert.equal(snapshot.capabilities.segment_cleaning.supported, false);
   assert.equal(snapshot.capabilities.segment_cleaning.status, "detected_not_ready");
   assert.equal(snapshot.capabilities.room_semantics.supported, false);
@@ -2334,10 +2398,20 @@ function testValetudoAttachmentsAndDockComponentGuards(): void {
         docked: true,
         components: [{ id: "freshwater", label: "Freshwater", kind: "freshwater", status: "ok" }],
       },
+      map: {
+        available: true,
+        source: "fixed_mock",
+        metadata: { width: 300, height: 200, pixelSize: 5, segmentCount: 1 },
+        targets: {
+          segments: [{ id: "stale_segment", label: "Stale segment", kind: "segment", available: true }],
+        },
+      },
     }),
   );
   assert.equal(stale.attachments, undefined);
   assert.equal(stale.dock?.components, undefined);
+  assert.equal(stale.map.layeredMetadata, undefined);
+  assert.equal(stale.map.targets, undefined);
   assert.equal(stale.capabilities.attachments.supported, false);
   assert.equal(stale.capabilities.dock_components.supported, false);
 }
@@ -2750,6 +2824,29 @@ function testPublicContractAndUiBoundary(): void {
       /props\.maintenance\?\.consumables/.test(panelContents),
     true,
     "Maintenance card should render from normalized maintenance state and consumables descriptor",
+  );
+  assert.equal(
+    /MapTargetsCard/.test(panelContents) &&
+      /targets=\{snapshot\.map\.targets\}/.test(panelContents) &&
+      /const sidebarShowMapTargets = sidebarMapTargetSegments\.length > 0 \|\| sidebarMapTargetZones\.length > 0/.test(panelContents),
+    true,
+    "Map Targets card should render only from normalized map target presence",
+  );
+  assert.equal(
+    /MapTargetSection title="Segments \/ Rooms"/.test(panelContents) &&
+      /MapTargetSection title="Zones"/.test(panelContents) &&
+      panelContents.includes("Map Targets"),
+    true,
+    "Map Targets card should keep product-owned generic labels",
+  );
+  const mapTargetsUiStart = panelContents.indexOf("function formatMapTargetKind");
+  const mapTargetsUiEnd = panelContents.indexOf("function NoMapCanvasPlaceholder");
+  assert.equal(mapTargetsUiStart >= 0 && mapTargetsUiEnd > mapTargetsUiStart, true);
+  const mapTargetsUi = panelContents.slice(mapTargetsUiStart, mapTargetsUiEnd);
+  assert.equal(
+    /compressedPixels|JSON\.stringify|\.points|\.bounds/.test(mapTargetsUi),
+    false,
+    "Map Targets card should summarize geometry without exposing raw coordinates or Valetudo pixel payloads",
   );
   assert.equal(
     /vacuum-panel-card--robot-overview/.test(panelContents) &&

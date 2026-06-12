@@ -26,6 +26,8 @@ import {
   type VacuumRuntimeHealth,
   type VacuumSourceState,
   type VacuumStatisticsState,
+  type VacuumMapTarget,
+  type VacuumMapTargets,
   type VacuumMapAnnotation,
   type VacuumMapAnnotationKind,
   type VacuumMappingStatus,
@@ -2332,6 +2334,82 @@ function DockComponentsCard(props: {
   return <ReadinessListCard title="Dock Components" items={components} attentionCount={attentionCount} />;
 }
 
+function formatMapTargetKind(kind: VacuumMapTarget["kind"]): string {
+  switch (kind) {
+    case "room":
+      return "Room";
+    case "segment":
+      return "Segment";
+    case "zone":
+      return "Zone";
+  }
+}
+
+function formatMapTargetGeometry(geometry: VacuumMapTarget["geometry"]): string | null {
+  if (!geometry) {
+    return null;
+  }
+  if (geometry.type === "polygon") {
+    return "Polygon";
+  }
+  if (geometry.type === "rectangle") {
+    return "Rectangle";
+  }
+  return "Area available";
+}
+
+function MapTargetSection(props: {
+  title: string;
+  targets: VacuumMapTarget[];
+}): JSX.Element | null {
+  if (props.targets.length === 0) {
+    return null;
+  }
+  return (
+    <div className="vacuum-map-target-section">
+      <p className="vacuum-map-target-section__title">{props.title}</p>
+      <div className="vacuum-map-target-list">
+        {props.targets.map((target) => {
+          const geometryLabel = formatMapTargetGeometry(target.geometry);
+          return (
+            <div key={target.id} className="vacuum-map-target-row">
+              <div>
+                <strong>{target.label}</strong>
+                {target.detail ? <p>{target.detail}</p> : null}
+                {geometryLabel ? <p>{geometryLabel}</p> : null}
+              </div>
+              <span>{`${formatMapTargetKind(target.kind)} - ${target.available ? "Available" : "Unavailable"}`}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MapTargetsCard(props: {
+  targets?: VacuumMapTargets;
+}): JSX.Element | null {
+  const segments = props.targets?.segments ?? [];
+  const zones = props.targets?.zones ?? [];
+  if (segments.length === 0 && zones.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="vacuum-panel-card vacuum-panel-card--map-targets" aria-label="Map targets">
+      <div className="vacuum-panel-card__head">
+        <p className="vacuum-panel-card__eyebrow">Map Targets</p>
+      </div>
+      <p className="vacuum-action-hint">
+        Map targets discovered from normalized Valetudo map data. Cleaning commands are not enabled yet.
+      </p>
+      <MapTargetSection title="Segments / Rooms" targets={segments} />
+      <MapTargetSection title="Zones" targets={zones} />
+    </section>
+  );
+}
+
 function NoMapCanvasPlaceholder(props: {
   mapDetail?: string;
 }): JSX.Element {
@@ -3837,6 +3915,9 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
   const sidebarAttachmentItems = snapshot.attachments?.items ?? [];
   const sidebarDockComponentItems = snapshot.dock?.components ?? [];
   const sidebarConsumableItems = snapshot.maintenance?.consumables ?? [];
+  const sidebarMapTargetSegments = snapshot.map.targets?.segments ?? [];
+  const sidebarMapTargetZones = snapshot.map.targets?.zones ?? [];
+  const sidebarShowMapTargets = sidebarMapTargetSegments.length > 0 || sidebarMapTargetZones.length > 0;
   const sidebarShowAttachments = snapshot.capabilities.attachments.supported && sidebarAttachmentItems.length > 0;
   const sidebarShowDockComponents = snapshot.capabilities.dock_components.supported && sidebarDockComponentItems.length > 0;
   const sidebarShowFanSpeed = !!(snapshot.cleaningSettings?.fanSpeed && snapshot.capabilities.fan_speed.supported);
@@ -4018,6 +4099,9 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
                         statistics={snapshot.statistics}
                         capabilities={snapshot.capabilities}
                       />
+                    ) : null}
+                    {sidebarShowMapTargets ? (
+                      <MapTargetsCard targets={snapshot.map.targets} />
                     ) : null}
                   </div>
                 </div>

@@ -12,7 +12,11 @@ import type {
   VacuumDockComponentStatus,
   VacuumAdapterSnapshot,
   VacuumDockState,
+  VacuumLayeredMapMetadata,
   VacuumMaintenanceState,
+  VacuumMapTarget,
+  VacuumMapTargetGeometry,
+  VacuumMapTargets,
   VacuumMissionSnapshot,
   VacuumMissionState,
   VacuumNavigationStatus,
@@ -27,7 +31,7 @@ import type { VacuumCapabilities } from "../../capabilities";
 import { buildVacuumMapMetadata } from "../../mapGrid";
 import type { ValetudoBackendCapability } from "./capabilityMapper";
 import { mapValetudoCapabilities } from "./capabilityMapper";
-import type { ValetudoRuntimeSnapshot } from "./runtimeContract";
+import type { ValetudoRuntimeMapTarget, ValetudoRuntimeSnapshot } from "./runtimeContract";
 import type { ValetudoRuntimeBoundary } from "./types";
 
 const EMPTY_NAVIGATION: VacuumNavigationStatus = {
@@ -527,6 +531,144 @@ function mapDockComponents(snapshot: ValetudoRuntimeSnapshot): VacuumDockCompone
   return components.length > 0 ? components : undefined;
 }
 
+function normalizeMapSource(value: string | undefined): VacuumLayeredMapMetadata["source"] {
+  if (value === "fixed_mock") {
+    return "fixed_mock";
+  }
+  if (value === "valetudo_mock") {
+    return "valetudo_mock";
+  }
+  if (value === "valetudo_http") {
+    return "valetudo_http";
+  }
+  if (value === "real_robot") {
+    return "real_robot";
+  }
+  return "unknown";
+}
+
+function normalizeMapCoordinateSystem(value: unknown): VacuumLayeredMapMetadata["coordinateSystem"] {
+  return value === "valetudo_pixel" ? "valetudo_pixel" : "unknown";
+}
+
+function normalizeMapMetadata(snapshot: ValetudoRuntimeSnapshot): VacuumLayeredMapMetadata | undefined {
+  if (sourceUnavailableReason(snapshot) || snapshot.map?.available !== true || !snapshot.map.metadata) {
+    return undefined;
+  }
+  const metadata = snapshot.map.metadata;
+  return {
+    id: typeof metadata.id === "string" && metadata.id.trim() !== "" ? metadata.id.trim() : undefined,
+    width: normalizePositiveInteger(metadata.width),
+    height: normalizePositiveInteger(metadata.height),
+    pixelSize: normalizePositiveInteger(metadata.pixelSize),
+    coordinateSystem: normalizeMapCoordinateSystem(metadata.coordinateSystem),
+    layerCount: normalizeNonNegativeInteger(metadata.layerCount),
+    entityCount: normalizeNonNegativeInteger(metadata.entityCount),
+    segmentCount: normalizeNonNegativeInteger(metadata.segmentCount),
+    zoneCount: normalizeNonNegativeInteger(metadata.zoneCount),
+    updatedAt: normalizeTimestamp(snapshot.map.updatedAt),
+    source: normalizeMapSource(snapshot.map.source),
+  };
+}
+
+function normalizeMapTargets(snapshot: ValetudoRuntimeSnapshot): VacuumMapTargets | undefined {
+  if (sourceUnavailableReason(snapshot) || snapshot.map?.available !== true) {
+    return undefined;
+  }
+  const segments = normalizeMapTargetList(snapshot.map.targets?.segments, "segment");
+  const zones = normalizeMapTargetList(snapshot.map.targets?.zones, "zone");
+  return segments.length > 0 || zones.length > 0 ? { segments, zones } : undefined;
+}
+
+function normalizeMapTargetList(
+  values: ValetudoRuntimeMapTarget[] | undefined,
+  expectedKind: "segment" | "zone",
+): VacuumMapTarget[] {
+  const seen = new Set<string>();
+  return (values ?? [])
+    .filter((item): item is ValetudoRuntimeMapTarget => (
+      item != null &&
+      typeof item.id === "string" &&
+      item.id.trim() !== "" &&
+      typeof item.label === "string" &&
+      item.label.trim() !== ""
+    ))
+    .map((item): VacuumMapTarget => ({
+      id: item.id.trim(),
+      label: item.label.trim(),
+      kind: expectedKind,
+      source: "runtime",
+      available: item.available === true,
+      geometry: normalizeMapTargetGeometry(item.geometry),
+      detail: typeof item.detail === "string" && item.detail.trim() !== "" ? item.detail : undefined,
+    }))
+    .filter((item) => {
+      if (seen.has(item.id)) {
+        return false;
+      }
+      seen.add(item.id);
+      return true;
+    });
+}
+
+function normalizeMapTargetGeometry(value: unknown): VacuumMapTargetGeometry | undefined {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return undefined;
+  }
+  const points = normalizeMapPoints(value.points);
+  const bounds = normalizeMapBounds(value.bounds);
+  if (value.type === "polygon" && points && points.length >= 3) {
+    return { type: "polygon", points };
+  }
+  if (value.type === "rectangle" && bounds) {
+    return { type: "rectangle", bounds };
+  }
+  if (value.type === "unknown" && (points || bounds)) {
+    const geometry: VacuumMapTargetGeometry = { type: "unknown" };
+    if (points) {
+      geometry.points = points;
+    }
+    if (bounds) {
+      geometry.bounds = bounds;
+    }
+    return geometry;
+  }
+  return undefined;
+}
+
+function normalizeMapPoints(value: unknown): Array<{ x: number; y: number }> | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const points = value
+    .filter((point): point is Record<string, unknown> => isRecord(point))
+    .map((point) => ({
+      x: typeof point.x === "number" && Number.isFinite(point.x) ? point.x : null,
+      y: typeof point.y === "number" && Number.isFinite(point.y) ? point.y : null,
+    }))
+    .filter((point): point is { x: number; y: number } => point.x != null && point.y != null);
+  return points.length > 0 ? points : undefined;
+}
+
+function normalizeMapBounds(value: unknown): { x: number; y: number; width: number; height: number } | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const x = typeof value.x === "number" && Number.isFinite(value.x) ? value.x : null;
+  const y = typeof value.y === "number" && Number.isFinite(value.y) ? value.y : null;
+  const width = typeof value.width === "number" && Number.isFinite(value.width) && value.width > 0 ? value.width : null;
+  const height = typeof value.height === "number" && Number.isFinite(value.height) && value.height > 0 ? value.height : null;
+  return x != null && y != null && width != null && height != null ? { x, y, width, height } : undefined;
+}
+
+function normalizePositiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function normalizeNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
 function runtimeCommandToCapabilityName(command: string): keyof VacuumCapabilities | null {
   if (command === "set_fan_speed") {
     return "fan_speed";
@@ -710,6 +852,8 @@ export function mapValetudoRuntimeSnapshotToBoundary(
   const statistics = mapStatistics(snapshot);
   const attachments = mapAttachments(snapshot);
   const dockComponents = mapDockComponents(snapshot);
+  const mapMetadata = normalizeMapMetadata(snapshot);
+  const mapTargets = normalizeMapTargets(snapshot);
   const faults = [
     ...(normalizeActivityStatus(snapshot) === "faulted" ? [snapshot.state.label || "Valetudo runtime reported a robot fault."] : []),
     ...(snapshot.source.stale ? ["Valetudo runtime source state is stale."] : []),
@@ -754,6 +898,13 @@ export function mapValetudoRuntimeSnapshotToBoundary(
     maintenance,
     statistics,
     attachments,
+    map: mapMetadata || mapTargets
+      ? {
+          layeredMetadata: mapMetadata,
+          targets: mapTargets,
+          detail: snapshot.map?.detail,
+        }
+      : undefined,
     diagnostics: mapDiagnostics(snapshot),
     lastError: snapshot.connectivity.online ? undefined : "Valetudo integration runtime is offline.",
   };
@@ -785,6 +936,7 @@ export function mapValetudoRuntimeUnavailable(message: string): ValetudoRuntimeB
     maintenance: undefined,
     statistics: undefined,
     attachments: undefined,
+    map: undefined,
     diagnostics: {
       backend: "valetudo",
       runtime: {
@@ -957,9 +1109,11 @@ export function mapValetudoState(runtime: ValetudoRuntimeBoundary): VacuumAdapte
     map: {
       readiness: "unavailable",
       receiving: false,
-      detail: "Map is unsupported for this Valetudo adapter state; no product map is available.",
+      detail: runtime.map?.detail ?? "Map is unsupported for this Valetudo adapter state; no product map is available.",
       grid: null,
       metadata: buildVacuumMapMetadata(null, null),
+      layeredMetadata: runtime.map?.layeredMetadata,
+      targets: runtime.map?.targets,
       annotations: [],
     },
     pose: {

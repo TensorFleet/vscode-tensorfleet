@@ -80,6 +80,7 @@ export type ValetudoRuntimeSnapshot = {
   attachments?: {
     items?: ValetudoRuntimeAttachment[];
   };
+  map?: ValetudoRuntimeMap;
   capabilities: {
     commands: Record<string, { available: boolean; reason?: string }>;
     diagnostics: ValetudoRuntimeCapabilityDiagnostic[];
@@ -164,6 +165,48 @@ export type ValetudoRuntimeDockComponent = {
   levelPercent?: number;
   detail?: string;
   updatedAt?: number | string;
+};
+
+export type ValetudoRuntimeMap = {
+  available: boolean;
+  source: "fixed_mock" | "valetudo_http" | "valetudo_mock" | string;
+  updatedAt?: number | string;
+  metadata?: ValetudoRuntimeMapMetadata;
+  targets?: ValetudoRuntimeMapTargets;
+  detail?: string;
+  diagnostics?: string[];
+};
+
+export type ValetudoRuntimeMapMetadata = {
+  id?: string;
+  width?: number;
+  height?: number;
+  pixelSize?: number;
+  coordinateSystem?: "valetudo_pixel" | "unknown" | string;
+  layerCount?: number;
+  entityCount?: number;
+  segmentCount?: number;
+  zoneCount?: number;
+};
+
+export type ValetudoRuntimeMapTargets = {
+  segments?: ValetudoRuntimeMapTarget[];
+  zones?: ValetudoRuntimeMapTarget[];
+};
+
+export type ValetudoRuntimeMapTarget = {
+  id: string;
+  label: string;
+  kind: "segment" | "room" | "zone" | string;
+  available: boolean;
+  geometry?: ValetudoRuntimeMapTargetGeometry;
+  detail?: string;
+};
+
+export type ValetudoRuntimeMapTargetGeometry = {
+  type: "polygon" | "rectangle" | "unknown" | string;
+  points?: Array<{ x: number; y: number }>;
+  bounds?: { x: number; y: number; width: number; height: number };
 };
 
 export type ValetudoRuntimeCapabilityDiagnostic = {
