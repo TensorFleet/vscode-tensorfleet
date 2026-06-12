@@ -1,3 +1,102 @@
+# Progress Report - Valetudo Main Canvas Static Map Preview
+Current report date: 2026-06-12.
+
+## 1. What changed
+- Added a main-canvas Valetudo layered-preview fallback that renders when normalized `snapshot.map.layeredPreview` is present and the normal map-capable `MapCanvas` path is unavailable.
+- Kept the existing TurtleBot4/Nav2 `MapCanvas` behavior gated by `capabilities.map.supported`; the interactive map path still owns occupancy-grid rendering and navigation/clean-area interactions.
+- Extracted the shared SVG renderer into `ValetudoLayeredMapSvg` and reused it from both the compact sidebar `MapPreviewCard` and the large center `ValetudoMainMapPreview`.
+- Preserved map aspect ratio with the renderer `viewBox`, explicit SVG `preserveAspectRatio`, and main-canvas fit styling for the larger read-only preview frame.
+- Kept the preview read-only: no segment selection, zone selection, hover targets, drawing tools, route calls, command buttons, SSE subscriptions, or map interactions were added.
+- Kept the small sidebar Map Preview as a compact confirmation card because it shares the renderer and sits next to the read-only Map Targets inventory.
+- Updated the adapter regression harness to assert the main preview branch, shared renderer reuse, normalized `layeredPreview` gating, and unchanged map capability gate.
+
+## 2. Product behavior
+- When a Valetudo snapshot includes normalized layered preview data, the main canvas now shows a large static saved-map preview with rooms, zones, robot, charger, paths, restrictions, virtual wall, and obstacle styling when those normalized records exist.
+- The sidebar still shows Map Targets, and the compact Map Preview remains available for quick context in the Operate group.
+- `capabilities.map.supported` remains false for Valetudo full interactive map support.
+- Segment cleaning, zone cleaning, room cleaning, go-to, Clean Area, map annotations, and mapping-session capabilities remain unsupported or detected-not-ready.
+- Raw Valetudo payload fields are still not consumed by UI; the preview path uses only normalized adapter data.
+
+## 3. Still deferred
+- Full interactive map rendering.
+- Segment selection.
+- Zone selection.
+- Target hover interaction.
+- Segment cleaning command.
+- Zone cleaning command.
+- Go-to command.
+- User-created zone drawing.
+- Map SSE/live streaming.
+- Hardware validation.
+
+## 4. Validation
+
+```sh
+bun run test:vacuum-adapter
+bun run --cwd panels-standalone build
+git diff --check
+```
+
+Result:
+
+- `bun run test:vacuum-adapter`: passed - `vacuum_adapter regression harness passed`.
+- `bun run --cwd panels-standalone build`: passed; Vite emitted existing browser-externalization, eval, and chunk-size warnings.
+- `git diff --check`: passed.
+
+---
+
+# Progress Report - Valetudo Realistic Saved Map Fixture
+Current report date: 2026-06-12.
+
+## 1. What changed
+* Inspected `Hypfer/lovelace-valetudo-map-card` only as a visual checklist for common map concepts: floor, walls, segments, robot, charger, paths, zones, no-go/no-mop areas, virtual walls, and obstacles.
+* Replaced the fixed mock Valetudo map fixture in `/home/shane/firecracker-vm/tensorfleet-mgr` with a TensorFleet-owned `Home Floor 1` saved-map fixture.
+* Added saved-map metadata, four named room segments (`Kitchen`, `Living Room`, `Bedroom`, `Hallway`), three zone-like targets (`Dining Area`, `Entryway`, `Around Sofa`), a charger, robot pose, cleaning path, predicted path, obstacle, no-go area, no-mop area, and virtual wall.
+* Extended runtime normalization with read-only product-owned preview entity kinds for `no_go_area`, `no_mop_area`, and `virtual_wall`; malformed optional overlays are omitted without failing the whole map.
+* Updated adapter contract/types and preview normalization so the new overlay kinds stay normalized and stale/unreachable/malformed top-level map data still fails closed.
+* Updated the sidebar Map Preview renderer and CSS to draw no-go/no-mop polygons, virtual walls, obstacles, paths, zones, rooms, charger, and robot as static read-only preview content.
+* Updated Map Targets wording to stay generic and normalized rather than exposing backend payload language.
+* No vm-manager proxy change was required; the existing generic proxy forwards the expanded runtime JSON. Firecracker runtime changes were required in `tensorfleet-mgr`.
+* Updated Go runtime tests and the `vacuum_adapter` regression harness for named rooms, named zones, overlay normalization/omission, UI boundary checks, and unchanged disabled command capabilities.
+
+## 2. Product behavior
+* The sidebar Map Preview now shows a realistic saved vacuum map with floor, walls, room blocks, recent/predicted paths, robot, charger, three zones, no-go/no-mop restrictions, a virtual wall, and an obstacle when those normalized records are present.
+* Map Targets now shows useful room/segment labels and zone labels without exposing raw coordinates by default.
+* The preview remains read-only: no buttons, drawing, target selection, dragging, or interactive map behavior was added.
+* No map, segment, zone, room, go-to, or Clean Area commands were enabled; `capabilities.map.supported` remains false for Valetudo full interactive map support.
+* Missing, malformed, stale, and unreachable top-level map data still suppress preview/targets. Malformed optional overlay rows are omitted while valid map content remains available.
+
+## 3. Still deferred
+* Main canvas Valetudo map preview.
+* Full interactive map rendering.
+* Target hover/selection.
+* Segment cleaning command.
+* Zone cleaning command.
+* Go-to command.
+* User-created zone drawing.
+* Map SSE/live streaming.
+* Hardware validation.
+
+## 4. Validation
+
+```sh
+cd /home/shane/firecracker-vm/tensorfleet-mgr && go test ./...
+cd /home/shane/firecracker-vm/tensorfleet-mgr && git diff --check
+bun run test:vacuum-adapter
+bun run --cwd panels-standalone build
+git diff --check
+```
+
+Result:
+
+* `cd /home/shane/firecracker-vm/tensorfleet-mgr && go test ./...`: passed.
+* `cd /home/shane/firecracker-vm/tensorfleet-mgr && git diff --check`: passed.
+* `bun run test:vacuum-adapter`: passed - `vacuum_adapter regression harness passed`.
+* `bun run --cwd panels-standalone build`: passed; Vite emitted existing browser-externalization, eval, and chunk-size warnings.
+* `git diff --check`: passed.
+
+---
+
 # Progress Report - Valetudo Static Map Preview Visual Validation
 Current report date: 2026-06-12.
 

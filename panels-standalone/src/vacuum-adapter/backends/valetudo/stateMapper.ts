@@ -655,7 +655,12 @@ function normalizeMapPreviewEntities(values: ValetudoRuntimeMapEntity[] | undefi
       }
       const kind = normalizeMapEntityKind(item.kind);
       const points = normalizeMapPoints(item.points);
-      const requiredPoints = kind === "zone" ? 3 : kind === "path" ? 2 : 1;
+      const requiredPoints =
+        kind === "zone" || kind === "no_go_area" || kind === "no_mop_area"
+          ? 3
+          : kind === "path" || kind === "virtual_wall"
+            ? 2
+            : 1;
       if (!points || points.length < requiredPoints) {
         return null;
       }
@@ -689,7 +694,16 @@ function normalizeMapLayerKind(value: unknown): VacuumMapLayerKind {
 }
 
 function normalizeMapEntityKind(value: unknown): VacuumMapEntityKind {
-  return value === "robot" || value === "charger" || value === "path" || value === "zone" || value === "obstacle"
+  return (
+    value === "robot" ||
+    value === "charger" ||
+    value === "path" ||
+    value === "zone" ||
+    value === "no_go_area" ||
+    value === "no_mop_area" ||
+    value === "virtual_wall" ||
+    value === "obstacle"
+  )
     ? value
     : "unknown";
 }

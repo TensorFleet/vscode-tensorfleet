@@ -2547,11 +2547,28 @@ function mapPreviewLegendItems(preview: VacuumLayeredMapPreview): string[] {
       present.add("Charger");
     } else if (entity.kind === "zone") {
       present.add("Zone");
+    } else if (entity.kind === "no_go_area") {
+      present.add("No-go");
+    } else if (entity.kind === "no_mop_area") {
+      present.add("No-mop");
+    } else if (entity.kind === "virtual_wall") {
+      present.add("Virtual wall");
+    } else if (entity.kind === "obstacle") {
+      present.add("Obstacle");
     } else if (entity.kind === "path") {
       present.add("Path");
     }
   }
-  return ["Floor", "Walls", "Segments", "Robot", "Charger", "Zone", "Path"].filter((item) => present.has(item));
+  return ["Floor", "Walls", "Segments", "Robot", "Charger", "Zone", "No-go", "No-mop", "Virtual wall", "Obstacle", "Path"]
+    .filter((item) => present.has(item));
+}
+
+function mapPreviewLegendClass(item: string): string {
+  return item.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function hasRenderableLayeredMapPreview(preview: VacuumLayeredMapPreview | undefined): preview is VacuumLayeredMapPreview {
+  return !!preview && preview.width > 0 && preview.height > 0 && (preview.layers.length > 0 || preview.entities.length > 0);
 }
 
 function MapPreviewLayer(props: {
@@ -2592,6 +2609,15 @@ function MapPreviewEntity(props: {
   if (props.entity.kind === "zone" && points.length >= 3) {
     return <polygon className="vacuum-map-preview-entity vacuum-map-preview-entity--zone" points={mapPreviewPointList(points)} />;
   }
+  if (props.entity.kind === "no_go_area" && points.length >= 3) {
+    return <polygon className="vacuum-map-preview-entity vacuum-map-preview-entity--no-go-area" points={mapPreviewPointList(points)} />;
+  }
+  if (props.entity.kind === "no_mop_area" && points.length >= 3) {
+    return <polygon className="vacuum-map-preview-entity vacuum-map-preview-entity--no-mop-area" points={mapPreviewPointList(points)} />;
+  }
+  if (props.entity.kind === "virtual_wall" && points.length >= 2) {
+    return <polyline className="vacuum-map-preview-entity vacuum-map-preview-entity--virtual-wall" points={mapPreviewPointList(points)} />;
+  }
   if (props.entity.kind === "path" && points.length >= 2) {
     return <polyline className="vacuum-map-preview-entity vacuum-map-preview-entity--path" points={mapPreviewPointList(points)} />;
   }
@@ -2619,15 +2645,45 @@ function MapPreviewEntity(props: {
   return <circle className={`vacuum-map-preview-entity vacuum-map-preview-entity--${props.entity.kind}`} cx={point.x} cy={point.y} r={props.markerSize * 0.58} />;
 }
 
-function MapPreviewCard(props: {
+function ValetudoLayeredMapSvg(props: {
   preview?: VacuumLayeredMapPreview;
+  className?: string;
+  ariaLabel: string;
 }): JSX.Element | null {
   const preview = props.preview;
-  if (!preview || preview.width <= 0 || preview.height <= 0 || (preview.layers.length === 0 && preview.entities.length === 0)) {
+  if (!hasRenderableLayeredMapPreview(preview)) {
     return null;
   }
   const transform = buildMapPreviewTransform(preview);
   const renderableLayers = prepareMapPreviewLayers(preview.layers);
+
+  return (
+    <svg
+      className={props.className ?? "vacuum-map-preview-svg"}
+      viewBox={mapPreviewViewBox(transform.viewBox)}
+      preserveAspectRatio="xMidYMid meet"
+      role="img"
+      aria-label={props.ariaLabel}
+    >
+      <rect className="vacuum-map-preview-bg" x="0" y="0" width={preview.width} height={preview.height} />
+      {renderableLayers.map(({ layer, segmentToneIndex }) => (
+        <MapPreviewLayer key={layer.id} layer={layer} segmentToneIndex={segmentToneIndex} transform={transform} />
+      ))}
+      {preview.entities.map((entity) => (
+        <MapPreviewEntity key={entity.id} entity={entity} markerSize={transform.markerSize} />
+      ))}
+    </svg>
+  );
+}
+
+function MapPreviewCard(props: {
+  preview?: VacuumLayeredMapPreview;
+}): JSX.Element | null {
+  const preview = props.preview;
+  if (!hasRenderableLayeredMapPreview(preview)) {
+    return null;
+  }
+  const transform = buildMapPreviewTransform(preview);
   const legendItems = mapPreviewLegendItems(preview);
 
   return (
@@ -2636,26 +2692,42 @@ function MapPreviewCard(props: {
         <p className="vacuum-panel-card__eyebrow">Map Preview</p>
       </div>
       <div className="vacuum-map-preview-frame" style={{ aspectRatio: mapPreviewAspectRatio(transform.viewBox) }}>
-        <svg className="vacuum-map-preview-svg" viewBox={mapPreviewViewBox(transform.viewBox)} role="img" aria-label="Static normalized map preview">
-          <rect className="vacuum-map-preview-bg" x="0" y="0" width={preview.width} height={preview.height} />
-          {renderableLayers.map(({ layer, segmentToneIndex }) => (
-            <MapPreviewLayer key={layer.id} layer={layer} segmentToneIndex={segmentToneIndex} transform={transform} />
-          ))}
-          {preview.entities.map((entity) => (
-            <MapPreviewEntity key={entity.id} entity={entity} markerSize={transform.markerSize} />
-          ))}
-        </svg>
+        <ValetudoLayeredMapSvg preview={preview} ariaLabel="Static normalized map preview" />
       </div>
       {legendItems.length > 0 ? (
         <div className="vacuum-map-preview-legend" aria-hidden="true">
           {legendItems.map((item) => (
-            <span key={item} className={`vacuum-map-preview-legend__item vacuum-map-preview-legend__item--${item.toLowerCase()}`}>
+            <span key={item} className={`vacuum-map-preview-legend__item vacuum-map-preview-legend__item--${mapPreviewLegendClass(item)}`}>
               {item}
             </span>
           ))}
         </div>
       ) : null}
       <p className="vacuum-action-hint">Static preview from normalized map data. Cleaning commands are not enabled.</p>
+    </section>
+  );
+}
+
+function ValetudoMainMapPreview(props: {
+  preview?: VacuumLayeredMapPreview;
+}): JSX.Element | null {
+  const preview = props.preview;
+  if (!hasRenderableLayeredMapPreview(preview)) {
+    return null;
+  }
+  const transform = buildMapPreviewTransform(preview);
+
+  return (
+    <section className="vacuum-map-card vacuum-map-card--layered-preview" aria-label="Main map preview">
+      <div className="vacuum-map-stage vacuum-map-stage--layered-preview">
+        <div className="vacuum-layered-map-preview-frame" style={{ aspectRatio: mapPreviewAspectRatio(transform.viewBox) }}>
+          <ValetudoLayeredMapSvg
+            preview={preview}
+            className="vacuum-map-preview-svg vacuum-map-preview-svg--main"
+            ariaLabel="Large static normalized map preview"
+          />
+        </div>
+      </div>
     </section>
   );
 }
@@ -2704,7 +2776,7 @@ function MapTargetsCard(props: {
         <p className="vacuum-panel-card__eyebrow">Map Targets</p>
       </div>
       <p className="vacuum-action-hint">
-        Map targets discovered from normalized Valetudo map data. Cleaning commands are not enabled yet.
+        Saved map targets discovered from normalized map data. Cleaning commands are not enabled yet.
       </p>
       <MapTargetSection title="Segments / Rooms" targets={segments} />
       <MapTargetSection title="Zones" targets={zones} />
@@ -4220,8 +4292,8 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
   const sidebarMapTargetSegments = snapshot.map.targets?.segments ?? [];
   const sidebarMapTargetZones = snapshot.map.targets?.zones ?? [];
   const sidebarShowMapTargets = sidebarMapTargetSegments.length > 0 || sidebarMapTargetZones.length > 0;
-  const sidebarShowMapPreview = !!snapshot.map.layeredPreview &&
-    (snapshot.map.layeredPreview.layers.length > 0 || snapshot.map.layeredPreview.entities.length > 0);
+  const layeredMapPreviewAvailable = hasRenderableLayeredMapPreview(snapshot.map.layeredPreview);
+  const sidebarShowMapPreview = layeredMapPreviewAvailable;
   const sidebarShowAttachments = snapshot.capabilities.attachments.supported && sidebarAttachmentItems.length > 0;
   const sidebarShowDockComponents = snapshot.capabilities.dock_components.supported && sidebarDockComponentItems.length > 0;
   const sidebarShowFanSpeed = !!(snapshot.cleaningSettings?.fanSpeed && snapshot.capabilities.fan_speed.supported);
@@ -4362,6 +4434,10 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
               onCleanAreaChange={handleMapAreaChange}
               onMapAnnotationSelect={handleSelectRoomZone}
               onMapMetadataChange={setMapMetadata}
+            />
+          ) : layeredMapPreviewAvailable ? (
+            <ValetudoMainMapPreview
+              preview={snapshot.map.layeredPreview}
             />
           ) : (
             <NoMapCanvasPlaceholder

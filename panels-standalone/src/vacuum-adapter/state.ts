@@ -261,7 +261,16 @@ export type VacuumLayeredMapMetadata = {
 };
 
 export type VacuumMapLayerKind = "floor" | "wall" | "segment" | "path" | "unknown";
-export type VacuumMapEntityKind = "robot" | "charger" | "path" | "zone" | "obstacle" | "unknown";
+export type VacuumMapEntityKind =
+  | "robot"
+  | "charger"
+  | "path"
+  | "zone"
+  | "no_go_area"
+  | "no_mop_area"
+  | "virtual_wall"
+  | "obstacle"
+  | "unknown";
 
 export type VacuumMapRun = {
   x: number;

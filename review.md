@@ -1,3 +1,65 @@
+# Valetudo Realistic Saved Map Fixture Review
+
+Current review date: 2026-06-12.
+
+## Implementation notes
+
+This pass used `Hypfer/lovelace-valetudo-map-card` only as a rendering checklist for common saved-map concepts: floor, walls, segments/rooms, robot, charger, path/predicted path, zones, no-go/no-mop restrictions, virtual walls, and obstacles. No card code, CSS, icons, Home Assistant configuration model, or product architecture was copied.
+
+The fixed mock runtime fixture in `/home/shane/firecracker-vm/tensorfleet-mgr` is now a TensorFleet-owned saved map named `Home Floor 1`. It keeps a Valetudo-like layer/entity shape to exercise the existing runtime normalization path while exposing only normalized `vacuum_adapter` data to product UI.
+
+Product flow remains:
+
+```text
+Valetudo source or fixed mock
+  -> VM-managed Valetudo integration runtime
+  -> vm-manager proxy path if applicable
+  -> Valetudo backend adapter
+  -> normalized vacuum_adapter snapshot/capabilities/commands
+  -> VacuumControlPanel UI
+```
+
+## Fixture coverage
+
+The saved-map fixture now includes:
+
+- Floor and walls, including interior wall structure.
+- Four named segment/room layers: `Kitchen`, `Living Room`, `Bedroom`, and `Hallway`.
+- Three zone-like targets: `Dining Area`, `Entryway`, and `Around Sofa`.
+- Robot and charger point entities.
+- Cleaning path and predicted path entities.
+- Read-only overlays: no-go area near cables, no-mop area on carpet, virtual wall at a doorway, and an obstacle.
+
+Runtime normalization maps those overlays into product-owned preview entity kinds (`no_go_area`, `no_mop_area`, `virtual_wall`, and `obstacle`). It does not expose raw `compressedPixels`, raw Valetudo entity arrays, source URLs, MQTT topics, vm-manager routes, Home Assistant/lovelace vocabulary, or backend payload shapes to the UI.
+
+## Safety behavior
+
+Top-level invalid map data still fails closed: no metadata, preview, or targets are exposed when size/pixel metadata is invalid, map data is missing, source data is stale, or the source is unreachable.
+
+Optional malformed overlay rows are omitted independently. Valid floor, walls, room segments, zones, and other preview entities continue to normalize when the map itself is valid.
+
+No command capabilities were enabled from map presence. Valetudo `snapshot.map.grid` remains `null`, `capabilities.map.supported` remains false, and segment/room/zone/go-to/Clean Area commands remain unsupported.
+
+## vm-manager / firecracker-vm impact
+
+`firecracker-vm/tensorfleet-mgr` changed because it owns the fixed mock fixture, runtime map normalizer, and runtime tests.
+
+No vm-manager code change was required. The existing generic VM proxy forwards the expanded `/api/v1/valetudo/snapshot` JSON without typed map schema changes.
+
+## Deferred areas
+
+- Main canvas Valetudo map preview.
+- Full interactive map rendering.
+- Target hover/selection.
+- Segment cleaning command.
+- Zone cleaning command.
+- Go-to command.
+- User-created zone drawing.
+- Map SSE/live streaming.
+- Hardware validation.
+
+---
+
 # Valetudo Map Data Foundation Review
 
 Current review date: 2026-06-12.

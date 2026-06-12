@@ -211,7 +211,17 @@ export type ValetudoRuntimeMapLayer = {
 
 export type ValetudoRuntimeMapEntity = {
   id: string;
-  kind: "robot" | "charger" | "path" | "zone" | "obstacle" | "unknown" | string;
+  kind:
+    | "robot"
+    | "charger"
+    | "path"
+    | "zone"
+    | "no_go_area"
+    | "no_mop_area"
+    | "virtual_wall"
+    | "obstacle"
+    | "unknown"
+    | string;
   label?: string;
   points?: Array<{ x: number; y: number }>;
   angle?: number;

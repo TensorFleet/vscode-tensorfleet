@@ -3086,6 +3086,29 @@ body {
   gap: 10px;
 }
 
+.vacuum-map-stage--layered-preview {
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background:
+    linear-gradient(rgba(232, 226, 214, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(232, 226, 214, 0.035) 1px, transparent 1px),
+    linear-gradient(180deg, #1b1a18 0%, #171614 100%);
+  background-size: 48px 48px, 48px 48px, auto;
+}
+
+.vacuum-layered-map-preview-frame {
+  width: min(100%, 980px);
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(232, 226, 214, 0.16);
+  border-radius: 10px;
+  background: #0f1211;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
 .vacuum-map-preview-frame {
   width: 100%;
   aspect-ratio: 3 / 2;
@@ -3099,6 +3122,10 @@ body {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.vacuum-map-preview-svg--main {
+  object-fit: contain;
 }
 
 .vacuum-map-preview-bg {
@@ -3174,6 +3201,29 @@ body {
   stroke: rgba(255, 190, 110, 0.92);
   stroke-width: 2.3;
   stroke-linejoin: round;
+}
+
+.vacuum-map-preview-entity--no-go-area {
+  fill: rgba(255, 116, 97, 0.15);
+  stroke: rgba(255, 116, 97, 0.96);
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+  stroke-dasharray: 5 3;
+}
+
+.vacuum-map-preview-entity--no-mop-area {
+  fill: rgba(115, 182, 242, 0.12);
+  stroke: rgba(115, 182, 242, 0.92);
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+  stroke-dasharray: 7 3;
+}
+
+.vacuum-map-preview-entity--virtual-wall {
+  fill: none;
+  stroke: rgba(255, 116, 97, 0.98);
+  stroke-width: 3.1;
+  stroke-linecap: round;
 }
 
 .vacuum-map-preview-entity--path {
@@ -3254,6 +3304,22 @@ body {
 
 .vacuum-map-preview-legend__item--zone {
   color: var(--vacuum-warning);
+}
+
+.vacuum-map-preview-legend__item--no-go {
+  color: var(--vacuum-danger);
+}
+
+.vacuum-map-preview-legend__item--no-mop {
+  color: var(--vacuum-info);
+}
+
+.vacuum-map-preview-legend__item--virtual-wall {
+  color: #ff8a78;
+}
+
+.vacuum-map-preview-legend__item--obstacle {
+  color: #ff9586;
 }
 
 .vacuum-map-preview-legend__item--path {

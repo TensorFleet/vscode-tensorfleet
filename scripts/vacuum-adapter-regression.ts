@@ -1812,8 +1812,8 @@ function testValetudoRuntimeSnapshotMapping(): void {
         supportedCapabilities: ["BasicControlCapability"],
         detectedNotProductReady: ["MapSegmentationCapability", "GoToLocationCapability", "ZoneCleaningCapability"],
         basicCommandsAvailable: true,
-        segmentTargetsAvailable: false,
-        segmentTargetCount: 0,
+        segmentTargetsAvailable: true,
+        segmentTargetCount: 4,
       },
     },
     cleaningSettings: {
@@ -1867,10 +1867,10 @@ function testValetudoRuntimeSnapshotMapping(): void {
         height: 200,
         pixelSize: 5,
         coordinateSystem: "valetudo_pixel",
-        layerCount: 5,
-        entityCount: 3,
-        segmentCount: 3,
-        zoneCount: 1,
+        layerCount: 6,
+        entityCount: 12,
+        segmentCount: 4,
+        zoneCount: 3,
       },
       preview: {
         layers: [
@@ -1903,7 +1903,14 @@ function testValetudoRuntimeSnapshotMapping(): void {
             kind: "segment",
             label: "Bedroom",
             segmentId: "bedroom",
-            runs: mapPreviewRunsForRows(5, 20, 34, 20),
+            runs: mapPreviewRunsForRows(5, 21, 34, 20),
+          },
+          {
+            id: "hallway",
+            kind: "segment",
+            label: "Hallway",
+            segmentId: "hallway",
+            runs: mapPreviewRunsForRows(26, 26, 34, 29),
           },
         ],
         entities: [
@@ -1911,28 +1918,115 @@ function testValetudoRuntimeSnapshotMapping(): void {
             id: "robot_1",
             kind: "robot",
             label: "Robot",
-            points: [{ x: 80, y: 60 }],
-            angle: 90,
+            points: [{ x: 225, y: 142 }],
+            angle: 315,
           },
           {
             id: "charger_1",
             kind: "charger",
-            points: [{ x: 35, y: 35 }],
+            points: [{ x: 178, y: 178 }],
           },
           {
-            id: "zone_spill_001",
-            kind: "zone",
+            id: "cleaning_path_recent",
+            kind: "path",
+            label: "Cleaning path",
             points: [
-              { x: 115, y: 110 },
-              { x: 200, y: 110 },
-              { x: 200, y: 160 },
-              { x: 115, y: 160 },
+              { x: 178, y: 178 },
+              { x: 190, y: 160 },
+              { x: 214, y: 142 },
+              { x: 225, y: 122 },
+              { x: 207, y: 96 },
+              { x: 178, y: 85 },
+              { x: 130, y: 75 },
+              { x: 94, y: 64 },
             ],
           },
           {
-            id: "bad_zone",
+            id: "predicted_path_next",
+            kind: "path",
+            label: "Predicted path",
+            points: [
+              { x: 225, y: 142 },
+              { x: 242, y: 128 },
+              { x: 258, y: 112 },
+              { x: 258, y: 86 },
+              { x: 238, y: 68 },
+            ],
+          },
+          {
+            id: "zone_dining_area",
             kind: "zone",
-            points: [{ x: 1, y: 1 }],
+            label: "Dining Area",
+            points: [
+              { x: 145, y: 40 },
+              { x: 215, y: 40 },
+              { x: 215, y: 95 },
+              { x: 145, y: 95 },
+            ],
+          },
+          {
+            id: "zone_entryway",
+            kind: "zone",
+            label: "Entryway",
+            points: [
+              { x: 200, y: 140 },
+              { x: 270, y: 140 },
+              { x: 270, y: 178 },
+              { x: 200, y: 178 },
+            ],
+          },
+          {
+            id: "zone_around_sofa",
+            kind: "zone",
+            label: "Around Sofa",
+            points: [
+              { x: 135, y: 95 },
+              { x: 230, y: 95 },
+              { x: 230, y: 125 },
+              { x: 135, y: 125 },
+            ],
+          },
+          {
+            id: "restriction_cables",
+            kind: "no_go_area",
+            label: "No-go area near cables",
+            points: [
+              { x: 238, y: 38 },
+              { x: 266, y: 38 },
+              { x: 266, y: 66 },
+              { x: 238, y: 66 },
+            ],
+          },
+          {
+            id: "restriction_bedroom_carpet",
+            kind: "no_mop_area",
+            label: "No-mop area on carpet",
+            points: [
+              { x: 42, y: 118 },
+              { x: 100, y: 118 },
+              { x: 100, y: 165 },
+              { x: 42, y: 165 },
+            ],
+          },
+          {
+            id: "virtual_wall_doorway",
+            kind: "virtual_wall",
+            label: "Virtual wall at doorway",
+            points: [
+              { x: 105, y: 96 },
+              { x: 132, y: 96 },
+            ],
+          },
+          {
+            id: "obstacle_chair_leg",
+            kind: "obstacle",
+            label: "Obstacle",
+            points: [{ x: 248, y: 86 }],
+          },
+          {
+            id: "bad_no_go",
+            kind: "no_go_area",
+            points: [{ x: 1, y: 1 }, { x: 2, y: 2 }],
           },
         ],
       },
@@ -1944,24 +2038,56 @@ function testValetudoRuntimeSnapshotMapping(): void {
             kind: "segment",
             available: true,
             geometry: { type: "unknown", bounds: { x: 5, y: 5, width: 16, height: 14 } },
-            detail: "Valetudo segment layer target.",
+            detail: "Saved room from normalized map data.",
           },
           { id: "living_room", label: "Living Room", kind: "segment", available: true },
           { id: "bedroom", label: "Bedroom", kind: "segment", available: true },
+          { id: "hallway", label: "Hallway", kind: "segment", available: true },
         ],
         zones: [
           {
-            id: "zone_spill_001",
-            label: "Kitchen spill zone",
+            id: "zone_dining_area",
+            label: "Dining Area",
             kind: "zone",
             available: true,
             geometry: {
               type: "polygon",
               points: [
-                { x: 115, y: 110 },
-                { x: 200, y: 110 },
-                { x: 200, y: 160 },
-                { x: 115, y: 160 },
+                { x: 145, y: 40 },
+                { x: 215, y: 40 },
+                { x: 215, y: 95 },
+                { x: 145, y: 95 },
+              ],
+            },
+            detail: "Saved zone from normalized map data.",
+          },
+          {
+            id: "zone_entryway",
+            label: "Entryway",
+            kind: "zone",
+            available: true,
+            geometry: {
+              type: "polygon",
+              points: [
+                { x: 200, y: 140 },
+                { x: 270, y: 140 },
+                { x: 270, y: 178 },
+                { x: 200, y: 178 },
+              ],
+            },
+          },
+          {
+            id: "zone_around_sofa",
+            label: "Around Sofa",
+            kind: "zone",
+            available: true,
+            geometry: {
+              type: "polygon",
+              points: [
+                { x: 135, y: 95 },
+                { x: 230, y: 95 },
+                { x: 230, y: 125 },
+                { x: 135, y: 125 },
               ],
             },
           },
@@ -2030,33 +2156,40 @@ function testValetudoRuntimeSnapshotMapping(): void {
   assert.equal(snapshot.map.readiness, "unavailable");
   assert.equal(snapshot.map.layeredMetadata?.id, "tensorfleet-fixed-map-001");
   assert.equal(snapshot.map.layeredMetadata?.coordinateSystem, "valetudo_pixel");
-  assert.equal(snapshot.map.layeredMetadata?.segmentCount, 3);
-  assert.equal(snapshot.map.layeredMetadata?.zoneCount, 1);
+  assert.equal(snapshot.map.layeredMetadata?.segmentCount, 4);
+  assert.equal(snapshot.map.layeredMetadata?.zoneCount, 3);
   assert.equal(snapshot.map.layeredPreview?.width, 300);
   assert.equal(snapshot.map.layeredPreview?.height, 200);
   assert.equal(snapshot.map.layeredPreview?.pixelSize, 5);
-  assert.equal(snapshot.map.layeredPreview?.layers.length, 5);
+  assert.equal(snapshot.map.layeredPreview?.layers.length, 6);
   assert.equal(snapshot.map.layeredPreview?.layers[0]?.kind, "floor");
   assert.equal(snapshot.map.layeredPreview?.layers[2]?.segmentId, "kitchen");
-  assert.equal(snapshot.map.layeredPreview?.layers.filter((layer) => layer.kind === "segment").length, 3);
+  assert.equal(snapshot.map.layeredPreview?.layers.filter((layer) => layer.kind === "segment").length, 4);
   assert.deepEqual(
     snapshot.map.layeredPreview?.layers
       .filter((layer) => layer.kind === "segment")
       .map((layer) => layer.segmentId),
-    ["kitchen", "living_room", "bedroom"],
+    ["kitchen", "living_room", "bedroom", "hallway"],
   );
-  assert.equal(snapshot.map.layeredPreview?.entities.length, 3);
+  assert.equal(snapshot.map.layeredPreview?.entities.length, 11);
   assert.equal(snapshot.map.layeredPreview?.entities[0]?.kind, "robot");
-  assert.equal(snapshot.map.layeredPreview?.entities[0]?.angle, 90);
-  assert.equal(snapshot.map.layeredPreview?.entities[2]?.kind, "zone");
-  assert.equal(snapshot.map.layeredPreview?.entities[2]?.points?.length, 4);
-  assert.equal(snapshot.map.targets?.segments?.length, 3);
+  assert.equal(snapshot.map.layeredPreview?.entities[0]?.angle, 315);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.kind === "zone").length, 3);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.kind === "path").length, 2);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.kind === "no_go_area").length, 1);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.kind === "no_mop_area").length, 1);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.kind === "virtual_wall").length, 1);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.id === "bad_no_go").length, 0);
+  assert.equal(snapshot.map.targets?.segments?.length, 4);
   assert.equal(snapshot.map.targets?.segments?.[0]?.id, "kitchen");
+  assert.equal(snapshot.map.targets?.segments?.[3]?.label, "Hallway");
   assert.deepEqual(snapshot.map.targets?.segments?.[0]?.geometry, {
     type: "unknown",
     bounds: { x: 5, y: 5, width: 16, height: 14 },
   });
-  assert.equal(snapshot.map.targets?.zones?.[0]?.label, "Kitchen spill zone");
+  assert.equal(snapshot.map.targets?.zones?.length, 3);
+  assert.equal(snapshot.map.targets?.zones?.[0]?.label, "Dining Area");
+  assert.equal(snapshot.map.targets?.zones?.[2]?.label, "Around Sofa");
   assert.equal(snapshot.map.targets?.zones?.[0]?.geometry?.type, "polygon");
   assert.equal(snapshot.capabilities.segment_cleaning.supported, false);
   assert.equal(snapshot.capabilities.segment_cleaning.status, "detected_not_ready");
@@ -2932,9 +3065,9 @@ function testPublicContractAndUiBoundary(): void {
     "No-map placeholder should keep the map-unavailable hierarchy sparse instead of duplicating status chips",
   );
   assert.equal(
-    /mapSurfaceAvailable \? \([\s\S]*?<MapCanvas[\s\S]*?\) : \([\s\S]*?<NoMapCanvasPlaceholder/.test(panelContents),
+    /mapSurfaceAvailable \? \([\s\S]*?<MapCanvas[\s\S]*?\) : layeredMapPreviewAvailable \? \([\s\S]*?<ValetudoMainMapPreview[\s\S]*?\) : \([\s\S]*?<NoMapCanvasPlaceholder/.test(panelContents),
     true,
-    "MapCanvas should be replaced by a no-map placeholder when map support is false",
+    "MapCanvas should keep its capability gate, with normalized layered previews taking the read-only fallback before the no-map placeholder",
   );
   assert.equal(
     /health=\{snapshot\.health\}/.test(panelContents) &&
@@ -2980,26 +3113,53 @@ function testPublicContractAndUiBoundary(): void {
   assert.equal(
     /MapPreviewCard/.test(panelContents) &&
       /preview=\{snapshot\.map\.layeredPreview\}/.test(panelContents) &&
-      /const sidebarShowMapPreview = !!snapshot\.map\.layeredPreview/.test(panelContents),
+      /const sidebarShowMapPreview = layeredMapPreviewAvailable/.test(panelContents),
     true,
     "Map Preview card should render only from normalized layered preview presence",
+  );
+  assert.equal(
+    /function ValetudoLayeredMapSvg/.test(panelContents) &&
+      /<ValetudoLayeredMapSvg[\s\S]*preview=\{preview\}/.test(panelContents) &&
+      /function ValetudoMainMapPreview/.test(panelContents) &&
+      /className="vacuum-map-preview-svg vacuum-map-preview-svg--main"/.test(panelContents),
+    true,
+    "Main and sidebar previews should reuse the shared normalized layered-map SVG renderer",
+  );
+  assert.equal(
+    /const layeredMapPreviewAvailable = hasRenderableLayeredMapPreview\(snapshot\.map\.layeredPreview\)/.test(panelContents) &&
+      /preview=\{snapshot\.map\.layeredPreview\}/.test(panelContents),
+    true,
+    "Main preview should be gated directly by normalized layeredPreview presence",
   );
   const mapPreviewUiStart = panelContents.indexOf("function buildMapPreviewTransform");
   const mapPreviewUiEnd = panelContents.indexOf("function MapTargetSection");
   assert.equal(mapPreviewUiStart >= 0 && mapPreviewUiEnd > mapPreviewUiStart, true);
   const mapPreviewUi = panelContents.slice(mapPreviewUiStart, mapPreviewUiEnd);
   assert.equal(
-    /compressedPixels|Valetudo|fetch\(|XMLHttpRequest|EventSource/.test(mapPreviewUi),
+    /compressedPixels|fetch\(|XMLHttpRequest|EventSource/.test(mapPreviewUi),
     false,
-    "Map Preview card should consume normalized adapter data without raw Valetudo payload names or direct runtime calls",
+    "Map Preview renderer should consume normalized adapter data without raw payload names or direct runtime calls",
   );
   assert.equal(
     /buildMapPreviewTransform/.test(mapPreviewUi) &&
       /mapPreviewRunRect/.test(mapPreviewUi) &&
       /prepareMapPreviewLayers/.test(mapPreviewUi) &&
-      /mapPreviewLegendItems/.test(mapPreviewUi),
+      /mapPreviewLegendItems/.test(mapPreviewUi) &&
+      /preserveAspectRatio="xMidYMid meet"/.test(mapPreviewUi),
     true,
-    "Map Preview card should keep coordinate transforms, layer ordering, and visual legend inside the normalized renderer",
+    "Map Preview renderer should keep coordinate transforms, layer ordering, aspect-ratio preservation, and visual legend inside the normalized renderer",
+  );
+  assert.equal(
+    /vacuum-map-stage--layered-preview/.test(panelStyles) &&
+      /vacuum-layered-map-preview-frame/.test(panelStyles) &&
+      /max-height: 100%/.test(panelStyles) &&
+      /vacuum-map-preview-svg--main/.test(panelStyles) &&
+      /object-fit: contain/.test(panelStyles) &&
+      /vacuum-map-preview-layer--floor/.test(panelStyles) &&
+      /vacuum-map-preview-layer--wall/.test(panelStyles) &&
+      /vacuum-map-preview-layer--segment/.test(panelStyles),
+    true,
+    "Main map preview styles should fit the shared SVG in the main canvas while preserving the map visual vocabulary",
   );
   assert.equal(
     /vacuum-map-preview-layer--floor/.test(panelStyles) &&
@@ -3008,9 +3168,13 @@ function testPublicContractAndUiBoundary(): void {
       /vacuum-map-preview-entity--robot/.test(panelStyles) &&
       /vacuum-map-preview-entity--charger/.test(panelStyles) &&
       /vacuum-map-preview-entity--zone/.test(panelStyles) &&
+      /vacuum-map-preview-entity--no-go-area/.test(panelStyles) &&
+      /vacuum-map-preview-entity--no-mop-area/.test(panelStyles) &&
+      /vacuum-map-preview-entity--virtual-wall/.test(panelStyles) &&
+      /vacuum-map-preview-entity--obstacle/.test(panelStyles) &&
       /vacuum-map-preview-entity--path/.test(panelStyles),
     true,
-    "Map Preview styles should distinguish floor, walls, segments, robot, charger, zone, and path entities",
+    "Map Preview styles should distinguish floor, walls, segments, robot, charger, zones, restrictions, obstacles, and paths",
   );
   assert.equal(
     /MapTargetSection title="Segments \/ Rooms"/.test(panelContents) &&
@@ -3027,6 +3191,11 @@ function testPublicContractAndUiBoundary(): void {
     /compressedPixels|JSON\.stringify|\.points|\.bounds/.test(mapTargetsUi),
     false,
     "Map Targets card should summarize geometry without exposing raw coordinates or Valetudo pixel payloads",
+  );
+  assert.equal(
+    /Valetudo|lovelace|Home Assistant|compressedPixels/.test(mapTargetsUi),
+    false,
+    "Map Targets card should not render raw Valetudo, lovelace, Home Assistant, or payload vocabulary",
   );
   assert.equal(
     /vacuum-panel-card--robot-overview/.test(panelContents) &&
