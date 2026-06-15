@@ -97,6 +97,14 @@ function deriveMissionState(navigationActive: boolean, mappingState?: VacuumMapp
   return "idle";
 }
 
+function isCleaningMissionType(type: VacuumMissionSnapshot["type"] | undefined): boolean {
+  return type === "coverage" || type === "room_cleaning" || type === "zone_cleaning";
+}
+
+function isTerminalMissionStatus(status: VacuumMissionStatus): boolean {
+  return status === "completed" || status === "failed" || status === "canceled" || status === "unsupported";
+}
+
 function buildRobotActivity(input: {
   runtime: Nav2RuntimeState;
   activeMission: VacuumMissionSnapshot | null;
@@ -113,7 +121,27 @@ function buildRobotActivity(input: {
       availableActions: [],
     };
   }
-  if (input.activeMission?.type === "coverage" || input.activeMission?.type === "room_cleaning" || input.activeMission?.type === "zone_cleaning") {
+  if (
+    isCleaningMissionType(input.activeMission?.type) &&
+    input.activeMission &&
+    isTerminalMissionStatus(input.activeMission.status) &&
+    (input.activeMission.status === "failed" || input.activeMission.status === "unsupported")
+  ) {
+    return {
+      status: "faulted",
+      label: "Cleaning failed",
+      updatedAt: input.activeMission.updatedAt ?? undefined,
+      source: "turtlebot4_nav2",
+      availableActions: input.activeMission.availableActions,
+      reason: input.activeMission.error?.code ?? input.activeMission.result?.status,
+      details: {
+        missionType: input.activeMission.type,
+        result: input.activeMission.result,
+        error: input.activeMission.error,
+      },
+    };
+  }
+  if (isCleaningMissionType(input.activeMission?.type) && input.activeMission && !isTerminalMissionStatus(input.activeMission.status)) {
     return {
       status: input.activeMission.status === "paused" || input.activeMission.status === "needs_assistance" ? "paused" : "covering",
       label: input.activeMission.type === "coverage" ? "Covering" : "Cleaning",

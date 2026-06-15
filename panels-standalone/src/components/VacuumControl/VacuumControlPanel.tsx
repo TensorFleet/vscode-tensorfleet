@@ -4023,7 +4023,7 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
     routeVisualState === "completed" || routeVisualState === "failed" || routeVisualState === "canceled";
   const runTarget = displayedDraftTarget ?? (isTerminalState ? displayedSentTarget : null);
   const canSendRun =
-    Boolean(runTarget) && startNavigationSupported && readinessReady && !isSendingGoal && !isCleanAreaRunning;
+    Boolean(runTarget) && navigationSupported && readinessReady && !isSendingGoal && !isCleanAreaRunning;
   const canCancelRun = (cancelMissionSupported || cancelNavigationSupported) && !isCancelingGoal;
   const canStartCleanArea =
     displayedCleanAreaState === "paused" && activeCoverageMission
@@ -4140,7 +4140,7 @@ function VacuumControlPanelContent(props: VacuumControlPanelContentProps) {
     }
     setDismissedNavigationTargetKey(null);
     setSentTarget(target);
-    await adapter.sendCommand({ command: "start_navigation", target });
+    await adapter.sendCommand({ command: startNavigationSupported ? "start_navigation" : "go_to_location", target });
   }
 
   async function handleCancel(): Promise<void> {

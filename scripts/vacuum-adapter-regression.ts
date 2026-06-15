@@ -680,6 +680,47 @@ function testStateMapping(): void {
     "skip_mission_step",
   ]);
 
+  const terminalCoverage = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      ...hydratedCoverage.activeMission!,
+      status: "completed",
+      updatedAt: 10,
+      phase: "completed",
+      availableActions: [],
+      result: { status: "completed", completedAt: 10, summary: "Coverage completed." },
+    },
+  });
+  assert.equal(terminalCoverage.activeMission?.status, "completed");
+  assert.equal(terminalCoverage.mission.state, "idle");
+  assert.equal(terminalCoverage.activity?.status, "idle");
+
+  const terminalCoverageWithActiveNavigation = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "executing" }),
+    mission: terminalCoverage.activeMission,
+  });
+  assert.equal(terminalCoverageWithActiveNavigation.activeMission?.status, "completed");
+  assert.equal(terminalCoverageWithActiveNavigation.activity?.status, "navigating");
+
+  const failedTerminalRoomCleaning = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      ...hydratedCoverage.activeMission!,
+      id: "room-cleaning-failed",
+      type: "room_cleaning",
+      status: "failed",
+      updatedAt: 12,
+      requestedCommand: "start_room_cleaning",
+      phase: "failed",
+      availableActions: [],
+      result: { status: "failed", completedAt: 12, summary: "Room cleaning failed." },
+      error: { code: "coverage_step_failed", message: "Coverage navigation step failed.", recoverable: true },
+    },
+  });
+  assert.equal(failedTerminalRoomCleaning.activeMission?.status, "failed");
+  assert.equal(failedTerminalRoomCleaning.mission.state, "idle");
+  assert.equal(failedTerminalRoomCleaning.activity?.status, "faulted");
+
   const hydratedCoverageWithAcceptedMap = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "ready" }),
     mapping: {
@@ -3058,6 +3099,20 @@ function testPublicContractAndUiBoundary(): void {
     panelContents.includes("deriveVacuumPrimaryRobotState"),
     true,
     "Vacuum Control should derive one normalized primary robot state for compact robot status",
+  );
+  assert.equal(
+    /const canSendRun =\s*Boolean\(runTarget\) && navigationSupported && readinessReady && !isSendingGoal && !isCleanAreaRunning/.test(
+      panelContents,
+    ),
+    true,
+    "Vacuum Control should allow direct Nav2 go_to_location navigation when VM mission navigation is unavailable",
+  );
+  assert.equal(
+    /adapter\.sendCommand\(\{ command: startNavigationSupported \? "start_navigation" : "go_to_location", target \}\)/.test(
+      panelContents,
+    ),
+    true,
+    "Vacuum Control should fall back to go_to_location when start_navigation is unsupported",
   );
   assert.equal(
     /vacuum-no-map-placeholder__chips/.test(panelContents),
