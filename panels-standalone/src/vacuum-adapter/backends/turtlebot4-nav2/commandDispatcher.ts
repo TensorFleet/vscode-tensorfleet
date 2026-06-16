@@ -3,7 +3,7 @@ import type { VacuumAdapterSnapshot } from "../../state";
 import type { VacuumCommand, VacuumCommandResult } from "../../commands";
 import { unsupportedCommand } from "../../errors";
 import type { VacuumGoalCoordinates } from "../../state";
-import { MAPPING_SERVICE_NAMES, TURTLEBOT4_NAV2_UNSUPPORTED_COMMANDS } from "./capabilityMapper";
+import { MAPPING_SERVICE_NAMES, MISSION_SERVICE_NAMES, TURTLEBOT4_NAV2_UNSUPPORTED_COMMANDS } from "./capabilityMapper";
 
 export type TurtleBot4Nav2CommandRuntime = Pick<
   Nav2RuntimeState,
@@ -49,6 +49,50 @@ export async function dispatchTurtleBot4Nav2Command(
         ok: false,
         command: commandName,
         error: unsupportedCommand(commandName, "Mapping service calls are not available in this runtime."),
+      };
+    }
+    try {
+      const response = await runtime.callService(serviceName, {}, { timeoutMs: 10_000 });
+      const success = response == null || response.success !== false;
+      if (!success) {
+        return {
+          ok: false,
+          command: commandName,
+          error: {
+            code: "backend_error",
+            command: commandName,
+            message: typeof response?.message === "string" ? response.message : `${serviceName} returned failure.`,
+          },
+        };
+      }
+      return {
+        ok: true,
+        command: commandName,
+        message: typeof response?.message === "string" ? response.message : `Dispatched ${commandName}.`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        command: commandName,
+        error: {
+          code: "backend_error",
+          command: commandName,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  async function callTriggerService(
+    serviceName: string,
+    commandName: VacuumCommand["command"],
+    unavailableMessage: string,
+  ): Promise<VacuumCommandResult> {
+    if (!runtime.callService) {
+      return {
+        ok: false,
+        command: commandName,
+        error: unsupportedCommand(commandName, unavailableMessage),
       };
     }
     try {
@@ -141,6 +185,299 @@ export async function dispatchTurtleBot4Nav2Command(
     }
   }
 
+  async function setNavigationRequest(target: VacuumGoalCoordinates): Promise<VacuumCommandResult | null> {
+    if (!runtime.callService) {
+      return {
+        ok: false,
+        command: "start_navigation",
+        error: unsupportedCommand("start_navigation", "Navigation mission service calls are not available in this runtime."),
+      };
+    }
+    try {
+      const response = await runtime.callService(
+        MISSION_SERVICE_NAMES.setParameters,
+        {
+          parameters: [
+            {
+              name: "navigation_request",
+              value: {
+                type: 4,
+                string_value: JSON.stringify({ target }),
+              },
+            },
+          ],
+        },
+        { timeoutMs: 5_000 },
+      );
+      const results = Array.isArray(response?.results) ? response.results : [];
+      const failed = results.find((entry) => entry && typeof entry === "object" && (entry as { successful?: boolean }).successful === false);
+      if (failed) {
+        return {
+          ok: false,
+          command: "start_navigation",
+          error: {
+            code: "backend_error",
+            command: "start_navigation",
+            message:
+              typeof (failed as { reason?: unknown }).reason === "string"
+                ? (failed as { reason: string }).reason
+                : "Navigation request parameter update failed.",
+          },
+        };
+      }
+      return null;
+    } catch (error) {
+      return {
+        ok: false,
+        command: "start_navigation",
+        error: {
+          code: "backend_error",
+          command: "start_navigation",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  async function setCoverageRequest(command: Extract<VacuumCommand, { command: "start_coverage" }>): Promise<VacuumCommandResult | null> {
+    if (!runtime.callService) {
+      return {
+        ok: false,
+        command: "start_coverage",
+        error: unsupportedCommand("start_coverage", "Coverage mission service calls are not available in this runtime."),
+      };
+    }
+    try {
+      const payload: Record<string, unknown> = { area: command.area };
+      if (command.route && command.route.length > 0) {
+        payload.route = command.route;
+      }
+      if (command.coverage) {
+        payload.coverage = command.coverage;
+      }
+      const response = await runtime.callService(
+        MISSION_SERVICE_NAMES.setParameters,
+        {
+          parameters: [
+            {
+              name: "coverage_request",
+              value: {
+                type: 4,
+                string_value: JSON.stringify(payload),
+              },
+            },
+          ],
+        },
+        { timeoutMs: 5_000 },
+      );
+      const results = Array.isArray(response?.results) ? response.results : [];
+      const failed = results.find((entry) => entry && typeof entry === "object" && (entry as { successful?: boolean }).successful === false);
+      if (failed) {
+        return {
+          ok: false,
+          command: "start_coverage",
+          error: {
+            code: "backend_error",
+            command: "start_coverage",
+            message:
+              typeof (failed as { reason?: unknown }).reason === "string"
+                ? (failed as { reason: string }).reason
+                : "Coverage request parameter update failed.",
+          },
+        };
+      }
+      return null;
+    } catch (error) {
+      return {
+        ok: false,
+        command: "start_coverage",
+        error: {
+          code: "backend_error",
+          command: "start_coverage",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  async function setRoomZoneCleaningRequest(
+    command: Extract<VacuumCommand, { command: "start_room_cleaning" | "start_zone_cleaning" }>,
+  ): Promise<VacuumCommandResult | null> {
+    if (!runtime.callService) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "Room/zone cleaning service calls are not available in this runtime."),
+      };
+    }
+    try {
+      const payload: Record<string, unknown> = {
+        area: command.annotation.area,
+        missionType: command.annotation.kind === "room" ? "room_cleaning" : "zone_cleaning",
+        requestedCommand: command.command,
+        annotation: {
+          id: command.annotation.id,
+          kind: command.annotation.kind,
+          name: command.annotation.name,
+          mapId: command.annotation.mapId,
+        },
+      };
+      if (command.route && command.route.length > 0) {
+        payload.route = command.route;
+      }
+      if (command.coverage) {
+        payload.coverage = command.coverage;
+      }
+      const response = await runtime.callService(
+        MISSION_SERVICE_NAMES.setParameters,
+        {
+          parameters: [
+            {
+              name: "coverage_request",
+              value: {
+                type: 4,
+                string_value: JSON.stringify(payload),
+              },
+            },
+          ],
+        },
+        { timeoutMs: 5_000 },
+      );
+      const results = Array.isArray(response?.results) ? response.results : [];
+      const failed = results.find((entry) => entry && typeof entry === "object" && (entry as { successful?: boolean }).successful === false);
+      if (failed) {
+        return {
+          ok: false,
+          command: command.command,
+          error: {
+            code: "backend_error",
+            command: command.command,
+            message:
+              typeof (failed as { reason?: unknown }).reason === "string"
+                ? (failed as { reason: string }).reason
+                : "Room/zone cleaning request parameter update failed.",
+          },
+        };
+      }
+      return null;
+    } catch (error) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "backend_error",
+          command: command.command,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  if (command.command === "start_navigation") {
+    if (!snapshot.capabilities.start_navigation.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "start_navigation requires the VM navigation mission runtime."),
+      };
+    }
+    if (!snapshot.readiness.ready) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "not_ready",
+          command: command.command,
+          message: `Adapter not ready to dispatch: ${snapshot.readiness.blockingReasons.join(" ")}`,
+        },
+      };
+    }
+    context.setCurrentTarget(command.target);
+    context.setInitialDistance(distanceBetween(runtime.currentMapCoordinates, command.target));
+    const setRequestError = await setNavigationRequest(command.target);
+    if (setRequestError) {
+      return setRequestError;
+    }
+    return await callTriggerService(
+      MISSION_SERVICE_NAMES.startNavigation,
+      command.command,
+      "Navigation mission service calls are not available in this runtime.",
+    );
+  }
+
+  if (command.command === "start_coverage") {
+    if (!snapshot.capabilities.start_coverage.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "start_coverage requires the VM coverage mission runtime."),
+      };
+    }
+    if (!snapshot.readiness.ready) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "not_ready",
+          command: command.command,
+          message: `Adapter not ready to dispatch: ${snapshot.readiness.blockingReasons.join(" ")}`,
+        },
+      };
+    }
+    const setRequestError = await setCoverageRequest(command);
+    if (setRequestError) {
+      return setRequestError;
+    }
+    return await callTriggerService(
+      MISSION_SERVICE_NAMES.startCoverage,
+      command.command,
+      "Coverage mission service calls are not available in this runtime.",
+    );
+  }
+
+  if (command.command === "start_room_cleaning" || command.command === "start_zone_cleaning") {
+    const capability = command.command === "start_room_cleaning" ? snapshot.capabilities.room_cleaning : snapshot.capabilities.zone_cleaning;
+    if (!capability.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, `${command.command} requires the VM coverage mission runtime.`),
+      };
+    }
+    if (!snapshot.readiness.ready) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "not_ready",
+          command: command.command,
+          message: `Adapter not ready to dispatch: ${snapshot.readiness.blockingReasons.join(" ")}`,
+        },
+      };
+    }
+    const expectedKind = command.command === "start_room_cleaning" ? "room" : "zone";
+    if (command.annotation.kind !== expectedKind) {
+      return {
+        ok: false,
+        command: command.command,
+        error: {
+          code: "invalid_request",
+          command: command.command,
+          message: `${command.command} requires a saved ${expectedKind} annotation.`,
+        },
+      };
+    }
+    const setRequestError = await setRoomZoneCleaningRequest(command);
+    if (setRequestError) {
+      return setRequestError;
+    }
+    return await callTriggerService(
+      MISSION_SERVICE_NAMES.startCoverage,
+      command.command,
+      "Coverage mission service calls are not available in this runtime.",
+    );
+  }
+
   if (command.command === "go_to_location") {
     if (!snapshot.capabilities.go_to_location.supported) {
       return {
@@ -183,6 +520,53 @@ export async function dispatchTurtleBot4Nav2Command(
         },
       };
     }
+  }
+
+  if (command.command === "cancel_mission") {
+    if (!snapshot.capabilities.cancel_mission.supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, "cancel_mission requires the VM mission runtime."),
+      };
+    }
+    return await callTriggerService(
+      MISSION_SERVICE_NAMES.cancel,
+      command.command,
+      "Mission cancel service calls are not available in this runtime.",
+    );
+  }
+
+  if (
+    command.command === "pause_mission" ||
+    command.command === "resume_mission" ||
+    command.command === "retry_mission_step" ||
+    command.command === "skip_mission_step"
+  ) {
+    const capabilityByCommand = {
+      pause_mission: snapshot.capabilities.pause_mission,
+      resume_mission: snapshot.capabilities.resume_mission,
+      retry_mission_step: snapshot.capabilities.retry_mission_step,
+      skip_mission_step: snapshot.capabilities.skip_mission_step,
+    } as const;
+    if (!capabilityByCommand[command.command].supported) {
+      return {
+        ok: false,
+        command: command.command,
+        error: unsupportedCommand(command.command, `${command.command} requires the VM mission runtime.`),
+      };
+    }
+    const serviceByCommand = {
+      pause_mission: MISSION_SERVICE_NAMES.pause,
+      resume_mission: MISSION_SERVICE_NAMES.resume,
+      retry_mission_step: MISSION_SERVICE_NAMES.retryStep,
+      skip_mission_step: MISSION_SERVICE_NAMES.skipStep,
+    } as const;
+    return await callTriggerService(
+      serviceByCommand[command.command],
+      command.command,
+      "Mission lifecycle service calls are not available in this runtime.",
+    );
   }
 
   if (command.command === "cancel_navigation") {

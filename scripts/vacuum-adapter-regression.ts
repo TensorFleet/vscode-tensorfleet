@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   CANCEL_GOAL_SERVICE,
@@ -23,27 +23,127 @@ import {
 } from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/commandDispatcher";
 import {
   MAPPING_SERVICE_NAMES,
+  MAP_ANNOTATION_SERVICE_NAMES,
   MAPPING_STATUS_TOPIC,
+  MISSION_SERVICE_NAMES,
+  MISSION_STATUS_TOPIC,
   mapTurtleBot4Nav2Capabilities,
 } from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/capabilityMapper";
 import {
   mapTurtleBot4Nav2State,
 } from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/stateMapper";
 import {
+  hasMigratedLocalPrototypeMapAnnotations,
+  readLocalPrototypeMapAnnotations,
+} from "../panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/localAnnotationMigration";
+import {
   mapVacuumCommandToValetudoRequest,
+  mapValetudoRuntimeCommandResult,
 } from "../panels-standalone/src/vacuum-adapter/backends/valetudo/commandMapper";
+import {
+  mapVacuumCommandToValetudoRuntimeCommandName,
+} from "../panels-standalone/src/vacuum-adapter/backends/valetudo/runtimeCommandMapper";
 import {
   mapValetudoCapabilities,
 } from "../panels-standalone/src/vacuum-adapter/backends/valetudo/capabilityMapper";
+import type {
+  ValetudoRuntimeSnapshot,
+} from "../panels-standalone/src/vacuum-adapter/backends/valetudo/runtimeContract";
+import {
+  isValetudoRuntimeSnapshot,
+  mapValetudoRuntimeSnapshotToBoundary,
+  mapValetudoRuntimeUnavailable,
+  mapValetudoState,
+} from "../panels-standalone/src/vacuum-adapter/backends/valetudo/stateMapper";
+import {
+  deriveVacuumPrimaryRobotState,
+} from "../panels-standalone/src/vacuum-adapter/primaryState";
+import {
+  buildCleanAreaCoverageSnapshot,
+  buildCleanAreaCoverageTarget,
+  markCleanAreaCoveredCells,
+} from "../panels-standalone/src/components/VacuumControl/cleanAreaCoverage";
+import {
+  buildLawnmowerWaypoints,
+} from "../panels-standalone/src/components/VacuumControl/cleanAreaPlanner";
+import {
+  buildCleanAreaCoverageRuntimeConfig,
+} from "../panels-standalone/src/components/VacuumControl/cleanAreaProfile";
 
 const repoRoot = resolve(import.meta.dir, "..");
+const valetudoRawCapabilityNames = [
+  "BasicControlCapability",
+  "BatteryStateCapability",
+  "ConsumableMonitoringCapability",
+  "FanSpeedControlCapability",
+  "GoToLocationCapability",
+  "MapSegmentationCapability",
+  "WaterUsageControlCapability",
+  "ZoneCleaningCapability",
+] as const;
+
+function collectFiles(dir: string, predicate: (path: string) => boolean): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const path = resolve(dir, entry);
+    const stat = statSync(path);
+    if (stat.isDirectory()) {
+      files.push(...collectFiles(path, predicate));
+      continue;
+    }
+    if (predicate(path)) {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+function mapPreviewRunsForRows(x: number, yStart: number, yEnd: number, count: number): Array<{ x: number; y: number; count: number }> {
+  return Array.from({ length: yEnd - yStart + 1 }, (_, index) => ({ x, y: yStart + index, count }));
+}
+
+function mapPreviewWallRuns(widthInCells: number, heightInCells: number): Array<{ x: number; y: number; count: number }> {
+  return [
+    { x: 0, y: 0, count: widthInCells },
+    { x: 0, y: heightInCells - 1, count: widthInCells },
+    ...Array.from({ length: Math.max(0, heightInCells - 2) }, (_, index) => index + 1).flatMap((y) => [
+      { x: 0, y, count: 1 },
+      { x: widthInCells - 1, y, count: 1 },
+    ]),
+  ];
+}
+
+function installMockLocalStorage(): Map<string, string> {
+  const storage = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          storage.set(key, value);
+        },
+        removeItem: (key: string) => {
+          storage.delete(key);
+        },
+      },
+    },
+  });
+  return storage;
+}
 
 function createRuntime(overrides: Partial<Nav2RuntimeState> = {}): Nav2RuntimeState {
   return {
     connectionStatus: "connected",
     connectedAt: 1,
-    availableTopics: [],
-    availableServices: [SEND_GOAL_SERVICE, CANCEL_GOAL_SERVICE, ...Object.values(MAPPING_SERVICE_NAMES)],
+    availableTopics: [{ topic: MISSION_STATUS_TOPIC, type: "std_msgs/msg/String" }],
+    availableServices: [
+      SEND_GOAL_SERVICE,
+      CANCEL_GOAL_SERVICE,
+      ...Object.values(MAPPING_SERVICE_NAMES),
+      ...Object.values(MISSION_SERVICE_NAMES),
+      ...Object.values(MAP_ANNOTATION_SERVICE_NAMES),
+    ],
     messageTimestamps: {},
     odomMessage: null,
     poseMessage: null,
@@ -141,10 +241,43 @@ async function testTurtleBot4Commands(): Promise<void> {
   assert.deepEqual(currentTarget, target);
   assert.equal(initialDistance, 2);
 
-  const cancelResult = await dispatchTurtleBot4Nav2Command(
-    { command: "cancel_navigation" },
+  const serviceCalls: string[] = [];
+  const missionResult = await dispatchTurtleBot4Nav2Command(
+    { command: "start_navigation", target },
     {
-      runtime,
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return name === MISSION_SERVICE_NAMES.setParameters
+            ? { results: [{ successful: true }] }
+            : { success: true, message: name };
+        },
+      },
+      snapshot,
+      setCurrentTarget: (value) => {
+        currentTarget = value;
+      },
+      setInitialDistance: (value) => {
+        initialDistance = value;
+      },
+    },
+  );
+
+  assert.equal(missionResult.ok, true);
+  assert.equal(sentTargets.length, 1);
+  assert.deepEqual(serviceCalls, [MISSION_SERVICE_NAMES.setParameters, MISSION_SERVICE_NAMES.startNavigation]);
+
+  const cancelResult = await dispatchTurtleBot4Nav2Command(
+    { command: "cancel_mission" },
+    {
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return { success: true, message: name };
+        },
+      },
       snapshot,
       setCurrentTarget: () => undefined,
       setInitialDistance: () => undefined,
@@ -152,7 +285,85 @@ async function testTurtleBot4Commands(): Promise<void> {
   );
 
   assert.equal(cancelResult.ok, true);
-  assert.equal(cancelCount, 1);
+  assert.equal(cancelCount, 0);
+  assert.equal(serviceCalls.at(-1), MISSION_SERVICE_NAMES.cancel);
+
+  const coverageResult = await dispatchTurtleBot4Nav2Command(
+    {
+      command: "start_coverage",
+      area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+    },
+    {
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return name === MISSION_SERVICE_NAMES.setParameters
+            ? { results: [{ successful: true }] }
+            : { success: true, message: name };
+        },
+      },
+      snapshot,
+      setCurrentTarget: () => undefined,
+      setInitialDistance: () => undefined,
+    },
+  );
+
+  assert.equal(coverageResult.ok, true);
+  assert.deepEqual(serviceCalls.slice(-2), [MISSION_SERVICE_NAMES.setParameters, MISSION_SERVICE_NAMES.startCoverage]);
+
+  const roomCleaningResult = await dispatchTurtleBot4Nav2Command(
+    {
+      command: "start_room_cleaning",
+      annotation: {
+        id: "room-1",
+        kind: "room",
+        name: "Kitchen",
+        area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+        mapId: "lab-map",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    },
+    {
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return name === MISSION_SERVICE_NAMES.setParameters
+            ? { results: [{ successful: true }] }
+            : { success: true, message: name };
+        },
+      },
+      snapshot,
+      setCurrentTarget: () => undefined,
+      setInitialDistance: () => undefined,
+    },
+  );
+
+  assert.equal(roomCleaningResult.ok, true);
+  assert.deepEqual(serviceCalls.slice(-2), [MISSION_SERVICE_NAMES.setParameters, MISSION_SERVICE_NAMES.startCoverage]);
+
+  for (const command of [
+    { command: "pause_mission" },
+    { command: "resume_mission" },
+    { command: "retry_mission_step" },
+    { command: "skip_mission_step" },
+  ] satisfies VacuumCommand[]) {
+    const result = await dispatchTurtleBot4Nav2Command(command, {
+      runtime: {
+        ...runtime,
+        callService: async (name) => {
+          serviceCalls.push(name);
+          return { success: true, message: name };
+        },
+      },
+      snapshot,
+      setCurrentTarget: () => undefined,
+      setInitialDistance: () => undefined,
+    });
+    assert.equal(result.ok, true, `${command.command} should dispatch`);
+  }
 }
 
 async function testTurtleBot4MappingCommands(): Promise<void> {
@@ -232,10 +443,23 @@ function testCapabilityCoverage(): void {
 
   const supportedNav2 = mapTurtleBot4Nav2Capabilities(createRuntime());
   assert.equal(supportedNav2.go_to_location.supported, true);
+  assert.equal(supportedNav2.start_navigation.supported, true);
+  assert.equal(supportedNav2.cancel_mission.supported, true);
   assert.equal(supportedNav2.cancel_navigation.supported, true);
   assert.equal(supportedNav2.go_to_location.backendCapability, "nav2_msgs/action/NavigateToPose");
   assert.equal(supportedNav2.mapping_session.supported, true);
   assert.equal(supportedNav2.auto_mapping.supported, false);
+  assert.equal(supportedNav2.coverage_mission.supported, true);
+  assert.equal(supportedNav2.map_annotations.supported, true);
+  assert.equal(supportedNav2.room_semantics.supported, true);
+  assert.equal(supportedNav2.zone_semantics.supported, true);
+  assert.equal(supportedNav2.room_cleaning.supported, true);
+  assert.equal(supportedNav2.zone_cleaning.supported, true);
+  assert.equal(supportedNav2.start_coverage.supported, true);
+  assert.equal(supportedNav2.pause_mission.supported, true);
+  assert.equal(supportedNav2.resume_mission.supported, true);
+  assert.equal(supportedNav2.retry_mission_step.supported, true);
+  assert.equal(supportedNav2.skip_mission_step.supported, true);
 
   const mappingNav2 = mapTurtleBot4Nav2Capabilities(
     createRuntime({ availableTopics: [{ topic: MAPPING_STATUS_TOPIC, type: "std_msgs/msg/String" }] }),
@@ -244,21 +468,75 @@ function testCapabilityCoverage(): void {
 
   const blockedNav2 = mapTurtleBot4Nav2Capabilities(createRuntime({ availableServices: [] }));
   assert.equal(blockedNav2.go_to_location.supported, false);
+  assert.equal(blockedNav2.start_navigation.supported, false);
+  assert.equal(blockedNav2.cancel_mission.supported, false);
   assert.equal(blockedNav2.cancel_navigation.supported, false);
   assert.equal(blockedNav2.mapping_session.supported, false);
+  assert.equal(blockedNav2.start_coverage.supported, false);
+  assert.equal(blockedNav2.map_annotations.supported, false);
+  assert.equal(blockedNav2.room_semantics.supported, false);
+  assert.equal(blockedNav2.zone_semantics.supported, false);
+  assert.equal(blockedNav2.room_cleaning.supported, false);
+  assert.equal(blockedNav2.zone_cleaning.supported, false);
 
   const valetudo = mapValetudoCapabilities([
     "BasicControlCapability",
+    "BatteryStateCapability",
+    "ConsumableMonitoringCapability",
     "GoToLocationCapability",
     "FanSpeedControlCapability",
+    "WaterUsageControlCapability",
+    "MapSegmentationCapability",
+    "ZoneCleaningCapability",
   ]);
   assert.equal(valetudo.start_cleaning.supported, true);
+  assert.equal(valetudo.start_cleaning.status, "supported");
+  assert.equal(valetudo.start_cleaning.available, true);
+  assert.equal(valetudo.pause.supported, true);
+  assert.equal(valetudo.resume.supported, true);
+  assert.equal(valetudo.stop.supported, true);
   assert.equal(valetudo.return_to_dock.supported, true);
-  assert.equal(valetudo.go_to_location.supported, true);
+  assert.equal(valetudo.battery.supported, true);
+  assert.equal(valetudo.go_to_location.supported, false);
   assert.equal(valetudo.fan_speed.supported, true);
+  assert.equal(valetudo.fan_speed.commands?.includes("set_fan_speed"), true);
+  assert.equal(valetudo.water_usage.supported, true);
+  assert.equal(valetudo.water_usage.commands?.includes("set_water_usage"), true);
+  assert.equal(valetudo.consumables.supported, false);
+  assert.equal(valetudo.segment_cleaning.supported, false);
   assert.equal(valetudo.zone_cleaning.supported, false);
-  assert.equal(valetudo.resume.supported, false);
+  assert.equal(valetudo.map.supported, false);
+  assert.equal(valetudo.pose.supported, false);
+  assert.equal(valetudo.zone_cleaning.supported, false);
+  assert.equal(valetudo.room_cleaning.supported, false);
+  assert.equal(valetudo.map_annotations.supported, false);
+  assert.equal(valetudo.room_semantics.supported, false);
+  assert.equal(valetudo.zone_semantics.supported, false);
   assert.equal(valetudo.auto_mapping.supported, false);
+
+  for (const name of ["consumables", "segment_cleaning", "zone_cleaning"] as const) {
+    assert.equal(valetudo[name].source, "valetudo");
+    assert.equal(valetudo[name].status, "detected_not_ready");
+    assert.equal(valetudo[name].available, false);
+    assert.equal(
+      valetudo[name].notes,
+      "Valetudo capability detected, but product workflow is not implemented in this slice.",
+    );
+  }
+
+  const valetudoWithConsumables = mapValetudoCapabilities(valetudoRawCapabilityNames, {
+    consumablesSupported: true,
+  });
+  assert.equal(valetudoWithConsumables.consumables.supported, true);
+  assert.equal(valetudoWithConsumables.consumables.available, true);
+
+  const withoutBasicControl = mapValetudoCapabilities(["BatteryStateCapability"]);
+  assert.equal(withoutBasicControl.start_cleaning.supported, false);
+  assert.equal(withoutBasicControl.pause.supported, false);
+  assert.equal(withoutBasicControl.resume.supported, false);
+  assert.equal(withoutBasicControl.stop.supported, false);
+  assert.equal(withoutBasicControl.return_to_dock.supported, false);
+  assert.equal(withoutBasicControl.battery.supported, true);
 }
 
 function testServiceDiscoveryNormalization(): void {
@@ -276,11 +554,46 @@ function testServiceDiscoveryNormalization(): void {
 function testStateMapping(): void {
   const idle = mapTurtleBot4Nav2State({ runtime: createRuntime({ goalState: "ready" }), currentTarget: null });
   assert.equal(idle.mission.state, "idle");
+  assert.equal(idle.activity?.status, "idle");
   assert.equal(idle.navigation.state, "idle");
+  assert.equal(idle.health?.runtimeStatus, "online");
+  assert.equal(idle.source?.kind, "turtlebot4_nav2");
+  assert.equal(idle.source?.status, "reachable");
+  assert.equal(idle.dock?.supported, false);
+  assert.equal(idle.dock?.state, "unknown");
+  assert.equal(idle.diagnostics?.backend, "turtlebot4_nav2");
+  assert.equal((idle.diagnostics?.map as { topic?: string } | undefined)?.topic, "/map");
+  assert.equal((idle.diagnostics?.pose as { source?: string } | undefined)?.source, "test");
+  assert.equal(
+    (idle.diagnostics?.navigation as { backendGoalState?: string } | undefined)?.backendGoalState,
+    "ready",
+  );
+  assert.equal(
+    ((idle.diagnostics?.capabilities as { backendCapabilities?: Record<string, string> } | undefined)?.backendCapabilities ?? {})
+      .go_to_location,
+    "nav2_msgs/action/NavigateToPose",
+  );
   assert.deepEqual(idle.navigation.planPath, [
     { x: 1, y: 2 },
     { x: 3, y: 4 },
   ]);
+  assert.deepEqual(idle.map.annotations, []);
+
+  const annotated = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    annotations: [
+      {
+        id: "room-1",
+        kind: "room",
+        name: "Kitchen",
+        area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+        mapId: "live-map",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+  });
+  assert.equal(annotated.map.annotations[0]?.name, "Kitchen");
 
   const navigating = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "executing" }),
@@ -288,9 +601,315 @@ function testStateMapping(): void {
     initialDistance: 5,
   });
   assert.equal(navigating.mission.state, "navigating");
+  assert.equal(navigating.activity?.status, "navigating");
+  assert.equal(navigating.activeMission?.type, "navigation");
+  assert.equal(navigating.activeMission?.status, "running");
+  assert.equal(navigating.activeMission?.requestedCommand, "start_navigation");
+  assert.deepEqual(navigating.missions.active, navigating.activeMission);
   assert.equal(navigating.navigation.active, true);
   assert.deepEqual(navigating.navigation.currentTarget, { x: 3, y: 4, yaw: 0 });
   assert.equal(navigating.navigation.progress.initialDistance, 5);
+
+  const hydratedNavigation = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      id: "navigation-1",
+      type: "navigation",
+      status: "running",
+      backendSource: "turtlebot4_nav2",
+      startedAt: 1,
+      updatedAt: 2,
+      requestedCommand: "start_navigation",
+      phase: "navigating",
+      progress: {
+        percent: 0.5,
+        currentStep: null,
+        totalSteps: null,
+        distanceRemaining: 0.8,
+        areaCoveredSqM: null,
+        areaRemainingSqM: null,
+      },
+      availableActions: ["cancel_mission", "pause_mission"],
+      result: null,
+      error: null,
+      target: { x: 4, y: 5, yaw: 90 },
+    },
+  });
+  assert.equal(hydratedNavigation.mission.state, "navigating");
+  assert.equal(hydratedNavigation.navigation.active, true);
+  assert.equal(hydratedNavigation.navigation.state, "active");
+  assert.deepEqual(hydratedNavigation.navigation.currentTarget, { x: 4, y: 5, yaw: 90 });
+  assert.deepEqual(hydratedNavigation.activeMission?.availableActions, ["cancel_mission"]);
+
+  const hydratedCoverage = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      id: "coverage-1",
+      type: "coverage",
+      status: "running",
+      backendSource: "turtlebot4_nav2",
+      startedAt: 1,
+      updatedAt: 2,
+      requestedCommand: "start_coverage",
+      phase: "navigating_step",
+      progress: {
+        percent: 0.25,
+        currentStep: 2,
+        totalSteps: 8,
+        distanceRemaining: 1.1,
+        areaCoveredSqM: 0.5,
+        areaRemainingSqM: 1.5,
+      },
+      availableActions: ["pause_mission", "cancel_mission", "retry_mission_step", "skip_mission_step"],
+      result: null,
+      error: null,
+      target: {
+        area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+        route: [{ x: 0.5, y: 0.5, yaw: 0 }],
+      },
+    },
+  });
+  assert.equal(hydratedCoverage.mission.state, "cleaning");
+  assert.equal(hydratedCoverage.activity?.status, "covering");
+  assert.equal(hydratedCoverage.activeMission?.type, "coverage");
+  assert.equal(hydratedCoverage.activeMission?.status, "running");
+  assert.deepEqual(hydratedCoverage.activeMission?.availableActions, [
+    "pause_mission",
+    "cancel_mission",
+    "retry_mission_step",
+    "skip_mission_step",
+  ]);
+
+  const terminalCoverage = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      ...hydratedCoverage.activeMission!,
+      status: "completed",
+      updatedAt: 10,
+      phase: "completed",
+      availableActions: [],
+      result: { status: "completed", completedAt: 10, summary: "Coverage completed." },
+    },
+  });
+  assert.equal(terminalCoverage.activeMission?.status, "completed");
+  assert.equal(terminalCoverage.mission.state, "idle");
+  assert.equal(terminalCoverage.activity?.status, "idle");
+
+  const terminalCoverageWithActiveNavigation = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "executing" }),
+    mission: terminalCoverage.activeMission,
+  });
+  assert.equal(terminalCoverageWithActiveNavigation.activeMission?.status, "completed");
+  assert.equal(terminalCoverageWithActiveNavigation.activity?.status, "navigating");
+
+  const failedTerminalRoomCleaning = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      ...hydratedCoverage.activeMission!,
+      id: "room-cleaning-failed",
+      type: "room_cleaning",
+      status: "failed",
+      updatedAt: 12,
+      requestedCommand: "start_room_cleaning",
+      phase: "failed",
+      availableActions: [],
+      result: { status: "failed", completedAt: 12, summary: "Room cleaning failed." },
+      error: { code: "coverage_step_failed", message: "Coverage navigation step failed.", recoverable: true },
+    },
+  });
+  assert.equal(failedTerminalRoomCleaning.activeMission?.status, "failed");
+  assert.equal(failedTerminalRoomCleaning.mission.state, "idle");
+  assert.equal(failedTerminalRoomCleaning.activity?.status, "faulted");
+
+  const hydratedCoverageWithAcceptedMap = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mapping: {
+      state: "accepted",
+      mode: "auto",
+      stateReason: "Map accepted.",
+      knownRatio: 1,
+      unknownRatio: 0,
+      frontierCount: 0,
+      visitedGoalCount: 4,
+      failedGoalCount: 0,
+      activeGoal: null,
+      lastError: null,
+      updatedAt: 30,
+      persistence: "session",
+      acceptedSessionLevel: true,
+      savedMapPath: null,
+      loadedMapPath: null,
+      lastSavedAt: null,
+      saveError: null,
+      loadError: null,
+      activeMapName: null,
+      savedMaps: [],
+    },
+    mission: {
+      ...hydratedCoverage.activeMission!,
+      id: "coverage-accepted-map",
+      status: "running",
+      result: null,
+    },
+  });
+  assert.equal(hydratedCoverageWithAcceptedMap.mission.state, "cleaning");
+  assert.equal(hydratedCoverageWithAcceptedMap.activeMission?.type, "coverage");
+
+  const hydratedPausedRoomCleaning = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      id: "room-cleaning-paused",
+      type: "room_cleaning",
+      status: "paused",
+      backendSource: "turtlebot4_nav2",
+      startedAt: 100,
+      updatedAt: 150,
+      requestedCommand: "start_room_cleaning",
+      phase: "paused",
+      progress: {
+        percent: 0.5,
+        currentStep: 2,
+        totalSteps: 4,
+        distanceRemaining: 0.5,
+        areaCoveredSqM: 1.5,
+        areaRemainingSqM: 1.5,
+      },
+      availableActions: ["resume_mission", "cancel_mission"],
+      result: null,
+      error: null,
+      target: {
+        area: { shape: "rectangle", minX: 0, minY: 0, maxX: 2, maxY: 2 },
+        annotation: { id: "room-1", kind: "room", name: "Kitchen", mapId: "lab-map" },
+      },
+    },
+  });
+  assert.equal(hydratedPausedRoomCleaning.mission.state, "paused");
+  assert.equal(hydratedPausedRoomCleaning.activity?.status, "paused");
+  assert.equal(hydratedPausedRoomCleaning.activeMission?.type, "room_cleaning");
+  assert.equal(hydratedPausedRoomCleaning.activeMission?.status, "paused");
+  assert.deepEqual(hydratedPausedRoomCleaning.activeMission?.availableActions, ["resume_mission", "cancel_mission"]);
+  assert.deepEqual((hydratedPausedRoomCleaning.activeMission?.target as { annotation?: unknown }).annotation, {
+    id: "room-1",
+    kind: "room",
+    name: "Kitchen",
+    mapId: "lab-map",
+  });
+
+  const hydratedAssistanceZoneCleaning = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      ...hydratedPausedRoomCleaning.activeMission!,
+      id: "zone-cleaning-assistance",
+      type: "zone_cleaning",
+      status: "needs_assistance",
+      requestedCommand: "start_zone_cleaning",
+      phase: "needs_assistance",
+      availableActions: ["retry_mission_step", "skip_mission_step", "cancel_mission"],
+      error: {
+        code: "coverage_step_failed",
+        message: "Coverage navigation step failed.",
+        recoverable: true,
+      },
+      target: {
+        area: { shape: "rectangle", minX: 0, minY: 0, maxX: 2, maxY: 2 },
+        annotation: { id: "zone-1", kind: "zone", name: "Kitchen spill", mapId: "lab-map" },
+      },
+    },
+  });
+  assert.equal(hydratedAssistanceZoneCleaning.mission.state, "paused");
+  assert.equal(hydratedAssistanceZoneCleaning.activeMission?.type, "zone_cleaning");
+  assert.deepEqual(hydratedAssistanceZoneCleaning.activeMission?.availableActions, [
+    "retry_mission_step",
+    "skip_mission_step",
+    "cancel_mission",
+  ]);
+
+  const hydratedRecentRoomCleaning = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    recentMissions: [
+      {
+        id: "room-cleaning-1",
+        type: "room_cleaning",
+        status: "completed",
+        backendSource: "turtlebot4_nav2",
+        startedAt: 100,
+        updatedAt: 200,
+        requestedCommand: "start_room_cleaning",
+        phase: "completed",
+        progress: {
+          percent: 1,
+          currentStep: 4,
+          totalSteps: 4,
+          distanceRemaining: 0,
+          areaCoveredSqM: 3,
+          areaRemainingSqM: 0,
+        },
+        availableActions: [],
+        result: {
+          status: "completed",
+          completedAt: 200,
+          summary: "Kitchen partially cleaned. 2.5 m² cleaned, 0.5 m² remaining, 0.2 m² skipped.",
+          details: {
+            featureState: "partially_cleaned",
+            cleanedAreaSqM: 2.5,
+            remainingAreaSqM: 0.5,
+            skippedAreaSqM: 0.2,
+            skippedReasons: { occupied: 2, unknown: 1, outOfBounds: 0, tooSmall: 0 },
+            routeCompleted: true,
+            coverageThresholdReached: false,
+          },
+        },
+        error: null,
+        target: {
+          area: { shape: "rectangle", minX: 0, minY: 0, maxX: 2, maxY: 2 },
+          annotation: { id: "room-1", kind: "room", name: "Kitchen", mapId: "lab-map" },
+          coverage: {
+            completionThreshold: 0.95,
+            targetCells: 10,
+            coveredCells: 8,
+            remainingCells: 2,
+            cleanableAreaSqM: 3,
+            coveredAreaSqM: 2.5,
+            remainingAreaSqM: 0.5,
+            skippedAreaSqM: 0.2,
+            skippedReasons: { occupied: 2, unknown: 1, outOfBounds: 0, tooSmall: 0 },
+          },
+        },
+      },
+    ],
+  });
+  assert.equal(hydratedRecentRoomCleaning.activeMission, null);
+  assert.equal(hydratedRecentRoomCleaning.missions.recent.length, 1);
+  assert.equal(hydratedRecentRoomCleaning.missions.recent[0]?.type, "room_cleaning");
+  assert.equal(
+    hydratedRecentRoomCleaning.missions.recent[0]?.result?.summary,
+    "Kitchen partially cleaned. 2.5 m² cleaned, 0.5 m² remaining, 0.2 m² skipped.",
+  );
+  assert.deepEqual(hydratedRecentRoomCleaning.missions.recent[0]?.result?.details?.skippedReasons, {
+    occupied: 2,
+    unknown: 1,
+    outOfBounds: 0,
+    tooSmall: 0,
+  });
+
+  const hydratedTerminalRoomCleaning = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mission: {
+      ...hydratedPausedRoomCleaning.activeMission!,
+      status: "canceled",
+      updatedAt: 250,
+      phase: "canceled",
+      availableActions: [],
+      result: {
+        status: "canceled",
+        completedAt: 250,
+        summary: "Kitchen canceled.",
+      },
+    },
+  });
+  assert.equal(hydratedTerminalRoomCleaning.activeMission?.status, "canceled");
+  assert.equal(hydratedTerminalRoomCleaning.missions.recent[0]?.id, "room-cleaning-paused");
+  assert.equal(hydratedTerminalRoomCleaning.missions.recent[0]?.result?.summary, "Kitchen canceled.");
 
   const mapping = mapTurtleBot4Nav2State({
     runtime: createRuntime({ goalState: "ready" }),
@@ -309,12 +928,143 @@ function testStateMapping(): void {
       persistence: "session",
       acceptedSessionLevel: false,
       savedMapPath: null,
+      loadedMapPath: null,
       lastSavedAt: null,
       saveError: null,
+      loadError: null,
+      activeMapName: null,
+      savedMaps: [],
     },
   });
   assert.equal(mapping.mission.state, "mapping");
+  assert.equal(mapping.activity?.status, "mapping");
+  assert.equal(mapping.activeMission?.type, "mapping");
+  assert.equal(mapping.activeMission?.status, "running");
+  assert.equal(mapping.activeMission?.progress.percent, 0.25);
+  assert.deepEqual(mapping.activeMission?.availableActions, ["pause_mapping", "finish_mapping", "discard_mapping"]);
   assert.equal(mapping.mapping.frontierCount, 3);
+
+  const mappingWithSavedPaths = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ goalState: "ready" }),
+    mapping: {
+      state: "idle",
+      mode: null,
+      stateReason: "Saved map inventory loaded.",
+      knownRatio: 1,
+      unknownRatio: 0,
+      frontierCount: 0,
+      visitedGoalCount: 0,
+      failedGoalCount: 0,
+      activeGoal: null,
+      lastError: null,
+      updatedAt: 20,
+      persistence: "persistent",
+      acceptedSessionLevel: false,
+      savedMapPath: "/maps/lab.yaml",
+      loadedMapPath: "/maps/lab.yaml",
+      lastSavedAt: 20,
+      saveError: null,
+      loadError: null,
+      activeMapName: "lab",
+      savedMaps: [
+        {
+          id: "lab",
+          name: "Lab",
+          yamlPath: "/maps/lab.yaml",
+          imagePath: "/maps/lab.pgm",
+          poseGraphPath: "/maps/lab.posegraph",
+          loadable: true,
+          loadUnavailableReason: null,
+          modifiedAt: 20,
+          sizeBytes: 123,
+          active: true,
+        },
+      ],
+    },
+  });
+  assert.equal(mappingWithSavedPaths.mapping.savedMaps[0]?.yamlPath, "/maps/lab.yaml");
+  assert.deepEqual(
+    (mappingWithSavedPaths.diagnostics?.mapping as {
+      savedMapPaths?: {
+        savedMapPath?: string | null;
+        loadedMapPath?: string | null;
+        savedMaps?: Array<{ id: string; yamlPath: string; imagePath: string | null; poseGraphPath: string | null }>;
+      };
+    } | undefined)?.savedMapPaths,
+    {
+      savedMapPath: "/maps/lab.yaml",
+      loadedMapPath: "/maps/lab.yaml",
+      savedMaps: [
+        {
+          id: "lab",
+          yamlPath: "/maps/lab.yaml",
+          imagePath: "/maps/lab.pgm",
+          poseGraphPath: "/maps/lab.posegraph",
+        },
+      ],
+    },
+  );
+
+  const offline = mapTurtleBot4Nav2State({
+    runtime: createRuntime({ connectionStatus: "disconnected" }),
+    currentTarget: null,
+  });
+  assert.equal(offline.activity?.status, "unavailable");
+  assert.equal(offline.mission.state, "idle");
+}
+
+function testLocalPrototypeAnnotationMigrationParsing(): void {
+  const storage = installMockLocalStorage();
+  storage.set(
+    "tensorfleet:vacuums:turtlebot4-nav2:map-annotations:lab-map",
+    JSON.stringify({
+      annotations: [
+        {
+          id: "room-1",
+          kind: "room",
+          name: "Kitchen",
+          area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+          mapId: "lab-map",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+        {
+          id: "wrong-map-room",
+          kind: "room",
+          name: "Wrong map",
+          area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+          mapId: "other-map",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    }),
+  );
+  assert.equal(readLocalPrototypeMapAnnotations("lab-map").length, 1);
+  assert.equal(readLocalPrototypeMapAnnotations("lab-map")[0]?.name, "Kitchen");
+  assert.equal(readLocalPrototypeMapAnnotations("other-map").length, 0);
+
+  storage.set(
+    "tensorfleet:vacuums:turtlebot4-nav2:map-annotations:legacy-array-map",
+    JSON.stringify([
+      {
+        id: "zone-1",
+        kind: "zone",
+        name: "Entry",
+        area: { shape: "rectangle", minX: 1, minY: 1, maxX: 2, maxY: 2 },
+        mapId: null,
+        createdAt: 3,
+        updatedAt: 4,
+      },
+    ]),
+  );
+  const legacyArrayAnnotations = readLocalPrototypeMapAnnotations("legacy-array-map");
+  assert.equal(legacyArrayAnnotations.length, 1);
+  assert.equal(legacyArrayAnnotations[0]?.mapId, "legacy-array-map");
+
+  assert.equal(hasMigratedLocalPrototypeMapAnnotations("lab-map"), false);
+  storage.set("tensorfleet:vacuums:turtlebot4-nav2:map-annotations-migrated:lab-map", "true");
+  assert.equal(hasMigratedLocalPrototypeMapAnnotations("lab-map"), true);
 }
 
 function testMapMetadata(): void {
@@ -340,35 +1090,1975 @@ function testMapMetadata(): void {
   assert.equal(metadata.lastUpdateAt, 123);
 }
 
+function testCleanAreaCoverageAndPlanning(): void {
+  const grid = parseVacuumMapGrid({
+    info: {
+      width: 20,
+      height: 20,
+      resolution: 0.1,
+      origin: { position: { x: 0, y: 0 }, orientation: { w: 1 } },
+    },
+    header: { frame_id: "map" },
+    data: Array.from({ length: 400 }, () => 0),
+  });
+  assert.ok(grid);
+
+  const rect = { minX: 0.2, minY: 0.2, maxX: 1.2, maxY: 1.5 };
+  const target = buildCleanAreaCoverageTarget(rect, grid);
+  assert.ok(target);
+  assert.equal(target.occupiedCells.length, 0);
+  assert.equal(target.unknownCells.length, 0);
+  assert.ok(target.cleanableCells.length > 100);
+
+  const waypoints = buildLawnmowerWaypoints({
+    rect,
+    spacing: 0.24,
+    swathWidth: 0.3,
+    target,
+  });
+  assert.ok(waypoints.length >= 8, "planner should create dense overlapping passes");
+  assert.ok(Math.min(...waypoints.map((point) => point.x)) <= rect.minX + 0.16, "first lane should cover left edge");
+  assert.ok(Math.max(...waypoints.map((point) => point.x)) >= rect.maxX - 0.16, "last lane should cover right edge");
+  assert.ok(Math.min(...waypoints.map((point) => point.y)) <= rect.minY + 0.16, "pass endpoints should cover lower edge");
+  assert.ok(Math.max(...waypoints.map((point) => point.y)) >= rect.maxY - 0.16, "pass endpoints should cover upper edge");
+
+  const compactRect = { minX: 0.3, minY: 0.3, maxX: 1.0, maxY: 1.0 };
+  const compactTarget = buildCleanAreaCoverageTarget(compactRect, grid);
+  assert.ok(compactTarget);
+  const compactWaypoints = buildLawnmowerWaypoints({
+    rect: compactRect,
+    spacing: 0.12,
+    swathWidth: 0.3,
+    goalCompletionTolerance: 0.28,
+    target: compactTarget,
+  });
+  assert.ok(compactWaypoints.length >= 12, "small square clean areas should get dense passes");
+  assert.ok(Math.min(...compactWaypoints.map((point) => point.y)) <= compactRect.minY + 0.01);
+  assert.ok(Math.max(...compactWaypoints.map((point) => point.y)) >= compactRect.maxY - 0.01);
+  assert.ok(Math.min(...compactWaypoints.map((point) => point.x)) <= compactRect.minX - 0.25);
+  assert.ok(Math.max(...compactWaypoints.map((point) => point.x)) >= compactRect.maxX + 0.25);
+
+  const covered = markCleanAreaCoveredCells({
+    target,
+    coveredCellKeys: new Set(),
+    previousPose: { x: 0.35, y: 0.35, yaw: 0 },
+    currentPose: { x: 1.05, y: 0.35, yaw: 0 },
+    swathWidth: 0.3,
+  });
+  const snapshot = buildCleanAreaCoverageSnapshot({ target, coveredCellKeys: covered, swathWidth: 0.3 });
+  assert.ok(snapshot);
+  assert.ok(snapshot.coveredCells > 0);
+  assert.equal(snapshot.remainingCells + snapshot.coveredCells, snapshot.targetCells);
+  assert.ok(snapshot.overlayCells.every((cell) => Number.isFinite(cell.minX) && Number.isFinite(cell.maxY)));
+}
+
+function testCoverageProfileAndDecomposition(): void {
+  const runtimeConfig = buildCleanAreaCoverageRuntimeConfig({
+    mapMetadata: {
+      hasMap: true,
+      width: 20,
+      height: 20,
+      resolution: 0.05,
+      freeCells: 300,
+      occupiedCells: 20,
+      unknownCells: 80,
+      knownCells: 320,
+      totalCells: 400,
+      freeRatio: 0.75,
+      occupiedRatio: 0.05,
+      unknownRatio: 0.2,
+      knownRatio: 0.8,
+      knownAreaSqM: 0.8,
+      lastUpdateAt: 1,
+      poseAvailable: true,
+      readiness: "Map active",
+    },
+  });
+  assert.equal(runtimeConfig.cleaningSwathWidthM, 0.3);
+  assert.equal(runtimeConfig.completionThreshold, 0.95);
+  assert.equal(runtimeConfig.laneSpacingM, 0.12);
+  assert.equal(runtimeConfig.boundaryExtensionM, 0.28);
+
+  const data = Array.from({ length: 100 }, () => 100);
+  for (const [x, y] of [
+    [1, 1],
+    [1, 2],
+    [2, 1],
+    [7, 7],
+  ]) {
+    data[x + y * 10] = 0;
+  }
+  data[4 + 4 * 10] = -1;
+  const grid = parseVacuumMapGrid({
+    info: {
+      width: 10,
+      height: 10,
+      resolution: 0.1,
+      origin: { position: { x: 0, y: 0 }, orientation: { w: 1 } },
+    },
+    header: { frame_id: "map" },
+    data,
+  });
+  assert.ok(grid);
+
+  const target = buildCleanAreaCoverageTarget(
+    { minX: 0, minY: 0, maxX: 1, maxY: 1 },
+    grid,
+    { minimumUsefulCleanableRegionSqM: 0.02 },
+  );
+  assert.ok(target);
+  assert.equal(target.cleanableRegions.length, 1);
+  assert.equal(target.skippedSmallRegionCount, 1);
+  assert.equal(target.skippedSmallRegionCells.length, 1);
+  assert.equal(target.unknownCells.length, 1);
+  assert.equal(target.cleanableCells.length, 3);
+
+  const snapshot = buildCleanAreaCoverageSnapshot({
+    target,
+    coveredCellKeys: new Set(),
+    swathWidth: runtimeConfig.cleaningSwathWidthM,
+  });
+  assert.ok(snapshot);
+  assert.equal(snapshot.cleanableRegionCount, 1);
+  assert.equal(snapshot.skippedSmallRegionCount, 1);
+  assert.equal(snapshot.skippedSmallRegionCells, 1);
+}
+
 function testValetudoCommandStub(): void {
   const capabilities = mapValetudoCapabilities([
     "BasicControlCapability",
     "GoToLocationCapability",
+    "FanSpeedControlCapability",
     "WaterUsageControlCapability",
   ]);
+  capabilities.fan_speed.attributes = ["option:balanced", "option:turbo"];
+  capabilities.water_usage.attributes = ["option:low", "option:medium", "option:high"];
 
   assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "start_cleaning" }, capabilities), {
     ok: true,
     command: "start_cleaning",
     request: { type: "basic_control", action: "start" },
   });
-  assert.deepEqual(
-    mapVacuumCommandToValetudoRequest({ command: "go_to_location", target: { x: 1, y: 2, yaw: 0 } }, capabilities),
-    {
-      ok: true,
-      command: "go_to_location",
-      request: { type: "go_to_location", target: { x: 1, y: 2, yaw: 0 } },
-    },
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "pause" }, capabilities), {
+    ok: true,
+    command: "pause",
+    request: { type: "basic_control", action: "pause" },
+  });
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "resume" }, capabilities), {
+    ok: true,
+    command: "resume",
+    request: { type: "basic_control", action: "start" },
+  });
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "stop" }, capabilities), {
+    ok: true,
+    command: "stop",
+    request: { type: "basic_control", action: "stop" },
+  });
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "return_to_dock" }, capabilities), {
+    ok: true,
+    command: "return_to_dock",
+    request: { type: "basic_control", action: "home" },
+  });
+  assert.equal(
+    mapVacuumCommandToValetudoRequest({ command: "go_to_location", target: { x: 1, y: 2, yaw: 0 } }, capabilities).ok,
+    false,
   );
   assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "set_water_usage", value: "medium" }, capabilities), {
     ok: true,
     command: "set_water_usage",
     request: { type: "set_water_usage", value: "medium" },
   });
-  const zoneResult = mapVacuumCommandToValetudoRequest({ command: "zone_cleaning" }, capabilities);
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "set_fan_speed", value: "turbo" }, capabilities), {
+    ok: true,
+    command: "set_fan_speed",
+    request: { type: "set_fan_speed", value: "turbo" },
+  });
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "set_fan_speed", value: "max" }, capabilities), {
+    ok: false,
+    command: "set_fan_speed",
+    reason: "invalid_request",
+    message: "Selected cleaning setting is not available.",
+  });
+  assert.deepEqual(
+    mapVacuumCommandToValetudoRequest({ command: "segment_cleaning" }, mapValetudoCapabilities(["MapSegmentationCapability"])),
+    {
+      ok: false,
+      command: "segment_cleaning",
+      reason: "unsupported",
+      message: "Valetudo segment cleaning is diagnostics-only until segment targets are normalized.",
+    },
+  );
+  const zoneResult = mapVacuumCommandToValetudoRequest({
+    command: "start_zone_cleaning",
+    annotation: {
+      id: "zone-1",
+      kind: "zone",
+      name: "Entryway",
+      area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+      mapId: null,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  }, capabilities);
   assert.equal(zoneResult.ok, false);
+  const annotationResult = mapVacuumCommandToValetudoRequest({
+    command: "save_map_annotation",
+    annotation: {
+      id: "room-1",
+      kind: "room",
+      name: "Kitchen",
+      area: { shape: "rectangle", minX: 0, minY: 0, maxX: 1, maxY: 1 },
+      mapId: null,
+    },
+  }, capabilities);
+  assert.equal(annotationResult.ok, false);
   const mappingResult = mapVacuumCommandToValetudoRequest({ command: "start_mapping", mode: "auto" }, capabilities);
   assert.equal(mappingResult.ok, false);
+
+  const missingBasicControl = mapValetudoCapabilities([]);
+  for (const command of ["start_cleaning", "pause", "resume", "stop", "return_to_dock"] as const) {
+    const result = mapVacuumCommandToValetudoRequest({ command }, missingBasicControl);
+    assert.equal(result.ok, false, `${command} should be unsupported without BasicControlCapability`);
+  }
+
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "unsupported",
+      command: "start_cleaning",
+      message: "not implemented",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: { command: "start_cleaning", code: "unsupported", message: "not implemented" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "unavailable",
+      command: "start_cleaning",
+      message: "source down",
+      reason: "source_unreachable",
+      code: "source_unreachable",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: { command: "start_cleaning", code: "source_unreachable", message: "source down" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("pause", {
+      ok: false,
+      status: "unavailable",
+      command: "pause",
+      message: "stale",
+      reason: "stale_source",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "pause",
+      error: { command: "pause", code: "stale_source", message: "stale" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("pause", {
+      ok: false,
+      status: "failed",
+      command: "pause",
+      message: "cannot pause from docked",
+      reason: "invalid_state",
+      code: "invalid_state",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "pause",
+      error: { command: "pause", code: "invalid_state", message: "cannot pause from docked" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("pause", {
+      ok: false,
+      status: "unsupported",
+      command: "pause",
+      message: "legacy invalid state",
+      reason: "command_invalid_state",
+      code: "command_invalid_state",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "pause",
+      error: { command: "pause", code: "invalid_state", message: "legacy invalid state" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "unsupported",
+      command: "start_cleaning",
+      message: "missing basic control",
+      reason: "capability_unavailable",
+      code: "capability_unavailable",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: { command: "start_cleaning", code: "unsupported", message: "missing basic control" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "failed",
+      command: "start_cleaning",
+      message: "source rejected command",
+      reason: "source_command_failed",
+      code: "source_command_failed",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: { command: "start_cleaning", code: "backend_error", message: "source rejected command" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "failed",
+      command: "",
+      message: "Missing command",
+      reason: "invalid_request",
+      code: "missing_command",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: { command: "start_cleaning", code: "invalid_request", message: "Missing command" },
+    },
+  );
+  assert.deepEqual(
+    mapValetudoRuntimeCommandResult("start_cleaning", {
+      ok: false,
+      status: "failed",
+      command: "start_cleaning",
+      message: "runtime returned malformed command response",
+      reason: "malformed_command_response",
+      code: "malformed_command_response",
+      updatedAt: 1,
+    }),
+    {
+      ok: false,
+      command: "start_cleaning",
+      error: {
+        command: "start_cleaning",
+        code: "malformed_backend_response",
+        message: "runtime returned malformed command response",
+      },
+    },
+  );
+}
+
+function testValetudoStateAwareCommandAvailability(): void {
+  const snapshotFor = (overrides: {
+    state?: { value: string; label: string; started: boolean; paused: boolean };
+    dock?: { state: string; docked: boolean };
+    battery?: { level: number; charging: boolean };
+    runtimeStatus?: "online" | "degraded" | "offline";
+    sourceKind?: "fixed_mock" | "valetudo_mock" | "valetudo_http" | "real_robot" | "unknown";
+    sourceStatus?: "reachable" | "unreachable" | "unknown";
+    sourceStale?: boolean;
+    reachable?: boolean;
+    online?: boolean;
+    commands?: Record<string, { available: boolean; reason?: string }>;
+  }) =>
+    mapValetudoState(
+      mapValetudoRuntimeSnapshotToBoundary({
+        runtime: {
+          id: "tensorfleet-valetudo-runtime",
+          version: "0.6.0",
+          status: overrides.runtimeStatus ?? "online",
+        },
+        backend: "valetudo",
+        robot: { id: "valetudo-command-rules", name: "Valetudo Command Rules" },
+        source: {
+          kind: overrides.sourceKind ?? "valetudo_mock",
+          status: overrides.sourceStatus ?? "reachable",
+          stale: overrides.sourceStale ?? false,
+          lastSeenAt: 1,
+        },
+        connectivity: {
+          reachable: overrides.reachable ?? true,
+          online: overrides.online ?? true,
+        },
+        state: overrides.state ?? { value: "idle", label: "Idle", started: false, paused: false },
+        battery: overrides.battery ?? { level: 82, charging: false },
+        dock: overrides.dock ?? { state: "available", docked: false },
+        capabilities: {
+          commands: overrides.commands ?? {
+            start_cleaning: { available: true },
+            pause: { available: true },
+            resume: { available: true },
+            stop: { available: true },
+            return_to_dock: { available: true },
+          },
+          diagnostics: [
+            { name: "ConsumableMonitoringCapability", detected: true, implemented: true, scope: "state" },
+          ],
+        },
+        diagnostics: { mode: "valetudo_mock", rawCapabilityNames: ["BasicControlCapability", "ConsumableMonitoringCapability"] },
+        maintenance: {
+          consumables: [
+            {
+              id: "filter:main",
+              label: "Filter",
+              remainingPercent: 52,
+              remainingMinutes: 4680,
+              usedMinutes: 4320,
+              totalMinutes: 9000,
+              status: "ok",
+              detail: "78 h remaining of 150 h",
+            },
+          ],
+        },
+        updatedAt: 1,
+      }),
+    );
+
+  const assertAvailability = (
+    label: string,
+    snapshot: ReturnType<typeof snapshotFor>,
+    expected: Record<"start_cleaning" | "pause" | "resume" | "stop" | "return_to_dock", { available: boolean; reason?: string }>,
+  ) => {
+    for (const command of ["start_cleaning", "pause", "resume", "stop", "return_to_dock"] as const) {
+      assert.equal(
+        snapshot.capabilities[command].available,
+        expected[command].available,
+        `${label}: ${command} availability`,
+      );
+      assert.equal(
+        snapshot.capabilities[command].availabilityReason,
+        expected[command].reason,
+        `${label}: ${command} reason`,
+      );
+      const result = mapVacuumCommandToValetudoRequest({ command }, snapshot.capabilities);
+      assert.equal(result.ok, expected[command].available, `${label}: ${command} dispatch gate`);
+      if (!result.ok) {
+        assert.equal(result.reason, expected[command].reason ?? "unavailable", `${label}: ${command} result reason`);
+      }
+    }
+  };
+
+  assertAvailability("idle away from dock", snapshotFor({}), {
+    start_cleaning: { available: true },
+    pause: { available: false, reason: "invalid_state" },
+    resume: { available: false, reason: "invalid_state" },
+    stop: { available: false, reason: "invalid_state" },
+    return_to_dock: { available: true },
+  });
+
+  assertAvailability("idle docked", snapshotFor({ dock: { state: "available", docked: true } }), {
+    start_cleaning: { available: true },
+    pause: { available: false, reason: "invalid_state" },
+    resume: { available: false, reason: "invalid_state" },
+    stop: { available: false, reason: "invalid_state" },
+    return_to_dock: { available: false, reason: "invalid_state" },
+  });
+
+  assertAvailability(
+    "cleaning",
+    snapshotFor({ state: { value: "cleaning", label: "Cleaning", started: true, paused: false } }),
+    {
+      start_cleaning: { available: false, reason: "invalid_state" },
+      pause: { available: true },
+      resume: { available: false, reason: "invalid_state" },
+      stop: { available: true },
+      return_to_dock: { available: true },
+    },
+  );
+
+  assertAvailability(
+    "paused",
+    snapshotFor({ state: { value: "paused", label: "Paused", started: true, paused: true } }),
+    {
+      start_cleaning: { available: false, reason: "invalid_state" },
+      pause: { available: false, reason: "invalid_state" },
+      resume: { available: true },
+      stop: { available: true },
+      return_to_dock: { available: true },
+    },
+  );
+
+  const legacyPausedRuntime = snapshotFor({
+    state: { value: "paused", label: "Paused", started: true, paused: true },
+    commands: {
+      start_cleaning: { available: true },
+      pause: { available: true },
+      stop: { available: true },
+      return_to_dock: { available: true },
+    },
+  });
+  assert.equal(legacyPausedRuntime.capabilities.resume.supported, true);
+  assert.equal(legacyPausedRuntime.capabilities.resume.available, true);
+  assert.deepEqual(mapVacuumCommandToValetudoRequest({ command: "resume" }, legacyPausedRuntime.capabilities), {
+    ok: true,
+    command: "resume",
+    request: { type: "basic_control", action: "start" },
+  });
+
+  const rawPausedRuntime = (
+    commands: ValetudoRuntimeSnapshot["capabilities"]["commands"],
+  ): ValetudoRuntimeSnapshot => ({
+    runtime: {
+      id: "tensorfleet-valetudo-runtime",
+      version: "0.6.0",
+      status: "online",
+    },
+    backend: "valetudo",
+    robot: { id: "valetudo-command-rules", name: "Valetudo Command Rules" },
+    source: {
+      kind: "valetudo_mock",
+      status: "reachable",
+      stale: false,
+      lastSeenAt: 1,
+    },
+    connectivity: {
+      reachable: true,
+      online: true,
+    },
+    state: { value: "paused", label: "Paused", started: true, paused: true },
+    battery: { level: 82, charging: false },
+    dock: { state: "available", docked: false },
+    capabilities: {
+      commands,
+      diagnostics: [],
+    },
+    diagnostics: { mode: "valetudo_mock", rawCapabilityNames: ["BasicControlCapability"] },
+    updatedAt: 1,
+  });
+  const normalizedPausedRuntime = rawPausedRuntime({
+    start_cleaning: { available: false, reason: "invalid_state" },
+    pause: { available: false, reason: "invalid_state" },
+    resume: { available: true },
+    stop: { available: true },
+    return_to_dock: { available: true },
+  });
+  assert.equal(mapVacuumCommandToValetudoRuntimeCommandName("resume", normalizedPausedRuntime), "resume");
+  assert.equal(mapVacuumCommandToValetudoRuntimeCommandName("resume_mission", normalizedPausedRuntime), "resume");
+  assert.equal(
+    mapVacuumCommandToValetudoRuntimeCommandName(
+      "resume",
+      rawPausedRuntime({
+        start_cleaning: { available: true },
+        pause: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      }),
+    ),
+    "start_cleaning",
+  );
+
+  assertAvailability(
+    "returning",
+    snapshotFor({
+      state: { value: "returning_to_dock", label: "Returning", started: false, paused: false },
+      dock: { state: "returning", docked: false },
+    }),
+    {
+      start_cleaning: { available: false, reason: "invalid_state" },
+      pause: { available: false, reason: "invalid_state" },
+      resume: { available: false, reason: "invalid_state" },
+      stop: { available: true },
+      return_to_dock: { available: false, reason: "invalid_state" },
+    },
+  );
+
+  assertAvailability(
+    "stopped away from dock",
+    snapshotFor({ state: { value: "stopped", label: "Stopped", started: false, paused: false } }),
+    {
+      start_cleaning: { available: true },
+      pause: { available: false, reason: "invalid_state" },
+      resume: { available: false, reason: "invalid_state" },
+      stop: { available: false, reason: "invalid_state" },
+      return_to_dock: { available: true },
+    },
+  );
+
+  for (const [label, overrides, reason] of [
+    ["stale source", { sourceStale: true }, "stale_source"],
+    ["unreachable source", { sourceStatus: "unreachable", reachable: false }, "source_unreachable"],
+    ["offline runtime", { runtimeStatus: "offline", online: false, reachable: false }, "runtime_offline"],
+    ["degraded runtime", { runtimeStatus: "degraded" }, "degraded_runtime"],
+  ] as const) {
+    assertAvailability(label, snapshotFor(overrides), {
+      start_cleaning: { available: false, reason },
+      pause: { available: false, reason },
+      resume: { available: false, reason },
+      stop: { available: false, reason },
+      return_to_dock: { available: false, reason },
+    });
+    const snapshot = snapshotFor(overrides);
+    assert.equal(snapshot.capabilities.consumables.supported, true, `${label}: consumables support`);
+    assert.equal(snapshot.capabilities.consumables.available, false, `${label}: consumables availability`);
+    assert.equal(snapshot.capabilities.consumables.availabilityReason, reason, `${label}: consumables reason`);
+  }
+
+  const runtimeBlocked = snapshotFor({
+    commands: {
+      start_cleaning: { available: false, reason: "unavailable" },
+      pause: { available: false, reason: "unavailable" },
+      resume: { available: false, reason: "unavailable" },
+      stop: { available: false, reason: "unavailable" },
+      return_to_dock: { available: false, reason: "unavailable" },
+    },
+  });
+  assert.equal(runtimeBlocked.capabilities.start_cleaning.status, "unavailable");
+  assert.equal(runtimeBlocked.capabilities.start_cleaning.availabilityReason, "unavailable");
+  assert.equal(runtimeBlocked.capabilities.start_cleaning.reasons?.[0]?.code, "unavailable");
+  assert.equal(runtimeBlocked.capabilities.start_cleaning.reasons?.[0]?.message, "Currently unavailable.");
+
+  const withoutBasicControl = mapValetudoCapabilities([]);
+  for (const command of ["start_cleaning", "pause", "resume", "stop", "return_to_dock"] as const) {
+    const result = mapVacuumCommandToValetudoRequest({ command }, withoutBasicControl);
+    assert.equal(withoutBasicControl[command].supported, false, `${command} should be unsupported`);
+    assert.equal(result.ok, false, `${command} should be blocked without BasicControlCapability`);
+    if (!result.ok) {
+      assert.equal(result.reason, "unsupported", `${command} should return unsupported`);
+    }
+  }
+
+  const withoutReturnHome = snapshotFor({
+    commands: {
+      start_cleaning: { available: true },
+      pause: { available: true },
+      resume: { available: true },
+      stop: { available: true },
+    },
+  });
+  assert.equal(withoutReturnHome.capabilities.return_to_dock.supported, false);
+  assert.equal(withoutReturnHome.capabilities.return_to_dock.status, "unsupported");
+
+  const cleaningSettings = mapValetudoCapabilities(["FanSpeedControlCapability", "WaterUsageControlCapability"]);
+  assert.equal(cleaningSettings.fan_speed.status, "supported");
+  assert.equal(cleaningSettings.water_usage.status, "supported");
+  assert.equal(mapValetudoCapabilities(["BasicControlCapability"]).resume.supported, true);
+
+  const staleSource = snapshotFor({ sourceStale: true });
+  assert.equal(staleSource.capabilities.start_cleaning.reasons?.[0]?.code, "stale_source");
+  assert.equal(staleSource.capabilities.start_cleaning.reasons?.[0]?.message, "Robot state is stale.");
+
+  const missingHTTPSourceConfig = snapshotFor({
+    sourceKind: "valetudo_http",
+    sourceStatus: "unknown",
+    sourceStale: true,
+    reachable: false,
+    online: false,
+    commands: {
+      start_cleaning: { available: false, reason: "source_unreachable" },
+      pause: { available: false, reason: "source_unreachable" },
+      resume: { available: false, reason: "source_unreachable" },
+      stop: { available: false, reason: "source_unreachable" },
+      return_to_dock: { available: false, reason: "source_unreachable" },
+    },
+  });
+  assert.equal(missingHTTPSourceConfig.availability.status, "offline");
+  assert.equal(missingHTTPSourceConfig.source?.kind, "valetudo_http");
+  assert.equal(missingHTTPSourceConfig.source?.status, "stale");
+  assert.equal(missingHTTPSourceConfig.source?.reason, "stale_source");
+  assert.equal(missingHTTPSourceConfig.capabilities.start_cleaning.available, false);
+
+  const reachableWithoutBasicControl = snapshotFor({
+    commands: {
+      start_cleaning: { available: false, reason: "capability_unavailable" },
+      pause: { available: false, reason: "capability_unavailable" },
+      resume: { available: false, reason: "capability_unavailable" },
+      stop: { available: false, reason: "capability_unavailable" },
+      return_to_dock: { available: false, reason: "capability_unavailable" },
+    },
+  });
+  assert.equal(reachableWithoutBasicControl.capabilities.start_cleaning.available, false);
+  assert.equal(reachableWithoutBasicControl.capabilities.start_cleaning.availabilityReason, "capability_unavailable");
+
+  const segmentationDetected = mapValetudoCapabilities(["MapSegmentationCapability"]);
+  assert.equal(segmentationDetected.segment_cleaning.supported, false);
+  assert.equal(segmentationDetected.segment_cleaning.status, "detected_not_ready");
+  assert.equal(segmentationDetected.room_semantics.supported, false);
+  assert.equal(segmentationDetected.room_cleaning.supported, false);
+}
+
+function testValetudoRuntimeSnapshotMapping(): void {
+  const runtimeSnapshot: ValetudoRuntimeSnapshot = {
+    runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.1.0-layer6a-m1", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
+    source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 1 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "idle", label: "Idle", started: false, paused: false },
+    battery: { level: 82, charging: false },
+    dock: {
+      state: "available",
+      docked: true,
+      components: [
+        { id: "freshwater", label: "Freshwater", kind: "freshwater", status: "ok", levelPercent: 76, detail: "Freshwater ready.", updatedAt: 1 },
+        { id: "wastewater", label: "Wastewater", kind: "wastewater", status: "empty", levelPercent: 18, detail: "Wastewater tank has capacity.", updatedAt: 1 },
+        { id: "detergent", label: "Dock detergent", kind: "detergent", status: "ok", levelPercent: 64, detail: "Dock detergent ready.", updatedAt: 1 },
+        { id: "dustbag", label: "Dustbag", kind: "dustbag", status: "ok", detail: "Dustbag installed.", updatedAt: 1 },
+      ],
+    },
+    capabilities: {
+      commands: {
+        start_cleaning: { available: true },
+        pause: { available: true },
+        resume: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+        set_fan_speed: { available: true },
+        set_water_usage: { available: true },
+      },
+      diagnostics: [
+        { name: "ConsumableMonitoringCapability", detected: true, implemented: true, scope: "state" },
+        { name: "FanSpeedControlCapability", detected: true, implemented: false, scope: "diagnostics" },
+        { name: "WaterUsageControlCapability", detected: true, implemented: false, scope: "diagnostics" },
+        { name: "MapSegmentationCapability", detected: true, implemented: false, scope: "diagnostics" },
+        { name: "GoToLocationCapability", detected: true, implemented: false, scope: "diagnostics" },
+        { name: "ZoneCleaningCapability", detected: true, implemented: false, scope: "diagnostics" },
+      ],
+    },
+    diagnostics: {
+      mode: "fixed_mock",
+      rawCapabilityNames: [
+        "BasicControlCapability",
+        "BatteryStateCapability",
+        "ConsumableMonitoringCapability",
+        "FanSpeedControlCapability",
+        "WaterUsageControlCapability",
+        "MapSegmentationCapability",
+        "GoToLocationCapability",
+        "ZoneCleaningCapability",
+      ],
+      readiness: {
+        runtimeOnline: true,
+        sourceReachable: true,
+        sourceStale: false,
+        supportedCapabilities: ["BasicControlCapability"],
+        detectedNotProductReady: ["MapSegmentationCapability", "GoToLocationCapability", "ZoneCleaningCapability"],
+        basicCommandsAvailable: true,
+        segmentTargetsAvailable: true,
+        segmentTargetCount: 4,
+      },
+    },
+    cleaningSettings: {
+      fanSpeed: { current: "medium", options: ["off", "min", "low", "medium", "high", "turbo", "max"] },
+      waterUsage: { current: "medium", options: ["off", "min", "low", "medium", "high", "max"] },
+    },
+    maintenance: {
+      consumables: [
+        {
+          id: "brush:main",
+          label: "Main brush",
+          remainingPercent: 72,
+          remainingMinutes: 12960,
+          usedMinutes: 5040,
+          totalMinutes: 18000,
+          status: "ok",
+          detail: "216 h remaining of 300 h",
+        },
+        {
+          id: "cleaning:sensor",
+          label: "Sensor cleaning",
+          remainingPercent: 9,
+          status: "replace_soon",
+          detail: "9% remaining",
+        },
+      ],
+    },
+    statistics: {
+      current: {
+        durationSeconds: 1440,
+        areaSquareMeters: 63,
+        updatedAt: 1,
+        detail: "Fixed mock current cleaning statistics.",
+      },
+    },
+    attachments: {
+      items: [
+        { id: "dustbin", label: "Dustbin", kind: "dustbin", status: "installed", detail: "Dustbin installed.", updatedAt: 1 },
+        { id: "water_tank", label: "Water tank", kind: "water_tank", status: "ok", levelPercent: 68, detail: "Robot water tank ready.", updatedAt: 1 },
+        { id: "mop", label: "Mop", kind: "mop", status: "installed", detail: "Mop attached.", updatedAt: 1 },
+        { id: "detergent", label: "Detergent", kind: "detergent", status: "ok", levelPercent: 74, detail: "Robot detergent present.", updatedAt: 1 },
+      ],
+    },
+    map: {
+      available: true,
+      source: "fixed_mock",
+      updatedAt: 1,
+      metadata: {
+        id: "tensorfleet-fixed-map-001",
+        width: 300,
+        height: 200,
+        pixelSize: 5,
+        coordinateSystem: "valetudo_pixel",
+        layerCount: 6,
+        entityCount: 12,
+        segmentCount: 4,
+        zoneCount: 3,
+      },
+      preview: {
+        layers: [
+          {
+            id: "floor_1",
+            kind: "floor",
+            runs: mapPreviewRunsForRows(1, 1, 38, 58),
+          },
+          {
+            id: "wall_1",
+            kind: "wall",
+            runs: mapPreviewWallRuns(60, 40),
+          },
+          {
+            id: "kitchen",
+            kind: "segment",
+            label: "Kitchen",
+            segmentId: "kitchen",
+            runs: mapPreviewRunsForRows(5, 5, 18, 16),
+          },
+          {
+            id: "living_room",
+            kind: "segment",
+            label: "Living Room",
+            segmentId: "living_room",
+            runs: mapPreviewRunsForRows(22, 5, 22, 24),
+          },
+          {
+            id: "bedroom",
+            kind: "segment",
+            label: "Bedroom",
+            segmentId: "bedroom",
+            runs: mapPreviewRunsForRows(5, 21, 34, 20),
+          },
+          {
+            id: "hallway",
+            kind: "segment",
+            label: "Hallway",
+            segmentId: "hallway",
+            runs: mapPreviewRunsForRows(26, 26, 34, 29),
+          },
+        ],
+        entities: [
+          {
+            id: "robot_1",
+            kind: "robot",
+            label: "Robot",
+            points: [{ x: 225, y: 142 }],
+            angle: 315,
+          },
+          {
+            id: "charger_1",
+            kind: "charger",
+            points: [{ x: 178, y: 178 }],
+          },
+          {
+            id: "cleaning_path_recent",
+            kind: "path",
+            label: "Cleaning path",
+            points: [
+              { x: 178, y: 178 },
+              { x: 190, y: 160 },
+              { x: 214, y: 142 },
+              { x: 225, y: 122 },
+              { x: 207, y: 96 },
+              { x: 178, y: 85 },
+              { x: 130, y: 75 },
+              { x: 94, y: 64 },
+            ],
+          },
+          {
+            id: "predicted_path_next",
+            kind: "path",
+            label: "Predicted path",
+            points: [
+              { x: 225, y: 142 },
+              { x: 242, y: 128 },
+              { x: 258, y: 112 },
+              { x: 258, y: 86 },
+              { x: 238, y: 68 },
+            ],
+          },
+          {
+            id: "zone_dining_area",
+            kind: "zone",
+            label: "Dining Area",
+            points: [
+              { x: 145, y: 40 },
+              { x: 215, y: 40 },
+              { x: 215, y: 95 },
+              { x: 145, y: 95 },
+            ],
+          },
+          {
+            id: "zone_entryway",
+            kind: "zone",
+            label: "Entryway",
+            points: [
+              { x: 200, y: 140 },
+              { x: 270, y: 140 },
+              { x: 270, y: 178 },
+              { x: 200, y: 178 },
+            ],
+          },
+          {
+            id: "zone_around_sofa",
+            kind: "zone",
+            label: "Around Sofa",
+            points: [
+              { x: 135, y: 95 },
+              { x: 230, y: 95 },
+              { x: 230, y: 125 },
+              { x: 135, y: 125 },
+            ],
+          },
+          {
+            id: "restriction_cables",
+            kind: "no_go_area",
+            label: "No-go area near cables",
+            points: [
+              { x: 238, y: 38 },
+              { x: 266, y: 38 },
+              { x: 266, y: 66 },
+              { x: 238, y: 66 },
+            ],
+          },
+          {
+            id: "restriction_bedroom_carpet",
+            kind: "no_mop_area",
+            label: "No-mop area on carpet",
+            points: [
+              { x: 42, y: 118 },
+              { x: 100, y: 118 },
+              { x: 100, y: 165 },
+              { x: 42, y: 165 },
+            ],
+          },
+          {
+            id: "virtual_wall_doorway",
+            kind: "virtual_wall",
+            label: "Virtual wall at doorway",
+            points: [
+              { x: 105, y: 96 },
+              { x: 132, y: 96 },
+            ],
+          },
+          {
+            id: "obstacle_chair_leg",
+            kind: "obstacle",
+            label: "Obstacle",
+            points: [{ x: 248, y: 86 }],
+          },
+          {
+            id: "bad_no_go",
+            kind: "no_go_area",
+            points: [{ x: 1, y: 1 }, { x: 2, y: 2 }],
+          },
+        ],
+      },
+      targets: {
+        segments: [
+          {
+            id: "kitchen",
+            label: "Kitchen",
+            kind: "segment",
+            available: true,
+            geometry: { type: "unknown", bounds: { x: 5, y: 5, width: 16, height: 14 } },
+            detail: "Saved room from normalized map data.",
+          },
+          { id: "living_room", label: "Living Room", kind: "segment", available: true },
+          { id: "bedroom", label: "Bedroom", kind: "segment", available: true },
+          { id: "hallway", label: "Hallway", kind: "segment", available: true },
+        ],
+        zones: [
+          {
+            id: "zone_dining_area",
+            label: "Dining Area",
+            kind: "zone",
+            available: true,
+            geometry: {
+              type: "polygon",
+              points: [
+                { x: 145, y: 40 },
+                { x: 215, y: 40 },
+                { x: 215, y: 95 },
+                { x: 145, y: 95 },
+              ],
+            },
+            detail: "Saved zone from normalized map data.",
+          },
+          {
+            id: "zone_entryway",
+            label: "Entryway",
+            kind: "zone",
+            available: true,
+            geometry: {
+              type: "polygon",
+              points: [
+                { x: 200, y: 140 },
+                { x: 270, y: 140 },
+                { x: 270, y: 178 },
+                { x: 200, y: 178 },
+              ],
+            },
+          },
+          {
+            id: "zone_around_sofa",
+            label: "Around Sofa",
+            kind: "zone",
+            available: true,
+            geometry: {
+              type: "polygon",
+              points: [
+                { x: 135, y: 95 },
+                { x: 230, y: 95 },
+                { x: 230, y: 125 },
+                { x: 135, y: 125 },
+              ],
+            },
+          },
+        ],
+      },
+      detail: "Valetudo map metadata and target inventory normalized; renderable map surfaces are not exposed yet.",
+    },
+    updatedAt: 1,
+  };
+  const boundary = mapValetudoRuntimeSnapshotToBoundary(runtimeSnapshot);
+  const snapshot = mapValetudoState(boundary);
+  assert.equal(snapshot.identity.label, "Valetudo Fixed Mock");
+  assert.equal(snapshot.availability.status, "online");
+  assert.equal(snapshot.health?.runtimeStatus, "online");
+  assert.equal(snapshot.source?.kind, "fixed_mock");
+  assert.equal(snapshot.source?.status, "reachable");
+  assert.equal(snapshot.source?.stale, false);
+  assert.equal(snapshot.dock?.supported, true);
+  assert.equal(snapshot.dock?.state, "docked");
+  assert.equal(snapshot.diagnostics?.backend, "valetudo");
+  assert.deepEqual(
+    (snapshot.diagnostics?.raw as { readiness?: unknown })?.readiness,
+    (boundary.diagnostics?.raw as { readiness?: unknown })?.readiness,
+  );
+  assert.equal(snapshot.capabilities.start_cleaning.supported, true);
+  assert.equal(snapshot.capabilities.start_cleaning.status, "supported");
+  assert.equal(snapshot.capabilities.start_cleaning.available, true);
+  assert.equal(snapshot.capabilities.pause.supported, true);
+  assert.equal(snapshot.capabilities.stop.supported, true);
+  assert.equal(snapshot.capabilities.return_to_dock.supported, true);
+  assert.equal(snapshot.capabilities.battery.supported, true);
+  assert.equal(snapshot.capabilities.go_to_location.supported, false);
+  assert.equal(snapshot.capabilities.fan_speed.supported, true);
+  assert.equal(snapshot.capabilities.fan_speed.available, true);
+  assert.equal(snapshot.capabilities.water_usage.supported, true);
+  assert.equal(snapshot.capabilities.consumables.supported, true);
+  assert.equal(snapshot.capabilities.consumables.available, true);
+  assert.equal(snapshot.capabilities.statistics.supported, true);
+  assert.equal(snapshot.capabilities.statistics.available, true);
+  assert.deepEqual(snapshot.capabilities.statistics.commands, []);
+  assert.deepEqual(snapshot.capabilities.statistics.attributes, ["current"]);
+  assert.equal(snapshot.capabilities.attachments.supported, true);
+  assert.equal(snapshot.capabilities.attachments.available, true);
+  assert.deepEqual(snapshot.capabilities.attachments.commands, []);
+  assert.equal(snapshot.capabilities.attachments.attributes?.includes("items"), true);
+  assert.equal(snapshot.capabilities.attachments.attributes?.includes("kind:dustbin"), true);
+  assert.equal(snapshot.capabilities.attachments.attributes?.includes("kind:water_tank"), true);
+  assert.equal(snapshot.capabilities.dock_components.supported, true);
+  assert.equal(snapshot.capabilities.dock_components.available, true);
+  assert.deepEqual(snapshot.capabilities.dock_components.commands, []);
+  assert.equal(snapshot.capabilities.dock_components.attributes?.includes("components"), true);
+  assert.equal(snapshot.capabilities.dock_components.attributes?.includes("kind:freshwater"), true);
+  assert.equal(snapshot.capabilities.dock_components.attributes?.includes("kind:dustbag"), true);
+  assert.equal(snapshot.statistics?.current?.durationSeconds, 1440);
+  assert.equal(snapshot.statistics?.current?.areaSquareMeters, 63);
+  assert.equal(snapshot.statistics?.current?.updatedAt, 1);
+  assert.equal(snapshot.attachments?.items.length, 4);
+  assert.equal(snapshot.attachments?.items[0]?.label, "Dustbin");
+  assert.equal(snapshot.attachments?.items[1]?.levelPercent, 68);
+  assert.equal(snapshot.dock?.components?.length, 4);
+  assert.equal(snapshot.dock?.components?.[0]?.label, "Freshwater");
+  assert.equal(snapshot.dock?.components?.[1]?.status, "empty");
+  assert.equal(snapshot.capabilities.map.supported, false);
+  assert.equal(snapshot.map.grid, null);
+  assert.equal(snapshot.map.metadata.hasMap, false);
+  assert.equal(snapshot.map.readiness, "unavailable");
+  assert.equal(snapshot.map.layeredMetadata?.id, "tensorfleet-fixed-map-001");
+  assert.equal(snapshot.map.layeredMetadata?.coordinateSystem, "valetudo_pixel");
+  assert.equal(snapshot.map.layeredMetadata?.segmentCount, 4);
+  assert.equal(snapshot.map.layeredMetadata?.zoneCount, 3);
+  assert.equal(snapshot.map.layeredPreview?.width, 300);
+  assert.equal(snapshot.map.layeredPreview?.height, 200);
+  assert.equal(snapshot.map.layeredPreview?.pixelSize, 5);
+  assert.equal(snapshot.map.layeredPreview?.layers.length, 6);
+  assert.equal(snapshot.map.layeredPreview?.layers[0]?.kind, "floor");
+  assert.equal(snapshot.map.layeredPreview?.layers[2]?.segmentId, "kitchen");
+  assert.equal(snapshot.map.layeredPreview?.layers.filter((layer) => layer.kind === "segment").length, 4);
+  assert.deepEqual(
+    snapshot.map.layeredPreview?.layers
+      .filter((layer) => layer.kind === "segment")
+      .map((layer) => layer.segmentId),
+    ["kitchen", "living_room", "bedroom", "hallway"],
+  );
+  assert.equal(snapshot.map.layeredPreview?.entities.length, 11);
+  assert.equal(snapshot.map.layeredPreview?.entities[0]?.kind, "robot");
+  assert.equal(snapshot.map.layeredPreview?.entities[0]?.angle, 315);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.kind === "zone").length, 3);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.kind === "path").length, 2);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.kind === "no_go_area").length, 1);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.kind === "no_mop_area").length, 1);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.kind === "virtual_wall").length, 1);
+  assert.equal(snapshot.map.layeredPreview?.entities.filter((entity) => entity.id === "bad_no_go").length, 0);
+  assert.equal(snapshot.map.targets?.segments?.length, 4);
+  assert.equal(snapshot.map.targets?.segments?.[0]?.id, "kitchen");
+  assert.equal(snapshot.map.targets?.segments?.[3]?.label, "Hallway");
+  assert.deepEqual(snapshot.map.targets?.segments?.[0]?.geometry, {
+    type: "unknown",
+    bounds: { x: 5, y: 5, width: 16, height: 14 },
+  });
+  assert.equal(snapshot.map.targets?.zones?.length, 3);
+  assert.equal(snapshot.map.targets?.zones?.[0]?.label, "Dining Area");
+  assert.equal(snapshot.map.targets?.zones?.[2]?.label, "Around Sofa");
+  assert.equal(snapshot.map.targets?.zones?.[0]?.geometry?.type, "polygon");
+  assert.equal(snapshot.capabilities.segment_cleaning.supported, false);
+  assert.equal(snapshot.capabilities.segment_cleaning.status, "detected_not_ready");
+  assert.equal(snapshot.capabilities.room_semantics.supported, false);
+  assert.equal(snapshot.capabilities.room_cleaning.supported, false);
+  assert.equal(snapshot.maintenance?.consumables.length, 2);
+  assert.equal(snapshot.maintenance?.consumables[0]?.label, "Main brush");
+  assert.equal(snapshot.maintenance?.consumables[1]?.status, "replace_soon");
+  assert.equal(snapshot.cleaningSettings?.fanSpeed?.current, "medium");
+  assert.deepEqual(snapshot.cleaningSettings?.fanSpeed?.options.map((option) => option.value), [
+    "off",
+    "min",
+    "low",
+    "medium",
+    "high",
+    "turbo",
+    "max",
+  ]);
+  assert.equal(snapshot.cleaningSettings?.waterUsage?.current, "medium");
+  assert.deepEqual(snapshot.cleaningSettings?.waterUsage?.options.map((option) => option.value), [
+    "off",
+    "min",
+    "low",
+    "medium",
+    "high",
+    "max",
+  ]);
+  assert.equal(snapshot.capabilities.zone_cleaning.supported, false);
+  assert.equal(snapshot.capabilities.map.supported, false);
+  assert.equal(snapshot.capabilities.pose.supported, false);
+  assert.equal(snapshot.capabilities.navigation_status.supported, false);
+  assert.equal(snapshot.capabilities.mapping_session.supported, false);
+  assert.equal(snapshot.capabilities.auto_mapping.supported, false);
+  assert.equal(snapshot.capabilities.coverage_mission.supported, false);
+  assert.equal(snapshot.capabilities.start_coverage.supported, false);
+  assert.equal(snapshot.capabilities.map_annotations.supported, false);
+  assert.equal(snapshot.capabilities.room_semantics.supported, false);
+  assert.equal(snapshot.capabilities.zone_semantics.supported, false);
+  assert.equal(snapshot.capabilities.room_cleaning.supported, false);
+  assert.equal(snapshot.capabilities.manual_control.supported, false);
+  assert.equal(snapshot.map.grid, null);
+  assert.equal(snapshot.map.metadata.hasMap, false);
+  assert.equal(snapshot.map.metadata.totalCells, 0);
+  assert.equal(snapshot.map.receiving, false);
+  assert.equal(snapshot.map.readiness, "unavailable");
+  assert.deepEqual(snapshot.map.annotations, []);
+  assert.equal(snapshot.pose.available, false);
+  assert.equal(snapshot.pose.coordinates, null);
+  assert.equal(snapshot.pose.readiness, "unavailable");
+  assert.equal(snapshot.pose.source, undefined);
+  assert.equal(snapshot.navigation.active, false);
+  assert.equal(snapshot.navigation.currentTarget, null);
+  assert.equal(snapshot.navigation.backendGoalState, null);
+  assert.equal(snapshot.navigation.planPath, null);
+  assert.equal(snapshot.mapping.persistence, "unsupported");
+  assert.equal(snapshot.mapping.state, "idle");
+  assert.equal(snapshot.mapping.savedMaps.length, 0);
+  assert.equal(snapshot.readiness.ready, true);
+  assert.equal(snapshot.fault.readiness, "ready");
+  assert.equal(snapshot.battery.percentage, 82);
+  // A docked-but-idle robot that is not charging must read as idle with no active mission.
+  assert.equal(snapshot.mission.state, "idle");
+  assert.equal(snapshot.activity?.status, "docked");
+  assert.deepEqual(snapshot.activity?.availableActions, ["start_cleaning"]);
+  assert.equal(snapshot.battery.charging, false);
+  assert.equal(snapshot.activeMission, null);
+  assert.equal(snapshot.missions.active, null);
+  assert.equal((snapshot.diagnostics?.raw as { valetudoState?: string } | undefined)?.valetudoState, "idle");
+  assert.deepEqual(
+    (snapshot.diagnostics?.capabilities as { rawCapabilityNames?: string[] } | undefined)?.rawCapabilityNames,
+    [
+      "BasicControlCapability",
+      "BatteryStateCapability",
+      "ConsumableMonitoringCapability",
+      "FanSpeedControlCapability",
+      "WaterUsageControlCapability",
+      "MapSegmentationCapability",
+      "GoToLocationCapability",
+      "ZoneCleaningCapability",
+    ],
+  );
+  assert.equal((snapshot.diagnostics?.map as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((snapshot.diagnostics?.pose as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((snapshot.diagnostics?.navigation as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((snapshot.diagnostics?.mapping as { supported?: boolean } | undefined)?.supported, false);
+
+  const stalePreviewSnapshot = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary({
+    ...runtimeSnapshot,
+    source: { kind: "fixed_mock", status: "reachable", stale: true, lastSeenAt: 1 },
+  }));
+  assert.equal(stalePreviewSnapshot.map.layeredPreview, undefined);
+  assert.equal(stalePreviewSnapshot.map.targets, undefined);
+
+  const unreachablePreviewSnapshot = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary({
+    ...runtimeSnapshot,
+    source: { kind: "fixed_mock", status: "unreachable", stale: false, lastSeenAt: 1 },
+    connectivity: { reachable: false, online: true },
+  }));
+  assert.equal(unreachablePreviewSnapshot.map.layeredPreview, undefined);
+  assert.equal(unreachablePreviewSnapshot.map.targets, undefined);
+
+  const invalidMetadataPreviewSnapshot = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary({
+    ...runtimeSnapshot,
+    map: runtimeSnapshot.map
+      ? {
+          ...runtimeSnapshot.map,
+          metadata: {
+            ...runtimeSnapshot.map.metadata,
+            width: 0,
+          },
+        }
+      : undefined,
+  }));
+  assert.equal(invalidMetadataPreviewSnapshot.map.layeredPreview, undefined);
+
+  const malformedPreviewSnapshot = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary({
+    ...runtimeSnapshot,
+    map: runtimeSnapshot.map
+      ? {
+          ...runtimeSnapshot.map,
+          preview: {
+            layers: [{ id: "bad_layer", kind: "segment", runs: [{ x: 1, y: 1, count: 0 }] }],
+            entities: [{ id: "bad_zone", kind: "zone", points: [{ x: 1, y: 1 }] }],
+          },
+        }
+      : undefined,
+  }));
+  assert.equal(malformedPreviewSnapshot.map.layeredPreview, undefined);
+
+  const mockHTTPBoundary = mapValetudoRuntimeSnapshotToBoundary({
+    runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-mock-http-robot", name: "Valetudo Mock HTTP Source" },
+    source: { kind: "valetudo_mock", status: "reachable", stale: false, lastSeenAt: 2 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "idle", label: "Idle", started: false, paused: false },
+    capabilities: {
+      commands: {
+        start_cleaning: { available: true },
+        pause: { available: true },
+        resume: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      },
+      diagnostics: [],
+    },
+    diagnostics: { mode: "valetudo_mock_http", rawCapabilityNames: ["BasicControlCapability"] },
+    updatedAt: 2,
+  });
+  const mockHTTPSnapshot = mapValetudoState(mockHTTPBoundary);
+  assert.equal(mockHTTPSnapshot.identity.label, "Valetudo Mock HTTP Source");
+  assert.equal(mockHTTPSnapshot.source?.kind, "valetudo_mock");
+  assert.equal(mockHTTPSnapshot.capabilities.start_cleaning.supported, true);
+  assert.equal(mockHTTPSnapshot.capabilities.start_cleaning.available, true);
+  assert.equal(mockHTTPSnapshot.capabilities.start_navigation.supported, false);
+  assert.equal(mockHTTPSnapshot.capabilities.statistics.supported, false);
+  assert.equal(mockHTTPSnapshot.statistics, undefined);
+
+  const httpBoundary = mapValetudoRuntimeSnapshotToBoundary({
+    runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-http-robot", name: "Valetudo HTTP Source" },
+    source: { kind: "valetudo_http", status: "reachable", stale: false, lastSeenAt: 2 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "idle", label: "Idle", started: false, paused: false },
+    capabilities: {
+      commands: {
+        start_cleaning: { available: true },
+        pause: { available: true },
+        resume: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      },
+      diagnostics: [],
+    },
+    diagnostics: { mode: "valetudo_http", rawCapabilityNames: ["BasicControlCapability"] },
+    updatedAt: 2,
+  });
+  const httpSnapshot = mapValetudoState(httpBoundary);
+  assert.equal(httpSnapshot.identity.label, "Valetudo HTTP Source");
+  assert.equal(httpSnapshot.source?.kind, "valetudo_http");
+  assert.equal(httpSnapshot.capabilities.start_cleaning.supported, true);
+  assert.equal(httpSnapshot.capabilities.start_cleaning.available, true);
+
+  const mqttBoundary = mapValetudoRuntimeSnapshotToBoundary({
+    runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0-layer6a-m6", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-mqtt-robot", name: "Valetudo MQTT Source" },
+    source: { kind: "valetudo_mock", status: "reachable", stale: false, lastSeenAt: 2 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "cleaning", label: "Cleaning", started: true, paused: false },
+    battery: { level: 64, charging: true },
+    dock: { state: "available", docked: false },
+    capabilities: {
+      commands: {
+        start_cleaning: { available: true },
+        pause: { available: true },
+        resume: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      },
+      diagnostics: [],
+    },
+    diagnostics: {
+      mode: "valetudo_mock_mqtt",
+      rawCapabilityNames: ["BasicControlCapability", "BatteryStateCapability"],
+      transports: [
+        { name: "http", enabled: true, status: "available", stale: false },
+        {
+          name: "mqtt",
+          enabled: true,
+          status: "reachable",
+          stale: false,
+          messageCount: 4,
+          subscriptions: ["valetudo/robot/#"],
+        },
+      ],
+    },
+    updatedAt: 2,
+  });
+  const mqttSnapshot = mapValetudoState(mqttBoundary);
+  assert.equal(mqttSnapshot.identity.label, "Valetudo MQTT Source");
+  assert.equal(mqttSnapshot.availability.status, "online");
+  assert.equal(mqttSnapshot.source?.kind, "valetudo_mock");
+  assert.equal(mqttSnapshot.dock?.state, "charging");
+  assert.equal(mqttSnapshot.mission.state, "cleaning");
+  assert.equal(mqttSnapshot.activity?.status, "cleaning");
+  assert.equal(mqttSnapshot.capabilities.start_cleaning.supported, true);
+  assert.equal(mqttSnapshot.capabilities.battery.supported, true);
+
+  const missingBasic = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.1.0-layer6a-m1", status: "online" },
+      backend: "valetudo",
+      robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
+      source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 1 },
+      connectivity: { reachable: true, online: true },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      battery: { level: 82, charging: false },
+      dock: { state: "available", docked: true },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: false, reason: "capability_unavailable" },
+          pause: { available: false, reason: "capability_unavailable" },
+          resume: { available: false, reason: "capability_unavailable" },
+          stop: { available: false, reason: "capability_unavailable" },
+          return_to_dock: { available: false, reason: "capability_unavailable" },
+        },
+        diagnostics: [
+          { name: "BasicControlCapability", detected: true, implemented: true, scope: "diagnostics" },
+          { name: "FanSpeedControlCapability", detected: true, implemented: false, scope: "diagnostics" },
+        ],
+      },
+      diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability", "FanSpeedControlCapability"] },
+      updatedAt: 1,
+    }),
+  );
+  assert.equal(missingBasic.capabilities.start_cleaning.supported, true);
+  assert.equal(missingBasic.capabilities.start_cleaning.status, "unavailable");
+  assert.equal(missingBasic.capabilities.start_cleaning.available, false);
+  assert.equal(missingBasic.capabilities.pause.supported, true);
+  assert.equal(missingBasic.capabilities.pause.status, "unavailable");
+  assert.equal(missingBasic.capabilities.stop.supported, true);
+  assert.equal(missingBasic.capabilities.stop.status, "unavailable");
+  assert.equal(missingBasic.capabilities.return_to_dock.supported, true);
+  assert.equal(missingBasic.capabilities.return_to_dock.status, "unavailable");
+  assert.equal(missingBasic.capabilities.battery.supported, true);
+  assert.equal(missingBasic.capabilities.fan_speed.supported, false);
+
+  const unreachable = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0", status: "online" },
+      backend: "valetudo",
+      robot: { id: "valetudo-source-down", name: "Valetudo Source Down" },
+      source: { kind: "real_robot", status: "unreachable", stale: false, lastSeenAt: 10 },
+      connectivity: { reachable: false, online: true },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      battery: { level: 72, charging: false },
+      dock: { state: "available", docked: true },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: false, reason: "source_unreachable" },
+          pause: { available: false, reason: "source_unreachable" },
+          resume: { available: false, reason: "source_unreachable" },
+          stop: { available: false, reason: "source_unreachable" },
+          return_to_dock: { available: false, reason: "source_unreachable" },
+        },
+        diagnostics: [],
+      },
+      diagnostics: { mode: "real_robot", rawCapabilityNames: ["BasicControlCapability"] },
+      statistics: {
+        current: { durationSeconds: 1440, areaSquareMeters: 63, updatedAt: 10 },
+      },
+      updatedAt: 10,
+    }),
+  );
+  assert.equal(unreachable.availability.status, "online");
+  assert.equal(unreachable.source?.status, "unreachable");
+  assert.equal(unreachable.source?.reason, "source_unreachable");
+  assert.equal(unreachable.activity?.status, "unavailable");
+  assert.equal(unreachable.activity?.reason, "source_unreachable");
+  assert.equal(unreachable.capabilities.start_cleaning.supported, true);
+  assert.equal(unreachable.capabilities.start_cleaning.status, "unavailable");
+  assert.equal(unreachable.capabilities.start_cleaning.available, false);
+  assert.equal(unreachable.capabilities.start_cleaning.availabilityReason, "source_unreachable");
+  assert.equal(unreachable.capabilities.statistics.supported, false);
+  assert.equal(unreachable.statistics, undefined);
+  const unreachableCommand = mapVacuumCommandToValetudoRequest(
+    { command: "start_cleaning" },
+    unreachable.capabilities,
+  );
+  assert.equal(unreachableCommand.ok, false);
+  assert.equal(unreachableCommand.reason, "source_unreachable");
+
+  const runtimeOffline = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0", status: "offline" },
+      backend: "valetudo",
+      robot: { id: "valetudo-runtime-down", name: "Valetudo Runtime Down" },
+      source: { kind: "real_robot", status: "unreachable", stale: false, lastSeenAt: 10 },
+      connectivity: { reachable: false, online: false },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: false, reason: "source_unreachable" },
+          pause: { available: false, reason: "source_unreachable" },
+          resume: { available: false, reason: "source_unreachable" },
+          stop: { available: false, reason: "source_unreachable" },
+          return_to_dock: { available: false, reason: "source_unreachable" },
+        },
+        diagnostics: [],
+      },
+      diagnostics: { mode: "real_robot", rawCapabilityNames: ["BasicControlCapability"] },
+      updatedAt: 10,
+    }),
+  );
+  assert.equal(runtimeOffline.availability.status, "offline");
+  assert.equal(runtimeOffline.health?.runtimeStatus, "offline");
+  assert.equal(runtimeOffline.source?.reason, "runtime_offline");
+  assert.equal(runtimeOffline.activity?.status, "unavailable");
+  assert.equal(runtimeOffline.capabilities.start_cleaning.availabilityReason, "runtime_offline");
+  assert.deepEqual(runtimeOffline.fault.faults, ["Valetudo integration runtime is offline."]);
+
+  const stale = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0", status: "online" },
+      backend: "valetudo",
+      robot: { id: "valetudo-stale", name: "Valetudo Stale" },
+      source: { kind: "valetudo_mock", status: "reachable", stale: true, lastSeenAt: 11 },
+      connectivity: { reachable: true, online: true },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: false, reason: "stale_source" },
+        },
+        diagnostics: [{ name: "BasicControlCapability", detected: true, implemented: true, scope: "control" }],
+      },
+      diagnostics: { mode: "valetudo_mock", rawCapabilityNames: ["BasicControlCapability"] },
+      statistics: {
+        current: { durationSeconds: 1440, areaSquareMeters: 63, updatedAt: 11 },
+      },
+      updatedAt: 11,
+    }),
+  );
+  assert.equal(stale.source?.status, "stale");
+  assert.equal(stale.source?.stale, true);
+  assert.equal(stale.activity?.status, "idle");
+  assert.equal(stale.activity?.reason, "stale_source");
+  assert.equal(stale.capabilities.start_cleaning.supported, true);
+  assert.equal(stale.capabilities.start_cleaning.status, "unavailable");
+  assert.equal(stale.capabilities.start_cleaning.availabilityReason, "stale_source");
+  assert.equal(stale.capabilities.statistics.supported, false);
+  assert.equal(stale.statistics, undefined);
+
+  const malformedStatistics = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "tensorfleet-valetudo-runtime", version: "0.6.0", status: "online" },
+      backend: "valetudo",
+      robot: { id: "valetudo-malformed-stats", name: "Valetudo Malformed Stats" },
+      source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 12 },
+      connectivity: { reachable: true, online: true },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: true },
+        },
+        diagnostics: [{ name: "CurrentStatisticsCapability", detected: true, implemented: true, scope: "state" }],
+      },
+      diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability", "CurrentStatisticsCapability"] },
+      statistics: {
+        current: {
+          durationSeconds: Number.NaN,
+          areaSquareMeters: Number.POSITIVE_INFINITY,
+        },
+      },
+      updatedAt: 12,
+    }),
+  );
+  assert.equal(malformedStatistics.capabilities.statistics.supported, false);
+  assert.equal(malformedStatistics.statistics, undefined);
+}
+
+function testValetudoAttachmentsAndDockComponentGuards(): void {
+  const baseRuntime: ValetudoRuntimeSnapshot = {
+    runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.8.2", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
+    source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 1 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "idle", label: "Idle", started: false, paused: false },
+    battery: { level: 82, charging: false },
+    dock: { state: "available", docked: true },
+    capabilities: {
+      commands: {
+        start_cleaning: { available: true },
+        pause: { available: true },
+        resume: { available: true },
+        stop: { available: true },
+        return_to_dock: { available: true },
+      },
+      diagnostics: [],
+    },
+    diagnostics: {
+      mode: "fixed_mock",
+      rawCapabilityNames: ["BasicControlCapability"],
+    },
+    updatedAt: 1,
+  };
+
+  const missing = mapValetudoState(mapValetudoRuntimeSnapshotToBoundary(baseRuntime));
+  assert.equal(missing.attachments, undefined);
+  assert.equal(missing.dock?.components, undefined);
+  assert.equal(missing.capabilities.attachments.supported, false);
+  assert.equal(missing.capabilities.dock_components.supported, false);
+
+  const malformed = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      ...baseRuntime,
+      attachments: {
+        items: [
+          { id: "", label: "Missing id", kind: "dustbin", status: "ok" },
+          { id: "mystery_tool", label: "Mystery tool", kind: "surprise", status: "present", levelPercent: 140 },
+          { id: "water_tank", label: "Water tank", kind: "water_tank", status: "low", levelPercent: 12 },
+        ],
+      },
+      dock: {
+        state: "available",
+        docked: true,
+        components: [
+          { id: "", label: "Missing id", kind: "freshwater", status: "ok" },
+          { id: "unknown_bin", label: "Unknown bin", kind: "bin", status: "strange", levelPercent: -1 },
+          { id: "dustbag", label: "Dustbag", kind: "dustbag", status: "missing" },
+        ],
+      },
+    }),
+  );
+  assert.equal(malformed.attachments?.items.length, 2);
+  assert.equal(malformed.attachments?.items[0]?.kind, "unknown");
+  assert.equal(malformed.attachments?.items[0]?.status, "unknown");
+  assert.equal(malformed.attachments?.items[0]?.levelPercent, undefined);
+  assert.equal(malformed.attachments?.items[1]?.kind, "water_tank");
+  assert.equal(malformed.attachments?.items[1]?.levelPercent, 12);
+  assert.equal(malformed.dock?.components?.length, 2);
+  assert.equal(malformed.dock?.components?.[0]?.kind, "unknown");
+  assert.equal(malformed.dock?.components?.[0]?.status, "unknown");
+  assert.equal(malformed.dock?.components?.[0]?.levelPercent, undefined);
+  assert.equal(malformed.dock?.components?.[1]?.kind, "dustbag");
+  assert.equal(malformed.capabilities.attachments.supported, true);
+  assert.equal(malformed.capabilities.dock_components.supported, true);
+
+  const stale = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      ...baseRuntime,
+      source: { kind: "fixed_mock", status: "reachable", stale: true, lastSeenAt: 1 },
+      attachments: {
+        items: [{ id: "dustbin", label: "Dustbin", kind: "dustbin", status: "installed" }],
+      },
+      dock: {
+        state: "available",
+        docked: true,
+        components: [{ id: "freshwater", label: "Freshwater", kind: "freshwater", status: "ok" }],
+      },
+      map: {
+        available: true,
+        source: "fixed_mock",
+        metadata: { width: 300, height: 200, pixelSize: 5, segmentCount: 1 },
+        targets: {
+          segments: [{ id: "stale_segment", label: "Stale segment", kind: "segment", available: true }],
+        },
+      },
+    }),
+  );
+  assert.equal(stale.attachments, undefined);
+  assert.equal(stale.dock?.components, undefined);
+  assert.equal(stale.map.layeredMetadata, undefined);
+  assert.equal(stale.map.targets, undefined);
+  assert.equal(stale.capabilities.attachments.supported, false);
+  assert.equal(stale.capabilities.dock_components.supported, false);
+}
+
+function testValetudoRuntimeMissionStateMapping(): void {
+  const createSnapshot = (state: {
+    value: string;
+    label: string;
+    started: boolean;
+    paused: boolean;
+  }) =>
+    mapValetudoState(
+      mapValetudoRuntimeSnapshotToBoundary({
+        runtime: { id: "tensorfleet-valetudo-runtime-fixed-mock", version: "0.1.0-layer6a-m1", status: "online" },
+        backend: "valetudo",
+        robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
+        source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 1 },
+        connectivity: { reachable: true, online: true },
+        state,
+        battery: { level: 82, charging: false },
+        dock: { state: "available", docked: false },
+        capabilities: {
+          commands: {
+            start_cleaning: { available: true },
+            pause: { available: true },
+            resume: { available: true },
+            stop: { available: true },
+            return_to_dock: { available: true },
+          },
+          diagnostics: [],
+        },
+        diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability"] },
+        updatedAt: 1,
+      }),
+    );
+
+  const cleaning = createSnapshot({ value: "cleaning", label: "Cleaning", started: true, paused: false });
+  assert.equal(cleaning.mission.state, "cleaning");
+  assert.equal(cleaning.activity?.status, "cleaning");
+  assert.equal(cleaning.activeMission?.type, "hardware_cleaning");
+  assert.deepEqual(cleaning.activity?.availableActions, ["pause", "stop", "return_to_dock"]);
+
+  const paused = createSnapshot({ value: "paused", label: "Paused", started: true, paused: true });
+  assert.equal(paused.mission.state, "paused");
+  assert.equal(paused.activity?.status, "paused");
+
+  const stopped = createSnapshot({ value: "stopped", label: "Stopped", started: false, paused: false });
+  assert.equal(stopped.mission.state, "idle");
+  assert.equal(stopped.activity?.status, "idle");
+  assert.equal(stopped.activeMission, null);
+
+  const returning = createSnapshot({ value: "returning_to_dock", label: "Returning to dock", started: false, paused: false });
+  assert.equal(returning.mission.state, "returning");
+  assert.equal(returning.activity?.status, "returning");
+
+  const faulted = createSnapshot({ value: "error", label: "Error", started: false, paused: false });
+  assert.equal(faulted.activity?.status, "faulted");
+  assert.equal(faulted.fault.readiness, "degraded");
+  assert.deepEqual(faulted.fault.faults, ["Error"]);
+}
+
+function testPrimaryRobotStateDerivation(): void {
+  const createSnapshot = (overrides: {
+    runtimeStatus?: "online" | "degraded" | "offline";
+    source?: { status: "reachable" | "unreachable" | "unknown"; stale: boolean; reason?: string };
+    state?: { value: string; label: string; started: boolean; paused: boolean };
+    battery?: { level: number; charging: boolean };
+    dock?: { state: string; docked: boolean };
+  }) =>
+    mapValetudoState(
+      mapValetudoRuntimeSnapshotToBoundary({
+        runtime: { id: "rt", version: "v", status: overrides.runtimeStatus ?? "online" },
+        backend: "valetudo",
+        robot: { id: "primary-state", name: "Primary State Robot" },
+        source: {
+          kind: "fixed_mock",
+          status: overrides.source?.status ?? "reachable",
+          stale: overrides.source?.stale ?? false,
+          lastSeenAt: 1,
+        },
+        connectivity: {
+          reachable: overrides.source?.status !== "unreachable",
+          online: overrides.runtimeStatus !== "offline",
+        },
+        state: overrides.state ?? { value: "idle", label: "Idle", started: false, paused: false },
+        battery: overrides.battery ?? { level: 82, charging: false },
+        dock: overrides.dock ?? { state: "available", docked: false },
+        capabilities: {
+          commands: {
+            start_cleaning: { available: true },
+            pause: { available: true },
+            resume: { available: true },
+            stop: { available: true },
+            return_to_dock: { available: true },
+          },
+          diagnostics: [],
+        },
+        diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability"] },
+        updatedAt: 1,
+      }),
+    );
+
+  const cases = [
+    {
+      name: "idle",
+      snapshot: createSnapshot({ state: { value: "idle", label: "Idle", started: false, paused: false } }),
+      want: "idle",
+    },
+    {
+      name: "docked",
+      snapshot: createSnapshot({
+        state: { value: "docked", label: "Docked", started: false, paused: false },
+        dock: { state: "docked", docked: true },
+      }),
+      want: "docked",
+    },
+    {
+      name: "charging",
+      snapshot: createSnapshot({
+        state: { value: "docked", label: "Charging", started: false, paused: false },
+        battery: { level: 55, charging: true },
+        dock: { state: "charging", docked: true },
+      }),
+      want: "charging",
+    },
+    {
+      name: "cleaning",
+      snapshot: createSnapshot({ state: { value: "cleaning", label: "Cleaning", started: true, paused: false } }),
+      want: "cleaning",
+    },
+    {
+      name: "paused",
+      snapshot: createSnapshot({ state: { value: "paused", label: "Paused", started: true, paused: true } }),
+      want: "paused",
+    },
+    {
+      name: "returning",
+      snapshot: createSnapshot({
+        state: { value: "returning_to_dock", label: "Returning to dock", started: false, paused: false },
+        dock: { state: "returning", docked: false },
+      }),
+      want: "returning_to_dock",
+    },
+    {
+      name: "offline",
+      snapshot: createSnapshot({
+        runtimeStatus: "offline",
+        source: { status: "unreachable", stale: false },
+      }),
+      want: "offline",
+    },
+    {
+      name: "unavailable stale",
+      snapshot: createSnapshot({
+        source: { status: "reachable", stale: true },
+      }),
+      want: "unavailable",
+    },
+    {
+      name: "error",
+      snapshot: createSnapshot({ state: { value: "error", label: "Maintenance warning", started: false, paused: false } }),
+      want: "error",
+    },
+  ] as const;
+
+  for (const tt of cases) {
+    assert.equal(deriveVacuumPrimaryRobotState(tt.snapshot).state, tt.want, tt.name);
+  }
+
+  const noBatteryPrimary = deriveVacuumPrimaryRobotState({
+    ...createSnapshot({
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+    }),
+    battery: undefined,
+  });
+  assert.equal(noBatteryPrimary.state, "idle");
+  assert.equal(noBatteryPrimary.detail.includes("battery unknown"), true);
+}
+
+function testValetudoChargingAndOfflineMapping(): void {
+  const chargingBoundary = mapValetudoRuntimeSnapshotToBoundary({
+    runtime: { id: "rt", version: "v", status: "online" },
+    backend: "valetudo",
+    robot: { id: "valetudo-fixed-mock-001", name: "Valetudo Fixed Mock" },
+    source: { kind: "fixed_mock", status: "reachable", stale: false, lastSeenAt: 1 },
+    connectivity: { reachable: true, online: true },
+    state: { value: "docked", label: "Docked", started: false, paused: false },
+    battery: { level: 50, charging: true },
+    dock: { state: "charging", docked: true },
+    capabilities: { commands: { start_cleaning: { available: true } }, diagnostics: [] },
+    diagnostics: { mode: "fixed_mock", rawCapabilityNames: ["BasicControlCapability"] },
+    updatedAt: 1,
+  });
+  const chargingSnapshot = mapValetudoState(chargingBoundary);
+  assert.equal(chargingSnapshot.mission.state, "charging");
+  assert.equal(chargingSnapshot.activity?.status, "charging");
+  assert.equal(chargingSnapshot.battery.charging, true);
+
+  // Malformed payloads (e.g. a proxy error body) must be rejected so the adapter
+  // can fall back to an offline snapshot instead of crashing the UI.
+  assert.equal(isValetudoRuntimeSnapshot({ error: "Tensorfleet VM service is unavailable" }), false);
+  assert.equal(
+    isValetudoRuntimeSnapshot({
+      backend: "valetudo",
+      robot: { id: "valetudo-fixed-mock-001" },
+      connectivity: { online: true },
+      state: { value: "idle" },
+      capabilities: { commands: {} },
+    }),
+    false,
+  );
+  assert.equal(isValetudoRuntimeSnapshot(null), false);
+  assert.equal(isValetudoRuntimeSnapshot("offline"), false);
+
+  const offline = mapValetudoState(mapValetudoRuntimeUnavailable("runtime stopped"));
+  assert.equal(offline.availability.connected, false);
+  assert.equal(offline.availability.status, "offline");
+  assert.equal(offline.map.grid, null);
+  assert.equal(offline.map.metadata.hasMap, false);
+  assert.equal(offline.pose.available, false);
+  assert.equal(offline.navigation.active, false);
+  assert.equal(offline.mapping.persistence, "unsupported");
+  assert.equal(offline.activity?.status, "unavailable");
+  assert.equal(offline.activeMission, null);
+}
+
+function testAdvancedSurfaceOptionality(): void {
+  const grid = parseVacuumMapGrid({
+    info: {
+      width: 2,
+      height: 2,
+      resolution: 0.5,
+      origin: { position: { x: -1, y: -1 }, orientation: { w: 1 } },
+    },
+    header: { frame_id: "map" },
+    data: [0, 0, 100, -1],
+  });
+  assert.ok(grid);
+  const metadata = buildVacuumMapMetadata(grid, 50);
+  const nav2 = mapTurtleBot4Nav2State({
+    runtime: createRuntime({
+      currentMapCoordinates: { x: 0.25, y: 0.5, yaw: 90 },
+      helperPoseSource: "amcl",
+      goalState: "executing",
+    }),
+    currentTarget: { x: 1, y: 1, yaw: 0 },
+    initialDistance: 2,
+    mapGrid: grid,
+    mapMetadata: metadata,
+  });
+  assert.equal(nav2.capabilities.map.supported, true);
+  assert.equal(nav2.map.metadata.hasMap, true);
+  assert.deepEqual(nav2.map.grid, grid);
+  assert.equal(nav2.pose.available, true);
+  assert.deepEqual(nav2.pose.coordinates, { x: 0.25, y: 0.5, yaw: 90 });
+  assert.equal(nav2.navigation.active, true);
+  assert.equal(nav2.mapping.knownRatio, metadata.knownRatio);
+  assert.equal(nav2.capabilities.coverage_mission.supported, true);
+
+  const noMapValetudo = mapValetudoState(
+    mapValetudoRuntimeSnapshotToBoundary({
+      runtime: { id: "rt", version: "v", status: "online" },
+      backend: "valetudo",
+      robot: { id: "real-valetudo", name: "Real Valetudo" },
+      source: { kind: "real_robot", status: "reachable", stale: false, lastSeenAt: 100 },
+      connectivity: { reachable: true, online: true },
+      state: { value: "idle", label: "Idle", started: false, paused: false },
+      battery: { level: 70, charging: false },
+      dock: { state: "available", docked: false },
+      capabilities: {
+        commands: {
+          start_cleaning: { available: true },
+          pause: { available: true },
+          resume: { available: true },
+          stop: { available: true },
+          return_to_dock: { available: true },
+        },
+        diagnostics: [
+          { name: "GoToLocationCapability", detected: true, implemented: false, scope: "diagnostics" },
+          { name: "MapSegmentationCapability", detected: true, implemented: false, scope: "diagnostics" },
+          { name: "ZoneCleaningCapability", detected: true, implemented: false, scope: "diagnostics" },
+        ],
+      },
+      diagnostics: {
+        mode: "real_robot",
+        rawCapabilityNames: [
+          "BasicControlCapability",
+          "GoToLocationCapability",
+          "MapSegmentationCapability",
+          "ZoneCleaningCapability",
+        ],
+      },
+      updatedAt: 100,
+    }),
+  );
+  assert.equal(noMapValetudo.capabilities.map.supported, false);
+  assert.equal(noMapValetudo.map.grid, null);
+  assert.equal(noMapValetudo.map.metadata.hasMap, false);
+  assert.deepEqual(noMapValetudo.map.annotations, []);
+  assert.equal(noMapValetudo.pose.available, false);
+  assert.equal(noMapValetudo.pose.coordinates, null);
+  assert.equal(noMapValetudo.navigation.active, false);
+  assert.equal(noMapValetudo.navigation.state, "idle");
+  assert.equal(noMapValetudo.navigation.backendGoalState, null);
+  assert.equal(noMapValetudo.capabilities.go_to_location.status, "detected_not_ready");
+  assert.equal(noMapValetudo.capabilities.navigation_status.supported, false);
+  assert.equal(noMapValetudo.mapping.persistence, "unsupported");
+  assert.equal(noMapValetudo.capabilities.coverage_mission.supported, false);
+  assert.equal(noMapValetudo.capabilities.start_coverage.supported, false);
+  assert.equal(noMapValetudo.capabilities.map_annotations.supported, false);
+  assert.equal(noMapValetudo.capabilities.room_semantics.supported, false);
+  assert.equal(noMapValetudo.capabilities.zone_semantics.supported, false);
+  assert.equal(noMapValetudo.capabilities.room_cleaning.supported, false);
+  assert.equal(noMapValetudo.capabilities.zone_cleaning.status, "detected_not_ready");
+  assert.equal(noMapValetudo.capabilities.manual_control.supported, false);
+  assert.equal(noMapValetudo.activity?.status, "idle");
+  assert.deepEqual(noMapValetudo.activity?.availableActions, ["start_cleaning", "return_to_dock"]);
+  assert.equal(noMapValetudo.fault.readiness, "ready");
+  assert.deepEqual(noMapValetudo.fault.faults, []);
+  assert.deepEqual(
+    (noMapValetudo.diagnostics?.raw as { rawCapabilityNames?: string[] } | undefined)?.rawCapabilityNames,
+    [
+      "BasicControlCapability",
+      "GoToLocationCapability",
+      "MapSegmentationCapability",
+      "ZoneCleaningCapability",
+    ],
+  );
+  assert.equal((noMapValetudo.diagnostics?.map as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((noMapValetudo.diagnostics?.pose as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((noMapValetudo.diagnostics?.navigation as { supported?: boolean } | undefined)?.supported, false);
+  assert.equal((noMapValetudo.diagnostics?.mapping as { supported?: boolean } | undefined)?.supported, false);
 }
 
 function testPublicContractAndUiBoundary(): void {
@@ -376,20 +3066,342 @@ function testPublicContractAndUiBoundary(): void {
   for (const file of publicFiles) {
     const contents = readFileSync(resolve(repoRoot, "panels-standalone/src/vacuum-adapter", file), "utf8");
     assert.equal(/components\/Nav2|nav2Runtime|nav_msgs\/msg|geometry_msgs\/msg/.test(contents), false, file);
+    for (const capabilityName of valetudoRawCapabilityNames) {
+      assert.equal(contents.includes(capabilityName), false, `${file} should not expose ${capabilityName}`);
+    }
   }
 
   const panelContents = readFileSync(
     resolve(repoRoot, "panels-standalone/src/components/VacuumControl/VacuumControlPanel.tsx"),
     "utf8",
   );
+  const panelStyles = readFileSync(
+    resolve(repoRoot, "panels-standalone/src/components/VacuumControl/VacuumControlPanel.css"),
+    "utf8",
+  );
   for (const backendName of ["turtlebot4_nav2", "valetudo"]) {
     assert.equal(panelContents.includes(backendName), false, `Vacuum Control should not branch on ${backendName}`);
   }
   assert.equal(/identity\.source|snapshot\.identity\.source/.test(panelContents), false);
+  assert.equal(
+    /snapshot\.activity\?\.status === "returning_to_dock"|snapshot\.mission\.state === "returning_to_dock"/.test(panelContents),
+    false,
+    "Vacuum Control should not branch on raw backend return-to-dock state",
+  );
+  assert.equal(
+    !panelContents.includes("Robot overview") &&
+      !panelContents.includes("vacuum-no-map-overview") &&
+      panelContents.includes("vacuum-no-map-stage-note"),
+    true,
+    "Vacuum Control should keep the no-map stage visually empty instead of rendering a robot overview dashboard",
+  );
+  assert.equal(
+    panelContents.includes("deriveVacuumPrimaryRobotState"),
+    true,
+    "Vacuum Control should derive one normalized primary robot state for compact robot status",
+  );
+  assert.equal(
+    /const canSendRun =\s*Boolean\(runTarget\) && navigationSupported && readinessReady && !isSendingGoal && !isCleanAreaRunning/.test(
+      panelContents,
+    ),
+    true,
+    "Vacuum Control should allow direct Nav2 go_to_location navigation when VM mission navigation is unavailable",
+  );
+  assert.equal(
+    /adapter\.sendCommand\(\{ command: startNavigationSupported \? "start_navigation" : "go_to_location", target \}\)/.test(
+      panelContents,
+    ),
+    true,
+    "Vacuum Control should fall back to go_to_location when start_navigation is unsupported",
+  );
+  assert.equal(
+    /vacuum-no-map-placeholder__chips/.test(panelContents),
+    false,
+    "No-map placeholder should keep the map-unavailable hierarchy sparse instead of duplicating status chips",
+  );
+  assert.equal(
+    /mapSurfaceAvailable \? \([\s\S]*?<MapCanvas[\s\S]*?\) : layeredMapPreviewAvailable \? \([\s\S]*?<ValetudoMainMapPreview[\s\S]*?\) : \([\s\S]*?<NoMapCanvasPlaceholder/.test(panelContents),
+    true,
+    "MapCanvas should keep its capability gate, with normalized layered previews taking the read-only fallback before the no-map placeholder",
+  );
+  assert.equal(
+    /health=\{snapshot\.health\}/.test(panelContents) &&
+      /source=\{snapshot\.source\}/.test(panelContents) &&
+      /activity=\{snapshot\.activity\}/.test(panelContents) &&
+      /dock=\{snapshot\.dock\}/.test(panelContents),
+    true,
+    "No-map sidebar should render normalized health, source, activity, and dock state",
+  );
+  assert.equal(
+    /battery=\{snapshot\.battery\}/.test(panelContents) && /fault=\{snapshot\.fault\}/.test(panelContents),
+    true,
+    "No-map sidebar should render normalized battery and fault state",
+  );
+  assert.equal(
+    /supportedControls = controls\.filter\(\(control\) => control\.capability\.supported\)/.test(panelContents),
+    true,
+    "Unsupported basic commands should not appear as active controls",
+  );
+  assert.equal(
+    /CleaningSettingsCard/.test(panelContents) &&
+      /settings=\{snapshot\.cleaningSettings\}/.test(panelContents) &&
+      /props\.capabilities\.fan_speed\.supported/.test(panelContents) &&
+      /props\.capabilities\.water_usage\.supported/.test(panelContents),
+    true,
+    "Cleaning Settings card should render from normalized settings and capability descriptors",
+  );
+  assert.equal(
+    /MaintenanceCard/.test(panelContents) &&
+      /maintenance=\{snapshot\.maintenance\}/.test(panelContents) &&
+      /props\.capabilities\.consumables\.supported/.test(panelContents) &&
+      /props\.maintenance\?\.consumables/.test(panelContents),
+    true,
+    "Maintenance card should render from normalized maintenance state and consumables descriptor",
+  );
+  assert.equal(
+    /MapTargetsCard/.test(panelContents) &&
+      /targets=\{snapshot\.map\.targets\}/.test(panelContents) &&
+      /const sidebarShowMapTargets = sidebarMapTargetSegments\.length > 0 \|\| sidebarMapTargetZones\.length > 0/.test(panelContents),
+    true,
+    "Map Targets card should render only from normalized map target presence",
+  );
+  assert.equal(
+    /const \[hoveredMapTargetKey, setHoveredMapTargetKey\] = useState<MapTargetSelectionKey \| null>\(null\)/.test(panelContents) &&
+      /const \[selectedMapTargetKey, setSelectedMapTargetKey\] = useState<MapTargetSelectionKey \| null>\(null\)/.test(panelContents) &&
+      /onMouseEnter=\{\(\) => props\.onTargetHover\(targetKey\)\}/.test(panelContents) &&
+      /onClick=\{\(\) => props\.onTargetSelect\(targetKey\)\}/.test(panelContents) &&
+      /aria-pressed=\{selected\}/.test(panelContents),
+    true,
+    "Map Targets rows should support local hover and selection state without command actions",
+  );
+  assert.equal(
+    /<ValetudoMainMapPreview[\s\S]*preview=\{snapshot\.map\.layeredPreview\}[\s\S]*hoveredTarget=\{hoveredMapTarget\}[\s\S]*selectedTarget=\{selectedMapTarget\}/.test(panelContents),
+    true,
+    "Hovered and selected normalized targets should be passed into the main layered preview renderer",
+  );
+  assert.equal(
+    /MapPreviewCard/.test(panelContents) &&
+      /preview=\{snapshot\.map\.layeredPreview\}/.test(panelContents) &&
+      /const mainLayeredMapPreviewVisible = !mapSurfaceAvailable && layeredMapPreviewAvailable/.test(panelContents) &&
+      /const sidebarShowMapPreview = layeredMapPreviewAvailable && !mainLayeredMapPreviewVisible/.test(panelContents),
+    true,
+    "Sidebar Map Preview card should stay hidden while the main layered preview is visible",
+  );
+  assert.equal(
+    /const ValetudoLayeredMapSvg = memo/.test(panelContents) &&
+      /<ValetudoLayeredMapSvg[\s\S]*preview=\{preview\}[\s\S]*renderData=\{renderData\}/.test(panelContents) &&
+      /function ValetudoMainMapPreview/.test(panelContents) &&
+      /className="vacuum-map-preview-svg vacuum-map-preview-svg--main"/.test(panelContents),
+    true,
+    "Main and sidebar previews should reuse the shared normalized layered-map SVG renderer with memoized render data",
+  );
+  assert.equal(
+    /const layeredMapPreviewAvailable = hasRenderableLayeredMapPreview\(snapshot\.map\.layeredPreview\)/.test(panelContents) &&
+      /preview=\{snapshot\.map\.layeredPreview\}/.test(panelContents),
+    true,
+    "Main preview should be gated directly by normalized layeredPreview presence",
+  );
+  const mapPreviewUiStart = panelContents.indexOf("function mapPreviewRunRect");
+  const mapPreviewUiEnd = panelContents.indexOf("function MapTargetSection");
+  assert.equal(mapPreviewUiStart >= 0 && mapPreviewUiEnd > mapPreviewUiStart, true);
+  const mapPreviewUi = panelContents.slice(mapPreviewUiStart, mapPreviewUiEnd);
+  assert.equal(
+    /compressedPixels|fetch\(|XMLHttpRequest|EventSource/.test(mapPreviewUi),
+    false,
+    "Map Preview renderer should consume normalized adapter data without raw payload names or direct runtime calls",
+  );
+  assert.equal(
+    /buildMapPreviewTransform/.test(mapPreviewUi) &&
+      /mapPreviewRunRect/.test(mapPreviewUi) &&
+      /mergeMapPreviewRuns/.test(mapPreviewUi) &&
+      /inferMapPreviewRunScale/.test(mapPreviewUi) &&
+      /runPath: mapPreviewRunPath\(layer\.runs, transform\.runScale\)/.test(mapPreviewUi) &&
+      /mapPreviewRunPath/.test(mapPreviewUi) &&
+      /prepareMapPreviewLayers/.test(mapPreviewUi) &&
+      /mapPreviewLegendItems/.test(mapPreviewUi) &&
+      /resolveMapTargetHighlight[\s\S]*layer\.id === target\.id \|\| layer\.segmentId === target\.id/.test(mapPreviewUi) &&
+      /entity\.id === target\.id/.test(mapPreviewUi) &&
+      /renderableMapTargetGeometry\(target\.geometry\)/.test(mapPreviewUi) &&
+      /MapPreviewHighlights/.test(mapPreviewUi) &&
+      /useMapPreviewRenderData/.test(mapPreviewUi) &&
+      /preserveAspectRatio="xMidYMid meet"/.test(mapPreviewUi),
+    true,
+    "Map Preview renderer should keep memoized coordinate transforms, inferred run scaling, run compaction, layer ordering, run path conversion, target highlighting, aspect-ratio preservation, and visual legend inside the normalized renderer",
+  );
+  assert.equal(
+    /<rect[\s\S]*run:/.test(mapPreviewUi),
+    false,
+    "Map Preview layers should avoid rendering one SVG rect per normalized run",
+  );
+  assert.equal(
+    /vacuum-map-stage--layered-preview/.test(panelStyles) &&
+      /vacuum-layered-map-preview-frame/.test(panelStyles) &&
+      /max-height: 100%/.test(panelStyles) &&
+      /vacuum-map-preview-svg--main/.test(panelStyles) &&
+      /object-fit: contain/.test(panelStyles) &&
+      /vacuum-map-preview-layer--floor/.test(panelStyles) &&
+      /vacuum-map-preview-layer--wall/.test(panelStyles) &&
+      /vacuum-map-preview-layer--segment/.test(panelStyles),
+    true,
+    "Main map preview styles should fit the shared SVG in the main canvas while preserving the map visual vocabulary",
+  );
+  assert.equal(
+    /vacuum-map-preview-layer--floor/.test(panelStyles) &&
+      /vacuum-map-preview-layer--wall/.test(panelStyles) &&
+      /vacuum-map-preview-layer--segment/.test(panelStyles) &&
+      /vacuum-map-preview-entity--robot/.test(panelStyles) &&
+      /vacuum-map-preview-entity--charger/.test(panelStyles) &&
+      /vacuum-map-preview-entity--zone/.test(panelStyles) &&
+      /vacuum-map-preview-entity--no-go-area/.test(panelStyles) &&
+      /vacuum-map-preview-entity--no-mop-area/.test(panelStyles) &&
+      /vacuum-map-preview-entity--virtual-wall/.test(panelStyles) &&
+      /vacuum-map-preview-entity--obstacle/.test(panelStyles) &&
+      /vacuum-map-preview-entity--path/.test(panelStyles),
+    true,
+    "Map Preview styles should distinguish floor, walls, segments, robot, charger, zones, restrictions, obstacles, and paths",
+  );
+  assert.equal(
+    /title="Segments \/ Rooms"/.test(panelContents) &&
+      /title="Zones"/.test(panelContents) &&
+      /SelectedMapTargetDetails/.test(panelContents) &&
+      panelContents.includes("Map Targets"),
+    true,
+    "Map Targets card should keep product-owned generic labels and selected target details",
+  );
+  const mapTargetsUiStart = panelContents.indexOf("function formatMapTargetKind");
+  const mapTargetsUiEnd = panelContents.indexOf("type MapPreviewBounds");
+  assert.equal(mapTargetsUiStart >= 0 && mapTargetsUiEnd > mapTargetsUiStart, true);
+  const mapTargetsUi = panelContents.slice(mapTargetsUiStart, mapTargetsUiEnd);
+  assert.equal(
+    /compressedPixels|JSON\.stringify|\.points|\.bounds/.test(mapTargetsUi),
+    false,
+    "Map Targets card should summarize geometry without exposing raw coordinates or Valetudo pixel payloads",
+  );
+  assert.equal(
+    /Valetudo|lovelace|Home Assistant|compressedPixels/.test(mapTargetsUi),
+    false,
+    "Map Targets card should not render raw Valetudo, lovelace, Home Assistant, or payload vocabulary",
+  );
+  assert.equal(
+    /targetIds|start_room_cleaning|start_zone_cleaning|segment_cleaning|zone_cleaning|go_to_location/.test(mapTargetsUi),
+    false,
+    "Map Targets hover and selection UI should not expose target execution or map command actions",
+  );
+  assert.equal(
+    /vacuum-panel-card--robot-overview/.test(panelContents) &&
+      /vacuum-panel-card--battery-dock/.test(panelContents) &&
+      /vacuum-robot-battery__track/.test(panelContents),
+    true,
+    "No-map sidebar should split robot overview from battery and dock while keeping a battery bar",
+  );
+  assert.equal(/CleaningTargetsCard|snapshot\.cleaningTargets|targetIds: \[targetId\]/.test(panelContents), false);
+  assert.equal(
+    /ConsumableMonitoringCapability/.test(panelContents),
+    false,
+    "Operator UI should not render raw Valetudo consumable capability names",
+  );
+  assert.equal(
+    /handleCleaningSettingCommand\("set_fan_speed", value\)/.test(panelContents) &&
+      /handleCleaningSettingCommand\("set_water_usage", value\)/.test(panelContents),
+    true,
+    "Cleaning Settings controls should submit normalized fan and water commands",
+  );
+  assert.equal(
+    /control\.capability\.available === false/.test(panelContents) &&
+      !/title=\{reason/.test(panelContents),
+    true,
+    "Basic controls should disable unavailable actions without rendering inline disabled reasons",
+  );
+  assert.equal(
+      !panelContents.includes("Robot is not cleaning.") &&
+      !panelContents.includes("Nothing is running.") &&
+      !panelContents.includes("Already docked.") &&
+      !panelContents.includes("Robot cannot start cleaning from this state."),
+    true,
+    "Basic Cleaning should not expose action-specific disabled explanation copy",
+  );
+  assert.equal(
+    /UnavailableWorkflowsCard|Unavailable workflows|vacuum-unavailable-workflows/.test(panelContents),
+    false,
+    "No-map basic profiles should not render the unavailable workflows summary card",
+  );
+  assert.equal(
+    /Map Live/.test(panelContents) && /Localized/.test(panelContents) && /Target Selected/.test(panelContents),
+    true,
+    "Simulation status strip labels should remain available for map-capable backends",
+  );
+  assert.equal(
+    /formatDockBatterySummary\(snapshot\.activity, snapshot\.dock, snapshot\.battery, \{\s*omitDockWhenActivityDuplicates: true,\s*\}\)/.test(panelContents),
+    true,
+    "No-map task strip should collapse dock and battery into one summary chip",
+  );
+  assert.equal(
+    /icon: "dock" as const/.test(panelContents),
+    false,
+    "No-map task strip should not render a separate dock chip beside activity and battery summary",
+  );
+  assert.equal(
+    /!mapSurfaceAvailable && !isBasicRobotProfile[\s\S]*?<BasicControlsCard/.test(panelContents),
+    false,
+    "No-map advanced profiles should not duplicate the basic command controls beside the status surface",
+  );
+  assert.equal(
+    /const mapSurfaceAvailable = mapSupported/.test(panelContents),
+    true,
+    "MapCanvas should be gated by the normalized map capability",
+  );
+  assert.equal(
+    /disabled=\{!navigationSupported/.test(panelContents),
+    true,
+    "Navigation controls should be gated by normalized navigation capability",
+  );
+  assert.equal(
+    /disabled=\{!cleanAreaSupported/.test(panelContents),
+    true,
+    "Clean Area controls should be gated by normalized coverage capability",
+  );
+  assert.equal(
+    /disabled=\{!roomsZonesSupported/.test(panelContents),
+    true,
+    "Rooms/Zones controls should be gated by normalized room and zone capabilities",
+  );
+  assert.equal(
+    /manualControlSupported \? \(/.test(panelContents),
+    true,
+    "Teleop should be gated by normalized manual_control capability",
+  );
+  assert.equal(panelContents.includes("rawCapabilityNames"), false, "Vacuum Control should not read raw backend capability diagnostics");
+  assert.equal(panelContents.includes("map.topic"), false, "Vacuum Control should not branch on backend map topics");
+  assert.equal(panelContents.includes("pose.source"), false, "Vacuum Control should not branch on backend pose sources");
+  assert.equal(panelContents.includes("imagePath"), false, "Vacuum Control should not branch on saved-map image paths");
+  assert.equal(panelContents.includes("backendGoalState"), false, "Vacuum Control should not branch on Nav2 backend goal state");
+  assert.equal(panelContents.includes("yamlPath"), false, "Vacuum Control should not branch on saved-map YAML paths");
+  assert.equal(panelContents.includes("poseGraphPath"), false, "Vacuum Control should not branch on saved-map pose graph paths");
+
+  const componentFiles = collectFiles(
+    resolve(repoRoot, "panels-standalone/src/components/VacuumControl"),
+    (path) => path.endsWith(".ts") || path.endsWith(".tsx"),
+  );
+  for (const file of componentFiles) {
+    const contents = readFileSync(file, "utf8");
+    for (const capabilityName of valetudoRawCapabilityNames) {
+      assert.equal(contents.includes(capabilityName), false, `${file} should not branch on ${capabilityName}`);
+    }
+    assert.equal(contents.includes("rawCapabilityNames"), false, `${file} should not branch on raw backend capability diagnostics`);
+    assert.equal(contents.includes("map.topic"), false, `${file} should not branch on backend map topics`);
+    assert.equal(contents.includes("pose.source"), false, `${file} should not branch on backend pose sources`);
+    assert.equal(contents.includes("backendGoalState"), false, `${file} should not branch on backend navigation states`);
+    assert.equal(contents.includes("yamlPath"), false, `${file} should not branch on saved-map YAML paths`);
+    assert.equal(contents.includes("imagePath"), false, `${file} should not branch on saved-map image paths`);
+    assert.equal(contents.includes("poseGraphPath"), false, `${file} should not branch on saved-map pose graph paths`);
+    assert.equal(contents.includes("identity.source"), false, `${file} should not branch on backend identity source`);
+    assert.equal(contents.includes("snapshot.identity.source"), false, `${file} should not branch on backend identity source`);
+  }
 }
 
 function assertCommandNamesHandled(): void {
   const commandNames: VacuumCommandName[] = [
+    "start_navigation",
     "go_to_location",
     "cancel_navigation",
     "manual_control",
@@ -399,6 +3411,17 @@ function assertCommandNamesHandled(): void {
     "finish_mapping",
     "discard_mapping",
     "accept_map",
+    "load_map",
+    "save_map_annotation",
+    "delete_map_annotation",
+    "start_coverage",
+    "start_room_cleaning",
+    "start_zone_cleaning",
+    "pause_mission",
+    "resume_mission",
+    "cancel_mission",
+    "retry_mission_step",
+    "skip_mission_step",
     "start_cleaning",
     "pause",
     "resume",
@@ -416,7 +3439,17 @@ async function main(): Promise<void> {
   assertCommandNamesHandled();
   testCapabilityCoverage();
   testStateMapping();
+  testLocalPrototypeAnnotationMigrationParsing();
   testMapMetadata();
+  testCleanAreaCoverageAndPlanning();
+  testCoverageProfileAndDecomposition();
+  testValetudoStateAwareCommandAvailability();
+  testValetudoRuntimeSnapshotMapping();
+  testValetudoAttachmentsAndDockComponentGuards();
+  testValetudoRuntimeMissionStateMapping();
+  testPrimaryRobotStateDerivation();
+  testValetudoChargingAndOfflineMapping();
+  testAdvancedSurfaceOptionality();
   testValetudoCommandStub();
   testPublicContractAndUiBoundary();
   testServiceDiscoveryNormalization();

@@ -2,6 +2,15 @@ import type { VacuumCommandName } from "./commands";
 
 export type VacuumCommandErrorCode =
   | "unsupported"
+  | "unavailable"
+  | "invalid_state"
+  | "stale_source"
+  | "runtime_offline"
+  | "source_unreachable"
+  | "backend_timeout"
+  | "malformed_backend_response"
+  | "degraded_runtime"
+  | "needs_assistance"
   | "not_ready"
   | "backend_error"
   | "invalid_request";

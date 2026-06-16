@@ -25,6 +25,122 @@ export type VacuumMissionState =
   | "returning"
   | "charging";
 
+export type VacuumMissionType =
+  | "mapping"
+  | "navigation"
+  | "coverage"
+  | "return_to_dock"
+  | "room_cleaning"
+  | "zone_cleaning"
+  | "hardware_cleaning";
+
+export type VacuumMissionStatus =
+  | "idle"
+  | "preparing"
+  | "running"
+  | "paused"
+  | "canceling"
+  | "returning"
+  | "charging"
+  | "resuming"
+  | "needs_assistance"
+  | "completed"
+  | "failed"
+  | "canceled"
+  | "unsupported";
+
+export type VacuumMissionAction =
+  | "pause_mapping"
+  | "resume_mapping"
+  | "finish_mapping"
+  | "pause_mission"
+  | "resume_mission"
+  | "cancel_mission"
+  | "retry_mission_step"
+  | "skip_mission_step"
+  | "return_to_dock"
+  | "accept_map"
+  | "discard_mapping";
+
+export type VacuumRobotActivityStatus =
+  | "unknown"
+  | "unavailable"
+  | "idle"
+  | "cleaning"
+  | "paused"
+  | "returning"
+  | "docked"
+  | "charging"
+  | "faulted"
+  | "mapping"
+  | "navigating"
+  | "covering";
+
+export type VacuumRobotActivityAction =
+  | VacuumMissionAction
+  | "start_cleaning"
+  | "pause"
+  | "resume"
+  | "stop"
+  | "return_to_dock"
+  | "start_navigation"
+  | "cancel_navigation"
+  | "start_mapping"
+  | "start_coverage";
+
+export type VacuumRobotActivity = {
+  status: VacuumRobotActivityStatus;
+  label?: string;
+  updatedAt?: number | string;
+  source?: VacuumBackendSource;
+  reason?: string;
+  availableActions?: VacuumRobotActivityAction[];
+  details?: unknown;
+};
+
+export type VacuumMissionProgress = {
+  percent: number | null;
+  currentStep: number | null;
+  totalSteps: number | null;
+  distanceRemaining: number | null;
+  areaCoveredSqM: number | null;
+  areaRemainingSqM: number | null;
+};
+
+export type VacuumMissionResult = {
+  status: Extract<VacuumMissionStatus, "completed" | "failed" | "canceled" | "unsupported">;
+  completedAt: number | null;
+  summary?: string;
+  details?: Record<string, unknown>;
+};
+
+export type VacuumMissionError = {
+  code: string;
+  message: string;
+  recoverable: boolean;
+};
+
+export type VacuumMissionSnapshot = {
+  id: string;
+  type: VacuumMissionType;
+  status: VacuumMissionStatus;
+  backendSource: VacuumBackendSource;
+  startedAt: number | null;
+  updatedAt: number | null;
+  requestedCommand: string;
+  phase: string;
+  progress: VacuumMissionProgress;
+  availableActions: VacuumMissionAction[];
+  result: VacuumMissionResult | null;
+  error: VacuumMissionError | null;
+  target: unknown;
+};
+
+export type VacuumMissionCollection = {
+  active: VacuumMissionSnapshot | null;
+  recent: VacuumMissionSnapshot[];
+};
+
 export type VacuumPoseCoordinates = {
   x: number;
   y: number;
@@ -78,6 +194,123 @@ export type VacuumMapMetadata = {
   lastUpdateAt: number | null;
 };
 
+export type VacuumMapAnnotationKind = "room" | "zone";
+
+export type VacuumMapAnnotation = {
+  id: string;
+  kind: VacuumMapAnnotationKind;
+  name: string;
+  area:
+    | {
+        shape: "rectangle";
+        minX: number;
+        minY: number;
+        maxX: number;
+        maxY: number;
+      }
+    | {
+        shape: "polygon";
+        points: Array<{ x: number; y: number }>;
+      };
+  mapId: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type VacuumMapTargetKind = "segment" | "room" | "zone";
+
+export type VacuumMapTargetGeometry =
+  | {
+      type: "polygon";
+      points: Array<{ x: number; y: number }>;
+      bounds?: never;
+    }
+  | {
+      type: "rectangle";
+      bounds: { x: number; y: number; width: number; height: number };
+      points?: never;
+    }
+  | {
+      type: "unknown";
+      points?: Array<{ x: number; y: number }>;
+      bounds?: { x: number; y: number; width: number; height: number };
+    };
+
+export type VacuumMapTarget = {
+  id: string;
+  label: string;
+  kind: VacuumMapTargetKind;
+  source: "runtime" | "user";
+  available: boolean;
+  geometry?: VacuumMapTargetGeometry;
+  detail?: string;
+};
+
+export type VacuumLayeredMapMetadata = {
+  id?: string;
+  width?: number;
+  height?: number;
+  pixelSize?: number;
+  coordinateSystem?: "valetudo_pixel" | "unknown";
+  layerCount?: number;
+  entityCount?: number;
+  segmentCount?: number;
+  zoneCount?: number;
+  updatedAt?: number | string;
+  source?: VacuumSourceKind;
+};
+
+export type VacuumMapLayerKind = "floor" | "wall" | "segment" | "path" | "unknown";
+export type VacuumMapEntityKind =
+  | "robot"
+  | "charger"
+  | "path"
+  | "zone"
+  | "no_go_area"
+  | "no_mop_area"
+  | "virtual_wall"
+  | "obstacle"
+  | "unknown";
+
+export type VacuumMapRun = {
+  x: number;
+  y: number;
+  count: number;
+};
+
+export type VacuumMapLayer = {
+  id: string;
+  kind: VacuumMapLayerKind;
+  label?: string;
+  segmentId?: string;
+  runs?: VacuumMapRun[];
+  points?: Array<{ x: number; y: number }>;
+};
+
+export type VacuumMapEntity = {
+  id: string;
+  kind: VacuumMapEntityKind;
+  label?: string;
+  points?: Array<{ x: number; y: number }>;
+  angle?: number;
+  detail?: string;
+};
+
+export type VacuumLayeredMapPreview = {
+  width: number;
+  height: number;
+  pixelSize?: number;
+  coordinateSystem: "valetudo_pixel" | "unknown";
+  layers: VacuumMapLayer[];
+  entities: VacuumMapEntity[];
+  updatedAt?: number | string;
+};
+
+export type VacuumMapTargets = {
+  segments?: VacuumMapTarget[];
+  zones?: VacuumMapTarget[];
+};
+
 export type VacuumAvailability = {
   status: VacuumAvailabilityStatus;
   connected: boolean;
@@ -86,16 +319,22 @@ export type VacuumAvailability = {
 
 export type VacuumMapState = {
   readiness: VacuumReadinessState;
+  /** @deprecated Compatibility mirror only. Backend topics belong in snapshot.diagnostics.map. */
   topic?: string;
   receiving: boolean;
   detail?: string;
   grid: VacuumMapGrid | null;
   metadata: VacuumMapMetadata;
+  layeredMetadata?: VacuumLayeredMapMetadata;
+  layeredPreview?: VacuumLayeredMapPreview;
+  targets?: VacuumMapTargets;
+  annotations: VacuumMapAnnotation[];
 };
 
 export type VacuumPoseState = {
   readiness: VacuumReadinessState;
   available: boolean;
+  /** @deprecated Compatibility mirror only. Backend pose sources belong in snapshot.diagnostics.pose. */
   source?: string;
   coordinates: VacuumPoseCoordinates | null;
   detail?: string;
@@ -111,6 +350,7 @@ export type VacuumNavigationProgress = {
 
 export type VacuumNavigationStatus = {
   state: VacuumNavigationState;
+  /** @deprecated Compatibility mirror only. Backend goal states belong in snapshot.diagnostics.navigation. */
   backendGoalState: string | null;
   active: boolean;
   isSending: boolean;
@@ -122,7 +362,7 @@ export type VacuumNavigationStatus = {
   detail?: string;
 };
 
-export type VacuumMissionStatus = {
+export type VacuumLegacyMissionStatus = {
   state: VacuumMissionState;
   detail?: string;
   lastTerminalNavigation?: VacuumNavigationTerminalState | null;
@@ -167,8 +407,14 @@ export type VacuumMappingStatus = {
 export type VacuumSavedMapSummary = {
   id: string;
   name: string;
+  /** @deprecated Compatibility mirror only. Saved map paths belong in snapshot.diagnostics.mapping. */
   yamlPath: string;
+  /** @deprecated Compatibility mirror only. Saved map paths belong in snapshot.diagnostics.mapping. */
   imagePath: string | null;
+  /** @deprecated Compatibility mirror only. Saved map paths belong in snapshot.diagnostics.mapping. */
+  poseGraphPath: string | null;
+  loadable: boolean;
+  loadUnavailableReason: string | null;
   modifiedAt: number | null;
   sizeBytes: number;
   active: boolean;
@@ -192,14 +438,169 @@ export type VacuumBatteryState = {
   detail?: string;
 };
 
+export type VacuumRuntimeHealthStatus = "online" | "degraded" | "offline" | "unknown";
+
+export type VacuumSourceKind =
+  | "turtlebot4_nav2"
+  | "fixed_mock"
+  | "valetudo_mock"
+  | "valetudo_http"
+  | "real_robot"
+  | "unknown";
+
+export type VacuumSourceStatus = "reachable" | "unreachable" | "stale" | "unknown";
+
+export type VacuumDockState = "unknown" | "docked" | "undocked" | "returning" | "charging" | "error";
+
+export type VacuumAttachmentKind = "dustbin" | "water_tank" | "mop" | "detergent" | "unknown";
+
+export type VacuumAttachmentStatus =
+  | "installed"
+  | "missing"
+  | "full"
+  | "empty"
+  | "low"
+  | "ok"
+  | "unknown"
+  | "error";
+
+export type VacuumAttachmentState = {
+  id: string;
+  label: string;
+  kind: VacuumAttachmentKind;
+  status: VacuumAttachmentStatus;
+  available?: boolean;
+  levelPercent?: number;
+  detail?: string;
+  updatedAt?: number | string;
+};
+
+export type VacuumAttachmentsState = {
+  items: VacuumAttachmentState[];
+};
+
+export type VacuumDockComponentKind = "freshwater" | "wastewater" | "detergent" | "dustbag" | "unknown";
+
+export type VacuumDockComponentStatus =
+  | "ok"
+  | "missing"
+  | "full"
+  | "empty"
+  | "low"
+  | "unknown"
+  | "error";
+
+export type VacuumDockComponentState = {
+  id: string;
+  label: string;
+  kind: VacuumDockComponentKind;
+  status: VacuumDockComponentStatus;
+  levelPercent?: number;
+  detail?: string;
+  updatedAt?: number | string;
+};
+
+export type VacuumRuntimeHealth = {
+  runtimeStatus: VacuumRuntimeHealthStatus;
+  updatedAt?: number | string;
+  detail?: string;
+};
+
+export type VacuumSourceState = {
+  kind?: VacuumSourceKind;
+  status?: VacuumSourceStatus;
+  stale?: boolean;
+  lastSeenAt?: number | string | null;
+  reason?: string;
+};
+
+export type VacuumDockStatus = {
+  supported?: boolean;
+  state?: VacuumDockState;
+  charging?: boolean;
+  detail?: string;
+  components?: VacuumDockComponentState[];
+};
+
+export type VacuumCleaningSettingOption = {
+  value: string;
+  label: string;
+};
+
+export type VacuumCleaningSettingState = {
+  current?: string;
+  options: VacuumCleaningSettingOption[];
+  readiness?: VacuumReadinessState;
+  status?: string;
+  detail?: string;
+};
+
+export type VacuumCleaningSettingsState = {
+  fanSpeed?: VacuumCleaningSettingState;
+  waterUsage?: VacuumCleaningSettingState;
+};
+
+export type VacuumConsumableStatus = "ok" | "warning" | "replace_soon" | "replace_now" | "unknown";
+
+export type VacuumConsumableState = {
+  id: string;
+  label: string;
+  remainingPercent?: number;
+  remainingMinutes?: number;
+  usedMinutes?: number;
+  totalMinutes?: number;
+  status?: VacuumConsumableStatus;
+  detail?: string;
+};
+
+export type VacuumMaintenanceState = {
+  consumables: VacuumConsumableState[];
+};
+
+export type VacuumCurrentStatisticsState = {
+  durationSeconds?: number;
+  areaSquareMeters?: number;
+  startedAt?: number | string;
+  updatedAt?: number | string;
+  detail?: string;
+};
+
+export type VacuumStatisticsState = {
+  current?: VacuumCurrentStatisticsState;
+};
+
+export type VacuumAdapterDiagnostics = {
+  backend?: string;
+  runtime?: unknown;
+  source?: unknown;
+  capabilities?: unknown;
+  map?: unknown;
+  pose?: unknown;
+  navigation?: unknown;
+  mapping?: unknown;
+  warnings?: string[];
+  raw?: unknown;
+};
+
 export type VacuumAdapterSnapshot = {
   identity: VacuumBackendIdentity;
   availability: VacuumAvailability;
   capabilities: VacuumCapabilities;
+  health?: VacuumRuntimeHealth;
+  source?: VacuumSourceState;
+  dock?: VacuumDockStatus;
+  cleaningSettings?: VacuumCleaningSettingsState;
+  maintenance?: VacuumMaintenanceState;
+  statistics?: VacuumStatisticsState;
+  attachments?: VacuumAttachmentsState;
+  diagnostics?: VacuumAdapterDiagnostics;
   map: VacuumMapState;
   pose: VacuumPoseState;
   navigation: VacuumNavigationStatus;
-  mission: VacuumMissionStatus;
+  activity?: VacuumRobotActivity;
+  mission: VacuumLegacyMissionStatus;
+  activeMission: VacuumMissionSnapshot | null;
+  missions: VacuumMissionCollection;
   mapping: VacuumMappingStatus;
   readiness: VacuumReadinessSummary;
   fault: VacuumFaultState;

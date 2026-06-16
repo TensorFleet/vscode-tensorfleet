@@ -5,6 +5,7 @@ import {
   normalizeRosMessage,
   type VacuumMapGrid,
   type VacuumMapMetadata,
+  type VacuumMapAnnotation,
   type VacuumPoseCoordinates,
 } from "../../vacuum-adapter";
 import {
@@ -19,6 +20,7 @@ import {
   type ProjectedMapPoint,
 } from "./mapOverlayUtils";
 import { CameraOverlay } from "./CameraOverlay";
+import type { CleanAreaCoverageSnapshot, CleanAreaCoverageOverlayCell } from "./cleanAreaCoverage";
 
 export type MapCanvasTarget = {
   x: number;
@@ -135,6 +137,8 @@ type CleanAreaHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 type CleanAreaInteractionState = {
   pointerId: number;
+  startClientX: number;
+  startClientY: number;
   mode: "draw" | "move" | "resize";
   handle: CleanAreaHandle | null;
   startWorld: MapPoint;
@@ -142,6 +146,7 @@ type CleanAreaInteractionState = {
 };
 
 export type RouteVisualState = "idle" | "staged" | "active" | "completed" | "failed" | "canceled";
+export type MapInteractionMode = "mapping" | "navigation" | "clean" | "rooms";
 
 type RasterLayerKey = "map" | "globalCostmap" | "localCostmap";
 type RasterLayerMode = "map" | "global-costmap" | "local-costmap";
@@ -166,8 +171,13 @@ export type MapCanvasProps = {
   cleanAreaRect?: CleanAreaRect | null;
   cleanAreaPreviewPoints?: MapPoint[] | null;
   cleanAreaCurrentIndex?: number;
+  cleanAreaCoverage?: CleanAreaCoverageSnapshot | null;
   cleanAreaToolActive?: boolean;
+  cleanAreaEditable?: boolean;
   cleanAreaVisualState?: CleanAreaVisualState;
+  mapAnnotations?: VacuumMapAnnotation[];
+  selectedMapAnnotationId?: string | null;
+  interactionMode?: MapInteractionMode;
   routeVisualState: RouteVisualState;
   isGoalActive: boolean;
   mappingState: MappingSessionState;
@@ -178,6 +188,7 @@ export type MapCanvasProps = {
   onTargetStart: (target: MapCanvasTarget) => void;
   onTargetRotate: (yaw: number) => void;
   onCleanAreaChange?: (rect: CleanAreaRect, validation: CleanAreaValidation) => void;
+  onMapAnnotationSelect?: (id: string) => void;
   onMapMetadataChange?: (metadata: MapCanvasMetadata) => void;
 };
 
@@ -189,6 +200,7 @@ const FIT_PADDING_PX = 42;
 const MIN_ZOOM_RATIO = 0.5;
 const MAX_ZOOM_RATIO = 8;
 const POINTER_PAN_THRESHOLD_PX = 5;
+const CLEAN_AREA_DRAW_THRESHOLD_PX = 8;
 const CLEAN_AREA_MIN_SIZE_M = 0.2;
 const CLEAN_AREA_MAX_UNKNOWN_RATIO = 0.25;
 const CLEAN_AREA_MAX_OCCUPIED_RATIO = 0.1;
@@ -343,40 +355,44 @@ function parseOccupancyMap(message: Record<string, unknown> | null): OccupancyMa
 
 function drawPlaceholderMap(canvas: HTMLCanvasElement): void {
   const size = 320;
-  const context = canvas.getContext("2d");
-  if (!context) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
     return;
   }
 
   canvas.width = size;
   canvas.height = size;
 
-  const image = context.createImageData(size, size);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const index = (y * size + x) * 4;
-      const mainCorridor = Math.sin((x + 28) * 0.024) + Math.cos((y - 34) * 0.028);
-      const sideWalls = Math.sin((x - y) * 0.06) + Math.cos((x + y) * 0.04);
-      const occupied =
-        mainCorridor > 1.33 ||
-        sideWalls > 1.46 ||
-        x < 12 ||
-        y < 12 ||
-        x > size - 12 ||
-        y > size - 12;
+  const wallColor = `rgb(${MAP_OCCUPIED_COLOR.r},${MAP_OCCUPIED_COLOR.g},${MAP_OCCUPIED_COLOR.b})`;
+  const freeColor = `rgb(${MAP_FREE_COLOR.r},${MAP_FREE_COLOR.g},${MAP_FREE_COLOR.b})`;
 
-      const r = occupied ? MAP_OCCUPIED_COLOR.r : MAP_FREE_COLOR.r;
-      const g = occupied ? MAP_OCCUPIED_COLOR.g : MAP_FREE_COLOR.g;
-      const b = occupied ? MAP_OCCUPIED_COLOR.b : MAP_FREE_COLOR.b;
+  ctx.fillStyle = wallColor;
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = freeColor;
 
-      image.data[index] = r;
-      image.data[index + 1] = g;
-      image.data[index + 2] = b;
-      image.data[index + 3] = 255;
-    }
+  // Rooms: living room, kitchen, hallway, bedroom 1, bedroom 2
+  const rooms = [
+    { x: 12, y: 12, w: 176, h: 144 },
+    { x: 200, y: 12, w: 108, h: 144 },
+    { x: 12, y: 168, w: 296, h: 40 },
+    { x: 12, y: 220, w: 136, h: 88 },
+    { x: 160, y: 220, w: 148, h: 88 },
+  ];
+  for (const r of rooms) {
+    ctx.fillRect(r.x, r.y, r.w, r.h);
   }
 
-  context.putImageData(image, 0, 0);
+  // Doorways connecting the rooms
+  const doorways = [
+    { x: 80, y: 156, w: 48, h: 14 },
+    { x: 228, y: 156, w: 44, h: 14 },
+    { x: 52, y: 208, w: 40, h: 14 },
+    { x: 196, y: 208, w: 40, h: 14 },
+    { x: 188, y: 52, w: 14, h: 56 },
+  ];
+  for (const d of doorways) {
+    ctx.fillRect(d.x, d.y, d.w, d.h);
+  }
 }
 
 function clearCanvas(canvas: HTMLCanvasElement): void {
@@ -553,6 +569,23 @@ function normalizeCleanAreaRect(a: MapPoint, b: MapPoint): CleanAreaRect {
   };
 }
 
+function makeStarterCleanAreaRect(center: MapPoint, bounds: MapBounds): CleanAreaRect {
+  const starterSize = Math.min(
+    1,
+    Math.max(CLEAN_AREA_MIN_SIZE_M * 2, Math.min(bounds.width, bounds.height) * 0.18),
+  );
+  const halfSize = starterSize / 2;
+  return clampCleanAreaRect(
+    {
+      minX: center.x - halfSize,
+      minY: center.y - halfSize,
+      maxX: center.x + halfSize,
+      maxY: center.y + halfSize,
+    },
+    bounds,
+  );
+}
+
 function clampPointToBounds(point: MapPoint, bounds: MapBounds): MapPoint {
   return {
     x: clamp(point.x, bounds.minX, bounds.maxX),
@@ -699,6 +732,30 @@ function getCleanAreaScreenRect(rect: CleanAreaRect, bounds: MapBounds, viewport
   };
 }
 
+function getCleanAreaCellScreenRect(
+  cell: CleanAreaCoverageOverlayCell,
+  bounds: MapBounds,
+  viewport: MapViewport,
+): React.CSSProperties {
+  return getCleanAreaScreenRect(cell, bounds, viewport);
+}
+
+function getRobotFootprintStyle(
+  pose: MapPoint,
+  swathWidth: number,
+  bounds: MapBounds,
+  viewport: MapViewport,
+): React.CSSProperties {
+  const position = worldToScreen(pose, bounds, viewport);
+  const diameter = Math.max(8, swathWidth * viewport.scale);
+  return {
+    left: `${position.x}px`,
+    top: `${position.y}px`,
+    width: `${diameter}px`,
+    height: `${diameter}px`,
+  };
+}
+
 function getMapLayerStyle(bounds: MapBounds, viewport: MapViewport): React.CSSProperties {
   return {
     left: `${viewport.offsetX}px`,
@@ -770,6 +827,7 @@ function getRasterLayerStyle(
 }
 
 function getMapPrompt(args: {
+  interactionMode: MapInteractionMode;
   routeVisualState: RouteVisualState;
   hasTarget: boolean;
   mappingState: MappingSessionState;
@@ -777,6 +835,15 @@ function getMapPrompt(args: {
   cleanAreaVisualState: CleanAreaVisualState;
   hasCleanArea: boolean;
 }): string {
+  if (args.interactionMode === "mapping") {
+    return args.mappingState === "saved" ? "Current map ready" : "Mapping";
+  }
+  if (args.interactionMode === "rooms" && args.cleanAreaToolActive) {
+    return args.hasCleanArea ? "Edit room / zone draft" : "Draw room / zone";
+  }
+  if (args.interactionMode === "rooms") {
+    return args.hasCleanArea ? "Room / zone draft" : "Rooms / Zones";
+  }
   if (args.cleanAreaVisualState === "preparing") {
     return "Preparing clean area";
   }
@@ -824,6 +891,9 @@ function getMapPrompt(args: {
   }
   if (args.routeVisualState === "canceled") {
     return "Run canceled";
+  }
+  if (args.interactionMode === "clean") {
+    return "Clean Area";
   }
   return args.hasTarget ? "Destination selected" : "Click to choose destination";
 }
@@ -1104,6 +1174,7 @@ export function MapCanvas(props: MapCanvasProps) {
   const layerPopoverRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<PointerDragState | null>(null);
   const cleanAreaInteractionRef = useRef<CleanAreaInteractionState | null>(null);
+  const cleanAreaWindowCleanupRef = useRef<(() => void) | null>(null);
   const hasFitInitialMapRef = useRef(false);
   const previousMappingStateRef = useRef<MappingSessionState>(props.mappingState);
   const [stageSize, setStageSize] = useState<CanvasSize>({ width: 1, height: 1 });
@@ -1180,6 +1251,23 @@ export function MapCanvas(props: MapCanvasProps) {
   useEffect(() => {
     props.onMapMetadataChange?.(mapMetadata);
   }, [mapMetadata, props.onMapMetadataChange]);
+
+  useEffect(() => {
+    if (props.cleanAreaRect) {
+      return;
+    }
+    cleanAreaInteractionRef.current = null;
+    cleanAreaWindowCleanupRef.current?.();
+    cleanAreaWindowCleanupRef.current = null;
+  }, [props.cleanAreaRect]);
+
+  useEffect(() => {
+    return () => {
+      cleanAreaWindowCleanupRef.current?.();
+      cleanAreaWindowCleanupRef.current = null;
+      cleanAreaInteractionRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!stageRef.current) {
@@ -1336,9 +1424,12 @@ export function MapCanvas(props: MapCanvasProps) {
     };
   }, [isLayerPickerOpen]);
 
-  const hasTarget = props.draftTarget != null;
-  const displayedTarget = props.sentTarget ?? props.draftTarget;
+  const interactionMode = props.interactionMode ?? "navigation";
+  const canShowNavigationTarget = interactionMode === "navigation" || props.isGoalActive;
+  const displayedTarget = canShowNavigationTarget ? props.sentTarget ?? props.draftTarget : null;
+  const hasTarget = displayedTarget != null;
   const targetSelectionDisabled =
+    interactionMode !== "navigation" ||
     props.disableTargetSelection ||
     Boolean(props.cleanAreaToolActive) ||
     props.mappingState === "mapping" ||
@@ -1362,6 +1453,7 @@ export function MapCanvas(props: MapCanvasProps) {
     [bounds, routePoints, viewport],
   );
   const cleanAreaVisualState = props.cleanAreaVisualState ?? "idle";
+  const cleanAreaEditable = Boolean(props.cleanAreaEditable ?? props.cleanAreaToolActive);
   const cleanAreaPreviewSegments = useMemo(() => {
     const points = (props.cleanAreaPreviewPoints ?? []).filter((point): point is MapPoint => (
       Number.isFinite(point.x) && Number.isFinite(point.y)
@@ -1400,6 +1492,7 @@ export function MapCanvas(props: MapCanvasProps) {
     ? getCleanAreaScreenRect(props.cleanAreaRect, bounds, viewport)
     : null;
   const mapPrompt = getMapPrompt({
+    interactionMode,
     routeVisualState: props.routeVisualState,
     hasTarget,
     mappingState: props.mappingState,
@@ -1540,6 +1633,82 @@ export function MapCanvas(props: MapCanvasProps) {
     props.onCleanAreaChange?.(clamped, getCleanAreaValidation(clamped, occupancyMap, bounds));
   }
 
+  function clearCleanAreaWindowListeners(): void {
+    const cleanup = cleanAreaWindowCleanupRef.current;
+    cleanAreaWindowCleanupRef.current = null;
+    cleanup?.();
+  }
+
+  function finishCleanAreaInteraction(pointerId: number): boolean {
+    const cleanAreaInteraction = cleanAreaInteractionRef.current;
+    if (!cleanAreaInteraction || cleanAreaInteraction.pointerId !== pointerId) {
+      return false;
+    }
+    cleanAreaInteractionRef.current = null;
+    clearCleanAreaWindowListeners();
+    return true;
+  }
+
+  function processCleanAreaPointerMove(pointerId: number, clientX: number, clientY: number): boolean {
+    const cleanAreaInteraction = cleanAreaInteractionRef.current;
+    if (!cleanAreaInteraction || cleanAreaInteraction.pointerId !== pointerId) {
+      return false;
+    }
+
+    const worldPoint = worldPointFromPointer(clientX, clientY);
+    if (!worldPoint) {
+      return true;
+    }
+
+    if (cleanAreaInteraction.mode === "draw") {
+      const screenDistance = Math.hypot(
+        clientX - cleanAreaInteraction.startClientX,
+        clientY - cleanAreaInteraction.startClientY,
+      );
+      if (screenDistance < CLEAN_AREA_DRAW_THRESHOLD_PX) {
+        return true;
+      }
+      updateCleanAreaRect(normalizeCleanAreaRect(cleanAreaInteraction.startWorld, worldPoint));
+    } else if (cleanAreaInteraction.mode === "move" && cleanAreaInteraction.startRect) {
+      updateCleanAreaRect(
+        moveCleanAreaRect(
+          cleanAreaInteraction.startRect,
+          {
+            x: worldPoint.x - cleanAreaInteraction.startWorld.x,
+            y: worldPoint.y - cleanAreaInteraction.startWorld.y,
+          },
+          bounds,
+        ),
+      );
+    } else if (cleanAreaInteraction.mode === "resize" && cleanAreaInteraction.startRect && cleanAreaInteraction.handle) {
+      updateCleanAreaRect(resizeCleanAreaRect(cleanAreaInteraction.startRect, cleanAreaInteraction.handle, worldPoint, bounds));
+    }
+
+    return true;
+  }
+
+  function installCleanAreaWindowListeners(): void {
+    clearCleanAreaWindowListeners();
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (processCleanAreaPointerMove(event.pointerId, event.clientX, event.clientY)) {
+        event.preventDefault();
+      }
+    };
+    const handlePointerEnd = (event: PointerEvent) => {
+      finishCleanAreaInteraction(event.pointerId);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+    cleanAreaWindowCleanupRef.current = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }
+
   function startCleanAreaInteraction(
     event: React.PointerEvent<HTMLElement>,
     mode: CleanAreaInteractionState["mode"],
@@ -1547,7 +1716,7 @@ export function MapCanvas(props: MapCanvasProps) {
   ): void {
     event.stopPropagation();
     event.preventDefault();
-    if (!props.cleanAreaToolActive || props.isGoalActive) {
+    if ((!props.cleanAreaToolActive && (mode === "draw" || !cleanAreaEditable)) || props.isGoalActive) {
       return;
     }
     const worldPoint = worldPointFromPointer(event.clientX, event.clientY);
@@ -1556,14 +1725,17 @@ export function MapCanvas(props: MapCanvasProps) {
     }
     cleanAreaInteractionRef.current = {
       pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
       mode,
       handle,
       startWorld: worldPoint,
       startRect: props.cleanAreaRect ?? null,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
+    installCleanAreaWindowListeners();
     if (mode === "draw") {
-      updateCleanAreaRect(normalizeCleanAreaRect(worldPoint, worldPoint));
+      updateCleanAreaRect(makeStarterCleanAreaRect(worldPoint, bounds));
     }
   }
 
@@ -1587,28 +1759,7 @@ export function MapCanvas(props: MapCanvasProps) {
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>): void {
-    const cleanAreaInteraction = cleanAreaInteractionRef.current;
-    if (cleanAreaInteraction && cleanAreaInteraction.pointerId === event.pointerId) {
-      const worldPoint = worldPointFromPointer(event.clientX, event.clientY);
-      if (!worldPoint) {
-        return;
-      }
-      if (cleanAreaInteraction.mode === "draw") {
-        updateCleanAreaRect(normalizeCleanAreaRect(cleanAreaInteraction.startWorld, worldPoint));
-      } else if (cleanAreaInteraction.mode === "move" && cleanAreaInteraction.startRect) {
-        updateCleanAreaRect(
-          moveCleanAreaRect(
-            cleanAreaInteraction.startRect,
-            {
-              x: worldPoint.x - cleanAreaInteraction.startWorld.x,
-              y: worldPoint.y - cleanAreaInteraction.startWorld.y,
-            },
-            bounds,
-          ),
-        );
-      } else if (cleanAreaInteraction.mode === "resize" && cleanAreaInteraction.startRect && cleanAreaInteraction.handle) {
-        updateCleanAreaRect(resizeCleanAreaRect(cleanAreaInteraction.startRect, cleanAreaInteraction.handle, worldPoint, bounds));
-      }
+    if (processCleanAreaPointerMove(event.pointerId, event.clientX, event.clientY)) {
       return;
     }
 
@@ -1635,9 +1786,7 @@ export function MapCanvas(props: MapCanvasProps) {
   }
 
   function onPointerEnd(event: React.PointerEvent<HTMLDivElement>): void {
-    const cleanAreaInteraction = cleanAreaInteractionRef.current;
-    if (cleanAreaInteraction && cleanAreaInteraction.pointerId === event.pointerId) {
-      cleanAreaInteractionRef.current = null;
+    if (finishCleanAreaInteraction(event.pointerId)) {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
@@ -1925,14 +2074,59 @@ export function MapCanvas(props: MapCanvasProps) {
             className="vacuum-map-stage__overlay-canvas vacuum-map-stage__overlay-canvas--depth"
           />
 
+          {props.cleanAreaCoverage ? (
+            <div className="vacuum-clean-area-coverage" aria-hidden="true">
+              {props.cleanAreaCoverage.overlayCells.map((cell) => (
+                <span
+                  key={cell.key}
+                  className={`vacuum-clean-area-coverage__cell vacuum-clean-area-coverage__cell--${cell.state}`}
+                  style={getCleanAreaCellScreenRect(cell, bounds, viewport)}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {(props.mapAnnotations ?? []).map((annotation) => {
+            if (annotation.area.shape !== "rectangle") {
+              return null;
+            }
+            const selected = annotation.id === props.selectedMapAnnotationId;
+            return (
+              <button
+                key={annotation.id}
+                type="button"
+                className={`vacuum-map-annotation vacuum-map-annotation--${annotation.kind}${selected ? " vacuum-map-annotation--selected" : ""}${props.cleanAreaToolActive ? " vacuum-map-annotation--reference" : ""}`}
+                style={getCleanAreaScreenRect(annotation.area, bounds, viewport)}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onMapAnnotationSelect?.(annotation.id);
+                }}
+                title={annotation.name}
+              >
+                <span>{annotation.name}</span>
+              </button>
+            );
+          })}
+
+          {props.cleanAreaCoverage && displayedRobotPose ? (
+            <span
+              className="vacuum-clean-area-footprint"
+              aria-hidden="true"
+              style={getRobotFootprintStyle(displayedRobotPose, props.cleanAreaCoverage.swathWidth, bounds, viewport)}
+            />
+          ) : null}
+
           {props.cleanAreaRect && cleanAreaScreenStyle ? (
             <div
-              className={`vacuum-clean-area vacuum-clean-area--${cleanAreaVisualState} ${cleanAreaValidation?.ok ? "vacuum-clean-area--valid" : "vacuum-clean-area--invalid"}`}
+              className={`vacuum-clean-area vacuum-clean-area--${cleanAreaVisualState} ${cleanAreaEditable ? "" : "vacuum-clean-area--readonly"} ${cleanAreaValidation?.ok ? "vacuum-clean-area--valid" : "vacuum-clean-area--invalid"}`}
               style={cleanAreaScreenStyle}
-              onPointerDown={(event) => startCleanAreaInteraction(event, "move", null)}
+              onPointerDown={cleanAreaEditable ? (event) => startCleanAreaInteraction(event, "move", null) : undefined}
             >
               <div className="vacuum-clean-area__fill" />
-              {props.cleanAreaToolActive
+              {cleanAreaEditable
                 ? CLEAN_AREA_HANDLES.map((handle) => (
                     <button
                       key={handle}
@@ -1985,7 +2179,7 @@ export function MapCanvas(props: MapCanvasProps) {
           })() : null}
         </div>
 
-        {!props.draftTarget && !props.isGoalActive && !targetSelectionDisabled ? (
+        {interactionMode === "navigation" && !props.draftTarget && !props.isGoalActive && !targetSelectionDisabled ? (
           <div className="vacuum-map-stage__center-prompt">
             <strong>Choose destination</strong>
             <span>{bounds.hasLiveMap ? "Click the map to stage a run" : "Live map unavailable, placeholder ready"}</span>

@@ -1,5 +1,24 @@
 import type { VacuumCommandName } from "../../commands";
-import type { VacuumGoalCoordinates, VacuumMissionState, VacuumPoseCoordinates } from "../../state";
+import type { VacuumCapabilityName } from "../../capabilities";
+import type { VacuumCommandErrorCode } from "../../errors";
+import type {
+  VacuumAdapterDiagnostics,
+  VacuumAttachmentsState,
+  VacuumCleaningSettingsState,
+  VacuumDockStatus,
+  VacuumGoalCoordinates,
+  VacuumMaintenanceState,
+  VacuumMissionState,
+  VacuumLayeredMapMetadata,
+  VacuumLayeredMapPreview,
+  VacuumMapTargets,
+  VacuumPoseCoordinates,
+  VacuumRobotActivityStatus,
+  VacuumRuntimeHealth,
+  VacuumSourceState,
+  VacuumStatisticsState,
+} from "../../state";
+import type { ValetudoCapabilityAvailability } from "./capabilityMapper";
 import type { ValetudoBackendCapability } from "./capabilityMapper";
 
 export type ValetudoConnectionStatus = "offline" | "connecting" | "online";
@@ -8,7 +27,23 @@ export type ValetudoRuntimeBoundary = {
   connectionStatus: ValetudoConnectionStatus;
   endpoint?: string;
   capabilities: ValetudoBackendCapability[];
+  commandAvailability?: Partial<Record<string, ValetudoCapabilityAvailability>>;
+  unsupportedCommands?: Partial<Record<VacuumCapabilityName, string>>;
   state: ValetudoRobotState | null;
+  health?: VacuumRuntimeHealth;
+  source?: VacuumSourceState;
+  dock?: VacuumDockStatus;
+  cleaningSettings?: VacuumCleaningSettingsState;
+  maintenance?: VacuumMaintenanceState;
+  statistics?: VacuumStatisticsState;
+  attachments?: VacuumAttachmentsState;
+  map?: {
+    layeredMetadata?: VacuumLayeredMapMetadata;
+    layeredPreview?: VacuumLayeredMapPreview;
+    targets?: VacuumMapTargets;
+    detail?: string;
+  };
+  diagnostics?: VacuumAdapterDiagnostics;
   lastError?: string;
 };
 
@@ -21,6 +56,9 @@ export type ValetudoRobotState = {
   batteryPercentage: number | null;
   charging: boolean | null;
   missionState: VacuumMissionState;
+  activityStatus: VacuumRobotActivityStatus;
+  activityLabel?: string;
+  activityUpdatedAt?: number | string;
   faults: string[];
 };
 
@@ -32,10 +70,6 @@ export type ValetudoCommandRequest =
   | {
       type: "go_to_location";
       target: VacuumGoalCoordinates;
-    }
-  | {
-      type: "segment_cleaning";
-      segmentIds: string[];
     }
   | {
       type: "zone_cleaning";
@@ -55,6 +89,6 @@ export type ValetudoCommandMappingResult =
   | {
       ok: false;
       command: VacuumCommandName;
-      reason: "unsupported" | "invalid_request";
+      reason: VacuumCommandErrorCode;
       message: string;
     };
