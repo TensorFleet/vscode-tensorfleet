@@ -138,7 +138,7 @@ function makeFlightPathStyles(): (feature: Feature<LineString>) => Style[] {
         const lineStyle = new Style({
             stroke: new Stroke({
                 color: accentColor,
-                width: 3,
+                width: isOngoing ? 4.5 : 3,
                 lineCap: 'square',
                 lineJoin: 'miter',
             }),

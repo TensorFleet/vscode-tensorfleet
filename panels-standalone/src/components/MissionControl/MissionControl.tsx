@@ -99,6 +99,20 @@ function getOngoingMissionLabel(waypoints: MavrosMsgsWaypoint[] | undefined, cur
     return `Ongoing mission ${itemNumber}/${waypoints.length}`;
 }
 
+function pathsEqual(left: [number, number][], right: [number, number][]): boolean {
+    if (left.length !== right.length) {
+        return false;
+    }
+
+    for (let index = 0; index < left.length; index += 1) {
+        if (left[index][0] !== right[index][0] || left[index][1] !== right[index][1]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 export const MissionControlPanel: React.FC = () => {
     const [, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
     const [activePanel, setActivePanel] = useState<'mission-planning' | 'drone-status'>('mission-planning');
@@ -108,6 +122,8 @@ export const MissionControlPanel: React.FC = () => {
     const [ongoingMissionPath, setOngoingMissionPath] = useState<[number, number][]>([]);
     const [ongoingMissionLabel, setOngoingMissionLabel] = useState('');
     const nextFlightPlanNumberRef = useRef<number>(getNextFlightPlanNumber(flightPlans));
+    const ongoingMissionPathRef = useRef<[number, number][]>([]);
+    const ongoingMissionLabelRef = useRef('');
 
     useEffect(() => {
         // Ensure connection to rosbridge (single supported mode)
@@ -140,8 +156,18 @@ export const MissionControlPanel: React.FC = () => {
                 state.vehicle?.mode === 'AUTO.MISSION' && !state.mission?.completed
                     ? state.mission?.waypoints
                     : undefined;
-            setOngoingMissionPath(getOngoingMissionPath(missionWaypoints));
-            setOngoingMissionLabel(getOngoingMissionLabel(missionWaypoints, state.mission?.current_seq));
+            const nextPath = getOngoingMissionPath(missionWaypoints);
+            const nextLabel = getOngoingMissionLabel(missionWaypoints, state.mission?.current_seq);
+
+            if (!pathsEqual(ongoingMissionPathRef.current, nextPath)) {
+                ongoingMissionPathRef.current = nextPath;
+                setOngoingMissionPath(nextPath);
+            }
+
+            if (ongoingMissionLabelRef.current !== nextLabel) {
+                ongoingMissionLabelRef.current = nextLabel;
+                setOngoingMissionLabel(nextLabel);
+            }
         });
 
         return () => {
