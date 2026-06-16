@@ -127,29 +127,32 @@ const DroneStatusIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) =
 );
 
 function makeFlightPathStyles(): (feature: Feature<LineString>) => Style[] {
-    const lineStyle = new Style();
-    const squareMarker = new Style();
-    const arrowStyle = new Style();
-
     return (feature) => {
-        const strokeColor = feature.get('isSelected') === true
+        const isOngoing = feature.get('isOngoing') === true;
+        const accentColor = isOngoing
+            ? '#000000'
+            : feature.get('isSelected') === true
             ? 'rgba(255,105,180,0.98)'
             : 'rgba(255,0,0,0.95)';
 
-        lineStyle.setStroke(new Stroke({
-            color: strokeColor,
-            width: 3,
-            lineCap: 'square',
-            lineJoin: 'miter',
-        }));
+        const lineStyle = new Style({
+            stroke: new Stroke({
+                color: accentColor,
+                width: 3,
+                lineCap: 'square',
+                lineJoin: 'miter',
+            }),
+        });
 
-        squareMarker.setImage(new RegularShape({
-            points: 4,
-            radius: 5,
-            angle: 0,
-            fill: new Fill({ color: '#ffffff' }),
-            stroke: new Stroke({ color: strokeColor, width: 2 }),
-        }));
+        const squareMarker = new Style({
+            image: new RegularShape({
+                points: 4,
+                radius: 5,
+                angle: 0,
+                fill: new Fill({ color: '#ffffff' }),
+                stroke: new Stroke({ color: accentColor, width: 2 }),
+            }),
+        });
         squareMarker.setGeometry((innerFeature) => {
             const geom = innerFeature.getGeometry();
             if (geom instanceof LineString) return new MultiPoint(geom.getCoordinates());
@@ -157,13 +160,16 @@ function makeFlightPathStyles(): (feature: Feature<LineString>) => Style[] {
         });
         squareMarker.setZIndex(10);
 
-        arrowStyle.setImage(new RegularShape({
+        const arrowImage = new RegularShape({
             points: 3,
             radius: 8,
             rotation: 0,
-            fill: new Fill({ color: strokeColor }),
+            fill: new Fill({ color: accentColor }),
             stroke: new Stroke({ color: '#ffffff', width: 1 }),
-        }));
+        });
+        const arrowStyle = new Style({
+            image: arrowImage,
+        });
         arrowStyle.setGeometry((innerFeature) => {
             const geom = innerFeature.getGeometry();
             if (!(geom instanceof LineString)) return undefined;
@@ -174,7 +180,7 @@ function makeFlightPathStyles(): (feature: Feature<LineString>) => Style[] {
             const dx = end[0] - prev[0];
             const dy = end[1] - prev[1];
             const rotation = Math.atan2(dy, dx);
-            (arrowStyle.getImage() as RegularShape).setRotation(rotation);
+            arrowImage.setRotation(rotation);
             return new Point(end);
         });
         arrowStyle.setZIndex(11);
@@ -193,18 +199,31 @@ function syncFlightPlanFeatures(
     source: VectorSource,
     flightPlans: FlightPlanRecord[],
     selectedFlightPlanId: string | null,
+    ongoingMissionPath: [number, number][],
 ) {
     source.clear();
 
+    if (ongoingMissionPath.length >= 2) {
+        const ongoingFeature = new Feature({
+            geometry: new LineString(ongoingMissionPath),
+        });
+        ongoingFeature.setId('ongoing-mission');
+        ongoingFeature.set('isSelected', false);
+        ongoingFeature.set('isOngoing', true);
+        source.addFeature(ongoingFeature);
+    }
+
     for (const flightPlan of flightPlans) {
-        if (flightPlan.id !== selectedFlightPlanId) continue;
+        const isSelected = flightPlan.id === selectedFlightPlanId;
+        if (!isSelected) continue;
         if (flightPlan.path.length < 2) continue;
 
         const feature = new Feature({
             geometry: new LineString(flightPlan.path),
         });
         feature.setId(flightPlan.id);
-        feature.set('isSelected', flightPlan.id === selectedFlightPlanId);
+        feature.set('isSelected', isSelected);
+        feature.set('isOngoing', false);
         source.addFeature(feature);
     }
 }
@@ -215,6 +234,7 @@ type FlightPathToolsProps = {
     startRequestKey?: number;
     flightPlans?: FlightPlanRecord[];
     selectedFlightPlanId?: string | null;
+    ongoingMissionPath?: [number, number][];
     activePanel?: 'mission-planning' | 'drone-status';
     onSelectPanel?: (panel: 'mission-planning' | 'drone-status') => void;
 };
@@ -225,6 +245,7 @@ export const FlightPathTools: React.FC<FlightPathToolsProps> = ({
     startRequestKey = 0,
     flightPlans = [],
     selectedFlightPlanId = null,
+    ongoingMissionPath = [],
     activePanel = 'mission-planning',
     onSelectPanel,
 }) => {
@@ -258,8 +279,8 @@ export const FlightPathTools: React.FC<FlightPathToolsProps> = ({
 
     useEffect(() => {
         if (!sourceRef.current) return;
-        syncFlightPlanFeatures(sourceRef.current, flightPlans, selectedFlightPlanId);
-    }, [flightPlans, selectedFlightPlanId]);
+        syncFlightPlanFeatures(sourceRef.current, flightPlans, selectedFlightPlanId, ongoingMissionPath);
+    }, [flightPlans, selectedFlightPlanId, ongoingMissionPath]);
 
     const startNewPath = () => {
         if (!map || !sourceRef.current) return;

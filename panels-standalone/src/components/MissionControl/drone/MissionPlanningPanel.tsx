@@ -9,10 +9,13 @@ type FlightPlanRecord = {
 type MissionPlanningPanelProps = {
   flightPlans: FlightPlanRecord[];
   selectedFlightPlanId: string | null;
+  ongoingMissionLabel: string;
+  hasOngoingMission: boolean;
   onStartNewPlan: () => void;
   onSelectFlightPlan: (flightPlanId: string) => void;
   onSendFlightPlan: (flightPlanId: string) => void;
   onDeleteFlightPlan: (flightPlanId: string) => void;
+  onStopOngoingMission: () => void;
 };
 
 function PlayIcon() {
@@ -49,13 +52,31 @@ function TrashIcon() {
   );
 }
 
+function StopIcon() {
+  return (
+    <svg
+      className="mission-side-panel__action-icon"
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function MissionPlanningPanel({
   flightPlans,
   selectedFlightPlanId,
+  ongoingMissionLabel,
+  hasOngoingMission,
   onStartNewPlan,
   onSelectFlightPlan,
   onSendFlightPlan,
   onDeleteFlightPlan,
+  onStopOngoingMission,
 }: MissionPlanningPanelProps) {
   return (
     <div className="mission-side-panel">
@@ -73,6 +94,26 @@ export function MissionPlanningPanel({
         </button>
 
         <div className="mission-side-panel__missions">
+          <div className="mission-side-panel__mission-row">
+            <div className="mission-side-panel__mission-button">
+              <span className="mission-side-panel__mission-name">
+                {ongoingMissionLabel}
+              </span>
+            </div>
+            {hasOngoingMission ? (
+              <div className="mission-side-panel__mission-actions">
+                <button
+                  type="button"
+                  className="mission-side-panel__icon-button"
+                  onClick={onStopOngoingMission}
+                  aria-label="Stop ongoing mission"
+                  title="Stop ongoing mission"
+                >
+                  <StopIcon />
+                </button>
+              </div>
+            ) : null}
+          </div>
           {flightPlans.map((flightPlan) => {
             const isSelected = flightPlan.id === selectedFlightPlanId;
             return (

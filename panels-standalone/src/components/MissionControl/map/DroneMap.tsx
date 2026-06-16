@@ -34,6 +34,7 @@ type Props = {
     path: [number, number][];
   }>;
   selectedFlightPlanId?: string | null;
+  ongoingMissionPath?: [number, number][];
   activePanel?: 'mission-planning' | 'drone-status';
   onSelectPanel?: (panel: 'mission-planning' | 'drone-status') => void;
   onFlightPlanPathChange?: (flightPlanId: string, path: [number, number][]) => void;
@@ -168,6 +169,7 @@ export const DroneMap: React.FC<Props> = ({
   missionPlanningRequestKey = 0,
   flightPlans = [],
   selectedFlightPlanId = null,
+  ongoingMissionPath = [],
   activePanel = 'mission-planning',
   onSelectPanel,
   onFlightPlanPathChange,
@@ -440,6 +442,7 @@ export const DroneMap: React.FC<Props> = ({
           startRequestKey={missionPlanningRequestKey}
           flightPlans={flightPlans}
           selectedFlightPlanId={selectedFlightPlanId}
+          ongoingMissionPath={ongoingMissionPath}
           activePanel={activePanel}
           onSelectPanel={onSelectPanel}
           onPathChange={(coords) => {

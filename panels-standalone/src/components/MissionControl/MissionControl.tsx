@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ros2Bridge } from 'tensorfleet-ros';
 import { DroneStateModel } from 'tensorfleet-util/drone/drone-state-model';
 import { MavrosMissionCommand, MavrosMissionWaypoint, type MavrosMsgsWaypoint } from 'tensorfleet-util/ros/ros-types/mavros-msgs-waypoint';
-import { toLonLat } from 'ol/proj';
+import { fromLonLat, toLonLat } from 'ol/proj';
 import { DroneMap } from './map/DroneMap';
 import './MissionControl.css';
 import { DroneStatusPanel } from './drone/DroneStatusPanel';
@@ -63,12 +63,50 @@ function buildMissionFromFlightPlan(flightPlan: FlightPlanRecord): MavrosMsgsWay
     });
 }
 
+function getOngoingMissionPath(waypoints: MavrosMsgsWaypoint[] | undefined): [number, number][] {
+    if (!waypoints || waypoints.length === 0) {
+        return [];
+    }
+
+    const path: [number, number][] = [];
+
+    for (const waypoint of waypoints) {
+        if (!Number.isFinite(waypoint.x_lat) || !Number.isFinite(waypoint.y_long)) {
+            continue;
+        }
+        if (Math.abs(waypoint.x_lat) > 90 || Math.abs(waypoint.y_long) > 180) {
+            continue;
+        }
+        if (waypoint.x_lat === 0 && waypoint.y_long === 0) {
+            continue;
+        }
+
+        path.push(fromLonLat([waypoint.y_long, waypoint.x_lat]) as [number, number]);
+    }
+
+    return path;
+}
+
+function getOngoingMissionLabel(waypoints: MavrosMsgsWaypoint[] | undefined, currentSeq: number | undefined): string {
+    if (!waypoints || waypoints.length === 0) {
+        return '';
+    }
+
+    const itemNumber = typeof currentSeq === 'number' && Number.isFinite(currentSeq)
+        ? currentSeq + 1
+        : 1;
+
+    return `Ongoing mission ${itemNumber}/${waypoints.length}`;
+}
+
 export const MissionControlPanel: React.FC = () => {
     const [, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
     const [activePanel, setActivePanel] = useState<'mission-planning' | 'drone-status'>('mission-planning');
     const [missionPlanningRequestKey, setMissionPlanningRequestKey] = useState(0);
     const [flightPlans, setFlightPlans] = useState<FlightPlanRecord[]>(() => loadPersistedFlightPlans());
     const [selectedFlightPlanId, setSelectedFlightPlanId] = useState<string | null>(null);
+    const [ongoingMissionPath, setOngoingMissionPath] = useState<[number, number][]>([]);
+    const [ongoingMissionLabel, setOngoingMissionLabel] = useState('');
     const nextFlightPlanNumberRef = useRef<number>(getNextFlightPlanNumber(flightPlans));
 
     useEffect(() => {
@@ -94,6 +132,22 @@ export const MissionControlPanel: React.FC = () => {
     useEffect(() => {
         persistFlightPlans(flightPlans);
     }, [flightPlans]);
+
+    useEffect(() => {
+        const unsubscribe = droneState.onUpdate(() => {
+            const state = droneState.getCurrentState();
+            const missionWaypoints =
+                state.vehicle?.mode === 'AUTO.MISSION' && !state.mission?.completed
+                    ? state.mission?.waypoints
+                    : undefined;
+            setOngoingMissionPath(getOngoingMissionPath(missionWaypoints));
+            setOngoingMissionLabel(getOngoingMissionLabel(missionWaypoints, state.mission?.current_seq));
+        });
+
+        return () => {
+            unsubscribe();
+        };
+    }, []);
 
     const handleStartNewPlan = () => {
         const nextPlanNumber = nextFlightPlanNumberRef.current;
@@ -140,8 +194,27 @@ export const MissionControlPanel: React.FC = () => {
         }
 
         const mission = buildMissionFromFlightPlan(flightPlan);
-        void droneController.sendMissionRequest(mission).catch((error) => {
-            console.error(`Failed to send mission "${flightPlan.name}"`, error);
+        void droneController.sendMissionRequest(mission)
+            .catch((error) => {
+                console.error(`Failed to send mission "${flightPlan.name}"`, error);
+            });
+    };
+
+    const handleStopOngoingMission = () => {
+        const state = droneState.getCurrentState();
+        const currentAltitude =
+            state.altitude?.relative ??
+            state.altitude?.agl ??
+            state.global_position_int?.relative_alt ??
+            Math.abs(state.local?.position?.z ?? 0) ??
+            DEFAULT_MISSION_ALTITUDE_METERS;
+
+        void droneController.requestAutoState({
+            kind: 'airborne',
+            altMeters: currentAltitude > 0 ? currentAltitude : DEFAULT_MISSION_ALTITUDE_METERS,
+        }).then(() => {
+        }).catch((error) => {
+            console.error('Failed to stop ongoing mission', error);
         });
     };
 
@@ -160,6 +233,7 @@ export const MissionControlPanel: React.FC = () => {
             missionPlanningRequestKey={missionPlanningRequestKey}
             flightPlans={flightPlans}
             selectedFlightPlanId={selectedFlightPlanId}
+            ongoingMissionPath={ongoingMissionPath}
             activePanel={activePanel}
             onSelectPanel={setActivePanel}
             onFlightPlanPathChange={handleFlightPlanPathChange}
@@ -168,10 +242,13 @@ export const MissionControlPanel: React.FC = () => {
             <MissionPlanningPanel
               flightPlans={flightPlans}
               selectedFlightPlanId={selectedFlightPlanId}
+              ongoingMissionLabel={ongoingMissionLabel}
+              hasOngoingMission={ongoingMissionPath.length >= 2}
               onStartNewPlan={handleStartNewPlan}
               onSelectFlightPlan={handleSelectFlightPlan}
               onSendFlightPlan={handleSendFlightPlan}
               onDeleteFlightPlan={handleDeleteFlightPlan}
+              onStopOngoingMission={handleStopOngoingMission}
             />
           ) : (
             <DroneStatusPanel model={droneState} />
