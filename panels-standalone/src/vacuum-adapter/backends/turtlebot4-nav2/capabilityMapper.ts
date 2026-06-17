@@ -15,6 +15,7 @@ import { unsupportedCommand } from "../../errors";
 const SOURCE = "turtlebot4_nav2" as const;
 
 export const MAPPING_STATUS_TOPIC = "/vacuum_mapping/status";
+export const MAPPING_MAP_SNAPSHOT_TOPIC = "/vacuum_mapping/map_snapshot";
 export const MAPPING_SERVICE_NAMES = {
   startAuto: "/vacuum_mapping/start_auto",
   startManual: "/vacuum_mapping/start_manual",
@@ -27,6 +28,23 @@ export const MAPPING_SERVICE_NAMES = {
   loadMap: "/vacuum_mapping/load_map",
   listMaps: "/vacuum_mapping/list_maps",
 } as const;
+export const MISSION_STATUS_TOPIC = "/vacuum_mission/status";
+export const MISSION_SERVICE_NAMES = {
+  startNavigation: "/vacuum_mission/start_navigation",
+  startCoverage: "/vacuum_mission/start_coverage",
+  cancel: "/vacuum_mission/cancel",
+  pause: "/vacuum_mission/pause",
+  resume: "/vacuum_mission/resume",
+  retryStep: "/vacuum_mission/retry_step",
+  skipStep: "/vacuum_mission/skip_step",
+  getSnapshot: "/vacuum_mission/get_snapshot",
+  setParameters: "/vacuum_mission_runtime/set_parameters",
+} as const;
+export const MAP_ANNOTATION_SERVICE_NAMES = {
+  getSnapshot: "/vacuum_map_annotations/get_snapshot",
+  save: "/vacuum_map_annotations/save",
+  delete: "/vacuum_map_annotations/delete",
+} as const;
 
 const UNSUPPORTED_VACUUM_FEATURES: VacuumCapabilityName[] = [
   "start_cleaning",
@@ -36,11 +54,12 @@ const UNSUPPORTED_VACUUM_FEATURES: VacuumCapabilityName[] = [
   "return_to_dock",
   "dock_state",
   "segment_cleaning",
-  "zone_cleaning",
   "fan_speed",
   "water_usage",
   "battery",
   "consumables",
+  "attachments",
+  "dock_components",
   "events",
 ];
 
@@ -51,7 +70,6 @@ export const TURTLEBOT4_NAV2_UNSUPPORTED_COMMANDS: VacuumCommandName[] = [
   "stop",
   "return_to_dock",
   "segment_cleaning",
-  "zone_cleaning",
   "set_fan_speed",
   "set_water_usage",
 ];
@@ -76,6 +94,19 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
   const capabilities = createUnsupportedCapabilities();
   const hasNavigateToPose = runtime.availableServices.includes(SEND_GOAL_SERVICE);
   const hasCancelNavigation = runtime.availableServices.includes(CANCEL_GOAL_SERVICE);
+  const hasMissionStartNavigation = runtime.availableServices.includes(MISSION_SERVICE_NAMES.startNavigation);
+  const hasMissionStartCoverage = runtime.availableServices.includes(MISSION_SERVICE_NAMES.startCoverage);
+  const hasMissionSetParameters = runtime.availableServices.includes(MISSION_SERVICE_NAMES.setParameters);
+  const hasMissionCancel = runtime.availableServices.includes(MISSION_SERVICE_NAMES.cancel);
+  const hasMissionPause = runtime.availableServices.includes(MISSION_SERVICE_NAMES.pause);
+  const hasMissionResume = runtime.availableServices.includes(MISSION_SERVICE_NAMES.resume);
+  const hasMissionRetryStep = runtime.availableServices.includes(MISSION_SERVICE_NAMES.retryStep);
+  const hasMissionSkipStep = runtime.availableServices.includes(MISSION_SERVICE_NAMES.skipStep);
+  const hasMissionSnapshot = runtime.availableServices.includes(MISSION_SERVICE_NAMES.getSnapshot);
+  const hasMapAnnotationGetSnapshot = runtime.availableServices.includes(MAP_ANNOTATION_SERVICE_NAMES.getSnapshot);
+  const hasMapAnnotationSave = runtime.availableServices.includes(MAP_ANNOTATION_SERVICE_NAMES.save);
+  const hasMapAnnotationDelete = runtime.availableServices.includes(MAP_ANNOTATION_SERVICE_NAMES.delete);
+  const hasMissionStatus = runtime.availableTopics.some((topic) => topic.topic === MISSION_STATUS_TOPIC);
 
   capabilities.go_to_location = hasNavigateToPose
     ? supportedCapability({
@@ -86,6 +117,19 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
       })
     : unsupportedCapability("NavigateToPose send_goal service is not advertised.");
 
+  capabilities.start_navigation = hasMissionStartNavigation && hasMissionSetParameters
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["start_navigation"],
+        attributes: ["map_frame_target", "yaw", "active_mission_snapshot"],
+        notes: "Product command for a point-navigation mission owned by the VM runtime.",
+      })
+    : unsupportedCapability(
+        hasMissionStartNavigation
+          ? "VM navigation mission runtime parameter service is not advertised."
+          : "VM navigation mission runtime is not advertised.",
+      );
+
   capabilities.cancel_navigation = hasCancelNavigation
     ? supportedCapability({
         backendCapability: "nav2_msgs/action/NavigateToPose cancel_goal",
@@ -93,6 +137,122 @@ export function mapTurtleBot4Nav2Capabilities(runtime: Nav2RuntimeState): Vacuum
         notes: "Backed by the Nav2 action cancel service.",
       })
     : unsupportedCapability("NavigateToPose cancel_goal service is not advertised.");
+
+  capabilities.mission_state = supportedCapability({
+    backendCapability: hasMissionStatus || hasMissionSnapshot ? "vacuum_mission_runtime" : "vacuum_adapter mission normalization",
+    attributes: ["activeMission", "missions", "availableActions", "terminalResult"],
+    notes: hasMissionStatus || hasMissionSnapshot
+      ? "The VM runtime publishes or serves backend-neutral mission snapshots for UI hydration."
+      : "The adapter exposes a backend-neutral mission snapshot bridge for UI hydration.",
+  });
+  capabilities.cancel_mission = hasMissionCancel
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["cancel_mission"],
+        notes: "Cancels the active VM-owned mission when supported by that mission.",
+      })
+    : unsupportedCapability("VM mission cancel service is not advertised.");
+  capabilities.coverage_mission = hasMissionStartCoverage && hasMissionSetParameters
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["start_coverage", "cancel_mission", "pause_mission", "resume_mission", "retry_mission_step", "skip_mission_step"],
+        attributes: ["coverage_area", "runtime_route", "coverage_progress", "active_mission_snapshot"],
+        notes: "Product command for a coverage mission owned by the VM runtime.",
+      })
+    : unsupportedCapability(
+        hasMissionStartCoverage
+          ? "VM coverage mission runtime parameter service is not advertised."
+          : "VM coverage mission runtime is not advertised.",
+      );
+  const hasMapAnnotations = hasMissionSetParameters && hasMapAnnotationGetSnapshot && hasMapAnnotationSave && hasMapAnnotationDelete;
+  capabilities.map_annotations = hasMapAnnotations
+    ? supportedCapability({
+        backendCapability: "vacuum_map_annotations runtime",
+        commands: ["save_map_annotation", "delete_map_annotation"],
+        attributes: ["map_annotations", "room_annotations", "zone_annotations", "map_identity"],
+        notes: "Manual room/zone annotations are product-level map state persisted by the VM runtime.",
+      })
+    : unsupportedCapability("VM map annotation persistence services are not advertised.");
+  capabilities.room_semantics = hasMapAnnotations
+    ? supportedCapability({
+        backendCapability: "vacuum_map_annotations runtime",
+        commands: ["save_map_annotation", "delete_map_annotation"],
+        attributes: ["map_annotation", "room"],
+        notes: "Manual room boundaries can be created and selected on the current map.",
+      })
+    : unsupportedCapability("VM room annotation persistence services are not advertised.");
+  capabilities.zone_semantics = hasMapAnnotations
+    ? supportedCapability({
+        backendCapability: "vacuum_map_annotations runtime",
+        commands: ["save_map_annotation", "delete_map_annotation"],
+        attributes: ["map_annotation", "zone"],
+        notes: "Manual zone boundaries can be created and selected on the current map.",
+      })
+    : unsupportedCapability("VM zone annotation persistence services are not advertised.");
+  capabilities.room_cleaning = hasMissionStartCoverage && hasMissionSetParameters
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["start_room_cleaning", "cancel_mission", "pause_mission", "resume_mission", "retry_mission_step", "skip_mission_step"],
+        attributes: ["room_annotation", "coverage_area", "runtime_route", "active_mission_snapshot"],
+        notes: "Starts a room-oriented product mission that is executed by the VM coverage runtime.",
+      })
+    : unsupportedCapability(
+        hasMissionStartCoverage
+          ? "VM coverage mission runtime parameter service is not advertised."
+          : "VM coverage mission runtime is not advertised.",
+      );
+  capabilities.zone_cleaning = hasMissionStartCoverage && hasMissionSetParameters
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["start_zone_cleaning", "cancel_mission", "pause_mission", "resume_mission", "retry_mission_step", "skip_mission_step"],
+        attributes: ["zone_annotation", "coverage_area", "runtime_route", "active_mission_snapshot"],
+        notes: "Starts a zone-oriented product mission that is executed by the VM coverage runtime.",
+      })
+    : unsupportedCapability(
+        hasMissionStartCoverage
+          ? "VM coverage mission runtime parameter service is not advertised."
+          : "VM coverage mission runtime is not advertised.",
+      );
+  capabilities.start_coverage = hasMissionStartCoverage && hasMissionSetParameters
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["start_coverage"],
+        attributes: ["coverage_area", "optional_route", "active_mission_snapshot"],
+        notes: "Starts a backend-neutral coverage mission owned by the VM runtime.",
+      })
+    : unsupportedCapability(
+        hasMissionStartCoverage
+          ? "VM coverage mission runtime parameter service is not advertised."
+          : "VM coverage mission runtime is not advertised.",
+      );
+  capabilities.pause_mission = hasMissionPause
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["pause_mission"],
+        notes: "Pauses the active VM-owned mission when supported by that mission.",
+      })
+    : unsupportedCapability("VM mission pause service is not advertised.");
+  capabilities.resume_mission = hasMissionResume
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["resume_mission"],
+        notes: "Resumes the active VM-owned mission when supported by that mission.",
+      })
+    : unsupportedCapability("VM mission resume service is not advertised.");
+  capabilities.retry_mission_step = hasMissionRetryStep
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["retry_mission_step"],
+        notes: "Retries the current runtime-owned mission step when supported.",
+      })
+    : unsupportedCapability("VM mission retry-step service is not advertised.");
+  capabilities.skip_mission_step = hasMissionSkipStep
+    ? supportedCapability({
+        backendCapability: "vacuum_mission_runtime",
+        commands: ["skip_mission_step"],
+        notes: "Skips the current runtime-owned mission step when supported.",
+      })
+    : unsupportedCapability("VM mission skip-step service is not advertised.");
 
   capabilities.manual_control = supportedCapability({
     backendCapability: "/cmd_vel_raw",

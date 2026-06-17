@@ -4,17 +4,26 @@ import {
 } from "../../../components/Nav2/runtime/nav2RuntimeUtils";
 import type { Nav2RuntimeState, GoalState, TopicHealth } from "../../../components/Nav2/runtime/nav2RuntimeTypes";
 import type {
+  CapabilitySupport,
+  VacuumCapabilityName,
+} from "../../capabilities";
+import type {
   VacuumAdapterSnapshot,
   VacuumAvailabilityStatus,
   VacuumGoalCoordinates,
   VacuumMapGrid,
   VacuumMapMetadata,
+  VacuumMapAnnotation,
   VacuumMappingStatus,
+  VacuumMissionAction,
+  VacuumMissionSnapshot,
   VacuumMissionState,
+  VacuumMissionStatus,
   VacuumNavigationState,
   VacuumNavigationTerminalState,
   VacuumPathPoint,
   VacuumReadinessState,
+  VacuumRobotActivity,
 } from "../../state";
 import { buildVacuumMapMetadata } from "../../mapGrid";
 import { mapTurtleBot4Nav2Capabilities } from "./capabilityMapper";
@@ -28,6 +37,9 @@ export type TurtleBot4Nav2StateMapperInput = {
   mapGrid?: VacuumMapGrid | null;
   mapMetadata?: VacuumMapMetadata | null;
   mapping?: VacuumMappingStatus | null;
+  mission?: VacuumMissionSnapshot | null;
+  recentMissions?: VacuumMissionSnapshot[];
+  annotations?: VacuumMapAnnotation[];
 };
 
 function getTopicStatus(runtime: Nav2RuntimeState, topic: string): TopicHealth["status"] | null {
@@ -83,6 +95,331 @@ function deriveMissionState(navigationActive: boolean, mappingState?: VacuumMapp
     return "navigating";
   }
   return "idle";
+}
+
+function isCleaningMissionType(type: VacuumMissionSnapshot["type"] | undefined): boolean {
+  return type === "coverage" || type === "room_cleaning" || type === "zone_cleaning";
+}
+
+function isTerminalMissionStatus(status: VacuumMissionStatus): boolean {
+  return status === "completed" || status === "failed" || status === "canceled" || status === "unsupported";
+}
+
+function buildRobotActivity(input: {
+  runtime: Nav2RuntimeState;
+  activeMission: VacuumMissionSnapshot | null;
+  missionState: VacuumMissionState;
+  normalizedMapping: VacuumMappingStatus;
+  navigationActive: boolean;
+}): VacuumRobotActivity {
+  if (input.runtime.connectionStatus !== "connected") {
+    return {
+      status: "unavailable",
+      label: "Unavailable",
+      source: "turtlebot4_nav2",
+      reason: "bridge_not_connected",
+      availableActions: [],
+    };
+  }
+  if (
+    isCleaningMissionType(input.activeMission?.type) &&
+    input.activeMission &&
+    isTerminalMissionStatus(input.activeMission.status) &&
+    (input.activeMission.status === "failed" || input.activeMission.status === "unsupported")
+  ) {
+    return {
+      status: "faulted",
+      label: "Cleaning failed",
+      updatedAt: input.activeMission.updatedAt ?? undefined,
+      source: "turtlebot4_nav2",
+      availableActions: input.activeMission.availableActions,
+      reason: input.activeMission.error?.code ?? input.activeMission.result?.status,
+      details: {
+        missionType: input.activeMission.type,
+        result: input.activeMission.result,
+        error: input.activeMission.error,
+      },
+    };
+  }
+  if (isCleaningMissionType(input.activeMission?.type) && input.activeMission && !isTerminalMissionStatus(input.activeMission.status)) {
+    return {
+      status: input.activeMission.status === "paused" || input.activeMission.status === "needs_assistance" ? "paused" : "covering",
+      label: input.activeMission.type === "coverage" ? "Covering" : "Cleaning",
+      updatedAt: input.activeMission.updatedAt ?? undefined,
+      source: "turtlebot4_nav2",
+      availableActions: input.activeMission.availableActions,
+      details: { missionType: input.activeMission.type },
+    };
+  }
+  if (input.activeMission?.type === "mapping" || input.missionState === "mapping") {
+    return {
+      status: "mapping",
+      label: "Mapping",
+      updatedAt: input.normalizedMapping.updatedAt ?? input.activeMission?.updatedAt ?? undefined,
+      source: "turtlebot4_nav2",
+      availableActions: input.activeMission?.availableActions ?? [],
+      details: { mappingState: input.normalizedMapping.state },
+    };
+  }
+  if (input.activeMission?.type === "navigation" || input.navigationActive || input.missionState === "navigating") {
+    return {
+      status: "navigating",
+      label: "Navigating",
+      updatedAt: input.activeMission?.updatedAt ?? undefined,
+      source: "turtlebot4_nav2",
+      availableActions: input.activeMission?.availableActions ?? [],
+      details: { goalState: input.runtime.goalState },
+    };
+  }
+  if (input.missionState === "paused") {
+    return {
+      status: "paused",
+      label: "Paused",
+      updatedAt: input.activeMission?.updatedAt ?? undefined,
+      source: "turtlebot4_nav2",
+      availableActions: input.activeMission?.availableActions ?? [],
+    };
+  }
+  return {
+    status: "idle",
+    label: "Idle",
+    source: "turtlebot4_nav2",
+    availableActions: [],
+  };
+}
+
+function emptyMissionProgress(): VacuumMissionSnapshot["progress"] {
+  return {
+    percent: null,
+    currentStep: null,
+    totalSteps: null,
+    distanceRemaining: null,
+    areaCoveredSqM: null,
+    areaRemainingSqM: null,
+  };
+}
+
+function mapNavigationMissionStatus(goalState: GoalState): VacuumMissionStatus {
+  if (goalState === "sending") {
+    return "preparing";
+  }
+  if (goalState === "accepted" || goalState === "executing") {
+    return "running";
+  }
+  if (goalState === "canceling") {
+    return "canceling";
+  }
+  if (goalState === "succeeded") {
+    return "completed";
+  }
+  if (goalState === "canceled") {
+    return "canceled";
+  }
+  if (goalState === "aborted" || goalState === "rejected" || goalState === "unknown" || goalState === "blocked") {
+    return "failed";
+  }
+  return "idle";
+}
+
+function mapMappingMissionStatus(mappingState: VacuumMappingStatus["state"]): VacuumMissionStatus {
+  if (mappingState === "auto_mapping" || mappingState === "manual_mapping" || mappingState === "review") {
+    return "running";
+  }
+  if (mappingState === "paused") {
+    return "paused";
+  }
+  if (mappingState === "needs_assistance") {
+    return "needs_assistance";
+  }
+  if (mappingState === "accepted") {
+    return "completed";
+  }
+  if (mappingState === "discarded") {
+    return "canceled";
+  }
+  if (mappingState === "error") {
+    return "failed";
+  }
+  return "idle";
+}
+
+function terminalResultFromStatus(
+  status: VacuumMissionStatus,
+  updatedAt: number | null,
+  summary: string,
+): VacuumMissionSnapshot["result"] {
+  if (status !== "completed" && status !== "failed" && status !== "canceled" && status !== "unsupported") {
+    return null;
+  }
+  return { status, completedAt: updatedAt, summary };
+}
+
+function isRuntimeMissionActive(status: VacuumMissionStatus): boolean {
+  return [
+    "preparing",
+    "running",
+    "paused",
+    "canceling",
+    "returning",
+    "charging",
+    "resuming",
+    "needs_assistance",
+  ].includes(status);
+}
+
+function isMappingMissionActive(mappingState: VacuumMappingStatus["state"]): boolean {
+  return mappingState === "auto_mapping" || mappingState === "manual_mapping" || mappingState === "paused" || mappingState === "needs_assistance" || mappingState === "review";
+}
+
+function normalizeRuntimeMissionActions(
+  mission: VacuumMissionSnapshot,
+  hasCancelMission: boolean,
+): VacuumMissionSnapshot {
+  return {
+    ...mission,
+    availableActions: mission.availableActions.filter((action) => {
+      if (action === "cancel_mission") {
+        return hasCancelMission;
+      }
+      if (mission.type === "navigation") {
+        return action !== "pause_mission" && action !== "resume_mission" && action !== "retry_mission_step" && action !== "skip_mission_step";
+      }
+      return true;
+    }),
+  };
+}
+
+function missionSortTime(mission: VacuumMissionSnapshot): number {
+  return mission.result?.completedAt ?? mission.updatedAt ?? mission.startedAt ?? 0;
+}
+
+function mergeRecentMissions(missions: VacuumMissionSnapshot[]): VacuumMissionSnapshot[] {
+  const byId = new Map<string, VacuumMissionSnapshot>();
+  for (const mission of missions) {
+    if (mission.status === "idle") {
+      continue;
+    }
+    const existing = byId.get(mission.id);
+    if (!existing || missionSortTime(mission) >= missionSortTime(existing)) {
+      byId.set(mission.id, mission);
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => missionSortTime(b) - missionSortTime(a))
+    .slice(0, 10);
+}
+
+function deriveAvailableMissionActions(
+  status: VacuumMissionStatus,
+  type: VacuumMissionSnapshot["type"],
+  hasCancelMission: boolean,
+  mappingState?: VacuumMappingStatus["state"],
+): VacuumMissionAction[] {
+  if (type === "navigation") {
+    return status === "running" || status === "preparing" || status === "canceling"
+      ? hasCancelMission
+        ? ["cancel_mission"]
+        : []
+      : [];
+  }
+  if (type === "mapping") {
+    if (mappingState === "auto_mapping") {
+      return ["pause_mapping", "finish_mapping", "discard_mapping"];
+    }
+    if (mappingState === "manual_mapping" || mappingState === "paused" || mappingState === "needs_assistance") {
+      return ["resume_mapping", "finish_mapping", "discard_mapping"];
+    }
+    if (mappingState === "review") {
+      return ["accept_map", "discard_mapping"];
+    }
+  }
+  return [];
+}
+
+function buildActiveMission(input: {
+  runtime: Nav2RuntimeState;
+  mapping: VacuumMappingStatus;
+  navigationState: VacuumNavigationState;
+  terminalState: VacuumNavigationTerminalState | null;
+  currentTarget: VacuumGoalCoordinates | null | undefined;
+  initialDistance: number | null | undefined;
+  distanceRemaining: number | null;
+  hasCancelMission: boolean;
+  runtimeMission: VacuumMissionSnapshot | null | undefined;
+}): VacuumMissionSnapshot | null {
+  if (input.runtimeMission && input.runtimeMission.status !== "idle" && isRuntimeMissionActive(input.runtimeMission.status)) {
+    return normalizeRuntimeMissionActions(input.runtimeMission, input.hasCancelMission);
+  }
+
+  const mappingStatus = mapMappingMissionStatus(input.mapping.state);
+  if (mappingStatus !== "idle" && isMappingMissionActive(input.mapping.state)) {
+    return {
+      id: "turtlebot4-nav2:mapping",
+      type: "mapping",
+      status: mappingStatus,
+      backendSource: "turtlebot4_nav2",
+      startedAt: null,
+      updatedAt: input.mapping.updatedAt,
+      requestedCommand: input.mapping.mode === "auto" ? "start_mapping:auto" : input.mapping.mode === "manual" ? "start_mapping:manual" : "mapping",
+      phase: input.mapping.state,
+      progress: {
+        ...emptyMissionProgress(),
+        percent: input.mapping.knownRatio,
+      },
+      availableActions: deriveAvailableMissionActions(mappingStatus, "mapping", input.hasCancelMission, input.mapping.state),
+      result: terminalResultFromStatus(mappingStatus, input.mapping.updatedAt, input.mapping.stateReason),
+      error: input.mapping.lastError
+        ? {
+            code: "mapping_error",
+            message: input.mapping.lastError,
+            recoverable: mappingStatus === "needs_assistance",
+          }
+        : null,
+      target: input.mapping.activeGoal,
+    };
+  }
+
+  if (input.runtimeMission && input.runtimeMission.status !== "idle") {
+    return normalizeRuntimeMissionActions(input.runtimeMission, input.hasCancelMission);
+  }
+
+  const navigationStatus = mapNavigationMissionStatus(input.runtime.goalState);
+  if (navigationStatus === "idle") {
+    return null;
+  }
+  return {
+    id: "turtlebot4-nav2:navigation",
+    type: "navigation",
+    status: navigationStatus,
+    backendSource: "turtlebot4_nav2",
+    startedAt: null,
+    updatedAt: null,
+    requestedCommand: "start_navigation",
+    phase: input.runtime.goalState,
+    progress: {
+      ...emptyMissionProgress(),
+      percent:
+        input.initialDistance != null && input.distanceRemaining != null && input.initialDistance > 0
+          ? Math.max(0, Math.min(1, 1 - input.distanceRemaining / input.initialDistance))
+          : null,
+      distanceRemaining: input.distanceRemaining,
+    },
+    availableActions: deriveAvailableMissionActions(navigationStatus, "navigation", input.hasCancelMission),
+    result: terminalResultFromStatus(
+      navigationStatus,
+      null,
+      input.terminalState ? `Navigation ${input.terminalState}.` : input.navigationState,
+    ),
+    error:
+      navigationStatus === "failed"
+        ? {
+            code: "navigation_failed",
+            message: input.runtime.validationSummary.detail,
+            recoverable: true,
+          }
+        : null,
+    target: input.currentTarget ?? null,
+  };
 }
 
 function defaultMappingStatus(mapMetadata: VacuumMapMetadata): VacuumMappingStatus {
@@ -188,11 +525,19 @@ function getReadinessBlockers(runtime: Nav2RuntimeState, mapReady: boolean): str
   return blockers;
 }
 
+function collectBackendCapabilityDiagnostics(capabilities: Record<VacuumCapabilityName, CapabilitySupport>): Partial<Record<VacuumCapabilityName, string>> {
+  return Object.fromEntries(
+    Object.entries(capabilities)
+      .filter((entry): entry is [VacuumCapabilityName, CapabilitySupport & { backendCapability: string }] => typeof entry[1].backendCapability === "string")
+      .map(([name, capability]) => [name, capability.backendCapability]),
+  );
+}
+
 export function mapTurtleBot4Nav2State(
   input: TurtleBot4Nav2StateMapperInput | Nav2RuntimeState,
   legacyCurrentTarget?: VacuumGoalCoordinates | null,
 ): VacuumAdapterSnapshot {
-  const { runtime, currentTarget, initialDistance, mapGrid, mapMetadata, mapping } = isMapperInput(input)
+  const { runtime, currentTarget, initialDistance, mapGrid, mapMetadata, mapping, mission, recentMissions, annotations } = isMapperInput(input)
     ? input
     : {
         runtime: input,
@@ -201,6 +546,9 @@ export function mapTurtleBot4Nav2State(
         mapGrid: null,
         mapMetadata: null,
         mapping: null,
+        mission: null,
+        recentMissions: [],
+        annotations: [],
       };
 
   const mapStatus = getTopicStatus(runtime, "/map");
@@ -225,9 +573,70 @@ export function mapTurtleBot4Nav2State(
   const navigationState = mapGoalState(runtime.goalState);
   const active = ACTIVE_GOAL_STATES.has(runtime.goalState);
   const terminalState = deriveTerminalState(runtime.goalState);
-  const missionState = deriveMissionState(active, normalizedMapping.state);
   const readinessBlockers = getReadinessBlockers(runtime, mapReady);
   const planPath = extractPlanPath(runtime.planMessage);
+  const distanceRemaining = toFiniteNumber(runtime.feedbackDistanceRemaining);
+  const capabilities = mapTurtleBot4Nav2Capabilities(runtime);
+  const activeMission = buildActiveMission({
+    runtime,
+    mapping: normalizedMapping,
+    navigationState,
+    terminalState,
+    currentTarget,
+    initialDistance,
+    distanceRemaining,
+    hasCancelMission: capabilities.cancel_mission.supported,
+    runtimeMission: mission,
+  });
+  const navigationMission = activeMission?.type === "navigation" ? activeMission : null;
+  const navigationMissionTarget =
+    navigationMission?.target && typeof navigationMission.target === "object"
+      ? (navigationMission.target as VacuumGoalCoordinates)
+      : null;
+  const navigationFromMissionState: VacuumNavigationState | null = navigationMission
+    ? navigationMission.status === "preparing"
+      ? "sending"
+      : navigationMission.status === "running"
+        ? "active"
+        : navigationMission.status === "canceling"
+          ? "canceling"
+          : navigationMission.status === "completed"
+            ? "completed"
+            : navigationMission.status === "canceled"
+              ? "canceled"
+              : navigationMission.status === "failed" || navigationMission.status === "needs_assistance"
+                ? "failed"
+                : null
+    : null;
+  const terminalFromMission: VacuumNavigationTerminalState | null = navigationMission
+    ? navigationMission.status === "completed"
+      ? "completed"
+      : navigationMission.status === "canceled"
+        ? "canceled"
+        : navigationMission.status === "failed"
+          ? "failed"
+          : null
+    : null;
+  const navigationMissionActive = navigationMission ? ["preparing", "running", "canceling"].includes(navigationMission.status) : false;
+  const activeMissionRunning = activeMission ? ["preparing", "running", "canceling", "resuming", "paused", "needs_assistance"].includes(activeMission.status) : false;
+  const activeCleaningMission =
+    activeMission?.type === "coverage" || activeMission?.type === "room_cleaning" || activeMission?.type === "zone_cleaning";
+  const missionState =
+    activeMission?.type === "navigation" && navigationMissionActive
+      ? "navigating"
+      : activeCleaningMission && activeMissionRunning
+        ? activeMission.status === "paused" || activeMission.status === "needs_assistance"
+          ? "paused"
+          : "cleaning"
+        : deriveMissionState(active, normalizedMapping.state);
+  const activity = buildRobotActivity({
+    runtime,
+    activeMission,
+    missionState,
+    normalizedMapping,
+    navigationActive: active,
+  });
+  const navigationBackendGoalState = navigationMission?.phase ?? runtime.goalState;
 
   return {
     identity: {
@@ -241,7 +650,65 @@ export function mapTurtleBot4Nav2State(
       connected: runtime.connectionStatus === "connected",
       detail: runtime.connectionStatus === "connected" ? "Foxglove bridge connected." : "Robot bridge is not online.",
     },
-    capabilities: mapTurtleBot4Nav2Capabilities(runtime),
+    capabilities,
+    health: {
+      runtimeStatus: runtime.connectionStatus === "connected" ? "online" : runtime.connectionStatus === "disconnected" ? "offline" : "unknown",
+      detail: runtime.connectionStatus === "connected" ? "Foxglove bridge connected." : "Robot bridge status is not online.",
+    },
+    source: {
+      kind: "turtlebot4_nav2",
+      status: runtime.connectionStatus === "connected" ? "reachable" : "unknown",
+      stale: false,
+      lastSeenAt: null,
+      reason: runtime.connectionStatus === "connected" ? undefined : "bridge_not_connected",
+    },
+    dock: {
+      supported: false,
+      state: "unknown",
+      charging: undefined,
+      detail: "Dock state is not part of the TurtleBot4/Nav2 adapter slice.",
+    },
+    diagnostics: {
+      backend: "turtlebot4_nav2",
+      runtime: {
+        connectionStatus: runtime.connectionStatus,
+        availableTopicCount: runtime.availableTopics.length,
+        availableServiceCount: runtime.availableServices.length,
+      },
+      capabilities: {
+        backendCapabilities: collectBackendCapabilityDiagnostics(capabilities),
+      },
+      map: {
+        topic: "/map",
+        topicStatus: mapStatus,
+      },
+      pose: {
+        source: runtime.helperPoseSource,
+      },
+      navigation: {
+        backendGoalState: navigationBackendGoalState,
+        actionServices: {
+          sendGoal: "/navigate_to_pose/_action/send_goal",
+          cancelGoal: "/navigate_to_pose/_action/cancel_goal",
+        },
+      },
+      mapping: {
+        topics: {
+          status: "/vacuum_mapping/status",
+        },
+        savedMapPaths: {
+          savedMapPath: normalizedMapping.savedMapPath,
+          loadedMapPath: normalizedMapping.loadedMapPath,
+          savedMaps: normalizedMapping.savedMaps.map((savedMap) => ({
+            id: savedMap.id,
+            yamlPath: savedMap.yamlPath,
+            imagePath: savedMap.imagePath,
+            poseGraphPath: savedMap.poseGraphPath,
+          })),
+        },
+      },
+      warnings: faults,
+    },
     map: {
       readiness: mapReadiness,
       topic: "/map",
@@ -249,6 +716,7 @@ export function mapTurtleBot4Nav2State(
       detail: mapStatus === "receiving" || normalizedMapMetadata.hasMap ? "Map is receiving." : "Waiting for live occupancy-grid data.",
       grid: mapGrid ?? null,
       metadata: normalizedMapMetadata,
+      annotations: annotations ?? [],
     },
     pose: {
       readiness: poseReadiness,
@@ -258,23 +726,24 @@ export function mapTurtleBot4Nav2State(
       detail: poseAvailable ? "Pose is available." : "Waiting for localized pose or odometry fallback.",
     },
     navigation: {
-      state: navigationState,
-      backendGoalState: runtime.goalState,
-      active,
-      isSending: runtime.isSendingGoal,
-      isCanceling: runtime.isCancelingGoal,
-      currentTarget: currentTarget ?? null,
-      terminalState,
+      state: navigationFromMissionState ?? navigationState,
+      backendGoalState: navigationBackendGoalState,
+      active: navigationMission ? ["preparing", "running", "canceling"].includes(navigationMission.status) : active,
+      isSending: navigationMission ? navigationMission.status === "preparing" : runtime.isSendingGoal,
+      isCanceling: navigationMission ? navigationMission.status === "canceling" : runtime.isCancelingGoal,
+      currentTarget: navigationMissionTarget ?? currentTarget ?? null,
+      terminalState: terminalFromMission ?? terminalState,
       planPath,
       progress: {
-        distanceRemaining: toFiniteNumber(runtime.feedbackDistanceRemaining),
+        distanceRemaining: navigationMission?.progress.distanceRemaining ?? distanceRemaining,
         initialDistance: initialDistance ?? null,
         recoveries: toFiniteNumber(runtime.feedbackRecoveries),
         navigationTime: runtime.feedbackNavigationTime,
         estimatedTimeRemaining: runtime.feedbackEta,
       },
-      detail: runtime.validationSummary.detail,
+      detail: navigationMission?.error?.message ?? navigationMission?.result?.summary ?? runtime.validationSummary.detail,
     },
+    activity,
     mission: {
       state: missionState,
       detail:
@@ -282,10 +751,23 @@ export function mapTurtleBot4Nav2State(
           ? normalizedMapping.stateReason
           : missionState === "navigating"
             ? "Robot is navigating to a selected location."
-            : terminalState
-              ? `Last navigation ${terminalState}.`
+            : missionState === "cleaning"
+              ? activeMission?.type === "room_cleaning"
+                ? "Robot is cleaning a selected room."
+                : activeMission?.type === "zone_cleaning"
+                  ? "Robot is cleaning a selected zone."
+                  : "Robot is cleaning a selected area."
+              : missionState === "paused" && activeCleaningMission
+                ? activeMission?.error?.message ?? "Cleaning is paused."
+            : (terminalFromMission ?? terminalState)
+              ? `Last navigation ${terminalFromMission ?? terminalState}.`
               : "Robot is idle.",
-      lastTerminalNavigation: terminalState,
+      lastTerminalNavigation: terminalFromMission ?? terminalState,
+    },
+    activeMission,
+    missions: {
+      active: activeMission,
+      recent: mergeRecentMissions(activeMission?.result ? [activeMission, ...(recentMissions ?? [])] : recentMissions ?? []),
     },
     mapping: normalizedMapping,
     readiness: {

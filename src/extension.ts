@@ -2061,15 +2061,20 @@ async function getStandalonePanelHtml(
   const token = await auth.getToken(context);
   const currentVmConfig = vmManagerIntegration?.getLastUsedConfig() ?? null;
   const vmConfigId = currentVmConfig?.id ?? '';
+  const configuredVacuumBackend = vscode.workspace
+    .getConfiguration('tensorfleet.vacuum')
+    .get<string>('backend', 'turtlebot4_nav2');
 
   const serializedVmManagerUrl = JSON.stringify(vmManagerUrl);
   const serializedVmConfig = JSON.stringify(currentVmConfig ?? null).replace(/</g, '\\u003c');
   const serializedVmConfigId = JSON.stringify(vmConfigId);
+  const serializedVacuumBackend = JSON.stringify(configuredVacuumBackend === 'valetudo' ? 'valetudo' : 'turtlebot4_nav2');
 
   const tfConfigScript = `
   <script>
     window.TENSORFLEET_VM_MANAGER_URL = ${serializedVmManagerUrl};
     window.TENSORFLEET_VM_CONFIG = ${serializedVmConfig};
+    window.TENSORFLEET_VACUUM_BACKEND = ${serializedVacuumBackend};
     ${nodeId ? `window.TENSORFLEET_NODE_ID = ${JSON.stringify(nodeId)};` : ''}
     ${token ? `window.TENSORFLEET_JWT = ${JSON.stringify(token)};` : ''}
     ${vmConfigId ? `window.TENSORFLEET_VM_CONFIG_ID = ${serializedVmConfigId};` : ''}
