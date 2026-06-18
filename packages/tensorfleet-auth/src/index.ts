@@ -10,3 +10,17 @@
 
 export * from './oauth-core.js';
 export * from './types.js';
+export * from './regions.js';
+export * from './vm-config.js';
+export {
+  buildVmSnapshot,
+  fetchVmIdFromManager,
+  isVmAuthError,
+  isVmNotFoundError,
+} from './vm-manager.js';
+export type {
+  VmHttpError,
+} from './vm-manager.js';
+export * from './vm-manager-client.js';
+export * from './global-auth.js';
+export * from './config-store.js';

@@ -8,6 +8,8 @@ import OSM from 'ol/source/OSM';
 import VectorSource from 'ol/source/Vector';
 import Feature from 'ol/Feature';
 import Point from 'ol/geom/Point';
+import Draw from 'ol/interaction/Draw';
+import DoubleClickZoom from 'ol/interaction/DoubleClickZoom';
 import Style from 'ol/style/Style';
 import Icon from 'ol/style/Icon';
 import CircleStyle from 'ol/style/Circle';
@@ -17,7 +19,7 @@ import { fromLonLat } from 'ol/proj';
 import { unByKey } from 'ol/Observable';
 import type { EventsKey } from 'ol/events';
 
-import type { DroneStateModel, DroneState } from '../../../../packages/tensorfleet-util/src/drone/drone-state-model';
+import type { DroneStateModel, DroneState } from 'tensorfleet-util';
 import { MapButtonsStack, FollowLockButton } from './MapButtons';
 import { FlightPathTools } from './FlightPathTools';
 
@@ -25,6 +27,17 @@ type Props = {
   model: DroneStateModel;
   follow?: boolean;
   className?: string;
+  missionPlanningRequestKey?: number;
+  flightPlans?: Array<{
+    id: string;
+    name: string;
+    path: [number, number][];
+  }>;
+  selectedFlightPlanId?: string | null;
+  ongoingMissionPath?: [number, number][];
+  activePanel?: 'mission-planning' | 'drone-status';
+  onSelectPanel?: (panel: 'mission-planning' | 'drone-status') => void;
+  onFlightPlanPathChange?: (flightPlanId: string, path: [number, number][]) => void;
 };
 
 function toDegreesMaybeScaled(value: number | undefined): number | undefined {
@@ -129,7 +142,40 @@ function lerpAngleRad(a: number, b: number, t: number): number {
 const CAM_EASE_DURATION_MS = 450;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
-export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) => {
+function endMissionPlanning(map: Map, mode: 'finish' | 'cancel') {
+  const draw = map.getInteractions().getArray().find((interaction) => interaction instanceof Draw);
+  if (!(draw instanceof Draw)) return;
+
+  if (mode === 'finish') {
+    draw.finishDrawing();
+  } else {
+    draw.abortDrawing();
+  }
+
+  if (map.getInteractions().getArray().includes(draw)) {
+    map.removeInteraction(draw);
+  }
+
+  const dblZoom = map.getInteractions().getArray().find((interaction) => interaction instanceof DoubleClickZoom);
+  if (dblZoom instanceof DoubleClickZoom) {
+    dblZoom.setActive(true);
+  }
+}
+
+export const DroneMap: React.FC<Props> = ({
+  model,
+  follow = true,
+  className,
+  missionPlanningRequestKey = 0,
+  flightPlans = [],
+  selectedFlightPlanId = null,
+  ongoingMissionPath = [],
+  activePanel = 'mission-planning',
+  onSelectPanel,
+  onFlightPlanPathChange,
+}) => {
+  const rootClassName = className ? `tf-drone-map ${className}` : 'tf-drone-map';
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<HTMLDivElement | null>(null);
 
@@ -193,6 +239,24 @@ export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) =
       }
     });
 
+    const viewportEl = map.getViewport();
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+      endMissionPlanning(map, 'finish');
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        endMissionPlanning(map, 'finish');
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        endMissionPlanning(map, 'cancel');
+      }
+    };
+
+    viewportEl.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('keydown', handleKeyDown);
+
     const tick = (ts: number) => {
       if (!mapObjRef.current || !droneFeatureRef.current) return;
 
@@ -242,6 +306,8 @@ export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) =
     return () => {
       if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current);
       if (panListenerKeyRef.current) unByKey(panListenerKeyRef.current);
+      viewportEl.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('keydown', handleKeyDown);
       map.setTarget(undefined);
       mapObjRef.current = null;
       vectorSourceRef.current = null;
@@ -308,7 +374,7 @@ export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) =
   return (
     <div
       ref={containerRef}
-      className={className}
+      className={rootClassName}
       style={{
         position: 'relative',
         width: '100%',
@@ -318,14 +384,74 @@ export const DroneMap: React.FC<Props> = ({ model, follow = true, className }) =
         overflow: 'hidden',
       }}
     >
+      <style>{`
+        .tf-drone-map .tf-drone-map-panel-controls > div {
+          padding: 8px;
+          border-radius: 16px;
+          background: color-mix(in srgb, var(--vscode-editorWidget-background, rgba(24, 24, 24, 0.82)) 88%, transparent);
+          border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.12));
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+          backdrop-filter: blur(12px) saturate(1.15);
+          -webkit-backdrop-filter: blur(12px) saturate(1.15);
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button {
+          background: color-mix(in srgb, var(--vscode-button-secondaryBackground, rgba(255, 255, 255, 0.12)) 78%, transparent) !important;
+          border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.12)) !important;
+          box-shadow: none !important;
+          color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #e6e6e6));
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open mission planning"],
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open drone status"] {
+          color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #e6e6e6));
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open mission planning"][style*="2px solid"],
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open drone status"][style*="2px solid"] {
+          background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 24%, var(--vscode-editorWidget-background, rgba(24, 24, 24, 0.82))) !important;
+          border-color: var(--vscode-focusBorder, var(--vscode-button-background, #0e639c)) !important;
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder, #0e639c) 45%, transparent) !important;
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button svg rect,
+        .tf-drone-map .tf-drone-map-panel-controls button svg line,
+        .tf-drone-map .tf-drone-map-panel-controls button svg path {
+          stroke: currentColor !important;
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open mission planning"] svg path {
+          fill: currentColor !important;
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open mission planning"] svg rect {
+          fill: none !important;
+          opacity: 0.72;
+        }
+
+        .tf-drone-map .tf-drone-map-panel-controls button[title="Open drone status"] span[aria-hidden="true"] {
+          filter: grayscale(1) brightness(1.2);
+        }
+      `}</style>
+
       <div ref={mapRef} style={{ position: 'absolute', inset: 0 }} />
 
-      <FlightPathTools
-        map={olMap}
-        onPathChange={(coords) => {
-          // coords are in EPSG:3857
-        }}
-      />
+      <div className="tf-drone-map-panel-controls">
+        <FlightPathTools
+          map={olMap}
+          startRequestKey={missionPlanningRequestKey}
+          flightPlans={flightPlans}
+          selectedFlightPlanId={selectedFlightPlanId}
+          ongoingMissionPath={ongoingMissionPath}
+          activePanel={activePanel}
+          onSelectPanel={onSelectPanel}
+          onPathChange={(coords) => {
+            if (selectedFlightPlanId) {
+              onFlightPlanPathChange?.(selectedFlightPlanId, coords);
+            }
+          }}
+        />
+      </div>
 
       <MapButtonsStack corner="bottom-right">
         <FollowLockButton locked={isLocked} onToggle={() => setIsLocked((v) => !v)} />

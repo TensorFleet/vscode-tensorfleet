@@ -4,4 +4,144 @@
     width: 100%;
     height: 100%;
     display: flex;
+    position: relative;
+}
+
+.mission-control-settings-trigger {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 20;
+}
+
+.mission-side-panel {
+    width: 100%;
+    max-width: 400px;
+    margin: 0 auto;
+    border: 1px solid var(--vscode-widget-border, #e5e7eb);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+    background: var(--vscode-editorWidget-background, #fff);
+    color: var(--vscode-editorWidget-foreground, #111827);
+    min-height: 100%;
+    height: 100%;
+    max-height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.mission-side-panel__header {
+    padding: 16px;
+    border-bottom: 1px solid var(--vscode-widget-border, #e5e7eb);
+}
+
+.mission-side-panel__title {
+    font-weight: 600;
+    color: var(--vscode-editorWidget-foreground, #111827);
+}
+
+.mission-side-panel__body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.mission-side-panel__action {
+    width: 100%;
+    height: 44px;
+    padding: 0 14px;
+    border-radius: 10px;
+    background: var(--vscode-button-background, #111827);
+    color: var(--vscode-button-foreground, #fff);
+    border: 1px solid var(--vscode-button-background, #111827);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.mission-side-panel__missions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.mission-side-panel__mission-row {
+    position: relative;
+}
+
+.mission-side-panel__mission-button {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 82px 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--vscode-widget-border, #e5e7eb);
+    background: var(--vscode-editor-background, rgba(255, 255, 255, 0.04));
+    color: var(--vscode-editorWidget-foreground, #111827);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.mission-side-panel__mission-button--selected {
+    border-color: var(--vscode-focusBorder, #0e639c);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder, #0e639c) 45%, transparent);
+}
+
+.mission-side-panel__mission-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.mission-side-panel__mission-actions {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 2;
+}
+
+.mission-side-panel__icon-button {
+    width: 32px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--vscode-icon-foreground, var(--vscode-editorWidget-foreground, #111827));
+    border: 1px solid var(--vscode-widget-border, #e5e7eb);
+    background: var(--vscode-editorWidget-background, #fff);
+    cursor: pointer;
+    padding: 0;
+}
+
+.mission-side-panel__icon-button:hover:not(:disabled) {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground, rgba(0, 0, 0, 0.06)));
+}
+
+.mission-side-panel__icon-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.mission-side-panel__action-icon,
+.mission-side-panel__delete-icon {
+    width: 18px;
+    height: 18px;
+    display: block;
+}
+
+.mission-side-panel__delete-icon {
+    stroke: currentColor;
 }

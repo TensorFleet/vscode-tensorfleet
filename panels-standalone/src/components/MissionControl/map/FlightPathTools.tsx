@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import Feature from 'ol/Feature';
 import type Map from 'ol/Map';
 import VectorSource from 'ol/source/Vector';
 import VectorLayer from 'ol/layer/Vector';
@@ -11,25 +12,11 @@ import Style from 'ol/style/Style';
 import Stroke from 'ol/style/Stroke';
 import Fill from 'ol/style/Fill';
 import RegularShape from 'ol/style/RegularShape';
+import { MapButtonsStack } from './MapButtons';
 
-type TopRightButtonsStackProps = { children: React.ReactNode };
-
-export const TopRightButtonsStack: React.FC<TopRightButtonsStackProps> = ({ children }) => (
-    <div
-        style={{
-            position: 'absolute',
-            top: 12,
-            right: 12,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            zIndex: 1000,
-            pointerEvents: 'none',
-        }}
-    >
-        {children}
-    </div>
-);
+const iconButtonBaseStyle: React.CSSProperties = {
+    display: 'block',
+};
 
 type IconButtonProps = {
     title?: string;
@@ -42,14 +29,14 @@ type IconButtonProps = {
 };
 
 const IconButton: React.FC<IconButtonProps> = ({
-                                                   title,
-                                                   active,
-                                                   onClick,
-                                                   icon,
-                                                   size = 44,
-                                                   iconScale = 0.8,
-                                                   iconNudge,
-                                               }) => {
+    title,
+    active,
+    onClick,
+    icon,
+    size = 44,
+    iconScale = 0.8,
+    iconNudge,
+}) => {
     const iconPx = Math.round(size * iconScale);
     const iconEl = React.isValidElement(icon)
         ? React.cloneElement(icon as React.ReactElement<any>, {
@@ -60,6 +47,7 @@ const IconButton: React.FC<IconButtonProps> = ({
 
     return (
         <button
+            type="button"
             title={title}
             onClick={onClick}
             style={{
@@ -79,14 +67,14 @@ const IconButton: React.FC<IconButtonProps> = ({
                 lineHeight: 0,
             }}
         >
-      <span
-          style={{
-              display: 'block',
-              transform: `translate(${iconNudge?.x ?? 0}px, ${iconNudge?.y ?? 0}px)`,
-          }}
-      >
-        {iconEl}
-      </span>
+            <span
+                style={{
+                    display: 'block',
+                    transform: `translate(${iconNudge?.x ?? 0}px, ${iconNudge?.y ?? 0}px)`,
+                }}
+            >
+                {iconEl}
+            </span>
         </button>
     );
 };
@@ -95,7 +83,7 @@ const SVGFlagPlusIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) =
     <svg
         xmlns="http://www.w3.org/2000/svg"
         viewBox="0 0 24 24"
-        style={style}
+        style={{ ...iconButtonBaseStyle, ...style }}
         preserveAspectRatio="xMidYMid meet"
         aria-hidden="true"
         focusable="false"
@@ -116,46 +104,74 @@ const SVGFlagPlusIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) =
             vectorEffect="non-scaling-stroke"
         />
         <line x1="15.25" y1="12" x2="17.75" y2="12" stroke="#0a66ff" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-        <line x1="16.5"  y1="10.75" x2="16.5"  y2="13.25" stroke="#0a66ff" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        <line x1="16.5" y1="10.75" x2="16.5" y2="13.25" stroke="#0a66ff" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
     </svg>
 );
 
-function makeFlightPathStyles(): (feature: any) => Style[] {
-    const redStroke = new Stroke({
-        color: 'rgba(255,0,0,0.95)',
-        width: 2,
-        lineCap: 'square',
-        lineJoin: 'miter',
-    });
+const DroneStatusIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) => (
+    <span
+        aria-hidden="true"
+        style={{
+            ...iconButtonBaseStyle,
+            ...style,
+            width: '100%',
+            height: '100%',
+            display: 'grid',
+            placeItems: 'center',
+            lineHeight: 1,
+            fontSize: 20,
+        }}
+    >
+        ✈️
+    </span>
+);
 
-    const lineStyle = new Style({ stroke: redStroke });
+function makeFlightPathStyles(): (feature: Feature<LineString>) => Style[] {
+    return (feature) => {
+        const isOngoing = feature.get('isOngoing') === true;
+        const accentColor = isOngoing
+            ? '#000000'
+            : feature.get('isSelected') === true
+            ? 'rgba(255,105,180,0.98)'
+            : 'rgba(255,0,0,0.95)';
 
-    const squareMarker = new Style({
-        image: new RegularShape({
-            points: 4,
-            radius: 5,
-            angle: 0,
-            fill: new Fill({ color: '#ffffff' }),
-            stroke: new Stroke({ color: 'rgba(255,0,0,0.95)', width: 2 }),
-        }),
-        geometry: (feature) => {
-            const geom = feature.getGeometry();
+        const lineStyle = new Style({
+            stroke: new Stroke({
+                color: accentColor,
+                width: isOngoing ? 4.5 : 3,
+                lineCap: 'square',
+                lineJoin: 'miter',
+            }),
+        });
+
+        const squareMarker = new Style({
+            image: new RegularShape({
+                points: 4,
+                radius: 5,
+                angle: 0,
+                fill: new Fill({ color: '#ffffff' }),
+                stroke: new Stroke({ color: accentColor, width: 2 }),
+            }),
+        });
+        squareMarker.setGeometry((innerFeature) => {
+            const geom = innerFeature.getGeometry();
             if (geom instanceof LineString) return new MultiPoint(geom.getCoordinates());
             return undefined;
-        },
-        zIndex: 10,
-    });
+        });
+        squareMarker.setZIndex(10);
 
-    const arrowStyle = new Style({
-        image: new RegularShape({
+        const arrowImage = new RegularShape({
             points: 3,
             radius: 8,
             rotation: 0,
-            fill: new Fill({ color: 'rgba(255,0,0,0.95)' }),
+            fill: new Fill({ color: accentColor }),
             stroke: new Stroke({ color: '#ffffff', width: 1 }),
-        }),
-        geometry: (feature) => {
-            const geom = feature.getGeometry();
+        });
+        const arrowStyle = new Style({
+            image: arrowImage,
+        });
+        arrowStyle.setGeometry((innerFeature) => {
+            const geom = innerFeature.getGeometry();
             if (!(geom instanceof LineString)) return undefined;
             const coords = geom.getCoordinates();
             if (coords.length < 2) return undefined;
@@ -164,21 +180,75 @@ function makeFlightPathStyles(): (feature: any) => Style[] {
             const dx = end[0] - prev[0];
             const dy = end[1] - prev[1];
             const rotation = Math.atan2(dy, dx);
-            (arrowStyle.getImage() as RegularShape).setRotation(rotation);
+            arrowImage.setRotation(rotation);
             return new Point(end);
-        },
-        zIndex: 11,
-    });
+        });
+        arrowStyle.setZIndex(11);
 
-    return () => [lineStyle, squareMarker, arrowStyle];
+        return [lineStyle, squareMarker, arrowStyle];
+    };
+}
+
+type FlightPlanRecord = {
+    id: string;
+    name: string;
+    path: [number, number][];
+};
+
+function syncFlightPlanFeatures(
+    source: VectorSource,
+    flightPlans: FlightPlanRecord[],
+    selectedFlightPlanId: string | null,
+    ongoingMissionPath: [number, number][],
+) {
+    source.clear();
+
+    if (ongoingMissionPath.length >= 2) {
+        const ongoingFeature = new Feature({
+            geometry: new LineString(ongoingMissionPath),
+        });
+        ongoingFeature.setId('ongoing-mission');
+        ongoingFeature.set('isSelected', false);
+        ongoingFeature.set('isOngoing', true);
+        source.addFeature(ongoingFeature);
+    }
+
+    for (const flightPlan of flightPlans) {
+        const isSelected = flightPlan.id === selectedFlightPlanId;
+        if (!isSelected) continue;
+        if (flightPlan.path.length < 2) continue;
+
+        const feature = new Feature({
+            geometry: new LineString(flightPlan.path),
+        });
+        feature.setId(flightPlan.id);
+        feature.set('isSelected', isSelected);
+        feature.set('isOngoing', false);
+        source.addFeature(feature);
+    }
 }
 
 type FlightPathToolsProps = {
     map: Map | null | undefined;
     onPathChange?: (coords: [number, number][]) => void;
+    startRequestKey?: number;
+    flightPlans?: FlightPlanRecord[];
+    selectedFlightPlanId?: string | null;
+    ongoingMissionPath?: [number, number][];
+    activePanel?: 'mission-planning' | 'drone-status';
+    onSelectPanel?: (panel: 'mission-planning' | 'drone-status') => void;
 };
 
-export const FlightPathTools: React.FC<FlightPathToolsProps> = ({ map, onPathChange }) => {
+export const FlightPathTools: React.FC<FlightPathToolsProps> = ({
+    map,
+    onPathChange,
+    startRequestKey = 0,
+    flightPlans = [],
+    selectedFlightPlanId = null,
+    ongoingMissionPath = [],
+    activePanel = 'mission-planning',
+    onSelectPanel,
+}) => {
     const [isDrawing, setIsDrawing] = useState(false);
 
     const sourceRef = useRef<VectorSource | null>(null);
@@ -207,10 +277,13 @@ export const FlightPathTools: React.FC<FlightPathToolsProps> = ({ map, onPathCha
         };
     }, [map, styleFn]);
 
+    useEffect(() => {
+        if (!sourceRef.current) return;
+        syncFlightPlanFeatures(sourceRef.current, flightPlans, selectedFlightPlanId, ongoingMissionPath);
+    }, [flightPlans, selectedFlightPlanId, ongoingMissionPath]);
+
     const startNewPath = () => {
         if (!map || !sourceRef.current) return;
-
-        sourceRef.current.clear();
 
         if (drawRef.current) {
             map.removeInteraction(drawRef.current);
@@ -249,17 +322,32 @@ export const FlightPathTools: React.FC<FlightPathToolsProps> = ({ map, onPathCha
         setIsDrawing(true);
     };
 
+    useEffect(() => {
+        if (startRequestKey > 0) {
+            startNewPath();
+        }
+    }, [startRequestKey]);
+
     return (
-        <TopRightButtonsStack>
+        <MapButtonsStack corner="top-right">
             <IconButton
-                title={isDrawing ? 'Drawing flight path… (double-click to finish)' : 'Start flight path'}
-                active={isDrawing}
-                onClick={startNewPath}
+                title="Open mission planning"
+                active={activePanel === 'mission-planning'}
+                onClick={() => onSelectPanel?.('mission-planning')}
                 size={44}
                 iconScale={0.9}
                 icon={<SVGFlagPlusIcon />}
                 iconNudge={{ x: 0, y: 0 }}
             />
-        </TopRightButtonsStack>
+            <IconButton
+                title="Open drone status"
+                active={activePanel === 'drone-status'}
+                onClick={() => onSelectPanel?.('drone-status')}
+                size={44}
+                iconScale={0.72}
+                icon={<DroneStatusIcon />}
+                iconNudge={{ x: 0, y: -1 }}
+            />
+        </MapButtonsStack>
     );
 };
