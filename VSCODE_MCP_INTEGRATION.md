@@ -91,7 +91,9 @@ For Valetudo `vacuum_pause`:
 5. MCP server posts `{ "command": "pause" }` to `/vms/self/tensorfleet/api/v1/valetudo/command`.
 6. MCP server returns a structured TensorFleet result envelope.
 
-For simulation reads, MCP uses product-level `/vms/self/tensorfleet/api/v1/vacuum/health` and `/vms/self/tensorfleet/api/v1/vacuum/snapshot` routes when the VM runtime exposes them. Simulation state is mapped to normalized vacuum concepts such as pose, map summary, mission state, navigation state, readiness, and capabilities. MCP does not expose ROS topics, Nav2 actions, helper services, Foxglove endpoints, or direct VM addresses as tools.
+For simulation reads, MCP uses product-level `/vms/self/tensorfleet/api/v1/vacuum/health` and `/vms/self/tensorfleet/api/v1/vacuum/snapshot` routes when the VM runtime exposes them. Simulation is the current MCP development focus. Simulation state is mapped to normalized vacuum concepts such as pose, compact map summary, active/recent mission state, navigation state, readiness evidence, and capability availability. MCP does not expose ROS topics, Nav2 actions, helper services, Foxglove endpoints, or direct VM addresses as tools.
+
+Simulation readiness reports include selected backend, runtime/source availability, source freshness when timestamped, map and pose availability, localization evidence from pose state, active mission state, navigation state, movement/coverage capability availability, and blocking reasons from normalized snapshot data.
 
 Simulation write tools remain deferred in this phase. Valetudo-only settings such as `vacuum_set_fan_speed` and `vacuum_set_water_usage` return structured `unsupported` when `turtlebot4_nav2` is selected.
 

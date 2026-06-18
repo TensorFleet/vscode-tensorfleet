@@ -55,11 +55,18 @@ If no vacuum backend is known, tools return a structured `invalid_state` result 
 - `vacuum_set_fan_speed`
 - `vacuum_set_water_usage`
 
-Backend-neutral read tools use the selected backend. Valetudo reads use `/vms/self/tensorfleet/api/v1/valetudo/*`; simulation reads use product-level `/vms/self/tensorfleet/api/v1/vacuum/*` routes when the VM runtime exposes them. If the simulation snapshot route is not present yet, MCP returns structured `unavailable` rather than raw ROS/Nav2 data.
+Backend-neutral read tools use the selected backend. Valetudo reads use `/vms/self/tensorfleet/api/v1/valetudo/*`; simulation reads use product-level `/vms/self/tensorfleet/api/v1/vacuum/*` routes when the VM runtime exposes them. Simulation is the current MCP development focus. If the simulation snapshot route is not present yet, MCP returns structured `unavailable` rather than raw ROS/Nav2 data.
+
+Simulation read results are compact and product-level:
+
+- `vacuum_get_snapshot` includes readiness evidence for backend selection, runtime/source status, freshness, map availability, pose availability, mission/navigation state, capability availability, and blocking reasons.
+- `vacuum_get_capabilities` reports normalized features and marks them available only when the normalized descriptor says they are currently available.
+- `vacuum_get_map_summary` omits full grids and large geometry by default; `include_grid` and `include_geometry` are explicit large-payload requests.
+- `vacuum_get_pose`, `vacuum_get_mission_state`, and `vacuum_get_navigation_state` return structured unavailable/readiness fields rather than raw backend internals.
 
 `vacuum_set_fan_speed` and `vacuum_set_water_usage` are currently Valetudo-limited and return `unsupported` for the TurtleBot4/Nav2 simulation backend. Basic command tools remain gated by the selected backend's normalized capabilities and current availability.
 
-Deferred vacuum features such as segment cleaning, zone cleaning, room cleaning, go-to, map editing, live map streaming, consumable resets, dock actions, and hardware validation are not exposed as MCP commands.
+Deferred vacuum features such as simulation navigation writes, go-to, coverage, room cleaning, zone cleaning, mission pause/resume/cancel/retry/skip, segment cleaning, map editing, live map streaming, consumable resets, dock actions, and hardware validation are not exposed as MCP commands.
 
 ## Cursor Config
 

@@ -680,3 +680,65 @@ Result:
 - `timeout 3s node dist/mcp-server.js`: passed - server printed `TensorFleet MCP Server running on stdio`.
 - live simulation `curl`: not tested - `TENSORFLEET_JWT` or `TENSORFLEET_VM_MANAGER_URL` was not set in the shell.
 - `git diff --check`: passed - no whitespace errors.
+
+---
+
+# Progress Report - Simulation MCP Read Quality
+Current report date: 2026-06-18.
+
+## 1. What changed
+- Strengthened MCP simulation read projections for snapshot, capabilities, pose, map summary, mission state, and navigation state.
+- Added simulation readiness evidence to MCP snapshot/capability results, including selected backend, runtime/source availability, freshness, map and pose availability, localization evidence, active mission state, navigation state, movement/coverage capability availability, and blocking reasons.
+- Sanitized capability output so simulation capabilities expose normalized product names and availability reasons without ROS topic names, Nav2 action names, helper service names, raw message types, Foxglove routes, or private runtime details.
+- Updated map summary to return compact identity, dimensions, cell summary, annotation counts, target counts, navigation/coverage usability, and optional explicit grid/geometry payloads.
+- Updated pose, mission, and navigation projections to return compact product-level envelopes and structured unavailable responses when normalized state is absent.
+- Extended the MCP vacuum regression pass for simulation read quality, missing simulation route handling, sanitized capabilities, default map payload size, pose absence, compact mission/navigation envelopes, backend selection, unsupported simulation settings, and forbidden tool names.
+- Updated MCP setup, VS Code bridge, and architecture docs for simulation-focused read behavior and readiness diagnostics.
+
+## 2. Product behavior
+- MCP clients get clearer simulation readiness diagnostics before any future movement commands are exposed.
+- Simulation capabilities distinguish supported from currently available; capabilities are only marked available when the normalized descriptor explicitly reports availability.
+- Supported-but-unavailable simulation capabilities include normalized reasons such as map or mission-state blockers when provided.
+- `vacuum_get_map_summary` no longer returns full occupancy-grid payloads by default; callers must opt into `include_grid` or `include_geometry`.
+- `vacuum_get_pose` returns structured `available: false` with readiness and reason when pose is absent.
+- Mission and navigation reads expose active/recent mission state, compact progress, terminal result, related mission linkage, path summary, and normalized control availability without raw backend internals.
+- Valetudo behavior remains routed through the selected backend, and Valetudo-only fan speed/water usage settings remain unsupported on simulation.
+
+## 3. Still deferred
+- Simulation write tools.
+- `vacuum_start_navigation`.
+- `vacuum_go_to_location`.
+- `vacuum_start_clean_area`.
+- `vacuum_start_room_cleaning`.
+- `vacuum_start_zone_cleaning`.
+- `vacuum_pause_mission`.
+- `vacuum_resume_mission`.
+- `vacuum_cancel_mission`.
+- `vacuum_retry_mission_step`.
+- `vacuum_skip_mission_step`.
+- Map editing.
+- Map SSE/live streaming.
+- Consumable reset commands.
+- Dock action commands.
+- Hardware validation.
+- Live simulation runtime smoke testing with real `TENSORFLEET_VM_MANAGER_URL` and `TENSORFLEET_JWT`.
+
+## 4. Validation
+
+```sh
+bun run test:mcp-vacuum
+bun run typecheck
+bun run build:extension
+timeout 3s node dist/mcp-server.js
+if [ -n "$TENSORFLEET_JWT" ] && [ -n "$TENSORFLEET_VM_MANAGER_URL" ]; then curl -fsS -H "Authorization: Bearer $TENSORFLEET_JWT" "$TENSORFLEET_VM_MANAGER_URL/vms/self/tensorfleet/api/v1/vacuum/snapshot" >/tmp/tensorfleet-mcp-simulation-snapshot.json && wc -c /tmp/tensorfleet-mcp-simulation-snapshot.json; else echo "TENSORFLEET_JWT or TENSORFLEET_VM_MANAGER_URL not set; skipping live simulation curl"; fi
+git diff --check
+```
+
+Result:
+
+- `bun run test:mcp-vacuum`: passed - MCP vacuum regression passed.
+- `bun run typecheck`: passed - TypeScript completed with no errors.
+- `bun run build:extension`: passed - Vite built `dist/mcp-server.js` and `dist/extension.js`.
+- `timeout 3s node dist/mcp-server.js`: passed - server printed `TensorFleet MCP Server running on stdio`.
+- live simulation `curl`: not tested - `TENSORFLEET_JWT` or `TENSORFLEET_VM_MANAGER_URL` was not set in the shell.
+- `git diff --check`: passed - no whitespace errors.

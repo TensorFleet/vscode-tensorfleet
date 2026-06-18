@@ -46,7 +46,17 @@ type RuntimeSnapshot = JsonRecord & {
     annotations?: MapAnnotation[];
   };
   pose?: JsonRecord;
-  navigation?: JsonRecord;
+  navigation?: JsonRecord & {
+    active?: boolean;
+    isSending?: boolean;
+    isCanceling?: boolean;
+    currentTarget?: unknown;
+    terminalState?: string | null;
+    planPath?: unknown;
+    progress?: JsonRecord;
+    state?: string;
+    detail?: string;
+  };
   mission?: JsonRecord;
   activeMission?: JsonRecord | null;
   missions?: JsonRecord;
@@ -86,6 +96,30 @@ type CommandAvailability = {
   status?: string;
   notes?: string;
 };
+
+const SIMULATION_CAPABILITY_NAMES = [
+  "map",
+  "pose",
+  "navigation_status",
+  "mission_state",
+  "start_navigation",
+  "go_to_location",
+  "start_coverage",
+  "pause_mission",
+  "resume_mission",
+  "cancel_mission",
+  "retry_mission_step",
+  "skip_mission_step",
+  "mapping_session",
+  "auto_mapping",
+  "map_annotations",
+  "room_semantics",
+  "zone_semantics",
+  "room_cleaning",
+  "zone_cleaning",
+  "fan_speed",
+  "water_usage",
+] as const;
 
 const COMMAND_TOOL_TO_RUNTIME_COMMAND = {
   vacuum_start_cleaning: "start_cleaning",
@@ -158,7 +192,7 @@ export function createVacuumTools(): Map<string, VacuumToolDefinition> {
       withRuntime(async (context) => {
         const snapshot = await fetchSelectedVacuumSnapshot(context);
         if (!snapshot.ok || !snapshot.data) return snapshot;
-        return mcpSuccess("Vacuum capabilities fetched.", normalizeCapabilities(snapshot.data as RuntimeSnapshot));
+        return mcpSuccess("Vacuum capabilities fetched.", normalizeCapabilities(snapshot.data as RuntimeSnapshot, context.backend));
       }),
   });
 
@@ -194,13 +228,23 @@ export function createVacuumTools(): Map<string, VacuumToolDefinition> {
 
   tools.set("vacuum_get_map_summary", {
     name: "vacuum_get_map_summary",
-    description: "Return a compact normalized vacuum map summary without preview/grid payloads.",
-    inputSchema: emptyInputSchema(),
-    execute: async () =>
+    description: "Return a compact normalized vacuum map summary; grid and geometry payloads are omitted by default because they can be large.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        include_grid: { type: "boolean", default: false },
+        include_geometry: { type: "boolean", default: false },
+      },
+      additionalProperties: false,
+    },
+    execute: async (args) =>
       withRuntime(async (context) => {
         const snapshot = await fetchSelectedVacuumSnapshot(context);
         if (!snapshot.ok || !snapshot.data) return snapshot;
-        return mcpSuccess("Vacuum map summary fetched.", normalizeMap(snapshot.data as RuntimeSnapshot, false));
+        return mcpSuccess("Vacuum map summary fetched.", normalizeMap(snapshot.data as RuntimeSnapshot, {
+          includeGrid: args.include_grid === true,
+          includeGeometry: args.include_geometry === true,
+        }));
       }),
   });
 
@@ -392,10 +436,11 @@ function commandParams(command: RuntimeCommandName, args: JsonRecord): Record<st
   return { value: String(args.value).trim() };
 }
 
-function normalizeSnapshot(
+export function normalizeSnapshot(
   snapshot: RuntimeSnapshot,
   options: { backend: VacuumBackendId; includeDiagnostics: boolean; includeRawDiagnostics: boolean; includeMapPreview: boolean },
 ): JsonRecord {
+  const capabilities = normalizeCapabilities(snapshot, options.backend);
   const data: JsonRecord = {
     identity: {
       id: stringValue(snapshot.identity?.id) ?? stringValue(snapshot.robot?.id) ?? options.backend,
@@ -418,13 +463,17 @@ function normalizeSnapshot(
     battery: snapshot.battery,
     dock: snapshot.dock,
     cleaningSettings: normalizeCleaningSettings(snapshot),
-    map: normalizeMap(snapshot, options.includeMapPreview),
+    map: normalizeMap(snapshot, {
+      includeGrid: false,
+      includeGeometry: false,
+      includePreview: options.includeMapPreview,
+    }),
     pose: normalizePose(snapshot),
     navigation: normalizeNavigationState(snapshot),
     mission: normalizeMissionState(snapshot),
-    readiness: snapshot.readiness ?? snapshot.diagnostics?.readiness,
+    readiness: normalizeReadiness(snapshot, options.backend, capabilities),
     fault: snapshot.fault,
-    capabilities: normalizeCapabilities(snapshot),
+    capabilities,
     updatedAt: snapshot.updatedAt,
   };
 
@@ -435,9 +484,17 @@ function normalizeSnapshot(
   return data;
 }
 
-function normalizeCapabilities(snapshot: RuntimeSnapshot): JsonRecord {
+export function normalizeCapabilities(snapshot: RuntimeSnapshot, backend?: VacuumBackendId): JsonRecord {
   const normalizedCommands = normalizeCommandAvailability(snapshot);
   const normalizedFeatures = normalizeFeatureCapabilities(snapshot);
+  const featureEntries = backend === "turtlebot4_nav2"
+    ? Object.fromEntries(
+        SIMULATION_CAPABILITY_NAMES.map((name) => [
+          name,
+          normalizedFeatures[name] ?? unavailableCapability("Capability is not present in the normalized snapshot."),
+        ]),
+      )
+    : normalizedFeatures;
 
   return {
     commands: Object.fromEntries(
@@ -447,16 +504,14 @@ function normalizeCapabilities(snapshot: RuntimeSnapshot): JsonRecord {
         {
           supported: availability.supported !== false,
           available: availability.available === true,
-          reason: availability.reason ?? availability.availabilityReason,
+          reason: capabilityReason(availability),
           status: availability.status,
-          notes: availability.notes,
         },
       ]),
     ),
-    features: normalizedFeatures,
+    features: featureEntries,
     settings: normalizeCleaningSettings(snapshot),
-    readiness: snapshot.readiness ?? snapshot.diagnostics?.readiness,
-    capabilityTiers: snapshot.diagnostics?.capabilityTiers,
+    readiness: normalizeReadiness(snapshot, backend ?? inferBackend(snapshot), { features: featureEntries }),
   };
 }
 
@@ -498,17 +553,17 @@ function normalizeFeatureCapabilities(snapshot: RuntimeSnapshot): JsonRecord {
       .filter(([name, value]) => name !== "commands" && name !== "diagnostics" && value && typeof value === "object")
       .map(([name, value]) => {
         const capability = value as CommandAvailability & { commands?: string[]; attributes?: string[]; reasons?: unknown[] };
+        const supported = capability.supported === true;
+        const available = supported && capability.available === true;
         return [
           name,
           {
-            supported: capability.supported === true,
-            available: capability.available,
-            status: capability.status,
-            reason: capability.availabilityReason ?? capability.reason,
-            notes: capability.notes,
-            commands: capability.commands,
-            attributes: capability.attributes,
-            reasons: capability.reasons,
+            supported,
+            available,
+            status: capability.status ?? (supported ? available ? "supported" : "unavailable" : "unsupported"),
+            reason: capabilityReason(capability),
+            commands: sanitizeCommandNames(capability.commands),
+            reasons: normalizeReasons(capability.reasons),
           },
         ];
       }),
@@ -518,10 +573,11 @@ function normalizeFeatureCapabilities(snapshot: RuntimeSnapshot): JsonRecord {
 function featureToCommandAvailability(feature: CommandAvailability): CommandAvailability {
   return {
     supported: feature.supported === true,
-    available: feature.supported === true && feature.available !== false,
+    available: feature.supported === true && feature.available === true,
     status: feature.status,
-    reason: feature.availabilityReason ?? feature.reason ?? (feature.supported === true ? undefined : "unsupported_command"),
-    notes: feature.notes,
+    reason: feature.supported === true
+      ? capabilityReason(feature) ?? "availability_not_reported"
+      : "unsupported_command",
   };
 }
 
@@ -547,17 +603,50 @@ function settingOptions(setting: { options?: Array<string | { value?: string; la
   return options && options.length > 0 ? options : undefined;
 }
 
-function normalizeMap(snapshot: RuntimeSnapshot, includePreview: boolean): JsonRecord {
+export function normalizeMap(
+  snapshot: RuntimeSnapshot,
+  options: { includeGrid?: boolean; includeGeometry?: boolean; includePreview?: boolean } = {},
+): JsonRecord {
+  const metadata = snapshot.map?.metadata;
+  const layeredMetadata = snapshot.map?.layeredMetadata;
+  const annotations = snapshot.map?.annotations ?? [];
+  const available = snapshot.map?.available === true || snapshot.map?.readiness === "ready" || metadata?.hasMap === true;
+  const annotationCounts = countAnnotations(annotations);
+  const targets = normalizeMapTargets(snapshot, options.includeGeometry === true);
+  const featureCapabilities = normalizeFeatureCapabilities(snapshot);
   const map: JsonRecord = {
-    available: snapshot.map?.available === true || snapshot.map?.readiness === "ready" || snapshot.map?.metadata?.hasMap === true,
-    readiness: snapshot.map?.readiness,
-    receiving: snapshot.map?.receiving,
-    metadata: snapshot.map?.metadata ?? snapshot.map?.layeredMetadata,
-    targets: normalizeMapTargets(snapshot, false),
+    available,
+    status: available ? "available" : "unavailable",
+    reason: available ? undefined : snapshot.map?.detail ?? "Map is not available from the selected backend.",
+    readiness: snapshot.map?.readiness ?? "unavailable",
+    receiving: snapshot.map?.receiving === true,
+    identity: {
+      id: stringValue(layeredMetadata?.id) ?? stringValue(snapshot.mapping?.activeMapName),
+      name: stringValue(snapshot.mapping?.activeMapName) ?? stringValue(layeredMetadata?.id),
+    },
+    dimensions: normalizeMapDimensions(metadata, layeredMetadata),
+    cellSummary: normalizeCellSummary(metadata),
+    annotations: {
+      total: annotations.length,
+      rooms: annotationCounts.room,
+      zones: annotationCounts.zone,
+    },
+    targets: {
+      segmentCount: arrayLength((targets.segments as unknown[] | undefined)),
+      roomCount: arrayLength((targets.rooms as unknown[] | undefined)),
+      zoneCount: arrayLength((targets.zones as unknown[] | undefined)),
+      inventory: targets,
+    },
+    usableForNavigation: mapUsableFor("start_navigation", featureCapabilities, available),
+    usableForCoverage: mapUsableFor("start_coverage", featureCapabilities, available),
+    updatedAt: numberOrString(metadata?.lastUpdateAt) ?? numberOrString(layeredMetadata?.updatedAt) ?? numberOrString(snapshot.updatedAt),
     detail: snapshot.map?.detail,
   };
-  if (includePreview) {
+  if (options.includePreview) {
     map.preview = snapshot.map?.preview ?? snapshot.map?.layeredPreview;
+  }
+  if (options.includeGrid) {
+    map.grid = snapshot.map?.grid ?? null;
   }
   return map;
 }
@@ -617,34 +706,433 @@ function normalizeAnnotationTargets(annotations: MapAnnotation[] | undefined, ki
     });
 }
 
-function normalizePose(snapshot: RuntimeSnapshot): JsonRecord {
+export function normalizePose(snapshot: RuntimeSnapshot): JsonRecord {
+  const available = snapshot.pose?.available === true && snapshot.pose?.coordinates != null;
+  if (!available) {
+    return {
+      available: false,
+      status: "unavailable",
+      reason: snapshot.pose?.detail ?? "Pose is not available from the selected backend.",
+      readiness: snapshot.pose?.readiness ?? "unavailable",
+      updatedAt: numberOrString(snapshot.source?.lastSeenAt) ?? numberOrString(snapshot.updatedAt),
+    };
+  }
   return {
-    available: snapshot.pose?.available === true,
-    readiness: snapshot.pose?.readiness,
+    available: true,
+    status: "available",
+    readiness: snapshot.pose?.readiness ?? "ready",
     coordinates: snapshot.pose?.coordinates ?? null,
+    updatedAt: numberOrString(snapshot.source?.lastSeenAt) ?? numberOrString(snapshot.updatedAt),
     detail: snapshot.pose?.detail,
   };
 }
 
-function normalizeNavigationState(snapshot: RuntimeSnapshot): JsonRecord {
+export function normalizeNavigationState(snapshot: RuntimeSnapshot): JsonRecord {
+  const navigation = snapshot.navigation;
+  const mission = normalizeActiveMission(asRecord(snapshot.activeMission ?? snapshot.missions?.active));
+  const missionNavigation = mission && mission.type === "navigation" ? mission : null;
+  if (!navigation) {
+    return {
+      available: false,
+      status: "unavailable",
+      reason: mission ? "navigation_state_unavailable" : "No navigation state is available from the selected backend.",
+      relatedMission: missionNavigation ?? mission,
+    };
+  }
+  const progress = navigation.progress && typeof navigation.progress === "object" ? navigation.progress : undefined;
+  const availableActions = Array.isArray(missionNavigation?.availableActions)
+    ? missionNavigation.availableActions.filter((action): action is string => typeof action === "string")
+    : [];
   return {
-    state: snapshot.navigation?.state ?? "unknown",
-    active: snapshot.navigation?.active === true,
-    currentTarget: snapshot.navigation?.currentTarget ?? null,
-    terminalState: snapshot.navigation?.terminalState ?? null,
-    progress: snapshot.navigation?.progress,
-    detail: snapshot.navigation?.detail,
+    available: true,
+    state: navigation.state ?? "unknown",
+    active: navigation.active === true,
+    currentDestination: navigation.currentTarget ?? null,
+    terminalState: navigation.terminalState ?? null,
+    progress: {
+      distanceRemaining: progress?.distanceRemaining ?? null,
+      initialDistance: progress?.initialDistance ?? null,
+      recoveries: progress?.recoveries ?? null,
+      estimatedTimeRemaining: progress?.estimatedTimeRemaining ?? null,
+    },
+    path: summarizePath(navigation.planPath),
+    availableActions,
+    controls: {
+      cancel: availableActions.includes("cancel_mission"),
+      pause: availableActions.includes("pause_mission"),
+      resume: availableActions.includes("resume_mission"),
+    },
+    relatedMission: missionNavigation,
+    detail: navigation.detail,
   };
 }
 
-function normalizeMissionState(snapshot: RuntimeSnapshot): JsonRecord {
+export function normalizeMissionState(snapshot: RuntimeSnapshot): JsonRecord {
+  const active = normalizeActiveMission(asRecord(snapshot.activeMission ?? snapshot.missions?.active));
+  const recentRaw = Array.isArray(snapshot.missions?.recent) ? snapshot.missions?.recent : [];
+  const recent = recentRaw.map(normalizeMissionSummary).filter((mission): mission is JsonRecord => Boolean(mission));
   return {
-    summary: snapshot.mission,
-    active: snapshot.activeMission ?? snapshot.missions?.active ?? null,
-    recent: Array.isArray(snapshot.missions?.recent) ? snapshot.missions?.recent : [],
-    mapping: snapshot.mapping,
-    availableActions: Array.isArray(snapshot.activity?.availableActions) ? snapshot.activity?.availableActions : [],
+    summary: snapshot.mission ? {
+      state: snapshot.mission.state,
+      detail: snapshot.mission.detail,
+      lastTerminalNavigation: snapshot.mission.lastTerminalNavigation,
+    } : null,
+    active,
+    recentCount: recent.length,
+    recent,
+    mapping: normalizeMappingState(snapshot.mapping),
+    availableActions: active?.availableActions ?? (Array.isArray(snapshot.activity?.availableActions) ? snapshot.activity?.availableActions : []),
   };
+}
+
+function normalizeReadiness(snapshot: RuntimeSnapshot, backend: VacuumBackendId, capabilities: JsonRecord): JsonRecord {
+  const features = capabilities.features && typeof capabilities.features === "object"
+    ? capabilities.features as JsonRecord
+    : normalizeFeatureCapabilities(snapshot);
+  const sourceStatus = stringValue(snapshot.source?.status);
+  const availabilityStatus = stringValue(snapshot.availability?.status) ?? stringValue(snapshot.runtime?.status) ?? stringValue(snapshot.health?.runtimeStatus);
+  const connected = snapshot.availability?.connected === true || snapshot.connectivity?.online === true || availabilityStatus === "online";
+  const reachable = snapshot.connectivity?.reachable === true || sourceStatus === "reachable";
+  const stale = snapshot.source?.stale === true || sourceStatus === "stale";
+  const map = normalizeMap(snapshot);
+  const pose = normalizePose(snapshot);
+  const mission = normalizeMissionState(snapshot);
+  const navigation = normalizeNavigationState(snapshot);
+  const movementCapabilities = capabilityAvailability(features, ["start_navigation", "go_to_location"]);
+  const coverageCapabilities = capabilityAvailability(features, ["start_coverage"]);
+  const blockers = normalizedBlockingReasons(snapshot, {
+    connected,
+    reachable,
+    stale,
+    mapAvailable: map.available === true,
+    poseAvailable: pose.available === true,
+    movementCapabilities,
+  });
+
+  return {
+    selectedBackend: backend,
+    movementReady: blockers.length === 0,
+    runtime: {
+      available: connected,
+      status: availabilityStatus ?? (connected ? "online" : "unknown"),
+      detail: snapshot.availability?.detail ?? snapshot.health?.detail,
+    },
+    source: {
+      reachable,
+      stale,
+      status: sourceStatus ?? "unknown",
+      lastSeenAt: numberOrString(snapshot.source?.lastSeenAt) ?? numberOrString(snapshot.updatedAt),
+      freshness: stale ? "stale" : numberOrString(snapshot.source?.lastSeenAt) || numberOrString(snapshot.updatedAt) ? "timestamped" : "unknown",
+    },
+    map: {
+      available: map.available === true,
+      readiness: map.readiness,
+      usableForNavigation: map.usableForNavigation,
+      usableForCoverage: map.usableForCoverage,
+    },
+    pose: {
+      available: pose.available === true,
+      readiness: pose.readiness,
+    },
+    localization: {
+      ready: pose.available === true,
+      evidence: pose.available === true ? "pose_available" : "pose_unavailable",
+    },
+    mission: {
+      active: Boolean((mission.active as JsonRecord | null | undefined)?.id),
+      state: (mission.summary as JsonRecord | null | undefined)?.state,
+      activeMission: mission.active,
+    },
+    navigation: {
+      state: navigation.state ?? "unknown",
+      active: navigation.active === true,
+      available: navigation.available === true,
+    },
+    capabilities: {
+      movement: movementCapabilities,
+      coverage: coverageCapabilities,
+      missionActions: capabilityAvailability(features, [
+        "pause_mission",
+        "resume_mission",
+        "cancel_mission",
+        "retry_mission_step",
+        "skip_mission_step",
+      ]),
+    },
+    blockingReasons: blockers,
+  };
+}
+
+function normalizedBlockingReasons(
+  snapshot: RuntimeSnapshot,
+  evidence: {
+    connected: boolean;
+    reachable: boolean;
+    stale: boolean;
+    mapAvailable: boolean;
+    poseAvailable: boolean;
+    movementCapabilities: JsonRecord;
+  },
+): string[] {
+  const blockers = new Set<string>();
+  const existing = snapshot.readiness?.blockingReasons;
+  if (Array.isArray(existing)) {
+    for (const blocker of existing) {
+      if (typeof blocker === "string" && blocker.trim()) {
+        blockers.add(blocker.trim());
+      }
+    }
+  }
+  if (!evidence.connected) blockers.add("runtime_unavailable");
+  if (!evidence.reachable) blockers.add("source_unreachable");
+  if (evidence.stale) blockers.add("source_stale");
+  if (!evidence.mapAvailable) blockers.add("map_unavailable");
+  if (!evidence.poseAvailable) blockers.add("pose_unavailable");
+  if (evidence.movementCapabilities.available !== true) {
+    blockers.add(String(evidence.movementCapabilities.reason ?? "movement_capability_unavailable"));
+  }
+  return [...blockers];
+}
+
+function capabilityAvailability(features: JsonRecord, names: string[]): JsonRecord {
+  const entries = names.map((name) => {
+    const capability = features[name] && typeof features[name] === "object" ? features[name] as JsonRecord : null;
+    return {
+      name,
+      supported: capability?.supported === true,
+      available: capability?.available === true,
+      reason: typeof capability?.reason === "string" ? capability.reason : undefined,
+      status: typeof capability?.status === "string" ? capability.status : undefined,
+    };
+  });
+  const supported = entries.some((entry) => entry.supported);
+  const available = entries.some((entry) => entry.available);
+  const firstReason = entries.find((entry) => entry.supported && !entry.available)?.reason
+    ?? entries.find((entry) => !entry.supported)?.reason
+    ?? (supported ? "availability_not_reported" : "unsupported");
+  return {
+    supported,
+    available,
+    reason: available ? undefined : firstReason,
+    options: entries,
+  };
+}
+
+function unavailableCapability(reason: string): JsonRecord {
+  return {
+    supported: false,
+    available: false,
+    status: "unsupported",
+    reason,
+    commands: [],
+  };
+}
+
+function capabilityReason(capability: CommandAvailability): string | undefined {
+  const explicitReason = stringValue(capability.availabilityReason) ?? stringValue(capability.reason);
+  if (explicitReason) return explicitReason;
+  if (capability.supported === false) return "unsupported";
+  if (capability.supported === true && capability.available !== true) return "availability_not_reported";
+  return undefined;
+}
+
+function sanitizeCommandNames(commands: string[] | undefined): string[] {
+  return (commands ?? []).filter((command) => /^[a-z][a-z0-9_]*$/.test(command));
+}
+
+function normalizeReasons(reasons: unknown[] | undefined): JsonRecord[] | undefined {
+  if (!Array.isArray(reasons) || reasons.length === 0) return undefined;
+  return reasons
+    .filter((reason): reason is JsonRecord => reason != null && typeof reason === "object")
+    .map((reason) => {
+      const code = stringValue(reason.code);
+      const message = stringValue(reason.message);
+      return {
+        code,
+        message: message && !containsInternalReference(message) ? message : undefined,
+      };
+    })
+    .filter((reason) => reason.code || reason.message);
+}
+
+function containsInternalReference(value: string): boolean {
+  return /\/|ros|nav2|foxglove|topic|service|action|vm ip|mqtt|http/i.test(value);
+}
+
+function normalizeMapDimensions(metadata: JsonRecord | undefined, layeredMetadata: JsonRecord | undefined): JsonRecord | null {
+  const width = numberValue(metadata?.width) ?? numberValue(layeredMetadata?.width);
+  const height = numberValue(metadata?.height) ?? numberValue(layeredMetadata?.height);
+  const resolution = numberValue(metadata?.resolution) ?? numberValue(layeredMetadata?.pixelSize);
+  if (width == null && height == null && resolution == null) return null;
+  return {
+    width,
+    height,
+    resolution,
+    frameId: stringValue(metadata?.frameId),
+  };
+}
+
+function normalizeCellSummary(metadata: JsonRecord | undefined): JsonRecord | null {
+  if (!metadata) return null;
+  return {
+    knownCells: numberValue(metadata.knownCells),
+    freeCells: numberValue(metadata.freeCells),
+    occupiedCells: numberValue(metadata.occupiedCells),
+    unknownCells: numberValue(metadata.unknownCells),
+    totalCells: numberValue(metadata.totalCells),
+    knownRatio: numberValue(metadata.knownRatio),
+    freeRatio: numberValue(metadata.freeRatio),
+    occupiedRatio: numberValue(metadata.occupiedRatio),
+    unknownRatio: numberValue(metadata.unknownRatio),
+    knownAreaSqM: numberValue(metadata.knownAreaSqM),
+  };
+}
+
+function countAnnotations(annotations: MapAnnotation[]): { room: number; zone: number } {
+  return {
+    room: annotations.filter((annotation) => annotation.kind === "room").length,
+    zone: annotations.filter((annotation) => annotation.kind === "zone").length,
+  };
+}
+
+function mapUsableFor(capabilityName: string, features: JsonRecord, mapAvailable: boolean): JsonRecord {
+  const capability = features[capabilityName] && typeof features[capabilityName] === "object" ? features[capabilityName] as JsonRecord : null;
+  const available = mapAvailable && capability?.available === true;
+  return {
+    supported: capability?.supported === true,
+    available,
+    reason: available ? undefined : capability?.reason ?? (mapAvailable ? "capability_unavailable" : "map_unavailable"),
+  };
+}
+
+function normalizeActiveMission(mission: JsonRecord | null | undefined): JsonRecord | null {
+  if (!mission) return null;
+  const activeMission: JsonRecord = {
+    id: stringValue(mission.id),
+    type: stringValue(mission.type),
+    status: stringValue(mission.status),
+    phase: stringValue(mission.phase),
+    progress: normalizeMissionProgress(mission.progress),
+    availableActions: Array.isArray(mission.availableActions)
+      ? mission.availableActions.filter((action): action is string => typeof action === "string")
+      : [],
+    terminalResult: normalizeMissionResult(mission.result),
+    error: normalizeMissionError(mission.error),
+    target: summarizeTarget(mission.target),
+    startedAt: numberOrString(mission.startedAt),
+    updatedAt: numberOrString(mission.updatedAt),
+  };
+  return activeMission;
+}
+
+function normalizeMissionSummary(mission: unknown): JsonRecord | null {
+  if (!mission || typeof mission !== "object") return null;
+  const record = mission as JsonRecord;
+  return {
+    id: stringValue(record.id),
+    type: stringValue(record.type),
+    status: stringValue(record.status),
+    phase: stringValue(record.phase),
+    progress: normalizeMissionProgress(record.progress),
+    terminalResult: normalizeMissionResult(record.result),
+    updatedAt: numberOrString(record.updatedAt),
+  };
+}
+
+function normalizeMissionProgress(progress: unknown): JsonRecord | null {
+  if (!progress || typeof progress !== "object") return null;
+  const record = progress as JsonRecord;
+  return {
+    percent: numberValue(record.percent),
+    currentStep: numberValue(record.currentStep),
+    totalSteps: numberValue(record.totalSteps),
+    distanceRemaining: numberValue(record.distanceRemaining),
+    areaCoveredSqM: numberValue(record.areaCoveredSqM),
+    areaRemainingSqM: numberValue(record.areaRemainingSqM),
+  };
+}
+
+function normalizeMissionResult(result: unknown): JsonRecord | null {
+  if (!result || typeof result !== "object") return null;
+  const record = result as JsonRecord;
+  return {
+    status: stringValue(record.status),
+    completedAt: numberOrString(record.completedAt),
+    summary: stringValue(record.summary),
+  };
+}
+
+function normalizeMissionError(error: unknown): JsonRecord | null {
+  if (!error || typeof error !== "object") return null;
+  const record = error as JsonRecord;
+  return {
+    code: stringValue(record.code),
+    message: stringValue(record.message),
+    recoverable: typeof record.recoverable === "boolean" ? record.recoverable : undefined,
+  };
+}
+
+function summarizeTarget(target: unknown): JsonRecord | null {
+  if (!target || typeof target !== "object") return null;
+  const record = target as JsonRecord;
+  const x = numberValue(record.x);
+  const y = numberValue(record.y);
+  const yaw = numberValue(record.yaw);
+  if (x != null || y != null || yaw != null) {
+    return { x, y, yaw };
+  }
+  return { type: stringValue(record.type) ?? "target" };
+}
+
+function summarizePath(path: unknown): JsonRecord {
+  if (!Array.isArray(path) || path.length === 0) {
+    return { available: false, pointCount: 0 };
+  }
+  const points = path.filter((point): point is JsonRecord => point != null && typeof point === "object");
+  return {
+    available: points.length > 0,
+    pointCount: points.length,
+    start: points[0] ? { x: numberValue(points[0].x), y: numberValue(points[0].y) } : null,
+    end: points[points.length - 1] ? { x: numberValue(points[points.length - 1].x), y: numberValue(points[points.length - 1].y) } : null,
+  };
+}
+
+function normalizeMappingState(mapping: JsonRecord | undefined): JsonRecord | null {
+  if (!mapping) return null;
+  return {
+    state: stringValue(mapping.state),
+    mode: stringValue(mapping.mode),
+    reason: stringValue(mapping.stateReason),
+    knownRatio: numberValue(mapping.knownRatio),
+    unknownRatio: numberValue(mapping.unknownRatio),
+    frontierCount: numberValue(mapping.frontierCount),
+    activeMapName: stringValue(mapping.activeMapName),
+    updatedAt: numberOrString(mapping.updatedAt),
+  };
+}
+
+function inferBackend(snapshot: RuntimeSnapshot): VacuumBackendId {
+  const source = stringValue(snapshot.identity?.source) ?? stringValue(snapshot.source?.kind);
+  return source === "valetudo" || source === "valetudo_http" || source === "valetudo_mock" ? "valetudo" : "turtlebot4_nav2";
+}
+
+function asRecord(value: unknown): JsonRecord | null {
+  return value != null && typeof value === "object" ? value as JsonRecord : null;
+}
+
+function arrayLength(value: unknown[] | undefined): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function numberOrString(value: unknown): number | string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return undefined;
+}
+
+function numberValue(value: unknown): number | null {
+  const numeric = typeof value === "string" ? Number(value) : value;
+  return typeof numeric === "number" && Number.isFinite(numeric) ? numeric : null;
 }
 
 function safeDiagnostics(snapshot: RuntimeSnapshot, includeRawDiagnostics: boolean): JsonRecord {

@@ -462,6 +462,10 @@ hosts:
 - `vacuum_get_snapshot`
 - `vacuum_get_capabilities`
 - `vacuum_get_map_targets`
+- `vacuum_get_pose`
+- `vacuum_get_map_summary`
+- `vacuum_get_mission_state`
+- `vacuum_get_navigation_state`
 - `vacuum_start_cleaning`
 - `vacuum_pause`
 - `vacuum_resume`
@@ -530,6 +534,13 @@ Recommended behavior:
 - Include diagnostics only when requested or when failures occur.
 - Do not include huge map preview payloads unless explicitly requested.
 - Include map metadata and target inventory by default if compact.
+- Include simulation readiness evidence from normalized state: selected backend,
+  runtime/source status, source freshness, map and pose availability, mission
+  state, navigation state, movement capability availability, and blocking
+  reasons.
+- Do not expose ROS topic names, Nav2 action names, helper service names,
+  Foxglove routes, private VM addresses, or raw backend diagnostics unless the
+  caller explicitly asks for raw diagnostics.
 
 Relevant endpoint:
 
@@ -553,15 +564,27 @@ Arguments:
 
 Returns:
 
-- `capabilities.commands`.
-- `diagnostics.readiness`.
-- `diagnostics.capabilityTiers`.
+- `commands` for currently advertised MCP write tools.
+- `features` for normalized backend capabilities.
+- `settings` for normalized setting options.
+- `readiness` with movement-readiness evidence and blockers.
 - Current availability reasons.
 
 Implementation:
 
 - Can derive from `vacuum_get_snapshot`.
 - Should hide raw capability names by default unless diagnostics are requested.
+- For the simulation backend, expose normalized capabilities such as `map`,
+  `pose`, `navigation_status`, `mission_state`, `start_navigation`,
+  `go_to_location`, `start_coverage`, mission action capabilities,
+  `mapping_session`, `auto_mapping`, map annotation/room/zone semantics, and
+  room/zone cleaning readiness.
+- Mark a capability `available: true` only when the normalized descriptor says
+  it is currently available. If a capability is supported but not currently
+  available, return the normalized reason when present.
+- Keep Valetudo-only settings such as `fan_speed` and `water_usage` unsupported
+  for simulation unless the normalized simulation adapter explicitly supports
+  them.
 
 ### `vacuum_get_map_targets`
 
@@ -592,6 +615,8 @@ Purpose:
 - Return normalized robot pose readiness and coordinates when the selected
   backend exposes pose state.
 - Keep source details out of the default response.
+- If pose is absent, return a structured `available: false` response with
+  readiness, timestamp when available, and a normalized reason.
 
 ### `vacuum_get_map_summary`
 
@@ -600,12 +625,33 @@ Purpose:
 - Return compact map readiness and metadata without large preview/grid payloads.
 - Prefer normalized map concepts over backend transport details.
 
+Arguments:
+
+```json
+{
+  "include_grid": false,
+  "include_geometry": false
+}
+```
+
+Recommended behavior:
+
+- Include compact identity, dimensions/resolution, cell summary, annotation
+  counts, target counts, and whether the map is usable for navigation or
+  coverage when those normalized fields exist.
+- Do not include full occupancy grids or large geometry by default.
+- Treat `include_grid` and `include_geometry` as explicit large-payload
+  requests.
+
 ### `vacuum_get_mission_state`
 
 Purpose:
 
 - Return active and recent mission state through normalized product concepts.
 - Surface available mission actions as read-only state in this phase.
+- Include active mission id, type, status, phase, progress, available actions,
+  terminal result, and compact recent mission summaries when available.
+- Do not expose raw Nav2 goal internals.
 
 ### `vacuum_get_navigation_state`
 
@@ -614,6 +660,10 @@ Purpose:
 - Return normalized navigation status, current target, terminal state, and
   progress.
 - Do not expose Nav2 action names or direct goal dispatch as MCP tools.
+- Include compact path summary, related mission state, and cancel/pause/resume
+  availability when normalized mission actions expose those controls.
+- If navigation state is absent but mission state exists, link to the mission
+  state rather than inventing navigation details.
 
 ### `vacuum_start_cleaning`
 
