@@ -85,6 +85,11 @@ export interface ValetudoRuntimeCommandRequest {
   params?: Record<string, unknown>;
 }
 
+export interface TurtleBot4Nav2VacuumRuntimeCommandRequest {
+  command: string;
+  params?: Record<string, unknown>;
+}
+
 export interface ValetudoRuntimeCommandResult {
   ok: boolean;
   status: string;
@@ -99,6 +104,7 @@ export interface ValetudoRuntimeCommandResult {
 export type ValetudoRuntimeSnapshot = Record<string, unknown>;
 export type TurtleBot4Nav2VacuumRuntimeHealth = Record<string, unknown>;
 export type TurtleBot4Nav2VacuumRuntimeSnapshot = Record<string, unknown>;
+export type TurtleBot4Nav2VacuumRuntimeCommandResult = Record<string, unknown>;
 
 export interface VmManagerClientOptions {
   baseUrl: string;
@@ -322,6 +328,18 @@ export async function getTurtleBot4Nav2VacuumRuntimeSnapshot(
     options,
     'GET',
     '/vms/self/tensorfleet/api/v1/vacuum/snapshot'
+  );
+}
+
+export async function sendTurtleBot4Nav2VacuumRuntimeCommand(
+  options: VmManagerClientOptions,
+  request: TurtleBot4Nav2VacuumRuntimeCommandRequest
+): Promise<TurtleBot4Nav2VacuumRuntimeCommandResult> {
+  return apiRequest<TurtleBot4Nav2VacuumRuntimeCommandResult>(
+    options,
+    'POST',
+    '/vms/self/tensorfleet/api/v1/vacuum/command',
+    request
   );
 }
 

@@ -5,6 +5,7 @@ import {
   getValetudoRuntimeHealth,
   getValetudoRuntimeSnapshot,
   isAuthError,
+  sendTurtleBot4Nav2VacuumRuntimeCommand,
   sendValetudoRuntimeCommand,
   type TurtleBot4Nav2VacuumRuntimeHealth,
   type TurtleBot4Nav2VacuumRuntimeSnapshot,
@@ -170,10 +171,35 @@ export async function dispatchVacuumCommand(
   request: ValetudoRuntimeCommandRequest,
 ): Promise<TensorFleetMcpResult<ValetudoRuntimeCommandResult | Record<string, unknown>>> {
   if (context.backend === "turtlebot4_nav2") {
-    return mcpFailure("unsupported", "simulation_writes_deferred", "Simulation vacuum command dispatch is not enabled through MCP yet.", {
-      backend: context.backend,
-      command: request.command,
-    });
+    try {
+      const result = await sendTurtleBot4Nav2VacuumRuntimeCommand(context.options, request);
+      if (isRuntimeCommandSuccess(result)) {
+        return {
+          ok: true,
+          status: "success",
+          message: stringField(result, "message") ?? "Simulation vacuum command dispatched.",
+          data: result,
+        };
+      }
+      const status = stringField(result, "status");
+      const reason = stringField(result, "code") ?? stringField(result, "reason") ?? status ?? "command_failed";
+      return mcpFailure(
+        normalizeRuntimeStatus(status, reason),
+        reason,
+        stringField(result, "message") ?? "Simulation vacuum command was refused by the runtime.",
+        result,
+      );
+    } catch (error) {
+      if ((error as HttpError)?.status === 404) {
+        return mcpFailure(
+          "unavailable",
+          "simulation_command_route_unavailable",
+          "Simulation vacuum command dispatch is not exposed by the VM runtime yet.",
+          errorData(error),
+        );
+      }
+      return mapRuntimeError(error, "Simulation vacuum command could not be dispatched.");
+    }
   }
 
   try {
@@ -195,6 +221,17 @@ export async function dispatchVacuumCommand(
   } catch (error) {
     return mapRuntimeError(error, "Vacuum command could not be dispatched.");
   }
+}
+
+function isRuntimeCommandSuccess(result: Record<string, unknown>): boolean {
+  if (result.ok === true) return true;
+  if (result.success === true) return true;
+  return stringField(result, "status") === "success";
+}
+
+function stringField(record: Record<string, unknown>, field: string): string | undefined {
+  const value = record[field];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function normalizeRuntimeStatus(status: string | undefined, reason: string | undefined): Exclude<TensorFleetMcpStatus, "success"> {

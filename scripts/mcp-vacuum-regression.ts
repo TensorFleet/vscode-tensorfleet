@@ -10,6 +10,7 @@ import {
   normalizeSnapshot,
   validateCommandRequest,
   validateSettingValue,
+  createVacuumTools,
 } from "../src/mcp/vacuum-tools";
 import { resolveMcpRuntimeConfig } from "../src/mcp/config";
 import { createVacuumRuntimeContext } from "../src/mcp/vacuum-runtime";
@@ -24,6 +25,9 @@ const expectedTools = [
   "vacuum_get_map_summary",
   "vacuum_get_mission_state",
   "vacuum_get_navigation_state",
+  "vacuum_check_navigation_readiness",
+  "vacuum_check_clean_area_readiness",
+  "vacuum_get_supported_actions",
   "vacuum_start_cleaning",
   "vacuum_pause",
   "vacuum_resume",
@@ -31,6 +35,11 @@ const expectedTools = [
   "vacuum_return_to_dock",
   "vacuum_set_fan_speed",
   "vacuum_set_water_usage",
+  "vacuum_pause_mission",
+  "vacuum_resume_mission",
+  "vacuum_cancel_mission",
+  "vacuum_retry_mission_step",
+  "vacuum_skip_mission_step",
 ];
 
 assert.deepEqual([...VACUUM_MCP_TOOL_NAMES], expectedTools);
@@ -42,6 +51,11 @@ for (const forbiddenTool of [
   "valetudo_post_command",
   "drone_takeoff",
   "gazebo_spawn",
+  "vacuum_start_navigation",
+  "vacuum_go_to_location",
+  "vacuum_start_clean_area",
+  "vacuum_start_room_cleaning",
+  "vacuum_start_zone_cleaning",
 ]) {
   assert.equal(VACUUM_MCP_TOOL_NAMES.includes(forbiddenTool as never), false);
 }
@@ -145,6 +159,62 @@ const bridgeValetudo = createVacuumRuntimeContext(bridgeValetudoConfig);
 assert.equal(bridgeValetudo.ok, true);
 if (bridgeValetudo.ok) {
   assert.equal(bridgeValetudo.backend, "valetudo");
+}
+
+function toolResult(response: any): any {
+  if (Array.isArray(response?.content)) {
+    return JSON.parse(response.content[0]?.text ?? "{}");
+  }
+  return response;
+}
+
+async function withToolEnv<T>(
+  env: Record<string, string | undefined>,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const previous = {
+    TENSORFLEET_VM_MANAGER_URL: process.env.TENSORFLEET_VM_MANAGER_URL,
+    TENSORFLEET_JWT: process.env.TENSORFLEET_JWT,
+    TENSORFLEET_VACUUM_BACKEND: process.env.TENSORFLEET_VACUUM_BACKEND,
+  };
+  for (const [key, value] of Object.entries(env)) {
+    if (value == null) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    return await callback();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value == null) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+async function withMockVacuumServer<T>(
+  handler: (request: http.IncomingMessage, response: http.ServerResponse) => void,
+  callback: (baseUrl: string) => Promise<T>,
+): Promise<T> {
+  const server = http.createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    return await callback(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+function jsonResponse(response: http.ServerResponse, status: number, body: unknown): void {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(body));
 }
 
 const unavailableRuntime = validateCommandRequest(
@@ -444,5 +514,489 @@ assert.equal((normalizedSnapshot.readiness as any).selectedBackend, "turtlebot4_
 assert.equal((normalizedSnapshot.readiness as any).movementReady, true);
 assert.equal("diagnostics" in normalizedSnapshot, false);
 assert.equal(JSON.stringify(normalizedSnapshot).includes("[0,0,100"), false);
+
+const tools = createVacuumTools();
+for (const toolName of [
+  "vacuum_check_navigation_readiness",
+  "vacuum_check_clean_area_readiness",
+  "vacuum_get_supported_actions",
+  "vacuum_pause_mission",
+  "vacuum_resume_mission",
+  "vacuum_cancel_mission",
+  "vacuum_retry_mission_step",
+  "vacuum_skip_mission_step",
+]) {
+  assert.ok(tools.has(toolName), toolName);
+}
+
+const readyNavigationSnapshot = {
+  ...simulationReadSnapshot,
+  navigation: { state: "idle", active: false, detail: "Idle." },
+  mission: { state: "idle", detail: "No active mission." },
+  activeMission: null,
+  missions: { active: null, recent: [] },
+};
+
+const readyCleanAreaSnapshot = {
+  ...readyNavigationSnapshot,
+  capabilities: {
+    ...(readyNavigationSnapshot.capabilities as Record<string, unknown>),
+    start_coverage: { supported: true, available: true, status: "supported", commands: ["start_coverage"] },
+  },
+};
+
+await withToolEnv(
+  {
+    TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
+    TENSORFLEET_JWT: "token",
+    TENSORFLEET_VACUUM_BACKEND: undefined,
+  },
+  async () => {
+    const result = toolResult(await tools.get("vacuum_check_navigation_readiness")!.execute({}));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "invalid_state");
+    assert.equal(result.reason, "missing_vacuum_backend");
+  },
+);
+
+await withToolEnv(
+  {
+    TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
+    TENSORFLEET_JWT: "token",
+    TENSORFLEET_VACUUM_BACKEND: "valetudo",
+  },
+  async () => {
+    const navigation = toolResult(await tools.get("vacuum_check_navigation_readiness")!.execute({}));
+    assert.equal(navigation.ok, false);
+    assert.equal(navigation.status, "unsupported");
+    assert.equal(navigation.reason, "unsupported_backend");
+    assert.equal(navigation.data.backend, "valetudo");
+
+    const cleanArea = toolResult(await tools.get("vacuum_check_clean_area_readiness")!.execute({}));
+    assert.equal(cleanArea.ok, false);
+    assert.equal(cleanArea.status, "unsupported");
+    assert.equal(cleanArea.reason, "unsupported_backend");
+    assert.equal(cleanArea.data.backend, "valetudo");
+  },
+);
+
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 404, { error: "not found" });
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_check_navigation_readiness")!.execute({}));
+      assert.equal(result.ok, false);
+      assert.equal(result.status, "unavailable");
+      assert.equal(result.reason, "simulation_snapshot_route_unavailable");
+      assert.equal(result.data.backend, "turtlebot4_nav2");
+      assert.equal(result.data.status, "unavailable");
+    },
+  ),
+);
+
+for (const [toolName, snapshot, expectedReason] of [
+  [
+    "vacuum_check_navigation_readiness",
+    {
+      ...readyNavigationSnapshot,
+      map: {
+        ...(readyNavigationSnapshot.map as Record<string, unknown>),
+        readiness: "unavailable",
+        metadata: { hasMap: false },
+        detail: "Map is not available.",
+      },
+    },
+    "map_unavailable",
+  ],
+  [
+    "vacuum_check_clean_area_readiness",
+    {
+      ...readyCleanAreaSnapshot,
+      map: {
+        ...(readyCleanAreaSnapshot.map as Record<string, unknown>),
+        readiness: "unavailable",
+        metadata: { hasMap: false },
+        detail: "Map is not available.",
+      },
+    },
+    "map_unavailable",
+  ],
+  [
+    "vacuum_check_navigation_readiness",
+    {
+      ...readyNavigationSnapshot,
+      pose: { readiness: "waiting", available: false, coordinates: null, detail: "Waiting for pose." },
+    },
+    "pose_unavailable",
+  ],
+  [
+    "vacuum_check_clean_area_readiness",
+    {
+      ...readyCleanAreaSnapshot,
+      pose: { readiness: "waiting", available: false, coordinates: null, detail: "Waiting for pose." },
+    },
+    "pose_unavailable",
+  ],
+] as const) {
+  await withMockVacuumServer(
+    (request, response) => {
+      if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+        jsonResponse(response, 200, snapshot);
+        return;
+      }
+      jsonResponse(response, 404, { error: "not found" });
+    },
+    async (baseUrl) => withToolEnv(
+      {
+        TENSORFLEET_VM_MANAGER_URL: baseUrl,
+        TENSORFLEET_JWT: "token",
+        TENSORFLEET_VACUUM_BACKEND: "simulation",
+      },
+      async () => {
+        const args = toolName === "vacuum_check_navigation_readiness"
+          ? { target: { x: 0, y: 0, theta: 0, frameId: "map" } }
+          : { area: { type: "rectangle", x: 0, y: 0, width: 1, height: 1, frameId: "map" } };
+        const result = toolResult(await tools.get(toolName)!.execute(args));
+        assert.equal(result.ok, true);
+        assert.equal(result.data.ready, false);
+        assert.equal(result.data.status, "blocked");
+        assert.ok(result.data.blockingReasons.includes(expectedReason), `${toolName} should include ${expectedReason}`);
+      },
+    ),
+  );
+}
+
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, simulationReadSnapshot);
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_check_navigation_readiness")!.execute({
+        target: { x: 0, y: 0, theta: 0, frameId: "map" },
+      }));
+      assert.equal(result.ok, true);
+      assert.equal(result.data.ready, false);
+      assert.equal(result.data.status, "blocked");
+      assert.ok(result.data.blockingReasons.includes("active_mission_incompatible"));
+    },
+  ),
+);
+
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, readyNavigationSnapshot);
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_check_navigation_readiness")!.execute({}));
+      assert.equal(result.ok, true);
+      assert.equal(result.data.ready, false);
+      assert.equal(result.data.status, "needs_input");
+      assert.deepEqual(result.data.requiredInputs, ["target"]);
+    },
+  ),
+);
+
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, readyCleanAreaSnapshot);
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_check_clean_area_readiness")!.execute({}));
+      assert.equal(result.ok, true);
+      assert.equal(result.data.ready, false);
+      assert.equal(result.data.status, "needs_input");
+      assert.deepEqual(result.data.requiredInputs, ["area"]);
+    },
+  ),
+);
+
+await withToolEnv(
+  {
+    TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
+    TENSORFLEET_JWT: "token",
+    TENSORFLEET_VACUUM_BACKEND: "simulation",
+  },
+  async () => {
+    const invalidTarget = toolResult(await tools.get("vacuum_check_navigation_readiness")!.execute({ target: { x: "bad", y: 0 } }));
+    assert.equal(invalidTarget.ok, false);
+    assert.equal(invalidTarget.status, "invalid_request");
+    assert.equal(invalidTarget.reason, "invalid_target");
+
+    const invalidArea = toolResult(await tools.get("vacuum_check_clean_area_readiness")!.execute({
+      area: { type: "rectangle", x: 0, y: 0, width: 0, height: 1 },
+    }));
+    assert.equal(invalidArea.ok, false);
+    assert.equal(invalidArea.status, "invalid_request");
+    assert.equal(invalidArea.reason, "invalid_area_dimensions");
+  },
+);
+
+let preflightDispatchCount = 0;
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, readyCleanAreaSnapshot);
+      return;
+    }
+    if (request.method === "POST" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/command") {
+      preflightDispatchCount += 1;
+      jsonResponse(response, 500, { error: "preflight must not dispatch" });
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const navigation = toolResult(await tools.get("vacuum_check_navigation_readiness")!.execute({
+        target: { x: 0, y: 0, theta: 0, frameId: "map" },
+      }));
+      assert.equal(navigation.ok, true);
+      assert.equal(navigation.data.ready, true);
+      assert.equal(navigation.data.status, "ready");
+
+      const cleanArea = toolResult(await tools.get("vacuum_check_clean_area_readiness")!.execute({
+        area: { type: "rectangle", x: 0, y: 0, width: 1, height: 1, frameId: "map" },
+      }));
+      assert.equal(cleanArea.ok, true);
+      assert.equal(cleanArea.data.ready, true);
+      assert.equal(cleanArea.data.status, "ready");
+      assert.equal(preflightDispatchCount, 0);
+      assert.doesNotMatch(JSON.stringify({ navigation, cleanArea }), /\/map|\/pose|NavigateToPose|geometry_msgs|nav_msgs|Foxglove|topic|service|http:\/\/|10\.\d+\.\d+\.\d+/i);
+    },
+  ),
+);
+
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, readyCleanAreaSnapshot);
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_get_supported_actions")!.execute({}));
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.data.callableMovementWriteTools, []);
+      assert.ok(result.data.deferredActions.includes("vacuum_start_navigation"));
+      assert.ok(result.data.futureMovementActions.navigation.supported);
+      assert.doesNotMatch(JSON.stringify(result), /\/map|\/pose|NavigateToPose|geometry_msgs|nav_msgs|Foxglove|topic|service|http:\/\/|10\.\d+\.\d+\.\d+/i);
+    },
+  ),
+);
+
+await withToolEnv(
+  {
+    TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
+    TENSORFLEET_JWT: "token",
+    TENSORFLEET_VACUUM_BACKEND: "valetudo",
+  },
+  async () => {
+    const result = toolResult(await tools.get("vacuum_cancel_mission")!.execute({}));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "unsupported");
+    assert.equal(result.reason, "unsupported_backend");
+    assert.equal(result.data.backend, "valetudo");
+  },
+);
+
+await withToolEnv(
+  {
+    TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
+    TENSORFLEET_JWT: "token",
+    TENSORFLEET_VACUUM_BACKEND: undefined,
+  },
+  async () => {
+    const missingBackendResult = createVacuumRuntimeContext(await resolveMcpRuntimeConfig(
+      {
+        TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
+        TENSORFLEET_JWT: "token",
+      },
+      async () => null,
+    ));
+    assert.equal(missingBackendResult.ok, false);
+    if (!missingBackendResult.ok) {
+      assert.equal(missingBackendResult.result.status, "invalid_state");
+      assert.equal(missingBackendResult.result.reason, "missing_vacuum_backend");
+    }
+  },
+);
+
+const noActiveMissionSnapshot = {
+  ...simulationReadSnapshot,
+  activeMission: null,
+  missions: { active: null, recent: [] },
+};
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, noActiveMissionSnapshot);
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_cancel_mission")!.execute({}));
+      assert.equal(result.ok, false);
+      assert.equal(result.status, "invalid_state");
+      assert.equal(result.reason, "missing_active_mission");
+      assert.equal(result.data.blockingGate, "active_mission");
+    },
+  ),
+);
+
+const unavailableActionSnapshot = {
+  ...simulationReadSnapshot,
+  activeMission: {
+    ...(simulationReadSnapshot.activeMission as Record<string, unknown>),
+    status: "running",
+    availableActions: [],
+  },
+};
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, unavailableActionSnapshot);
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_cancel_mission")!.execute({}));
+      assert.equal(result.ok, false);
+      assert.equal(result.status, "unavailable");
+      assert.equal(result.reason, "mission_action_unavailable");
+      assert.equal(result.data.blockingGate, "available_actions");
+      assert.deepEqual(result.data.availableActions, []);
+    },
+  ),
+);
+
+let dispatchedCommand: unknown;
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, simulationReadSnapshot);
+      return;
+    }
+    if (request.method === "POST" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/command") {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        dispatchedCommand = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        jsonResponse(response, 200, { ok: true, status: "success", command: "cancel_mission", message: "Canceled." });
+      });
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_cancel_mission")!.execute({}));
+      assert.equal(result.ok, true);
+      assert.equal(result.data.actionRequested, "cancel_mission");
+      assert.equal(result.data.previousActiveMission.id, "mission-1");
+      assert.equal(result.data.refreshedActiveMission.id, "mission-1");
+      assert.deepEqual(dispatchedCommand, { command: "cancel_mission" });
+    },
+  ),
+);
+
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, simulationReadSnapshot);
+      return;
+    }
+    if (request.method === "POST" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/command") {
+      jsonResponse(response, 404, { error: "not found" });
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_cancel_mission")!.execute({}));
+      assert.equal(result.ok, false);
+      assert.equal(result.status, "unavailable");
+      assert.equal(result.reason, "simulation_command_route_unavailable");
+      assert.equal(result.data.blockingGate, "dispatch");
+    },
+  ),
+);
 
 console.log("MCP vacuum regression passed.");

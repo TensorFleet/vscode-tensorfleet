@@ -683,6 +683,55 @@ Result:
 
 ---
 
+# Progress Report - Simulation Movement Preflight
+Current report date: 2026-06-18.
+
+## 1. What changed
+- Added read-only MCP preflight tools for simulation movement readiness: `vacuum_check_navigation_readiness` and `vacuum_check_clean_area_readiness`.
+- Added `vacuum_get_supported_actions` to summarize read tools, active mission actions, supported-but-deferred future movement actions, and unsupported/deferred actions without advertising deferred movement starts as callable.
+- Implemented structured readiness data with backend, action, ready, status, blocking reasons, warnings, required inputs, capabilities, and snapshot evidence.
+- Gated preflight on selected simulation backend, snapshot availability, runtime/source availability, map and pose availability, active mission compatibility, normalized capability support/current availability, and optional target/area validation.
+- Kept the preflight tools read-only; they fetch snapshots only and do not call the simulation command route.
+- Extended MCP vacuum regression coverage for advertised preflight tools, missing backend invalid state, Valetudo unsupported behavior, missing simulation snapshots, map/pose blockers, incompatible active mission blockers, required inputs, invalid input shapes, ready cases without dispatch, raw-detail scrubbing, supported-action summaries, and deferred movement-start tool names.
+- Updated MCP setup, VS Code integration, and architecture docs to describe read-only simulation movement preflight and keep movement-start commands deferred.
+
+## 2. Product behavior
+- MCP clients can now ask whether simulation navigation or Clean Area could be started in principle before any movement-start write tools exist.
+- Missing target or area input returns `ready: false` with `status: "needs_input"` and the missing field in `requiredInputs`.
+- Invalid target or area payloads return structured `invalid_request`.
+- Valetudo selection returns structured `unsupported` for simulation movement preflight; existing Valetudo reads, basic cleaning commands, and settings behavior remain unchanged.
+- Simulation navigation, go-to, Clean Area start, room cleaning start, zone cleaning start, arbitrary waypoint, map editing, and raw Nav2 tools remain unavailable as MCP write tools.
+
+## 3. Still deferred
+- `vacuum_start_navigation`.
+- `vacuum_go_to_location`.
+- `vacuum_start_clean_area`.
+- `vacuum_start_room_cleaning`.
+- `vacuum_start_zone_cleaning`.
+- Arbitrary waypoint tools.
+- Raw Nav2 tools.
+- Map editing tools.
+- Live simulation runtime smoke testing with real `TENSORFLEET_VM_MANAGER_URL` and `TENSORFLEET_JWT`.
+
+## 4. Validation
+
+```sh
+bun run test:mcp-vacuum
+bun run typecheck
+bun run build:extension
+timeout 3s node dist/mcp-server.js
+if [ -n "$TENSORFLEET_JWT" ] && [ -n "$TENSORFLEET_VM_MANAGER_URL" ]; then curl -fsS -H "Authorization: Bearer $TENSORFLEET_JWT" "$TENSORFLEET_VM_MANAGER_URL/vms/self/tensorfleet/api/v1/vacuum/snapshot" >/tmp/tensorfleet-mcp-simulation-snapshot.json && wc -c /tmp/tensorfleet-mcp-simulation-snapshot.json; else echo "TENSORFLEET_JWT or TENSORFLEET_VM_MANAGER_URL not set; skipping live simulation curl"; fi
+git diff --check
+```
+
+Result:
+
+- `bun run test:mcp-vacuum`: passed - MCP vacuum regression passed.
+- `bun run typecheck`: passed - TypeScript completed with no errors.
+- `bun run build:extension`: passed - Vite built `dist/mcp-server.js` and `dist/extension.js`.
+- `timeout 3s node dist/mcp-server.js`: passed - server printed `TensorFleet MCP Server running on stdio`.
+- live simulation `curl`: not tested - `TENSORFLEET_JWT` or `TENSORFLEET_VM_MANAGER_URL` was not set in the shell.
+- `git diff --check`: passed - no whitespace errors.
 # Progress Report - Simulation MCP Read Quality
 Current report date: 2026-06-18.
 
@@ -737,6 +786,56 @@ git diff --check
 Result:
 
 - `bun run test:mcp-vacuum`: passed - MCP vacuum regression passed.
+- `bun run typecheck`: passed - TypeScript completed with no errors.
+- `bun run build:extension`: passed - Vite built `dist/mcp-server.js` and `dist/extension.js`.
+- `timeout 3s node dist/mcp-server.js`: passed - server printed `TensorFleet MCP Server running on stdio`.
+- live simulation `curl`: not tested - `TENSORFLEET_JWT` or `TENSORFLEET_VM_MANAGER_URL` was not set in the shell.
+- `git diff --check`: passed - no whitespace errors.
+
+---
+
+# Progress Report - Simulation Mission Actions
+Current report date: 2026-06-18.
+
+## 1. What changed
+- Added MCP tools for simulation mission controls: `vacuum_pause_mission`, `vacuum_resume_mission`, `vacuum_cancel_mission`, `vacuum_retry_mission_step`, and `vacuum_skip_mission_step`.
+- Added a narrow typed VM Manager helper for `POST /vms/self/tensorfleet/api/v1/vacuum/command`.
+- Gated simulation mission action dispatch on selected simulation backend, current normalized snapshot, runtime/source availability, active mission presence, compatible mission status, `activeMission.availableActions`, and normalized capability availability when descriptors exist.
+- Returned structured success/refusal envelopes with action requested, backend, blocking gate, active mission summary, available actions, and previous/refreshed mission summaries where available.
+- Extended MCP vacuum regression coverage for advertised mission action tools, no-backend invalid state, Valetudo unsupported behavior, missing active mission, unavailable active mission action, product-level command dispatch, missing simulation command route, and forbidden movement/raw tool names.
+- Updated MCP setup, VS Code integration, and architecture docs to distinguish mission action controls from mission-starting movement tools.
+
+## 2. Product behavior
+- MCP can now control only an already active runtime-owned simulation mission when the normalized active mission explicitly exposes the requested action.
+- Missing simulation command route returns structured `unavailable` with `simulation_command_route_unavailable`; MCP does not fake success or call raw ROS/Nav2 surfaces.
+- Valetudo mission action tools return structured `unsupported`; existing Valetudo basic cleaning commands and settings behavior remain unchanged.
+- Simulation navigation start, go-to, Clean Area, room cleaning, zone cleaning, map editing, arbitrary waypoint, and raw Nav2 tools remain unavailable.
+
+## 3. Still deferred
+- `vacuum_start_navigation`.
+- `vacuum_go_to_location`.
+- `vacuum_start_clean_area`.
+- `vacuum_start_room_cleaning`.
+- `vacuum_start_zone_cleaning`.
+- Map editing.
+- Arbitrary waypoint tools.
+- Raw Nav2 tools.
+- Live simulation mission-command smoke testing with real runtime credentials.
+
+## 4. Validation
+
+```sh
+bun run test:mcp-vacuum
+bun run typecheck
+bun run build:extension
+timeout 3s node dist/mcp-server.js
+if [ -n "$TENSORFLEET_JWT" ] && [ -n "$TENSORFLEET_VM_MANAGER_URL" ]; then curl -fsS -H "Authorization: Bearer $TENSORFLEET_JWT" "$TENSORFLEET_VM_MANAGER_URL/vms/self/tensorfleet/api/v1/vacuum/snapshot" >/tmp/tensorfleet-mcp-simulation-snapshot.json && wc -c /tmp/tensorfleet-mcp-simulation-snapshot.json; else echo "TENSORFLEET_JWT or TENSORFLEET_VM_MANAGER_URL not set; skipping live simulation curl"; fi
+git diff --check
+```
+
+Result:
+
+- `bun run test:mcp-vacuum`: passed - MCP vacuum regression passed after updating the test helper to accept direct structured tool results.
 - `bun run typecheck`: passed - TypeScript completed with no errors.
 - `bun run build:extension`: passed - Vite built `dist/mcp-server.js` and `dist/extension.js`.
 - `timeout 3s node dist/mcp-server.js`: passed - server printed `TensorFleet MCP Server running on stdio`.

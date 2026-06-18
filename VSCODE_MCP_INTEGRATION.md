@@ -95,7 +95,11 @@ For simulation reads, MCP uses product-level `/vms/self/tensorfleet/api/v1/vacuu
 
 Simulation readiness reports include selected backend, runtime/source availability, source freshness when timestamped, map and pose availability, localization evidence from pose state, active mission state, navigation state, movement/coverage capability availability, and blocking reasons from normalized snapshot data.
 
-Simulation write tools remain deferred in this phase. Valetudo-only settings such as `vacuum_set_fan_speed` and `vacuum_set_water_usage` return structured `unsupported` when `turtlebot4_nav2` is selected.
+Simulation movement preflight tools `vacuum_check_navigation_readiness` and `vacuum_check_clean_area_readiness` are read-only. They return structured readiness data for future movement starts, including `ready`, `status`, `blockingReasons`, `warnings`, `requiredInputs`, `capabilities`, and `snapshotEvidence`, but they do not dispatch navigation, go-to, Clean Area, room cleaning, or zone cleaning. `vacuum_get_supported_actions` summarizes current read tools, active mission actions, deferred movement starts, and unsupported actions without advertising deferred movement-start tools as callable.
+
+Simulation mission action writes use `POST /vms/self/tensorfleet/api/v1/vacuum/command` only after the selected backend, snapshot availability, runtime/source readiness, active mission state, `activeMission.availableActions`, and normalized capability gates pass. The exposed simulation mission controls are `vacuum_pause_mission`, `vacuum_resume_mission`, `vacuum_cancel_mission`, `vacuum_retry_mission_step`, and `vacuum_skip_mission_step`; they control an existing runtime-owned mission and do not start navigation, go-to, Clean Area, room cleaning, or zone cleaning.
+
+If the simulation command route is absent, MCP returns structured `unavailable` with `simulation_command_route_unavailable`. Valetudo-only settings such as `vacuum_set_fan_speed` and `vacuum_set_water_usage` return structured `unsupported` when `turtlebot4_nav2` is selected.
 
 ## Troubleshooting
 

@@ -129,7 +129,20 @@ const COMMAND_TOOL_TO_RUNTIME_COMMAND = {
   vacuum_return_to_dock: "return_to_dock",
   vacuum_set_fan_speed: "set_fan_speed",
   vacuum_set_water_usage: "set_water_usage",
+  vacuum_pause_mission: "pause_mission",
+  vacuum_resume_mission: "resume_mission",
+  vacuum_cancel_mission: "cancel_mission",
+  vacuum_retry_mission_step: "retry_mission_step",
+  vacuum_skip_mission_step: "skip_mission_step",
 } as const;
+
+const SIMULATION_MISSION_ACTION_COMMANDS = [
+  "pause_mission",
+  "resume_mission",
+  "cancel_mission",
+  "retry_mission_step",
+  "skip_mission_step",
+] as const;
 
 export const VACUUM_MCP_TOOL_NAMES = [
   "vacuum_get_health",
@@ -140,11 +153,15 @@ export const VACUUM_MCP_TOOL_NAMES = [
   "vacuum_get_map_summary",
   "vacuum_get_mission_state",
   "vacuum_get_navigation_state",
+  "vacuum_check_navigation_readiness",
+  "vacuum_check_clean_area_readiness",
+  "vacuum_get_supported_actions",
   ...Object.keys(COMMAND_TOOL_TO_RUNTIME_COMMAND),
 ] as const;
 
 type CommandToolName = keyof typeof COMMAND_TOOL_TO_RUNTIME_COMMAND;
 type RuntimeCommandName = (typeof COMMAND_TOOL_TO_RUNTIME_COMMAND)[CommandToolName];
+type SimulationMissionActionCommand = (typeof SIMULATION_MISSION_ACTION_COMMANDS)[number];
 
 export function createVacuumTools(): Map<string, VacuumToolDefinition> {
   const tools = new Map<string, VacuumToolDefinition>();
@@ -272,6 +289,70 @@ export function createVacuumTools(): Map<string, VacuumToolDefinition> {
       }),
   });
 
+  tools.set("vacuum_check_navigation_readiness", {
+    name: "vacuum_check_navigation_readiness",
+    description: "Read-only simulation preflight for a future navigation start; this does not dispatch movement.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: {
+          type: "object",
+          properties: {
+            x: { type: "number" },
+            y: { type: "number" },
+            theta: { type: "number" },
+            frameId: { type: "string" },
+          },
+          required: ["x", "y"],
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    execute: async (args) => executeReadinessTool("navigation", args),
+  });
+
+  tools.set("vacuum_check_clean_area_readiness", {
+    name: "vacuum_check_clean_area_readiness",
+    description: "Read-only simulation preflight for a future Clean Area start; this does not dispatch coverage.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        area: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ["rectangle"] },
+            x: { type: "number" },
+            y: { type: "number" },
+            width: { type: "number" },
+            height: { type: "number" },
+            frameId: { type: "string" },
+          },
+          required: ["type", "x", "y", "width", "height"],
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    execute: async (args) => executeReadinessTool("clean_area", args),
+  });
+
+  tools.set("vacuum_get_supported_actions", {
+    name: "vacuum_get_supported_actions",
+    description: "Summarize selected-backend vacuum actions, including read tools, active mission actions, and deferred movement starts.",
+    inputSchema: emptyInputSchema(),
+    execute: async () =>
+      withRuntime(async (context) => {
+        const snapshotResult = await fetchSelectedVacuumSnapshot(context);
+        if (context.backend !== "turtlebot4_nav2") {
+          if (!snapshotResult.ok || !snapshotResult.data) return snapshotResult;
+          return mcpSuccess("Vacuum supported actions fetched.", supportedActionsSummary(context.backend, snapshotResult.data as RuntimeSnapshot));
+        }
+        if (!snapshotResult.ok || !snapshotResult.data) return snapshotResult;
+        return mcpSuccess("Vacuum supported actions fetched.", supportedActionsSummary(context.backend, snapshotResult.data as RuntimeSnapshot));
+      }),
+  });
+
   for (const [toolName, command] of Object.entries(COMMAND_TOOL_TO_RUNTIME_COMMAND) as Array<[CommandToolName, RuntimeCommandName]>) {
     tools.set(toolName, {
       name: toolName,
@@ -295,8 +376,59 @@ async function withRuntime(
   return callback(context);
 }
 
+type ReadinessAction = "navigation" | "clean_area";
+
+async function executeReadinessTool(action: ReadinessAction, args: JsonRecord): Promise<TensorFleetMcpResult> {
+  return withRuntime(async (context) => {
+    if (context.backend !== "turtlebot4_nav2") {
+      return mcpFailure("unsupported", "unsupported_backend", `Vacuum ${readinessActionLabel(action)} readiness is only supported by the simulation backend.`, {
+        backend: context.backend,
+        action,
+        ready: false,
+        status: "unsupported",
+        blockingReasons: ["simulation_backend_required"],
+        warnings: [],
+        requiredInputs: [],
+        capabilities: {},
+        snapshotEvidence: {},
+      });
+    }
+
+    const inputValidation = action === "navigation" ? validateNavigationTarget(args.target) : validateCleanArea(args.area);
+    if (!inputValidation.ok) {
+      return inputValidation;
+    }
+
+    const snapshotResult = await fetchSelectedVacuumSnapshot(context);
+    if (!snapshotResult.ok || !snapshotResult.data) {
+      return {
+        ...snapshotResult,
+        data: {
+          ...asObjectData(snapshotResult.data),
+          backend: context.backend,
+          action,
+          ready: false,
+          status: "unavailable",
+          blockingReasons: [snapshotResult.reason ?? "snapshot_unavailable"],
+          warnings: [],
+          requiredInputs: [],
+          capabilities: {},
+          snapshotEvidence: {},
+        },
+      };
+    }
+
+    const snapshot = snapshotResult.data as RuntimeSnapshot;
+    return mcpSuccess(`Vacuum ${readinessActionLabel(action)} readiness checked.`, buildReadinessResult(context.backend, snapshot, action, inputValidation.data));
+  });
+}
+
 async function executeCommandTool(command: RuntimeCommandName, args: JsonRecord): Promise<TensorFleetMcpResult> {
   return withRuntime(async (context) => {
+    if (isSimulationMissionAction(command)) {
+      return executeSimulationMissionActionTool(context, command);
+    }
+
     if (context.backend === "turtlebot4_nav2" && (command === "set_fan_speed" || command === "set_water_usage")) {
       return mcpFailure("unsupported", "unsupported_command", `Vacuum command '${command}' is not supported by the simulation backend.`, {
         backend: context.backend,
@@ -327,6 +459,101 @@ async function executeCommandTool(command: RuntimeCommandName, args: JsonRecord)
   });
 }
 
+async function executeSimulationMissionActionTool(
+  context: Extract<ReturnType<typeof createVacuumRuntimeContext>, { ok: true }>,
+  action: SimulationMissionActionCommand,
+): Promise<TensorFleetMcpResult> {
+  if (context.backend !== "turtlebot4_nav2") {
+    return mcpFailure("unsupported", "unsupported_backend", `Vacuum mission action '${action}' is only supported by the simulation backend.`, {
+      actionRequested: action,
+      backend: context.backend,
+      blockingGate: "backend",
+      normalizedReason: "simulation_backend_required",
+    });
+  }
+
+  const snapshotResult = await fetchSelectedVacuumSnapshot(context);
+  if (!snapshotResult.ok || !snapshotResult.data) {
+    return withMissionActionRefusalDetails(snapshotResult, action, context.backend, "snapshot");
+  }
+
+  const snapshot = snapshotResult.data as RuntimeSnapshot;
+  const activeMission = normalizeActiveMission(asRecord(snapshot.activeMission ?? snapshot.missions?.active));
+  const refusalData = (blockingGate: string, normalizedReason: string, extra: JsonRecord = {}): JsonRecord => ({
+    actionRequested: action,
+    backend: context.backend,
+    blockingGate,
+    normalizedReason,
+    activeMission,
+    availableActions: Array.isArray(activeMission?.availableActions) ? activeMission.availableActions : undefined,
+    ...extra,
+  });
+
+  const availabilityStatus = runtimeAvailabilityStatus(snapshot);
+  if (availabilityStatus) {
+    return withMissionActionRefusalDetails(availabilityStatus, action, context.backend, "runtime_availability", activeMission);
+  }
+
+  if (!activeMission?.id) {
+    return mcpFailure(
+      "invalid_state",
+      "missing_active_mission",
+      `Vacuum mission action '${action}' requires an active runtime-owned mission.`,
+      refusalData("active_mission", "missing_active_mission"),
+    );
+  }
+
+  const status = stringValue(activeMission.status);
+  if (!isMissionStatusCompatible(action, status)) {
+    return mcpFailure(
+      "invalid_state",
+      "mission_status_incompatible",
+      `Vacuum mission action '${action}' is not compatible with the active mission status.`,
+      refusalData("mission_status", "mission_status_incompatible", { missionStatus: status }),
+    );
+  }
+
+  const availableActions = Array.isArray(activeMission.availableActions)
+    ? activeMission.availableActions.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  if (!availableActions.includes(action)) {
+    return mcpFailure(
+      "unavailable",
+      "mission_action_unavailable",
+      `Vacuum mission action '${action}' is not currently available on the active mission.`,
+      refusalData("available_actions", "mission_action_not_listed"),
+    );
+  }
+
+  const capabilityRefusal = validateMissionActionCapability(snapshot, action);
+  if (capabilityRefusal) {
+    return withMissionActionRefusalDetails(capabilityRefusal, action, context.backend, "capability", activeMission);
+  }
+
+  const commandResult = await dispatchVacuumCommand(context, { command: action });
+  if (!commandResult.ok) {
+    return withMissionActionRefusalDetails(commandResult, action, context.backend, "dispatch", activeMission);
+  }
+
+  const refreshedSnapshotResult = await fetchSelectedVacuumSnapshot(context);
+  const refreshedActiveMission = refreshedSnapshotResult.ok && refreshedSnapshotResult.data
+    ? normalizeActiveMission(asRecord((refreshedSnapshotResult.data as RuntimeSnapshot).activeMission ?? (refreshedSnapshotResult.data as RuntimeSnapshot).missions?.active))
+    : null;
+
+  return mcpSuccess("Vacuum mission action dispatched.", {
+    actionRequested: action,
+    backend: context.backend,
+    status: "success",
+    message: commandResult.message,
+    previousActiveMission: activeMission,
+    refreshedActiveMission,
+    refresh: refreshedSnapshotResult.ok
+      ? { ok: true }
+      : { ok: false, status: refreshedSnapshotResult.status, reason: refreshedSnapshotResult.reason, message: refreshedSnapshotResult.message },
+    result: commandResult.data,
+  });
+}
+
 async function fetchSelectedVacuumSnapshot(
   context: Extract<ReturnType<typeof createVacuumRuntimeContext>, { ok: true }>,
 ): Promise<TensorFleetMcpResult> {
@@ -336,6 +563,75 @@ async function fetchSelectedVacuumSnapshot(
     ...snapshot,
     data: extractSnapshotPayload(snapshot.data),
   };
+}
+
+function isSimulationMissionAction(command: RuntimeCommandName): command is SimulationMissionActionCommand {
+  return (SIMULATION_MISSION_ACTION_COMMANDS as readonly string[]).includes(command);
+}
+
+function withMissionActionRefusalDetails(
+  result: TensorFleetMcpResult,
+  action: SimulationMissionActionCommand,
+  backend: VacuumBackendId,
+  blockingGate: string,
+  activeMission: JsonRecord | null = null,
+): TensorFleetMcpResult {
+  if (result.ok) return result;
+  const resultData = result.data && typeof result.data === "object" ? result.data as JsonRecord : {};
+  return {
+    ...result,
+    data: {
+      ...resultData,
+      actionRequested: action,
+      backend,
+      blockingGate,
+      normalizedReason: result.reason ?? result.status,
+      activeMission,
+      availableActions: Array.isArray(activeMission?.availableActions) ? activeMission.availableActions : undefined,
+    },
+  };
+}
+
+function isMissionStatusCompatible(action: SimulationMissionActionCommand, status: string | undefined): boolean {
+  if (!status) return false;
+  const compatibleStatuses: Record<SimulationMissionActionCommand, string[]> = {
+    pause_mission: ["preparing", "running", "resuming", "returning", "charging"],
+    resume_mission: ["paused", "needs_assistance"],
+    cancel_mission: ["preparing", "running", "paused", "returning", "charging", "resuming", "needs_assistance"],
+    retry_mission_step: ["failed", "needs_assistance"],
+    skip_mission_step: ["running", "paused", "needs_assistance"],
+  };
+  return compatibleStatuses[action].includes(status);
+}
+
+function validateMissionActionCapability(snapshot: RuntimeSnapshot, action: SimulationMissionActionCommand): TensorFleetMcpResult | null {
+  const normalizedCommands = normalizeCommandAvailability(snapshot);
+  const commands = snapshot.capabilities?.commands ?? {};
+  const commandSupport = normalizedCommands[action] ?? commands[action];
+  const featureSupport = snapshot.capabilities?.[action] as CommandAvailability | undefined;
+  const support = commandSupport ?? featureSupport;
+  if (!support) {
+    return null;
+  }
+  if (support.supported === false) {
+    return mcpFailure("unsupported", support.reason ?? "unsupported_command", `Vacuum mission action '${action}' is not supported by the current runtime.`, {
+      actionRequested: action,
+      capability: support,
+    });
+  }
+  if (support.available === false) {
+    const reason = support.reason ?? support.availabilityReason ?? "capability_unavailable";
+    return mcpFailure(
+      normalizeAvailabilityReason(reason),
+      reason,
+      `Vacuum mission action '${action}' is currently unavailable in normalized capabilities.`,
+      {
+        actionRequested: action,
+        capability: support,
+      },
+    );
+  }
+  return null;
 }
 
 export function validateCommandRequest(
@@ -434,6 +730,242 @@ function commandParams(command: RuntimeCommandName, args: JsonRecord): Record<st
     return undefined;
   }
   return { value: String(args.value).trim() };
+}
+
+function buildReadinessResult(
+  backend: VacuumBackendId,
+  snapshot: RuntimeSnapshot,
+  action: ReadinessAction,
+  input: JsonRecord | null,
+): JsonRecord {
+  const map = normalizeMap(snapshot);
+  const pose = normalizePose(snapshot);
+  const mission = normalizeMissionState(snapshot);
+  const navigation = normalizeNavigationState(snapshot);
+  const capabilities = normalizeCapabilities(snapshot, backend);
+  const features = capabilities.features && typeof capabilities.features === "object" ? capabilities.features as JsonRecord : {};
+  const capabilityNames = action === "navigation" ? ["start_navigation", "go_to_location"] : ["start_coverage"];
+  const actionCapabilities = capabilityAvailability(features, capabilityNames);
+  const activeMission = mission.active && typeof mission.active === "object" ? mission.active as JsonRecord : null;
+  const blockers = new Set<string>();
+  const warnings: string[] = [];
+  const requiredInputs: string[] = [];
+  const availabilityStatus = runtimeAvailabilityStatus(snapshot);
+
+  if (availabilityStatus) {
+    blockers.add(availabilityStatus.reason ?? availabilityStatus.status);
+  }
+  if (map.available !== true) blockers.add("map_unavailable");
+  if (action === "navigation" && (map.usableForNavigation as JsonRecord | undefined)?.available === false) {
+    blockers.add(stringValue((map.usableForNavigation as JsonRecord).reason) ?? "map_not_usable_for_navigation");
+  }
+  if (action === "clean_area" && (map.usableForCoverage as JsonRecord | undefined)?.available === false) {
+    blockers.add(stringValue((map.usableForCoverage as JsonRecord).reason) ?? "map_not_usable_for_coverage");
+  }
+  if (pose.available !== true) blockers.add("pose_unavailable");
+  if (actionCapabilities.supported !== true) blockers.add("capability_unsupported");
+  if (actionCapabilities.supported === true && actionCapabilities.available !== true) {
+    blockers.add(stringValue(actionCapabilities.reason) ?? "capability_unavailable");
+  }
+  if (activeMission && isBlockingActiveMission(activeMission)) {
+    blockers.add("active_mission_incompatible");
+  }
+  if (!input) {
+    requiredInputs.push(action === "navigation" ? "target" : "area");
+  } else {
+    const frameWarning = frameCompatibilityWarning(input, map);
+    if (frameWarning) warnings.push(frameWarning);
+  }
+
+  const blockingReasons = [...blockers];
+  const ready = blockingReasons.length === 0 && requiredInputs.length === 0;
+  const status = ready ? "ready" : requiredInputs.length > 0 && blockingReasons.length === 0 ? "needs_input" : "blocked";
+
+  return {
+    backend,
+    action,
+    ready,
+    status,
+    blockingReasons,
+    warnings,
+    requiredInputs,
+    capabilities: actionCapabilities,
+    snapshotEvidence: {
+      runtime: {
+        status: stringValue(snapshot.runtime?.status) ?? stringValue(snapshot.availability?.status) ?? "unknown",
+        available: availabilityStatus == null,
+      },
+      source: {
+        status: stringValue(snapshot.source?.status) ?? "unknown",
+        stale: snapshot.source?.stale === true,
+        lastSeenAt: numberOrString(snapshot.source?.lastSeenAt) ?? numberOrString(snapshot.updatedAt),
+      },
+      map: {
+        available: map.available === true,
+        readiness: map.readiness,
+        usableForNavigation: map.usableForNavigation,
+        usableForCoverage: map.usableForCoverage,
+        dimensions: map.dimensions,
+      },
+      pose: {
+        available: pose.available === true,
+        readiness: pose.readiness,
+      },
+      localization: {
+        acceptable: pose.available === true,
+        evidence: pose.available === true ? "pose_available" : "pose_unavailable",
+      },
+      mission: {
+        active: Boolean(activeMission?.id),
+        activeMission,
+      },
+      navigation: {
+        available: navigation.available === true,
+        state: navigation.state ?? "unknown",
+        active: navigation.active === true,
+      },
+    },
+  };
+}
+
+function validateNavigationTarget(value: unknown): TensorFleetMcpResult<JsonRecord | null> {
+  if (value == null) return mcpSuccess("Navigation target omitted.", null);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return invalidReadinessInput("navigation", "invalid_target", "Navigation target must be an object.");
+  }
+  const target = value as JsonRecord;
+  if (numberValue(target.x) == null || numberValue(target.y) == null) {
+    return invalidReadinessInput("navigation", "invalid_target", "Navigation target requires numeric x and y coordinates.");
+  }
+  if ("theta" in target && numberValue(target.theta) == null) {
+    return invalidReadinessInput("navigation", "invalid_target", "Navigation target theta must be numeric when provided.");
+  }
+  if ("frameId" in target && !stringValue(target.frameId)) {
+    return invalidReadinessInput("navigation", "invalid_target", "Navigation target frameId must be a non-empty string when provided.");
+  }
+  return mcpSuccess("Navigation target is valid.", {
+    x: numberValue(target.x),
+    y: numberValue(target.y),
+    theta: numberValue(target.theta),
+    frameId: stringValue(target.frameId),
+  });
+}
+
+function validateCleanArea(value: unknown): TensorFleetMcpResult<JsonRecord | null> {
+  if (value == null) return mcpSuccess("Clean Area omitted.", null);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return invalidReadinessInput("clean_area", "invalid_area", "Clean Area payload must be an object.");
+  }
+  const area = value as JsonRecord;
+  if (area.type !== "rectangle") {
+    return invalidReadinessInput("clean_area", "invalid_area", "Clean Area currently accepts only rectangle areas.");
+  }
+  const x = numberValue(area.x);
+  const y = numberValue(area.y);
+  const width = numberValue(area.width);
+  const height = numberValue(area.height);
+  if (x == null || y == null || width == null || height == null) {
+    return invalidReadinessInput("clean_area", "invalid_area", "Clean Area requires numeric x, y, width, and height.");
+  }
+  if (width <= 0 || height <= 0) {
+    return invalidReadinessInput("clean_area", "invalid_area_dimensions", "Clean Area width and height must be positive.");
+  }
+  if ("frameId" in area && !stringValue(area.frameId)) {
+    return invalidReadinessInput("clean_area", "invalid_area", "Clean Area frameId must be a non-empty string when provided.");
+  }
+  return mcpSuccess("Clean Area payload is valid.", {
+    type: "rectangle",
+    x,
+    y,
+    width,
+    height,
+    frameId: stringValue(area.frameId),
+  });
+}
+
+function invalidReadinessInput(action: ReadinessAction, reason: string, message: string): TensorFleetMcpResult<JsonRecord | null> {
+  return mcpFailure<JsonRecord>("invalid_request", reason, message, {
+    backend: "turtlebot4_nav2",
+    action,
+    ready: false,
+    status: "invalid_request",
+    blockingReasons: [reason],
+    warnings: [],
+    requiredInputs: [],
+    capabilities: {},
+    snapshotEvidence: {},
+  });
+}
+
+function isBlockingActiveMission(activeMission: JsonRecord): boolean {
+  const status = stringValue(activeMission.status);
+  if (!status || ["idle", "completed", "failed", "canceled", "unsupported"].includes(status)) return false;
+  return Boolean(activeMission.id);
+}
+
+function frameCompatibilityWarning(input: JsonRecord, map: JsonRecord): string | null {
+  const requestedFrame = stringValue(input.frameId);
+  if (!requestedFrame) return null;
+  const dimensions = map.dimensions && typeof map.dimensions === "object" ? map.dimensions as JsonRecord : null;
+  const mapFrame = stringValue(dimensions?.frameId);
+  if (!mapFrame) return "Input frame could not be compared because the map frame is not available in normalized metadata.";
+  if (requestedFrame !== mapFrame) return "Input frame differs from the normalized map frame.";
+  return null;
+}
+
+function supportedActionsSummary(backend: VacuumBackendId, snapshot: RuntimeSnapshot): JsonRecord {
+  const capabilities = normalizeCapabilities(snapshot, backend);
+  const features = capabilities.features && typeof capabilities.features === "object" ? capabilities.features as JsonRecord : {};
+  const mission = normalizeMissionState(snapshot);
+  const activeMission = mission.active && typeof mission.active === "object" ? mission.active as JsonRecord : null;
+  const activeMissionActions = Array.isArray(activeMission?.availableActions) ? activeMission.availableActions : [];
+  return {
+    backend,
+    readTools: [
+      "vacuum_get_health",
+      "vacuum_get_snapshot",
+      "vacuum_get_capabilities",
+      "vacuum_get_map_targets",
+      "vacuum_get_pose",
+      "vacuum_get_map_summary",
+      "vacuum_get_mission_state",
+      "vacuum_get_navigation_state",
+      "vacuum_check_navigation_readiness",
+      "vacuum_check_clean_area_readiness",
+      "vacuum_get_supported_actions",
+    ],
+    activeMissionActions,
+    futureMovementActions: backend === "turtlebot4_nav2"
+      ? {
+          note: "These actions may be supported by normalized capabilities but are not executable through MCP write tools yet.",
+          navigation: capabilityAvailability(features, ["start_navigation", "go_to_location"]),
+          cleanArea: capabilityAvailability(features, ["start_coverage"]),
+        }
+      : {
+          note: "Simulation movement preflight does not reinterpret Valetudo map targets.",
+          navigation: { supported: false, available: false, reason: "unsupported_backend" },
+          cleanArea: { supported: false, available: false, reason: "unsupported_backend" },
+        },
+    deferredActions: [
+      "vacuum_start_navigation",
+      "vacuum_go_to_location",
+      "vacuum_start_clean_area",
+      "vacuum_start_room_cleaning",
+      "vacuum_start_zone_cleaning",
+      "arbitrary_waypoint_tools",
+      "map_editing_tools",
+    ],
+    callableMovementWriteTools: [],
+    capabilities,
+  };
+}
+
+function readinessActionLabel(action: ReadinessAction): string {
+  return action === "navigation" ? "navigation" : "Clean Area";
+}
+
+function asObjectData(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
 export function normalizeSnapshot(
@@ -1199,6 +1731,11 @@ function commandDescription(toolName: CommandToolName): string {
     vacuum_return_to_dock: "Return the vacuum to dock when currently supported and available.",
     vacuum_set_fan_speed: "Set vacuum fan speed to a currently available preset.",
     vacuum_set_water_usage: "Set vacuum water usage to a currently available preset.",
+    vacuum_pause_mission: "Pause an already active simulation runtime-owned mission when activeMission.availableActions permits it.",
+    vacuum_resume_mission: "Resume an already active paused simulation runtime-owned mission when activeMission.availableActions permits it.",
+    vacuum_cancel_mission: "Cancel an already active simulation runtime-owned mission when activeMission.availableActions permits it.",
+    vacuum_retry_mission_step: "Retry the current simulation mission step when activeMission.availableActions permits it.",
+    vacuum_skip_mission_step: "Skip the current simulation mission step when activeMission.availableActions permits it.",
   };
   return descriptions[toolName];
 }

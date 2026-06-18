@@ -130,6 +130,9 @@ The production MCP surface currently advertises vacuum product tools:
 - `vacuum_get_map_summary`
 - `vacuum_get_mission_state`
 - `vacuum_get_navigation_state`
+- `vacuum_check_navigation_readiness`
+- `vacuum_check_clean_area_readiness`
+- `vacuum_get_supported_actions`
 - `vacuum_start_cleaning`
 - `vacuum_pause`
 - `vacuum_resume`
@@ -137,6 +140,11 @@ The production MCP surface currently advertises vacuum product tools:
 - `vacuum_return_to_dock`
 - `vacuum_set_fan_speed`
 - `vacuum_set_water_usage`
+- `vacuum_pause_mission`
+- `vacuum_resume_mission`
+- `vacuum_cancel_mission`
+- `vacuum_retry_mission_step`
+- `vacuum_skip_mission_step`
 
 Current behavior facts:
 
@@ -154,8 +162,16 @@ Current behavior facts:
 - Command tools fetch current snapshot state before dispatch and refuse
   unsupported, unavailable, stale, unreachable, offline, invalid-state, and
   invalid-setting requests with structured results.
-- Simulation write tools remain deferred. Valetudo-only settings such as fan
-  speed and water usage return `unsupported` when `turtlebot4_nav2` is selected.
+- Simulation mission action writes are available only for controlling an
+  already active runtime-owned mission through normalized
+  `activeMission.availableActions`. They do not start navigation, go-to,
+  coverage, room, or zone missions.
+- Simulation movement preflight tools are read-only. They inspect the current
+  normalized snapshot and capabilities to report whether a future movement
+  command could be attempted, but they do not dispatch navigation, go-to, Clean
+  Area, room cleaning, or zone cleaning.
+- Valetudo-only settings such as fan speed and water usage return
+  `unsupported` when `turtlebot4_nav2` is selected.
 
 The existing bridge in `src/mcp-bridge.ts` listens on:
 
@@ -228,6 +244,7 @@ GET  /api/v1/valetudo/snapshot
 POST /api/v1/valetudo/command
 GET  /api/v1/vacuum/health              # simulation product route, when available
 GET  /api/v1/vacuum/snapshot            # simulation product route, when available
+POST /api/v1/vacuum/command             # simulation mission action route, when available
 ```
 
 Through VM Manager, those become:
@@ -238,6 +255,7 @@ GET  /vms/self/tensorfleet/api/v1/valetudo/snapshot
 POST /vms/self/tensorfleet/api/v1/valetudo/command
 GET  /vms/self/tensorfleet/api/v1/vacuum/health
 GET  /vms/self/tensorfleet/api/v1/vacuum/snapshot
+POST /vms/self/tensorfleet/api/v1/vacuum/command
 ```
 
 The MCP server should use those proxied paths by default. Direct VM access is a
@@ -466,6 +484,9 @@ hosts:
 - `vacuum_get_map_summary`
 - `vacuum_get_mission_state`
 - `vacuum_get_navigation_state`
+- `vacuum_check_navigation_readiness`
+- `vacuum_check_clean_area_readiness`
+- `vacuum_get_supported_actions`
 - `vacuum_start_cleaning`
 - `vacuum_pause`
 - `vacuum_resume`
@@ -473,6 +494,11 @@ hosts:
 - `vacuum_return_to_dock`
 - `vacuum_set_fan_speed`
 - `vacuum_set_water_usage`
+- `vacuum_pause_mission`
+- `vacuum_resume_mission`
+- `vacuum_cancel_mission`
+- `vacuum_retry_mission_step`
+- `vacuum_skip_mission_step`
 
 Avoid raw backend names:
 
@@ -822,6 +848,134 @@ Dispatch:
   }
 }
 ```
+
+### Simulation Mission Action Tools
+
+Tools:
+
+- `vacuum_pause_mission`
+- `vacuum_resume_mission`
+- `vacuum_cancel_mission`
+- `vacuum_retry_mission_step`
+- `vacuum_skip_mission_step`
+
+Purpose:
+
+- Control an already active, runtime-owned simulation mission.
+- Use only normalized mission actions exposed by `activeMission.availableActions`.
+- Do not start navigation, go-to, Clean Area, room cleaning, zone cleaning, map
+  editing, arbitrary waypoint, raw ROS, or raw Nav2 operations.
+
+Arguments:
+
+```json
+{}
+```
+
+Gate:
+
+- Selected backend must be `turtlebot4_nav2` or `simulation`.
+- Current simulation snapshot must be available from the product-level
+  `/vacuum/snapshot` route.
+- Runtime/source availability must be healthy enough for command dispatch.
+- `activeMission` must exist.
+- Active mission status must be compatible with the requested action.
+- Requested action must be present in `activeMission.availableActions`.
+- Matching normalized capability must be supported and currently available when
+  capability descriptors exist.
+
+Dispatch:
+
+```json
+{
+  "command": "pause_mission"
+}
+```
+
+The other mission action tools dispatch `resume_mission`, `cancel_mission`,
+`retry_mission_step`, or `skip_mission_step`.
+
+Relevant endpoint:
+
+```text
+POST /vms/self/tensorfleet/api/v1/vacuum/command
+```
+
+If the command route is absent, MCP returns structured `unavailable` with
+`simulation_command_route_unavailable`; it does not fake success or call raw
+backend endpoints.
+
+### Simulation Movement Preflight Tools
+
+Tools:
+
+- `vacuum_check_navigation_readiness`
+- `vacuum_check_clean_area_readiness`
+- `vacuum_get_supported_actions`
+
+Purpose:
+
+- Inspect whether the selected simulation backend is ready for a future
+  product-level movement start.
+- Return only structured readiness evidence; do not start navigation, go-to,
+  Clean Area, room cleaning, zone cleaning, arbitrary waypoint, map editing,
+  raw ROS, or raw Nav2 operations.
+- Return structured `unsupported` when the selected backend is Valetudo.
+
+`vacuum_check_navigation_readiness` accepts an optional target:
+
+```json
+{
+  "target": {
+    "x": 0,
+    "y": 0,
+    "theta": 0,
+    "frameId": "map"
+  }
+}
+```
+
+If `target` is omitted, the tool reports whether navigation is possible in
+principle and includes `target` in `requiredInputs`.
+
+`vacuum_check_clean_area_readiness` accepts an optional rectangular area:
+
+```json
+{
+  "area": {
+    "type": "rectangle",
+    "x": 0,
+    "y": 0,
+    "width": 1,
+    "height": 1,
+    "frameId": "map"
+  }
+}
+```
+
+If `area` is omitted, the tool reports whether Clean Area is possible in
+principle and includes `area` in `requiredInputs`.
+
+Readiness data uses this product-level shape inside the shared MCP envelope:
+
+```json
+{
+  "backend": "turtlebot4_nav2",
+  "action": "navigation",
+  "ready": false,
+  "status": "needs_input",
+  "blockingReasons": [],
+  "warnings": [],
+  "requiredInputs": ["target"],
+  "capabilities": {},
+  "snapshotEvidence": {}
+}
+```
+
+The preflight checks use normalized evidence only: selected backend, snapshot
+availability, runtime/source availability, map availability, pose/localization
+evidence, incompatible active mission state, and normalized movement/coverage
+capability support/current availability.
 
 ## 14. Vacuum MCP Resources
 
