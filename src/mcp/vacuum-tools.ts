@@ -156,12 +156,20 @@ export const VACUUM_MCP_TOOL_NAMES = [
   "vacuum_check_navigation_readiness",
   "vacuum_check_clean_area_readiness",
   "vacuum_get_supported_actions",
+  "vacuum_start_navigation",
   ...Object.keys(COMMAND_TOOL_TO_RUNTIME_COMMAND),
 ] as const;
 
 type CommandToolName = keyof typeof COMMAND_TOOL_TO_RUNTIME_COMMAND;
 type RuntimeCommandName = (typeof COMMAND_TOOL_TO_RUNTIME_COMMAND)[CommandToolName];
 type SimulationMissionActionCommand = (typeof SIMULATION_MISSION_ACTION_COMMANDS)[number];
+type NavigationStartTarget = {
+  x: number;
+  y: number;
+  theta: number;
+  frameId: string;
+  label?: string;
+};
 
 export function createVacuumTools(): Map<string, VacuumToolDefinition> {
   const tools = new Map<string, VacuumToolDefinition>();
@@ -353,6 +361,31 @@ export function createVacuumTools(): Map<string, VacuumToolDefinition> {
       }),
   });
 
+  tools.set("vacuum_start_navigation", {
+    name: "vacuum_start_navigation",
+    description: "Start a simulation backend navigation mission after product-level readiness gates pass.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: {
+          type: "object",
+          properties: {
+            x: { type: "number" },
+            y: { type: "number" },
+            theta: { type: "number" },
+            frameId: { type: "string", default: "map" },
+            label: { type: "string" },
+          },
+          required: ["x", "y", "theta"],
+          additionalProperties: false,
+        },
+      },
+      required: ["target"],
+      additionalProperties: false,
+    },
+    execute: async (args) => executeStartNavigationTool(args),
+  });
+
   for (const [toolName, command] of Object.entries(COMMAND_TOOL_TO_RUNTIME_COMMAND) as Array<[CommandToolName, RuntimeCommandName]>) {
     tools.set(toolName, {
       name: toolName,
@@ -455,6 +488,83 @@ async function executeCommandTool(command: RuntimeCommandName, args: JsonRecord)
     return mcpSuccess("Vacuum command dispatched.", {
       command,
       result: commandResult.data,
+    });
+  });
+}
+
+async function executeStartNavigationTool(args: JsonRecord): Promise<TensorFleetMcpResult> {
+  return withRuntime(async (context) => {
+    const requestedTarget = summarizeRequestedNavigationTarget(args.target);
+
+    if (context.backend !== "turtlebot4_nav2") {
+      return mcpFailure("unsupported", "unsupported_backend", "Vacuum start navigation is only supported by the simulation backend.", {
+        backend: context.backend,
+        action: "start_navigation",
+        requestedTarget,
+        blockingGate: "backend",
+        blockingReasons: ["simulation_backend_required"],
+        requiredInputs: [],
+        capabilityEvidence: {},
+        snapshotEvidence: {},
+        activeMission: null,
+      });
+    }
+
+    const targetValidation = validateNavigationStartTarget(args.target);
+    if (!targetValidation.ok || !targetValidation.data) {
+      return targetValidation;
+    }
+    const target = targetValidation.data as NavigationStartTarget;
+
+    const snapshotResult = await fetchSelectedVacuumSnapshot(context);
+    if (!snapshotResult.ok || !snapshotResult.data) {
+      return withStartNavigationRefusalDetails(snapshotResult, context.backend, target, "snapshot");
+    }
+
+    const snapshot = snapshotResult.data as RuntimeSnapshot;
+    const gate = buildStartNavigationGateResult(context.backend, snapshot, target);
+    if (gate.ready !== true) {
+      const reason = selectStartNavigationBlockingReason(gate);
+      return mcpFailure(
+        startNavigationFailureStatus(reason, gate.capabilities as JsonRecord | undefined),
+        reason,
+        "Vacuum start navigation was refused because readiness gates did not pass.",
+        {
+          ...gate,
+          blockingGate: blockingGateForNavigationReason(reason),
+        },
+      );
+    }
+
+    const previousActiveMission = normalizeActiveMission(asRecord(snapshot.activeMission ?? snapshot.missions?.active));
+    const commandResult = await dispatchVacuumCommand(context, {
+      command: "start_navigation",
+      target: {
+        x: target.x,
+        y: target.y,
+        yaw: target.theta,
+      },
+    });
+    if (!commandResult.ok) {
+      return withStartNavigationRefusalDetails(commandResult, context.backend, target, "dispatch", previousActiveMission, gate);
+    }
+
+    const refreshedSnapshotResult = await fetchSelectedVacuumSnapshot(context);
+    const refreshedActiveMission = refreshedSnapshotResult.ok && refreshedSnapshotResult.data
+      ? normalizeActiveMission(asRecord((refreshedSnapshotResult.data as RuntimeSnapshot).activeMission ?? (refreshedSnapshotResult.data as RuntimeSnapshot).missions?.active))
+      : null;
+
+    return mcpSuccess("Vacuum start navigation dispatched.", {
+      backend: context.backend,
+      action: "start_navigation",
+      requestedTarget: navigationTargetSummary(target),
+      previousActiveMission,
+      commandResult: summarizeCommandDispatchResult(commandResult.data),
+      refreshedActiveMission,
+      refresh: refreshedSnapshotResult.ok
+        ? { ok: true }
+        : { ok: false, status: refreshedSnapshotResult.status, reason: refreshedSnapshotResult.reason, message: refreshedSnapshotResult.message },
+      warnings: Array.isArray(gate.warnings) ? gate.warnings : [],
     });
   });
 }
@@ -590,6 +700,84 @@ function withMissionActionRefusalDetails(
       availableActions: Array.isArray(activeMission?.availableActions) ? activeMission.availableActions : undefined,
     },
   };
+}
+
+function withStartNavigationRefusalDetails(
+  result: TensorFleetMcpResult,
+  backend: VacuumBackendId,
+  target: NavigationStartTarget,
+  blockingGate: string,
+  activeMission: JsonRecord | null = null,
+  gate: JsonRecord | null = null,
+): TensorFleetMcpResult {
+  if (result.ok) return result;
+  const resultData = result.data && typeof result.data === "object" ? result.data as JsonRecord : {};
+  const gateReasons = Array.isArray(gate?.blockingReasons)
+    ? gate.blockingReasons.filter((reason): reason is string => typeof reason === "string")
+    : [];
+  return {
+    ...result,
+    data: {
+      ...resultData,
+      backend,
+      action: "start_navigation",
+      requestedTarget: navigationTargetSummary(target),
+      blockingGate,
+      blockingReasons: gateReasons.length > 0 ? gateReasons : [result.reason ?? result.status],
+      requiredInputs: Array.isArray(gate?.requiredInputs) ? gate.requiredInputs : [],
+      capabilityEvidence: gate?.capabilityEvidence ?? gate?.capabilities ?? {},
+      snapshotEvidence: gate?.snapshotEvidence ?? {},
+      activeMission,
+      commandResult: result.ok ? undefined : summarizeCommandDispatchResult(result.data),
+    },
+  };
+}
+
+function startNavigationFailureStatus(
+  reason: string,
+  capability: JsonRecord | undefined,
+): "unsupported" | "unavailable" | "invalid_request" | "invalid_state" | "runtime_offline" | "source_unreachable" | "stale_source" {
+  if (reason === "capability_unsupported" || capability?.supported === false) return "unsupported";
+  if (reason === "target_frame_mismatch") return "invalid_request";
+  if (reason === "active_mission_incompatible") return "invalid_state";
+  if (reason === "runtime_offline") return "runtime_offline";
+  if (reason === "source_unreachable") return "source_unreachable";
+  if (reason === "stale_source") return "stale_source";
+  return "unavailable";
+}
+
+function selectStartNavigationBlockingReason(gate: JsonRecord): string {
+  const reasons = Array.isArray(gate.blockingReasons)
+    ? gate.blockingReasons.filter((reason): reason is string => typeof reason === "string")
+    : [];
+  const priority = [
+    "runtime_offline",
+    "source_unreachable",
+    "stale_source",
+    "map_unavailable",
+    "map_not_usable_for_navigation",
+    "pose_unavailable",
+    "target_frame_mismatch",
+    "active_mission_incompatible",
+    "capability_unsupported",
+    "capability_unavailable",
+  ];
+  return priority.find((reason) => reasons.includes(reason))
+    ?? reasons.find((reason) => reason.includes("capability"))
+    ?? reasons.find((reason) => reason !== "availability_not_reported")
+    ?? reasons[0]
+    ?? "navigation_not_ready";
+}
+
+function blockingGateForNavigationReason(reason: string): string {
+  if (reason.includes("runtime")) return "runtime_availability";
+  if (reason.includes("source")) return "source_availability";
+  if (reason.includes("map")) return "map";
+  if (reason.includes("pose") || reason.includes("localization")) return "pose";
+  if (reason.includes("mission")) return "active_mission";
+  if (reason.includes("capability") || reason === "availability_not_reported" || reason.endsWith("_not_ready")) return "capability";
+  if (reason.includes("frame") || reason.includes("target")) return "target";
+  return "readiness";
 }
 
 function isMissionStatusCompatible(action: SimulationMissionActionCommand, status: string | undefined): boolean {
@@ -828,6 +1016,52 @@ function buildReadinessResult(
   };
 }
 
+function buildStartNavigationGateResult(
+  backend: VacuumBackendId,
+  snapshot: RuntimeSnapshot,
+  target: NavigationStartTarget,
+): JsonRecord {
+  const readiness = buildReadinessResult(backend, snapshot, "navigation", target);
+  const capabilities = normalizeCapabilities(snapshot, backend);
+  const features = capabilities.features && typeof capabilities.features === "object" ? capabilities.features as JsonRecord : {};
+  const startNavigationCapability = capabilityAvailability(features, ["start_navigation"]);
+  const blockingReasons = new Set(
+    Array.isArray(readiness.blockingReasons)
+      ? readiness.blockingReasons.filter((reason): reason is string => typeof reason === "string")
+      : [],
+  );
+  const map = normalizeMap(snapshot);
+  const mapFrame = stringValue((map.dimensions as JsonRecord | null | undefined)?.frameId);
+
+  if (mapFrame && target.frameId !== mapFrame) {
+    blockingReasons.add("target_frame_mismatch");
+  }
+  if (startNavigationCapability.supported !== true) {
+    blockingReasons.add("capability_unsupported");
+  } else if (startNavigationCapability.available !== true) {
+    blockingReasons.add(stringValue(startNavigationCapability.reason) ?? "capability_unavailable");
+  }
+
+  const reasons = [...blockingReasons];
+  return {
+    ...readiness,
+    action: "start_navigation",
+    ready: reasons.length === 0,
+    status: reasons.length === 0 ? "ready" : "blocked",
+    blockingReasons: reasons,
+    requiredInputs: [],
+    requestedTarget: navigationTargetSummary(target),
+    capabilities: startNavigationCapability,
+    capabilityEvidence: {
+      startNavigation: startNavigationCapability,
+    },
+    activeMission: (readiness.snapshotEvidence as JsonRecord | undefined)?.mission
+      && typeof (readiness.snapshotEvidence as JsonRecord).mission === "object"
+      ? ((readiness.snapshotEvidence as JsonRecord).mission as JsonRecord).activeMission
+      : null,
+  };
+}
+
 function validateNavigationTarget(value: unknown): TensorFleetMcpResult<JsonRecord | null> {
   if (value == null) return mcpSuccess("Navigation target omitted.", null);
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -848,6 +1082,71 @@ function validateNavigationTarget(value: unknown): TensorFleetMcpResult<JsonReco
     y: numberValue(target.y),
     theta: numberValue(target.theta),
     frameId: stringValue(target.frameId),
+  });
+}
+
+function validateNavigationStartTarget(value: unknown): TensorFleetMcpResult<NavigationStartTarget | JsonRecord | null> {
+  if (value == null) {
+    return mcpFailure("invalid_request", "missing_target", "Vacuum start navigation requires a target.", {
+      backend: "turtlebot4_nav2",
+      action: "start_navigation",
+      requestedTarget: null,
+      ready: false,
+      status: "needs_input",
+      blockingGate: "target",
+      blockingReasons: ["missing_target"],
+      requiredInputs: ["target"],
+      capabilityEvidence: {},
+      snapshotEvidence: {},
+      activeMission: null,
+    });
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return invalidNavigationStartTarget("invalid_target", "Navigation target must be an object.", value);
+  }
+  const target = value as JsonRecord;
+  const x = numberValue(target.x);
+  const y = numberValue(target.y);
+  const theta = numberValue(target.theta);
+  if (x == null || y == null) {
+    return invalidNavigationStartTarget("invalid_target", "Navigation target requires numeric x and y coordinates.", value);
+  }
+  if (theta == null) {
+    return invalidNavigationStartTarget(
+      "missing_theta",
+      "Navigation target requires numeric theta because the normalized start_navigation command requires yaw.",
+      value,
+    );
+  }
+  const frameId = stringValue(target.frameId) ?? "map";
+  if (frameId !== "map") {
+    return invalidNavigationStartTarget("unsupported_frame", "Navigation target frameId must be 'map'.", value);
+  }
+  if ("label" in target && target.label != null && !stringValue(target.label)) {
+    return invalidNavigationStartTarget("invalid_target", "Navigation target label must be a non-empty string when provided.", value);
+  }
+  return mcpSuccess("Navigation start target is valid.", {
+    x,
+    y,
+    theta,
+    frameId,
+    label: stringValue(target.label),
+  });
+}
+
+function invalidNavigationStartTarget(reason: string, message: string, value: unknown): TensorFleetMcpResult<NavigationStartTarget | JsonRecord | null> {
+  return mcpFailure("invalid_request", reason, message, {
+    backend: "turtlebot4_nav2",
+    action: "start_navigation",
+    requestedTarget: summarizeRequestedNavigationTarget(value),
+    ready: false,
+    status: "invalid_request",
+    blockingGate: "target",
+    blockingReasons: [reason],
+    requiredInputs: reason === "missing_theta" ? ["target.theta"] : [],
+    capabilityEvidence: {},
+    snapshotEvidence: {},
+    activeMission: null,
   });
 }
 
@@ -919,6 +1218,10 @@ function supportedActionsSummary(backend: VacuumBackendId, snapshot: RuntimeSnap
   const mission = normalizeMissionState(snapshot);
   const activeMission = mission.active && typeof mission.active === "object" ? mission.active as JsonRecord : null;
   const activeMissionActions = Array.isArray(activeMission?.availableActions) ? activeMission.availableActions : [];
+  const startNavigation = capabilityAvailability(features, ["start_navigation"]);
+  const callableMovementWriteTools = backend === "turtlebot4_nav2" && startNavigation.supported === true
+    ? ["vacuum_start_navigation"]
+    : [];
   return {
     backend,
     readTools: [
@@ -935,10 +1238,12 @@ function supportedActionsSummary(backend: VacuumBackendId, snapshot: RuntimeSnap
       "vacuum_get_supported_actions",
     ],
     activeMissionActions,
+    callableMovementWriteTools,
     futureMovementActions: backend === "turtlebot4_nav2"
       ? {
-          note: "These actions may be supported by normalized capabilities but are not executable through MCP write tools yet.",
-          navigation: capabilityAvailability(features, ["start_navigation", "go_to_location"]),
+          note: "Navigation start is the first callable movement write tool when the simulation start_navigation capability is supported; other movement starts remain deferred.",
+          navigationStart: startNavigation,
+          goToLocation: capabilityAvailability(features, ["go_to_location"]),
           cleanArea: capabilityAvailability(features, ["start_coverage"]),
         }
       : {
@@ -947,7 +1252,6 @@ function supportedActionsSummary(backend: VacuumBackendId, snapshot: RuntimeSnap
           cleanArea: { supported: false, available: false, reason: "unsupported_backend" },
         },
     deferredActions: [
-      "vacuum_start_navigation",
       "vacuum_go_to_location",
       "vacuum_start_clean_area",
       "vacuum_start_room_cleaning",
@@ -955,7 +1259,6 @@ function supportedActionsSummary(backend: VacuumBackendId, snapshot: RuntimeSnap
       "arbitrary_waypoint_tools",
       "map_editing_tools",
     ],
-    callableMovementWriteTools: [],
     capabilities,
   };
 }
@@ -1614,6 +1917,45 @@ function summarizeTarget(target: unknown): JsonRecord | null {
     return { x, y, yaw };
   }
   return { type: stringValue(record.type) ?? "target" };
+}
+
+function summarizeRequestedNavigationTarget(target: unknown): JsonRecord | null {
+  if (!target || typeof target !== "object" || Array.isArray(target)) return null;
+  const record = target as JsonRecord;
+  const summary: JsonRecord = {};
+  const x = numberValue(record.x);
+  const y = numberValue(record.y);
+  const theta = numberValue(record.theta);
+  if (x != null) summary.x = x;
+  if (y != null) summary.y = y;
+  if (theta != null) summary.theta = theta;
+  const frameId = stringValue(record.frameId);
+  const label = stringValue(record.label);
+  if (frameId) summary.frameId = frameId;
+  if (label) summary.label = label;
+  return Object.keys(summary).length > 0 ? summary : null;
+}
+
+function navigationTargetSummary(target: NavigationStartTarget): JsonRecord {
+  return {
+    x: target.x,
+    y: target.y,
+    theta: target.theta,
+    frameId: target.frameId,
+    label: target.label,
+  };
+}
+
+function summarizeCommandDispatchResult(result: unknown): JsonRecord | null {
+  if (!result || typeof result !== "object") return null;
+  const record = result as JsonRecord;
+  return {
+    ok: typeof record.ok === "boolean" ? record.ok : typeof record.success === "boolean" ? record.success : undefined,
+    status: stringValue(record.status),
+    command: stringValue(record.command),
+    message: stringValue(record.message),
+    reason: stringValue(record.reason) ?? stringValue(record.code),
+  };
 }
 
 function summarizePath(path: unknown): JsonRecord {

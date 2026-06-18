@@ -133,6 +133,7 @@ The production MCP surface currently advertises vacuum product tools:
 - `vacuum_check_navigation_readiness`
 - `vacuum_check_clean_area_readiness`
 - `vacuum_get_supported_actions`
+- `vacuum_start_navigation`
 - `vacuum_start_cleaning`
 - `vacuum_pause`
 - `vacuum_resume`
@@ -487,6 +488,7 @@ hosts:
 - `vacuum_check_navigation_readiness`
 - `vacuum_check_clean_area_readiness`
 - `vacuum_get_supported_actions`
+- `vacuum_start_navigation`
 - `vacuum_start_cleaning`
 - `vacuum_pause`
 - `vacuum_resume`
@@ -976,6 +978,44 @@ The preflight checks use normalized evidence only: selected backend, snapshot
 availability, runtime/source availability, map availability, pose/localization
 evidence, incompatible active mission state, and normalized movement/coverage
 capability support/current availability.
+
+### Simulation Movement-Start Write Tool
+
+Tool:
+
+- `vacuum_start_navigation`
+
+Purpose:
+
+- Start one runtime-owned simulation navigation mission after product-level gates
+  pass.
+- Require a target payload with numeric `x`, `y`, and `theta`; optional
+  `frameId` defaults to the product map frame (`map`) and optional `label` is
+  returned only as request context.
+- Dispatch only the normalized adapter command shape:
+
+```json
+{
+  "command": "start_navigation",
+  "target": {
+    "x": 0,
+    "y": 0,
+    "yaw": 0
+  }
+}
+```
+
+Before dispatch, the tool resolves the selected backend, requires
+`turtlebot4_nav2`, fetches the normalized simulation snapshot, checks
+runtime/source availability, map usability, pose/localization evidence,
+incompatible active mission state, `start_navigation` support/current
+availability, and target frame validity. Dispatch uses only
+`POST /vms/self/tensorfleet/api/v1/vacuum/command`.
+
+Valetudo returns structured `unsupported`. Missing or malformed targets return
+structured `invalid_request`. Missing simulation command route returns
+structured `unavailable` with `simulation_command_route_unavailable`; MCP does
+not fake success or call raw ROS/Nav2/Foxglove/private endpoints.
 
 ## 14. Vacuum MCP Resources
 

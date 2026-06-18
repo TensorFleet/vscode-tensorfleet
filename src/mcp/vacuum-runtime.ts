@@ -10,7 +10,6 @@ import {
   type TurtleBot4Nav2VacuumRuntimeHealth,
   type TurtleBot4Nav2VacuumRuntimeSnapshot,
   type HttpError,
-  type ValetudoRuntimeCommandRequest,
   type ValetudoRuntimeCommandResult,
   type ValetudoRuntimeHealth,
   type ValetudoRuntimeSnapshot,
@@ -168,7 +167,7 @@ export async function fetchVacuumSnapshot(
 
 export async function dispatchVacuumCommand(
   context: Extract<VacuumRuntimeContext, { ok: true }>,
-  request: ValetudoRuntimeCommandRequest,
+  request: { command: string; params?: Record<string, unknown> } & Record<string, unknown>,
 ): Promise<TensorFleetMcpResult<ValetudoRuntimeCommandResult | Record<string, unknown>>> {
   if (context.backend === "turtlebot4_nav2") {
     try {

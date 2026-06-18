@@ -28,6 +28,7 @@ const expectedTools = [
   "vacuum_check_navigation_readiness",
   "vacuum_check_clean_area_readiness",
   "vacuum_get_supported_actions",
+  "vacuum_start_navigation",
   "vacuum_start_cleaning",
   "vacuum_pause",
   "vacuum_resume",
@@ -51,7 +52,6 @@ for (const forbiddenTool of [
   "valetudo_post_command",
   "drone_takeoff",
   "gazebo_spawn",
-  "vacuum_start_navigation",
   "vacuum_go_to_location",
   "vacuum_start_clean_area",
   "vacuum_start_room_cleaning",
@@ -215,6 +215,14 @@ async function withMockVacuumServer<T>(
 function jsonResponse(response: http.ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+async function readJsonBody(request: http.IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
 const unavailableRuntime = validateCommandRequest(
@@ -520,6 +528,7 @@ for (const toolName of [
   "vacuum_check_navigation_readiness",
   "vacuum_check_clean_area_readiness",
   "vacuum_get_supported_actions",
+  "vacuum_start_navigation",
   "vacuum_pause_mission",
   "vacuum_resume_mission",
   "vacuum_cancel_mission",
@@ -563,6 +572,22 @@ await withToolEnv(
   {
     TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
     TENSORFLEET_JWT: "token",
+    TENSORFLEET_VACUUM_BACKEND: undefined,
+  },
+  async () => {
+    const result = toolResult(await tools.get("vacuum_start_navigation")!.execute({
+      target: { x: 0, y: 0, theta: 0, frameId: "map" },
+    }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "invalid_state");
+    assert.equal(result.reason, "missing_vacuum_backend");
+  },
+);
+
+await withToolEnv(
+  {
+    TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
+    TENSORFLEET_JWT: "token",
     TENSORFLEET_VACUUM_BACKEND: "valetudo",
   },
   async () => {
@@ -577,6 +602,14 @@ await withToolEnv(
     assert.equal(cleanArea.status, "unsupported");
     assert.equal(cleanArea.reason, "unsupported_backend");
     assert.equal(cleanArea.data.backend, "valetudo");
+
+    const startNavigation = toolResult(await tools.get("vacuum_start_navigation")!.execute({
+      target: { x: 0, y: 0, theta: 0, frameId: "map" },
+    }));
+    assert.equal(startNavigation.ok, false);
+    assert.equal(startNavigation.status, "unsupported");
+    assert.equal(startNavigation.reason, "unsupported_backend");
+    assert.equal(startNavigation.data.backend, "valetudo");
   },
 );
 
@@ -633,6 +666,19 @@ for (const [toolName, snapshot, expectedReason] of [
     "map_unavailable",
   ],
   [
+    "vacuum_start_navigation",
+    {
+      ...readyNavigationSnapshot,
+      map: {
+        ...(readyNavigationSnapshot.map as Record<string, unknown>),
+        readiness: "unavailable",
+        metadata: { hasMap: false },
+        detail: "Map is not available.",
+      },
+    },
+    "map_unavailable",
+  ],
+  [
     "vacuum_check_navigation_readiness",
     {
       ...readyNavigationSnapshot,
@@ -644,6 +690,14 @@ for (const [toolName, snapshot, expectedReason] of [
     "vacuum_check_clean_area_readiness",
     {
       ...readyCleanAreaSnapshot,
+      pose: { readiness: "waiting", available: false, coordinates: null, detail: "Waiting for pose." },
+    },
+    "pose_unavailable",
+  ],
+  [
+    "vacuum_start_navigation",
+    {
+      ...readyNavigationSnapshot,
       pose: { readiness: "waiting", available: false, coordinates: null, detail: "Waiting for pose." },
     },
     "pose_unavailable",
@@ -664,11 +718,11 @@ for (const [toolName, snapshot, expectedReason] of [
         TENSORFLEET_VACUUM_BACKEND: "simulation",
       },
       async () => {
-        const args = toolName === "vacuum_check_navigation_readiness"
+        const args = toolName === "vacuum_check_navigation_readiness" || toolName === "vacuum_start_navigation"
           ? { target: { x: 0, y: 0, theta: 0, frameId: "map" } }
           : { area: { type: "rectangle", x: 0, y: 0, width: 1, height: 1, frameId: "map" } };
         const result = toolResult(await tools.get(toolName)!.execute(args));
-        assert.equal(result.ok, true);
+        assert.equal(result.ok, toolName !== "vacuum_start_navigation");
         assert.equal(result.data.ready, false);
         assert.equal(result.data.status, "blocked");
         assert.ok(result.data.blockingReasons.includes(expectedReason), `${toolName} should include ${expectedReason}`);
@@ -699,6 +753,14 @@ await withMockVacuumServer(
       assert.equal(result.data.ready, false);
       assert.equal(result.data.status, "blocked");
       assert.ok(result.data.blockingReasons.includes("active_mission_incompatible"));
+
+      const startResult = toolResult(await tools.get("vacuum_start_navigation")!.execute({
+        target: { x: 0, y: 0, theta: 0, frameId: "map" },
+      }));
+      assert.equal(startResult.ok, false);
+      assert.equal(startResult.status, "invalid_state");
+      assert.equal(startResult.data.blockingGate, "active_mission");
+      assert.ok(startResult.data.blockingReasons.includes("active_mission_incompatible"));
     },
   ),
 );
@@ -751,6 +813,61 @@ await withMockVacuumServer(
   ),
 );
 
+for (const [snapshot, expectedStatus, expectedReason] of [
+  [
+    {
+      ...readyNavigationSnapshot,
+      capabilities: {
+        ...(readyNavigationSnapshot.capabilities as Record<string, unknown>),
+        start_navigation: { supported: false, available: false, status: "unsupported" },
+      },
+    },
+    "unsupported",
+    "capability_unsupported",
+  ],
+  [
+    {
+      ...readyNavigationSnapshot,
+      capabilities: {
+        ...(readyNavigationSnapshot.capabilities as Record<string, unknown>),
+        start_navigation: { supported: true, available: false, availabilityReason: "planner_not_ready", status: "unavailable" },
+      },
+    },
+    "unavailable",
+    "planner_not_ready",
+  ],
+] as const) {
+  await withMockVacuumServer(
+    (request, response) => {
+      if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+        jsonResponse(response, 200, snapshot);
+        return;
+      }
+      if (request.method === "POST" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/command") {
+        jsonResponse(response, 500, { error: "capability blocker should prevent dispatch" });
+        return;
+      }
+      jsonResponse(response, 404, { error: "not found" });
+    },
+    async (baseUrl) => withToolEnv(
+      {
+        TENSORFLEET_VM_MANAGER_URL: baseUrl,
+        TENSORFLEET_JWT: "token",
+        TENSORFLEET_VACUUM_BACKEND: "simulation",
+      },
+      async () => {
+        const result = toolResult(await tools.get("vacuum_start_navigation")!.execute({
+          target: { x: 0, y: 0, theta: 0, frameId: "map" },
+        }));
+        assert.equal(result.ok, false);
+        assert.equal(result.status, expectedStatus);
+        assert.ok(result.data.blockingReasons.includes(expectedReason));
+        assert.equal(result.data.blockingGate, "capability");
+      },
+    ),
+  );
+}
+
 await withToolEnv(
   {
     TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
@@ -769,6 +886,27 @@ await withToolEnv(
     assert.equal(invalidArea.ok, false);
     assert.equal(invalidArea.status, "invalid_request");
     assert.equal(invalidArea.reason, "invalid_area_dimensions");
+
+    const missingStartTarget = toolResult(await tools.get("vacuum_start_navigation")!.execute({}));
+    assert.equal(missingStartTarget.ok, false);
+    assert.equal(missingStartTarget.status, "invalid_request");
+    assert.equal(missingStartTarget.reason, "missing_target");
+    assert.deepEqual(missingStartTarget.data.requiredInputs, ["target"]);
+
+    const invalidStartTarget = toolResult(await tools.get("vacuum_start_navigation")!.execute({ target: { x: "bad", y: 0, theta: 0 } }));
+    assert.equal(invalidStartTarget.ok, false);
+    assert.equal(invalidStartTarget.status, "invalid_request");
+    assert.equal(invalidStartTarget.reason, "invalid_target");
+
+    const missingStartTheta = toolResult(await tools.get("vacuum_start_navigation")!.execute({ target: { x: 0, y: 0 } }));
+    assert.equal(missingStartTheta.ok, false);
+    assert.equal(missingStartTheta.status, "invalid_request");
+    assert.equal(missingStartTheta.reason, "missing_theta");
+
+    const invalidStartFrame = toolResult(await tools.get("vacuum_start_navigation")!.execute({ target: { x: 0, y: 0, theta: 0, frameId: "odom" } }));
+    assert.equal(invalidStartFrame.ok, false);
+    assert.equal(invalidStartFrame.status, "invalid_request");
+    assert.equal(invalidStartFrame.reason, "unsupported_frame");
   },
 );
 
@@ -829,9 +967,116 @@ await withMockVacuumServer(
     async () => {
       const result = toolResult(await tools.get("vacuum_get_supported_actions")!.execute({}));
       assert.equal(result.ok, true);
-      assert.deepEqual(result.data.callableMovementWriteTools, []);
-      assert.ok(result.data.deferredActions.includes("vacuum_start_navigation"));
-      assert.ok(result.data.futureMovementActions.navigation.supported);
+      assert.deepEqual(result.data.callableMovementWriteTools, ["vacuum_start_navigation"]);
+      assert.equal(result.data.deferredActions.includes("vacuum_start_navigation"), false);
+      assert.ok(result.data.futureMovementActions.navigationStart.supported);
+      assert.ok(result.data.futureMovementActions.goToLocation.supported);
+      for (const deferredTool of [
+        "vacuum_go_to_location",
+        "vacuum_start_clean_area",
+        "vacuum_start_room_cleaning",
+        "vacuum_start_zone_cleaning",
+      ]) {
+        assert.ok(result.data.deferredActions.includes(deferredTool), deferredTool);
+        assert.equal(VACUUM_MCP_TOOL_NAMES.includes(deferredTool as never), false);
+      }
+      assert.doesNotMatch(JSON.stringify(result), /\/map|\/pose|NavigateToPose|geometry_msgs|nav_msgs|Foxglove|topic|service|http:\/\/|10\.\d+\.\d+\.\d+/i);
+    },
+  ),
+);
+
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, readyNavigationSnapshot);
+      return;
+    }
+    if (request.method === "POST" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/command") {
+      jsonResponse(response, 404, { error: "not found" });
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_start_navigation")!.execute({
+        target: { x: 0.5, y: 1.25, theta: 90, frameId: "map", label: "Kitchen waypoint" },
+      }));
+      assert.equal(result.ok, false);
+      assert.equal(result.status, "unavailable");
+      assert.equal(result.reason, "simulation_command_route_unavailable");
+      assert.equal(result.data.blockingGate, "dispatch");
+      assert.equal(result.data.requestedTarget.label, "Kitchen waypoint");
+      assert.doesNotMatch(JSON.stringify(result), /\/map|\/pose|NavigateToPose|geometry_msgs|nav_msgs|Foxglove|topic|service|http:\/\/|10\.\d+\.\d+\.\d+/i);
+    },
+  ),
+);
+
+let startNavigationDispatchCount = 0;
+let startNavigationDispatchedCommand: unknown;
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      const snapshot = startNavigationDispatchCount === 0
+        ? readyNavigationSnapshot
+        : {
+            ...readyNavigationSnapshot,
+            navigation: { state: "active", active: true, currentTarget: { x: 0.5, y: 1.25, yaw: 90 }, detail: "Navigating." },
+            mission: { state: "navigating", detail: "Robot is navigating." },
+            activeMission: {
+              id: "mission-started",
+              type: "navigation",
+              status: "running",
+              phase: "en_route",
+              progress: { percent: 0, currentStep: 1, totalSteps: 1, distanceRemaining: 2, areaCoveredSqM: null, areaRemainingSqM: null },
+              availableActions: ["cancel_mission"],
+              result: null,
+              error: null,
+              target: { x: 0.5, y: 1.25, yaw: 90 },
+              startedAt: 1800000000002,
+              updatedAt: 1800000000003,
+            },
+          };
+      jsonResponse(response, 200, snapshot);
+      return;
+    }
+    if (request.method === "POST" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/command") {
+      startNavigationDispatchCount += 1;
+      void readJsonBody(request).then((body) => {
+        startNavigationDispatchedCommand = body;
+        jsonResponse(response, 200, { ok: true, status: "success", command: "start_navigation", message: "Navigation started." });
+      });
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_start_navigation")!.execute({
+        target: { x: 0.5, y: 1.25, theta: 90, frameId: "map", label: "Kitchen waypoint" },
+      }));
+      assert.equal(result.ok, true);
+      assert.equal(result.data.backend, "turtlebot4_nav2");
+      assert.equal(result.data.action, "start_navigation");
+      assert.equal(result.data.requestedTarget.label, "Kitchen waypoint");
+      assert.equal(result.data.previousActiveMission, null);
+      assert.equal(result.data.refreshedActiveMission.id, "mission-started");
+      assert.equal(result.data.commandResult.command, "start_navigation");
+      assert.equal(startNavigationDispatchCount, 1);
+      assert.deepEqual(startNavigationDispatchedCommand, {
+        command: "start_navigation",
+        target: { x: 0.5, y: 1.25, yaw: 90 },
+      });
       assert.doesNotMatch(JSON.stringify(result), /\/map|\/pose|NavigateToPose|geometry_msgs|nav_msgs|Foxglove|topic|service|http:\/\/|10\.\d+\.\d+\.\d+/i);
     },
   ),

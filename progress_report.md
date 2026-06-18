@@ -683,6 +683,58 @@ Result:
 
 ---
 
+# Progress Report - Simulation Navigation Start
+Current report date: 2026-06-18.
+
+## 1. What changed
+- Added `vacuum_start_navigation` as the first MCP simulation movement-start write tool.
+- Required a target payload with numeric `x`, `y`, and `theta`, optional `frameId`, and optional `label`; the dispatched normalized command maps `theta` to `target.yaw`.
+- Reused simulation navigation readiness gates before dispatch: selected backend, snapshot availability, runtime/source availability, map usability, pose/localization evidence, incompatible active mission state, and `start_navigation` support/current availability.
+- Dispatched only through the product-level simulation command route with normalized `{ "command": "start_navigation", "target": ... }`.
+- Returned structured success/refusal envelopes with backend, action, requested target summary, blocking gate/reasons, readiness/capability evidence, previous/refreshed active mission summaries, command result summary, and warnings.
+- Updated `vacuum_get_supported_actions` so `vacuum_start_navigation` is callable only for the simulation backend when normalized `start_navigation` is supported.
+- Extended MCP vacuum regression coverage for registration, Valetudo unsupported behavior, missing backend invalid state, missing/invalid target, map/pose blockers, incompatible active mission, unsupported/unavailable capability, missing command route, successful one-command dispatch, refreshed mission summaries, raw-detail scrubbing, and deferred movement-start tools.
+- Updated MCP setup, VS Code integration, architecture docs, and the vacuum stack plan.
+
+## 2. Product behavior
+- MCP can now start one simulation navigation mission after readiness gates pass.
+- Valetudo returns structured `unsupported`; Valetudo read tools, basic cleaning commands, and settings behavior remain unchanged.
+- Missing or malformed targets return structured `invalid_request`.
+- Missing simulation command route returns structured `unavailable` with `simulation_command_route_unavailable`; MCP does not fake success or call raw ROS/Nav2/Foxglove/private endpoints.
+- `label` is reported as request context only and does not affect safety or dispatch.
+
+## 3. Still deferred
+- `vacuum_go_to_location`.
+- `vacuum_start_clean_area`.
+- `vacuum_start_room_cleaning`.
+- `vacuum_start_zone_cleaning`.
+- Arbitrary waypoint tools.
+- Raw Nav2 tools.
+- Map editing.
+- Live simulation movement-start testing with real runtime credentials.
+
+## 4. Validation
+
+```sh
+bun run test:mcp-vacuum
+bun run typecheck
+bun run build:extension
+timeout 3s node dist/mcp-server.js
+if [ -n "$TENSORFLEET_JWT" ] && [ -n "$TENSORFLEET_VM_MANAGER_URL" ]; then curl -fsS -H "Authorization: Bearer $TENSORFLEET_JWT" "$TENSORFLEET_VM_MANAGER_URL/vms/self/tensorfleet/api/v1/vacuum/snapshot" >/tmp/tensorfleet-mcp-simulation-snapshot.json && wc -c /tmp/tensorfleet-mcp-simulation-snapshot.json; else echo "TENSORFLEET_JWT or TENSORFLEET_VM_MANAGER_URL not set; skipping live simulation curl"; fi
+git diff --check
+```
+
+Result:
+
+- `bun run test:mcp-vacuum`: passed - MCP vacuum regression passed.
+- `bun run typecheck`: passed - TypeScript completed with no errors.
+- `bun run build:extension`: passed - Vite built `dist/mcp-server.js` and `dist/extension.js`.
+- `timeout 3s node dist/mcp-server.js`: passed - server printed `TensorFleet MCP Server running on stdio`.
+- live simulation `curl`: not tested - `TENSORFLEET_JWT` or `TENSORFLEET_VM_MANAGER_URL` was not set in the shell.
+- `git diff --check`: passed - no whitespace errors.
+
+---
+
 # Progress Report - Simulation Movement Preflight
 Current report date: 2026-06-18.
 
