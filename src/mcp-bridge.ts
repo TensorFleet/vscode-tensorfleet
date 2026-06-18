@@ -3,6 +3,8 @@ import * as net from 'net';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as auth from './auth';
+import * as regions from './regions';
 
 // Bridge between MCP server and VS Code extension
 // Allows MCP tools to trigger actual VS Code commands
@@ -10,8 +12,10 @@ import * as path from 'path';
 export class MCPBridge {
   private server: net.Server | null = null;
   private socketPath: string;
+  private context: vscode.ExtensionContext;
 
-  constructor(_context: vscode.ExtensionContext) {
+  constructor(context: vscode.ExtensionContext) {
+    this.context = context;
     this.socketPath = path.join(os.tmpdir(), 'tensorfleet-mcp-bridge.sock');
   }
 
@@ -89,6 +93,22 @@ export class MCPBridge {
         vscode.window.showInformationMessage(params?.message || 'TensorFleet notification');
         return { success: true };
 
+      case 'getRuntimeConfig': {
+        const token = await auth.getToken(this.context).catch(() => undefined);
+        const selectedRegion = regions.getSelectedRegion();
+        const selectedBackend = vscode.workspace
+          .getConfiguration('tensorfleet.vacuum')
+          .get<string>('backend', 'turtlebot4_nav2');
+        return {
+          success: true,
+          vmManagerUrl: regions.getVmManagerUrl(),
+          token,
+          tokenAvailable: Boolean(token),
+          selectedRegion: selectedRegion.id,
+          selectedBackend,
+        };
+      }
+
       case 'createTerminal':
         const terminal = vscode.window.createTerminal({
           name: params?.name || 'TensorFleet',
@@ -109,4 +129,3 @@ export class MCPBridge {
     return this.socketPath;
   }
 }
-

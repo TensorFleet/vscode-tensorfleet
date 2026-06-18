@@ -3122,12 +3122,12 @@ function startMCPServer(context: vscode.ExtensionContext) {
     return;
   }
 
-  const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
+  const mcpServerPath = path.join(context.extensionPath, 'dist', 'mcp-server.js');
 
   if (!fs.existsSync(mcpServerPath)) {
     telemetry?.trackEvent('mcpServer.start', { phase: 'error', reason: 'missingBinary' });
     vscode.window.showErrorMessage(
-      'MCP server not found. Please compile the extension first (run "bun run compile")'
+      'MCP server not found. Please compile the extension first (run "bun run build:extension")'
     );
     return;
   }
@@ -3661,14 +3661,16 @@ async function showMCPConfiguration(context: vscode.ExtensionContext) {
   const telemetry = getTelemetry();
   telemetry?.trackEvent('mcp.config', { phase: 'start' });
   try {
-    const mcpServerPath = path.join(context.extensionPath, 'out', 'mcp-server.js');
+    const mcpServerPath = path.join(context.extensionPath, 'dist', 'mcp-server.js');
 
     const config = {
       mcpServers: {
-        'tensorfleet-drone': {
+        tensorfleet: {
           command: 'node',
           args: [mcpServerPath],
-          env: {}
+          env: {
+            TENSORFLEET_VM_MANAGER_URL: regions.getVmManagerUrl()
+          }
         }
       }
     };

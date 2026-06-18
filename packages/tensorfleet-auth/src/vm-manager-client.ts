@@ -65,6 +65,39 @@ export interface GazeboSelection {
   preset?: string;
 }
 
+export interface ValetudoRuntimeHealth {
+  runtime: {
+    id: string;
+    version: string;
+    status: string;
+  };
+  source: {
+    kind: string;
+    status: string;
+    stale: boolean;
+    lastSeenAt: number | null;
+  };
+  updatedAt: number;
+}
+
+export interface ValetudoRuntimeCommandRequest {
+  command: string;
+  params?: Record<string, unknown>;
+}
+
+export interface ValetudoRuntimeCommandResult {
+  ok: boolean;
+  status: string;
+  command: string;
+  message: string;
+  reason?: string;
+  code?: string;
+  updatedAt?: number;
+  diagnostics?: Record<string, unknown>;
+}
+
+export type ValetudoRuntimeSnapshot = Record<string, unknown>;
+
 export interface VmManagerClientOptions {
   baseUrl: string;
   token?: string;
@@ -240,6 +273,34 @@ export async function resetGazeboSelection(options: VmManagerClientOptions): Pro
     { reset: true }
   );
   return response.message ?? 'Gazebo selection reset requested';
+}
+
+export async function getValetudoRuntimeHealth(options: VmManagerClientOptions): Promise<ValetudoRuntimeHealth> {
+  return apiRequest<ValetudoRuntimeHealth>(
+    options,
+    'GET',
+    '/vms/self/tensorfleet/api/v1/valetudo/health'
+  );
+}
+
+export async function getValetudoRuntimeSnapshot(options: VmManagerClientOptions): Promise<ValetudoRuntimeSnapshot> {
+  return apiRequest<ValetudoRuntimeSnapshot>(
+    options,
+    'GET',
+    '/vms/self/tensorfleet/api/v1/valetudo/snapshot'
+  );
+}
+
+export async function sendValetudoRuntimeCommand(
+  options: VmManagerClientOptions,
+  request: ValetudoRuntimeCommandRequest
+): Promise<ValetudoRuntimeCommandResult> {
+  return apiRequest<ValetudoRuntimeCommandResult>(
+    options,
+    'POST',
+    '/vms/self/tensorfleet/api/v1/valetudo/command',
+    request
+  );
 }
 
 function authFailedSnapshot(): VmSnapshot {
