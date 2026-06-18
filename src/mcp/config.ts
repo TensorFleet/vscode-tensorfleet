@@ -24,18 +24,25 @@ function trimmed(value: string | undefined): string | undefined {
   return next ? next.replace(/\/+$/, "") : undefined;
 }
 
+function trimmedBackend(value: string | undefined): string | undefined {
+  const next = value?.trim();
+  return next || undefined;
+}
+
 export async function resolveMcpRuntimeConfig(
   env: NodeJS.ProcessEnv = process.env,
   bridgeResolver: () => Promise<RuntimeConfigBridgePayload | null> = getBridgeRuntimeConfig,
 ): Promise<McpRuntimeConfig> {
   const envVmManagerUrl = trimmed(env.TENSORFLEET_VM_MANAGER_URL);
   const envToken = trimmed(env.TENSORFLEET_JWT);
+  const envSelectedBackend = trimmedBackend(env.TENSORFLEET_VACUUM_BACKEND);
 
-  if (envVmManagerUrl && envToken) {
+  if (envVmManagerUrl && envToken && envSelectedBackend) {
     return {
       vmManagerUrl: envVmManagerUrl,
       token: envToken,
       tokenAvailable: true,
+      selectedBackend: envSelectedBackend,
       source: "env",
     };
   }
@@ -58,7 +65,7 @@ export async function resolveMcpRuntimeConfig(
     token,
     tokenAvailable: Boolean(token) || bridgeConfig?.tokenAvailable === true,
     selectedRegion: bridgeConfig?.selectedRegion,
-    selectedBackend: bridgeConfig?.selectedBackend,
+    selectedBackend: envSelectedBackend ?? bridgeConfig?.selectedBackend,
     vmState: bridgeConfig?.vmState,
     source,
   };
@@ -72,4 +79,3 @@ async function getBridgeRuntimeConfig(): Promise<RuntimeConfigBridgePayload | nu
   const { success: _success, ...payload } = response;
   return payload;
 }
-

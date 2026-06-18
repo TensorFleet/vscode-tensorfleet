@@ -1,268 +1,156 @@
 # TensorFleet MCP Server Setup
 
-This extension exposes a **Model Context Protocol (MCP) server** that allows AI assistants like Cursor and Claude to interact with your TensorFleet drone tooling.
+This extension exposes a Model Context Protocol (MCP) server for product-level TensorFleet tools. The current production MCP surface is the vacuum domain only.
 
-## What is MCP?
+The server is built to:
 
-The Model Context Protocol (MCP) is an open protocol that enables AI assistants to securely access context from your tools, systems, and data sources. The TensorFleet MCP server exposes drone operations, ROS2, Gazebo simulation, and AI ops capabilities.
+- read vacuum runtime state through VM Manager proxy routes
+- return structured TensorFleet MCP result envelopes
+- dispatch only normalized, currently supported vacuum commands
+- avoid raw robot, Valetudo, MQTT, ROS, shell, VM private IP, or generic proxy tools
+- route vacuum tools by the selected backend (`turtlebot4_nav2` or `valetudo`)
 
-## 🎯 VS Code Integration
+## Build
 
-**NEW:** When the TensorFleet extension is running in VS Code, MCP tools will automatically open the corresponding panels!
+```bash
+cd /path/to/vscode-tensorfleet
+bun install
+bun run build:extension
+```
 
-For example:
+The MCP entrypoint is:
 
-- Ask Cursor: **"Start a Gazebo simulation with iris model"**
-- The MCP server executes the tool AND opens the Gazebo panel in VS Code
-- You see immediate visual feedback in your workspace
+```text
+dist/mcp-server.js
+```
 
-See [VSCODE_MCP_INTEGRATION.md](./VSCODE_MCP_INTEGRATION.md) for details on how this works.
+## Runtime Config
+
+The MCP server resolves runtime config in this order:
+
+1. Environment variables:
+   - `TENSORFLEET_VM_MANAGER_URL`
+   - `TENSORFLEET_JWT`
+   - `TENSORFLEET_VACUUM_BACKEND` (`turtlebot4_nav2`, `simulation`, or `valetudo`)
+2. VS Code MCP bridge command `getRuntimeConfig`, when the TensorFleet extension is active.
+
+If no token is available, tools return a structured `not_authenticated` result instead of throwing.
+If no vacuum backend is known, tools return a structured `invalid_state` result instead of guessing.
 
 ## Available Tools
 
-The TensorFleet MCP server provides the following tools:
+- `vacuum_get_health`
+- `vacuum_get_snapshot`
+- `vacuum_get_capabilities`
+- `vacuum_get_map_targets`
+- `vacuum_get_pose`
+- `vacuum_get_map_summary`
+- `vacuum_get_mission_state`
+- `vacuum_get_navigation_state`
+- `vacuum_start_cleaning`
+- `vacuum_pause`
+- `vacuum_resume`
+- `vacuum_stop`
+- `vacuum_return_to_dock`
+- `vacuum_set_fan_speed`
+- `vacuum_set_water_usage`
 
-1. **get_drone_status** - Get current drone status (battery, GPS, mode, readiness)
-2. **launch_ros2_environment** - Launch ROS2 packages for drone operations
-3. **start_gazebo_simulation** - Start Gazebo simulation with world and model
-4. **run_ai_inference** - Run AI model inference on drone video feeds
-5. **configure_qgc_mission** - Configure QGroundControl missions
-6. **install_tensorfleet_tools** - Install bundled TensorFleet tools
-7. **get_telemetry_data** - Get real-time telemetry (position, velocity, sensors)
+Backend-neutral read tools use the selected backend. Valetudo reads use `/vms/self/tensorfleet/api/v1/valetudo/*`; simulation reads use product-level `/vms/self/tensorfleet/api/v1/vacuum/*` routes when the VM runtime exposes them. If the simulation snapshot route is not present yet, MCP returns structured `unavailable` rather than raw ROS/Nav2 data.
 
-## Available Resources
+`vacuum_set_fan_speed` and `vacuum_set_water_usage` are currently Valetudo-limited and return `unsupported` for the TurtleBot4/Nav2 simulation backend. Basic command tools remain gated by the selected backend's normalized capabilities and current availability.
 
-The server exposes these resources for context:
+Deferred vacuum features such as segment cleaning, zone cleaning, room cleaning, go-to, map editing, live map streaming, consumable resets, dock actions, and hardware validation are not exposed as MCP commands.
 
-- `tensorfleet://drone/config` - Drone configuration and parameters
-- `tensorfleet://ros2/topics` - Active ROS2 topics list
-- `tensorfleet://gazebo/models` - Available Gazebo models and worlds
-- `tensorfleet://ai/models` - Available AI models for analysis
-- `tensorfleet://qgc/missions` - Saved QGroundControl missions
+## Cursor Config
 
----
-
-## Setup for Cursor
-
-### 1. Build the Extension
-
-First, compile the TypeScript code:
-
-```bash
-cd /Users/hyper/projects/drone/vscode-tensorfleet
-bun install
-bun run compile
-```
-
-### 2. Configure Cursor Settings
-
-Open Cursor Settings (JSON) and add the MCP server configuration:
-
-**Location:** `~/.cursor/mcp.json` or Cursor Settings → Features → Model Context Protocol
+Edit `~/.cursor/mcp.json`:
 
 ```json
 {
   "mcpServers": {
-    "tensorfleet-drone": {
+    "tensorfleet": {
       "command": "node",
-      "args": [
-        "/Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js"
-      ],
-      "env": {}
+      "args": ["/path/to/vscode-tensorfleet/dist/mcp-server.js"],
+      "env": {
+        "TENSORFLEET_VM_MANAGER_URL": "https://eu.vm.tensorfleet.net",
+        "TENSORFLEET_JWT": "YOUR_TOKEN",
+        "TENSORFLEET_VACUUM_BACKEND": "turtlebot4_nav2"
+      }
     }
   }
 }
 ```
 
-### 3. Restart Cursor
+When the TensorFleet VS Code extension is active, `env` may omit the token and VM Manager URL because the server can ask the local MCP bridge for runtime config.
 
-Restart Cursor to load the MCP server. You should now see "TensorFleet" in your MCP servers list.
+## Claude Desktop Config
 
-### 4. Using TensorFleet Tools in Cursor
-
-In Cursor's AI chat, you can now ask questions like:
-
-- "What's the current drone status?"
-- "Launch the ROS2 sensor listener"
-- "Start a Gazebo simulation with the iris model in the warehouse world"
-- "Show me the available AI models"
-- "Get telemetry data from the drone"
-
-Cursor will automatically use the TensorFleet MCP tools to answer these questions.
-
----
-
-## Setup for Claude Desktop
-
-### 1. Build the Extension
-
-```bash
-cd /Users/hyper/projects/drone/vscode-tensorfleet
-bun install
-bun run compile
-```
-
-### 2. Configure Claude Desktop
-
-Edit the Claude Desktop configuration file:
-
-**Location:** `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS:
 
 ```json
 {
   "mcpServers": {
-    "tensorfleet-drone": {
+    "tensorfleet": {
       "command": "node",
-      "args": [
-        "/Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js"
-      ]
+      "args": ["/path/to/vscode-tensorfleet/dist/mcp-server.js"],
+      "env": {
+        "TENSORFLEET_VM_MANAGER_URL": "https://eu.vm.tensorfleet.net",
+        "TENSORFLEET_JWT": "YOUR_TOKEN",
+        "TENSORFLEET_VACUUM_BACKEND": "turtlebot4_nav2"
+      }
     }
   }
 }
 ```
 
-### 3. Restart Claude Desktop
-
-Quit and restart Claude Desktop. The TensorFleet MCP server will now be available.
-
-### 4. Using TensorFleet in Claude
-
-You can ask Claude:
-
-- "Can you check the drone battery status?"
-- "Start a Gazebo simulation for me"
-- "What ROS2 topics are available?"
-- "Run YOLOv8 inference on the camera feed"
-- "Show me the saved QGC missions"
-
-Claude will use the MCP server to access your TensorFleet tools.
-
----
-
-## Setup for Other AI Tools (OpenAI, Codex)
-
-For tools that support MCP over stdio, you can run the server directly:
+## Testing
 
 ```bash
-node /Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js
+bun run typecheck
+bun run build:extension
+bun run test:mcp-vacuum
+node dist/mcp-server.js
+npx @modelcontextprotocol/inspector node dist/mcp-server.js
 ```
 
-The server communicates via stdin/stdout using the MCP protocol.
-
----
-
-## Testing the MCP Server
-
-### Test with Direct Execution
-
-You can test the server manually:
+Optional live vacuum runtime smoke:
 
 ```bash
-cd /Users/hyper/projects/drone/vscode-tensorfleet
-bun run compile
-node out/mcp-server.js
+curl -H "Authorization: Bearer $TENSORFLEET_JWT" \
+  "$TENSORFLEET_VM_MANAGER_URL/vms/self/tensorfleet/api/v1/valetudo/snapshot"
+
+curl -H "Authorization: Bearer $TENSORFLEET_JWT" \
+  "$TENSORFLEET_VM_MANAGER_URL/vms/self/tensorfleet/api/v1/vacuum/snapshot"
 ```
 
-The server will start and listen on stdio. You should see:
+## Result Shape
 
-```
-TensorFleet MCP Server running on stdio
-```
+Successful tools return JSON text shaped like:
 
-### Test with MCP Inspector
-
-Use the official MCP inspector tool:
-
-```bash
-npx @modelcontextprotocol/inspector node out/mcp-server.js
-```
-
-This opens a web UI where you can:
-
-- View available tools and resources
-- Execute tools with test parameters
-- Inspect responses
-
----
-
-## Extending the MCP Server
-
-The MCP server is defined in `src/mcp-server.ts`. You can add more tools by:
-
-1. **Add a new tool executor** in the `setupTools()` method:
-
-```typescript
-this.tools.set("your_tool_name", {
-  execute: async (args) => {
-    // Your implementation
-    return {
-      content: [{ type: "text", text: "Result" }],
-    };
-  },
-});
-```
-
-2. **Add tool metadata** in the `ListToolsRequestSchema` handler:
-
-```typescript
+```json
 {
-  name: "your_tool_name",
-  description: "What your tool does",
-  inputSchema: {
-    type: "object",
-    properties: {
-      param1: { type: "string", description: "..." }
-    }
-  }
+  "ok": true,
+  "status": "success",
+  "message": "Vacuum snapshot fetched.",
+  "data": {}
 }
 ```
 
-3. **Recompile and restart**:
+Failures also return JSON text:
 
-```bash
-bun run compile
-# Restart Cursor or Claude Desktop
+```json
+{
+  "ok": false,
+  "status": "not_authenticated",
+  "reason": "missing_token",
+  "message": "TensorFleet authentication is not configured for MCP.",
+  "data": null
+}
 ```
-
----
 
 ## Troubleshooting
 
-### MCP Server Not Appearing
-
-- Ensure the path in config is absolute and correct
-- Check that `out/mcp-server.js` exists (run `bun run compile`)
-- Verify Node.js is in your PATH
-- Check Cursor/Claude logs for errors
-
-### Tools Not Working
-
-- Check the MCP server is running (inspect Cursor/Claude logs)
-- Verify the tool name matches exactly
-- Ensure input parameters match the schema
-
-### Permission Issues
-
-Make sure the compiled JavaScript is executable:
-
-```bash
-chmod +x /Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js
-```
-
----
-
-## Security Notes
-
-- The MCP server runs locally and doesn't expose network ports
-- All communication is via stdio (standard input/output)
-- The server only has access to what your VS Code extension has access to
-- No external network requests are made by default
-
----
-
-## Learn More
-
-- [Model Context Protocol Documentation](https://modelcontextprotocol.io)
-- [MCP SDK for TypeScript](https://github.com/modelcontextprotocol/typescript-sdk)
-- [Cursor MCP Documentation](https://docs.cursor.com/context/model-context-protocol)
-- [Claude Desktop MCP Guide](https://modelcontextprotocol.io/quickstart)
+- Use `dist/mcp-server.js`, not `out/mcp-server.js`.
+- Run `bun run build:extension` if `dist/mcp-server.js` is missing.
+- Set `TENSORFLEET_VM_MANAGER_URL`, `TENSORFLEET_JWT`, and `TENSORFLEET_VACUUM_BACKEND` when using MCP without the VS Code extension bridge.
+- Check that the TensorFleet extension is active if relying on bridge-provided runtime config.

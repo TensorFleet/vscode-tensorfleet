@@ -1,293 +1,135 @@
 # VS Code + MCP Integration Guide
 
-This guide explains how the TensorFleet MCP server integrates with VS Code to actually open panels when AI assistants call the tools.
+TensorFleet MCP runs as a separate stdio process and can optionally ask the active VS Code extension for runtime configuration over a local Unix socket bridge.
 
-## Architecture Overview
+## Architecture
 
+```text
+MCP host
+  -> node dist/mcp-server.js
+    -> TensorFleet MCP tools
+      -> VM Manager proxy routes
+
+Optional local config fallback:
+
+node dist/mcp-server.js
+  -> /tmp/tensorfleet-mcp-bridge.sock
+    -> TensorFleet VS Code extension
+      -> selected region, selected vacuum backend, stored auth token
 ```
-┌─────────────────────┐         ┌──────────────────┐         ┌─────────────────┐
-│   Cursor/Claude     │         │   MCP Server     │         │  VS Code Ext    │
-│   (AI Assistant)    │◄────────┤   (stdio)        │◄────────┤  (MCP Bridge)   │
-└─────────────────────┘         └──────────────────┘         └─────────────────┘
-         │                               │                             │
-         │  "Start Gazebo simulation"    │                             │
-         ├──────────────────────────────►│                             │
-         │                               │                             │
-         │                               │  Unix Socket                │
-         │                               ├────────────────────────────►│
-         │                               │  {cmd: openGazeboPanel}     │
-         │                               │                             │
-         │                               │                             │
-         │                               │◄────────────────────────────┤
-         │                               │  {success: true}            │
-         │                               │                             │
-         │◄──────────────────────────────┤                             │
-         │  "✓ Gazebo panel opened"      │                             ▼
-         │                               │                    [Gazebo Panel Opens]
-```
+
+The bridge is for local extension state and UI convenience. MCP runtime calls still go through VM Manager proxy routes; the MCP server does not call raw Valetudo endpoints, MQTT topics, ROS topics, private VM IPs, shell commands, or arbitrary HTTP URLs.
+The vacuum MCP surface is backend-aware and currently distinguishes `valetudo` from the TurtleBot4/Nav2 simulation backend (`turtlebot4_nav2`).
 
 ## Components
 
-### 1. **MCP Server** (`src/mcp-server.ts`)
+### MCP Server
 
-- Runs as a separate Node.js process
-- Communicates with AI assistants via stdio (MCP protocol)
-- When tools are called, it sends commands to the MCP Bridge
+`src/mcp-server.ts` registers the real TensorFleet MCP surface. The built entrypoint is:
 
-### 2. **MCP Bridge** (`src/mcp-bridge.ts`)
+```text
+dist/mcp-server.js
+```
 
-- Runs inside the VS Code extension
-- Listens on a Unix socket (`/tmp/tensorfleet-mcp-bridge.sock`)
-- Receives commands from MCP server and executes VS Code commands
+### MCP Bridge
 
-### 3. **VS Code Extension** (`src/extension.ts`)
+`src/mcp-bridge.ts` listens on:
 
-- Automatically starts the MCP Bridge on activation
-- Provides commands to open panels (Gazebo, QGC, AI Ops, ROS2)
+```text
+/tmp/tensorfleet-mcp-bridge.sock
+```
 
-## How It Works
+The server uses bridge command `getRuntimeConfig` only when environment config is missing.
 
-### Step 1: VS Code Extension Starts
+### Extension Helpers
 
-When you open VS Code with TensorFleet installed:
+`src/extension.ts` starts the bridge on activation and shows MCP config that points to `dist/mcp-server.js`.
 
-1. Extension activates
-2. MCP Bridge starts and creates a Unix socket
-3. Bridge is ready to receive commands
+## Bridge Commands
 
-### Step 2: Configure AI Assistant
+| Command | Purpose |
+| --- | --- |
+| `getRuntimeConfig` | Return VM Manager URL, token availability/token, selected region, and selected vacuum backend |
+| `openGazeboPanel` | Legacy extension UI bridge command |
+| `openQGCPanel` | Legacy extension UI bridge command |
+| `openAIPanel` | Legacy extension UI bridge command |
+| `openROS2Panel` | Legacy extension UI bridge command |
+| `openAllPanels` | Legacy extension UI bridge command |
+| `showMessage` | Show a VS Code notification |
+| `createTerminal` | Create a VS Code terminal |
 
-Add MCP server config to Cursor or Claude:
+The production MCP tool list no longer advertises the legacy drone, ROS2, Gazebo, AI inference, QGC mission, install, or telemetry placeholder tools.
+
+## MCP Config
 
 ```json
 {
   "mcpServers": {
-    "tensorfleet-drone": {
+    "tensorfleet": {
       "command": "node",
-      "args": ["/path/to/vscode-tensorfleet/out/mcp-server.js"]
+      "args": ["/path/to/vscode-tensorfleet/dist/mcp-server.js"],
+      "env": {
+        "TENSORFLEET_VM_MANAGER_URL": "https://eu.vm.tensorfleet.net",
+        "TENSORFLEET_JWT": "YOUR_TOKEN",
+        "TENSORFLEET_VACUUM_BACKEND": "turtlebot4_nav2"
+      }
     }
   }
 }
 ```
 
-### Step 3: AI Assistant Uses Tools
+If the VS Code extension is active, the `env` object may be empty because the MCP server can request config from the bridge, including the selected vacuum backend. Without a selected backend from env or bridge, vacuum tools return structured `invalid_state` rather than guessing.
 
-When you ask Cursor: **"Start a Gazebo simulation with the iris model"**
+## Vacuum Tool Flow
 
-1. Cursor recognizes this matches `start_gazebo_simulation` tool
-2. Cursor calls the MCP server with parameters: `{world: "empty", model: "iris"}`
-3. MCP server executes the tool:
-   - Sends command to MCP Bridge via Unix socket: `{command: "openGazeboPanel"}`
-   - Bridge receives command
-   - Bridge executes: `vscode.commands.executeCommand('tensorfleet.openGazeboPanel')`
-   - **Gazebo panel opens in VS Code!**
-4. MCP server returns success to Cursor
-5. Cursor shows you: "✓ Gazebo panel opened in VS Code"
+For Valetudo `vacuum_pause`:
 
-## Available Bridge Commands
+1. MCP host calls `vacuum_pause`.
+2. MCP server resolves VM Manager URL, token, and selected backend from env or bridge.
+3. MCP server fetches `/vms/self/tensorfleet/api/v1/valetudo/snapshot`.
+4. MCP server checks runtime/source availability and `pause` command support/current availability.
+5. MCP server posts `{ "command": "pause" }` to `/vms/self/tensorfleet/api/v1/valetudo/command`.
+6. MCP server returns a structured TensorFleet result envelope.
 
-The MCP Bridge supports these commands:
+For simulation reads, MCP uses product-level `/vms/self/tensorfleet/api/v1/vacuum/health` and `/vms/self/tensorfleet/api/v1/vacuum/snapshot` routes when the VM runtime exposes them. Simulation state is mapped to normalized vacuum concepts such as pose, map summary, mission state, navigation state, readiness, and capabilities. MCP does not expose ROS topics, Nav2 actions, helper services, Foxglove endpoints, or direct VM addresses as tools.
 
-| Command           | Action                          | Parameters             |
-| ----------------- | ------------------------------- | ---------------------- |
-| `openGazeboPanel` | Opens Gazebo simulation panel   | `{world, model}`       |
-| `openQGCPanel`    | Opens QGroundControl panel      | -                      |
-| `openAIPanel`     | Opens AI Ops panel              | -                      |
-| `openROS2Panel`   | Opens ROS 2 & Baselines panel   | -                      |
-| `openAllPanels`   | Opens all panels in quad layout | -                      |
-| `showMessage`     | Shows VS Code notification      | `{message}`            |
-| `createTerminal`  | Creates and shows terminal      | `{name, cwd, command}` |
-
-## MCP Tools That Open Panels
-
-These MCP tools now automatically open their corresponding panels:
-
-| MCP Tool                  | Opens Panel       | Example                        |
-| ------------------------- | ----------------- | ------------------------------ |
-| `start_gazebo_simulation` | Gazebo            | "Start Gazebo with iris model" |
-| `launch_ros2_environment` | ROS 2 & Baselines | "Launch ROS2 sensor listener"  |
-| `run_ai_inference`        | AI Ops            | "Run YOLOv8 on camera feed"    |
-| `configure_qgc_mission`   | QGroundControl    | "Configure waypoint mission"   |
-
-## Example Usage Scenarios
-
-### Scenario 1: From Cursor
-
-**You ask:** "Show me a Gazebo simulation with the typhoon_h480 drone in the warehouse world"
-
-**What happens:**
-
-1. Cursor calls `start_gazebo_simulation({world: "warehouse", model: "typhoon_h480"})`
-2. MCP server → Bridge → VS Code opens Gazebo panel
-3. You see the Gazebo workspace in VS Code
-4. Cursor responds: "✓ Gazebo panel opened in VS Code. Simulation starting with typhoon_h480 in warehouse world."
-
-### Scenario 2: From Claude Desktop
-
-**You ask:** "I want to run object detection on the drone camera"
-
-**What happens:**
-
-1. Claude calls `run_ai_inference({model_name: "yolov8", input_source: "camera"})`
-2. MCP server → Bridge → VS Code opens AI Ops panel
-3. AI Ops panel appears in VS Code
-4. Claude responds: "✓ AI Ops panel opened in VS Code. Running YOLOv8 on camera feed..."
-
-### Scenario 3: Workflow Automation
-
-**You ask:** "Set up my complete drone development environment"
-
-**What happens:**
-
-1. Cursor/Claude recognizes this needs multiple tools
-2. Calls multiple MCP tools in sequence:
-   - `start_gazebo_simulation` → Opens Gazebo panel
-   - `launch_ros2_environment` → Opens ROS 2 panel
-   - `run_ai_inference` → Opens AI Ops panel
-   - `configure_qgc_mission` → Opens QGC panel
-3. All panels open in VS Code
-4. Your complete workspace is ready!
-
-## Installation & Setup
-
-### 1. Compile Extension
-
-```bash
-cd /Users/hyper/projects/drone/vscode-tensorfleet
-bun install
-bun run compile
-```
-
-### 2. Install Extension in VS Code
-
-Either:
-
-- **Option A**: Open this folder in VS Code and press F5 to run in Extension Development Host
-- **Option B**: Package and install:
-  ```bash
-  bunx vsce package
-  code --install-extension tensorfleet-drone-0.0.1.vsix
-  ```
-
-### 3. Configure Cursor
-
-Edit `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "tensorfleet-drone": {
-      "command": "node",
-      "args": [
-        "/Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js"
-      ]
-    }
-  }
-}
-```
-
-### 4. Restart Cursor
-
-The MCP server will now be available in Cursor's AI features.
-
-### 5. Test It
-
-In Cursor, ask:
-
-- "What's the drone status?"
-- "Start a Gazebo simulation"
-- "Open all TensorFleet panels"
-
-Watch the panels open automatically in VS Code! ✨
+Simulation write tools remain deferred in this phase. Valetudo-only settings such as `vacuum_set_fan_speed` and `vacuum_set_water_usage` return structured `unsupported` when `turtlebot4_nav2` is selected.
 
 ## Troubleshooting
 
-### MCP Server Can't Connect to Bridge
-
-**Symptom:** Tools work but panels don't open. Response says "VS Code extension bridge not available"
-
-**Solution:**
-
-1. Make sure VS Code extension is activated
-2. Check bridge is running: Look for "TensorFleet MCP Bridge started" in extension output
-3. Verify socket exists: `ls -la /tmp/tensorfleet-mcp-bridge.sock`
-
-### Bridge Socket Permission Denied
-
-**Solution:**
-
-```bash
-rm -f /tmp/tensorfleet-mcp-bridge.sock
-# Restart VS Code
-```
-
 ### MCP Server Not Found
 
-**Solution:**
-
-1. Run `bun run compile`
-2. Verify `out/mcp-server.js` exists
-3. Update path in Cursor config to absolute path
-
-### Panels Don't Open But Everything Else Works
-
-**Check:**
-
-1. Extension is installed and activated in VS Code
-2. Bridge started successfully (check VS Code Developer Console)
-3. Unix socket permissions are correct
-
-## Advanced: Adding New Bridge Commands
-
-To add a new command that the MCP server can trigger:
-
-### 1. Add handler in `mcp-bridge.ts`:
-
-```typescript
-case 'myNewCommand':
-  // Your logic here
-  await vscode.commands.executeCommand('my.command');
-  return { success: true, message: 'Done!' };
-```
-
-### 2. Call it from MCP tool in `mcp-server.ts`:
-
-```typescript
-this.tools.set("my_new_tool", {
-  execute: async (args) => {
-    const response = await sendBridgeCommand("myNewCommand", args);
-    // Return result
-  },
-});
-```
-
-### 3. Recompile:
+Run:
 
 ```bash
-bun run compile
+bun run build:extension
 ```
+
+Verify:
+
+```bash
+ls -la dist/mcp-server.js
+```
+
+### Bridge Config Is Unavailable
+
+Set explicit env vars in the MCP host config:
+
+```json
+{
+  "TENSORFLEET_VM_MANAGER_URL": "https://eu.vm.tensorfleet.net",
+  "TENSORFLEET_JWT": "YOUR_TOKEN",
+  "TENSORFLEET_VACUUM_BACKEND": "turtlebot4_nav2"
+}
+```
+
+### Authentication Fails
+
+The tools return `status: "not_authenticated"` when no usable token is available or VM Manager rejects the token. Re-authenticate in TensorFleet VS Code or pass a fresh `TENSORFLEET_JWT`.
 
 ## Security Notes
 
-- The Unix socket is created in `/tmp` with default permissions
-- Only processes running as your user can connect to the socket
-- The MCP server and bridge communicate locally - no network exposure
-- All VS Code commands are executed in the extension's security context
-
-## Performance
-
-- Bridge startup: ~50ms
-- Command execution: ~5-20ms
-- Socket communication overhead: <1ms
-- Panel opening: 100-500ms (depends on panel complexity)
-
-## Benefits
-
-1. **Seamless UX**: AI assistants can actually control your VS Code workspace
-2. **Visual Feedback**: See results immediately in VS Code panels
-3. **Workflow Integration**: AI assistant understands your VS Code environment
-4. **No Manual Steps**: Just ask, and panels open automatically
-
----
-
-Enjoy your AI-powered drone development environment! 🚁✨
+- MCP communicates with the host over stdio.
+- The bridge socket is local to the machine and used only for TensorFleet extension state.
+- Runtime calls use VM Manager product proxy routes.
+- The production MCP surface is product-level and vacuum-scoped.

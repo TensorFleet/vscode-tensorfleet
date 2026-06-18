@@ -1,9 +1,13 @@
 import {
   formatError,
+  getTurtleBot4Nav2VacuumRuntimeHealth,
+  getTurtleBot4Nav2VacuumRuntimeSnapshot,
   getValetudoRuntimeHealth,
   getValetudoRuntimeSnapshot,
   isAuthError,
   sendValetudoRuntimeCommand,
+  type TurtleBot4Nav2VacuumRuntimeHealth,
+  type TurtleBot4Nav2VacuumRuntimeSnapshot,
   type HttpError,
   type ValetudoRuntimeCommandRequest,
   type ValetudoRuntimeCommandResult,
@@ -14,16 +18,29 @@ import {
 import type { McpRuntimeConfig } from "./config";
 import { mcpFailure, type TensorFleetMcpResult, type TensorFleetMcpStatus } from "./result";
 
+export type VacuumBackendId = "valetudo" | "turtlebot4_nav2";
+
 export type VacuumRuntimeContext =
   | {
       ok: true;
       options: VmManagerClientOptions;
       config: McpRuntimeConfig;
+      backend: VacuumBackendId;
     }
   | {
       ok: false;
       result: TensorFleetMcpResult;
     };
+
+export function normalizeVacuumBackend(value: unknown): VacuumBackendId | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase().replace(/[-\s]+/g, "_");
+  if (normalized === "valetudo") return "valetudo";
+  if (normalized === "turtlebot4_nav2" || normalized === "turtlebot4" || normalized === "simulation") {
+    return "turtlebot4_nav2";
+  }
+  return null;
+}
 
 export function createVacuumRuntimeContext(config: McpRuntimeConfig): VacuumRuntimeContext {
   if (!config.token) {
@@ -59,8 +76,29 @@ export function createVacuumRuntimeContext(config: McpRuntimeConfig): VacuumRunt
     };
   }
 
+  const backend = normalizeVacuumBackend(config.selectedBackend);
+  if (!backend) {
+    return {
+      ok: false,
+      result: mcpFailure(
+        "invalid_state",
+        config.selectedBackend ? "unsupported_vacuum_backend" : "missing_vacuum_backend",
+        config.selectedBackend
+          ? `Selected TensorFleet vacuum backend '${config.selectedBackend}' is not supported by MCP.`
+          : "TensorFleet vacuum backend is not configured for MCP.",
+        {
+          selectedRegion: config.selectedRegion,
+          selectedBackend: config.selectedBackend,
+          supportedBackends: ["valetudo", "turtlebot4_nav2"],
+          configSource: config.source,
+        },
+      ),
+    };
+  }
+
   return {
     ok: true,
+    backend,
     config,
     options: {
       baseUrl: config.vmManagerUrl,
@@ -72,8 +110,16 @@ export function createVacuumRuntimeContext(config: McpRuntimeConfig): VacuumRunt
 
 export async function fetchVacuumHealth(
   context: Extract<VacuumRuntimeContext, { ok: true }>,
-): Promise<TensorFleetMcpResult<ValetudoRuntimeHealth>> {
+): Promise<TensorFleetMcpResult<ValetudoRuntimeHealth | TurtleBot4Nav2VacuumRuntimeHealth>> {
   try {
+    if (context.backend === "turtlebot4_nav2") {
+      return {
+        ok: true,
+        status: "success",
+        message: "Vacuum health fetched.",
+        data: await getTurtleBot4Nav2VacuumRuntimeHealth(context.options),
+      };
+    }
     return {
       ok: true,
       status: "success",
@@ -81,14 +127,25 @@ export async function fetchVacuumHealth(
       data: await getValetudoRuntimeHealth(context.options),
     };
   } catch (error) {
+    if (context.backend === "turtlebot4_nav2" && (error as HttpError)?.status === 404) {
+      return mcpFailure("unavailable", "simulation_health_route_unavailable", "Simulation vacuum health is not exposed by the VM runtime yet.", errorData(error));
+    }
     return mapRuntimeError(error, "Vacuum health could not be fetched.");
   }
 }
 
 export async function fetchVacuumSnapshot(
   context: Extract<VacuumRuntimeContext, { ok: true }>,
-): Promise<TensorFleetMcpResult<ValetudoRuntimeSnapshot>> {
+): Promise<TensorFleetMcpResult<ValetudoRuntimeSnapshot | TurtleBot4Nav2VacuumRuntimeSnapshot>> {
   try {
+    if (context.backend === "turtlebot4_nav2") {
+      return {
+        ok: true,
+        status: "success",
+        message: "Vacuum snapshot fetched.",
+        data: await getTurtleBot4Nav2VacuumRuntimeSnapshot(context.options),
+      };
+    }
     return {
       ok: true,
       status: "success",
@@ -96,6 +153,14 @@ export async function fetchVacuumSnapshot(
       data: await getValetudoRuntimeSnapshot(context.options),
     };
   } catch (error) {
+    if (context.backend === "turtlebot4_nav2" && (error as HttpError)?.status === 404) {
+      return mcpFailure(
+        "unavailable",
+        "simulation_snapshot_route_unavailable",
+        "Simulation vacuum snapshot is not exposed by the VM runtime yet.",
+        errorData(error),
+      );
+    }
     return mapRuntimeError(error, "Vacuum snapshot could not be fetched.");
   }
 }
@@ -103,7 +168,14 @@ export async function fetchVacuumSnapshot(
 export async function dispatchVacuumCommand(
   context: Extract<VacuumRuntimeContext, { ok: true }>,
   request: ValetudoRuntimeCommandRequest,
-): Promise<TensorFleetMcpResult<ValetudoRuntimeCommandResult>> {
+): Promise<TensorFleetMcpResult<ValetudoRuntimeCommandResult | Record<string, unknown>>> {
+  if (context.backend === "turtlebot4_nav2") {
+    return mcpFailure("unsupported", "simulation_writes_deferred", "Simulation vacuum command dispatch is not enabled through MCP yet.", {
+      backend: context.backend,
+      command: request.command,
+    });
+  }
+
   try {
     const result = await sendValetudoRuntimeCommand(context.options, request);
     if (result.ok && result.status === "success") {
@@ -179,4 +251,3 @@ function errorData<T>(error: unknown): T {
     error: formatError(error),
   } as T;
 }
-
