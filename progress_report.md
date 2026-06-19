@@ -940,3 +940,50 @@ Result:
 - `timeout 3s node dist/mcp-server.js`: passed - server printed `TensorFleet MCP Server running on stdio`.
 - `git diff --check`: passed - no whitespace errors.
 - live simulation `curl`: not tested - `TENSORFLEET_JWT` or `TENSORFLEET_VM_MANAGER_URL` was not set in the shell.
+
+---
+
+# Progress Report - MCP Vacuum Surface Review
+Current report date: 2026-06-19.
+
+## 1. What changed
+- Reviewed the backend-aware MCP vacuum surface across advertised tools, backend routing, result envelopes, safety gates, read projections, command dispatch paths, tests, and docs.
+- Confirmed the production MCP surface remains product-level: no raw ROS, Nav2, Foxglove, shell, arbitrary VM endpoint, or raw Valetudo route tools are advertised.
+- Tightened readiness blocking reason taxonomy in normalized snapshot readiness from one-off names to shared stable reasons: `runtime_offline` and `stale_source`.
+- Added regression assertions for accepted backend identifiers: `valetudo`, `turtlebot4_nav2`, and `simulation`.
+- Clarified docs so `simulation` is documented as a backend alias for `turtlebot4_nav2`, room/zone MCP start tools remain deferred, and movement preflight wording reflects the currently available movement-start tools.
+
+## 2. Product behavior
+- Product behavior is unchanged except for clearer normalized readiness reason strings.
+- MCP remains backend-aware, selected-backend-driven, capability-gated, and product-level.
+- `vacuum_start_navigation` and `vacuum_start_clean_area` remain the only simulation movement-start write tools.
+- `vacuum_get_supported_actions` continues to list only callable movement writes in `callableMovementWriteTools` and keeps `vacuum_go_to_location`, `vacuum_start_room_cleaning`, and `vacuum_start_zone_cleaning` in deferred actions.
+
+## 3. Still deferred
+- `vacuum_go_to_location`.
+- `vacuum_start_room_cleaning`.
+- `vacuum_start_zone_cleaning`.
+- Arbitrary waypoint tools.
+- Raw Nav2 tools.
+- Map editing.
+- Live movement-start testing with real runtime credentials.
+
+## 4. Validation
+
+```sh
+bun run test:mcp-vacuum
+bun run typecheck
+bun run build:extension
+timeout 3s node dist/mcp-server.js
+git diff --check
+if [ -n "$TENSORFLEET_JWT" ] && [ -n "$TENSORFLEET_VM_MANAGER_URL" ]; then curl -fsS -H "Authorization: Bearer $TENSORFLEET_JWT" "$TENSORFLEET_VM_MANAGER_URL/vms/self/tensorfleet/api/v1/vacuum/snapshot" >/tmp/tensorfleet-mcp-simulation-snapshot.json && wc -c /tmp/tensorfleet-mcp-simulation-snapshot.json; else echo "TENSORFLEET_JWT or TENSORFLEET_VM_MANAGER_URL not set; skipping live simulation curl"; fi
+```
+
+Result:
+
+- `bun run test:mcp-vacuum`: passed - MCP vacuum regression passed.
+- `bun run typecheck`: passed - TypeScript completed with no errors.
+- `bun run build:extension`: passed - Vite built `dist/mcp-server.js` and `dist/extension.js`.
+- `timeout 3s node dist/mcp-server.js`: passed - server printed `TensorFleet MCP Server running on stdio`.
+- `git diff --check`: passed - no whitespace errors.
+- live simulation `curl`: skipped - `TENSORFLEET_JWT` or `TENSORFLEET_VM_MANAGER_URL` was not set in the shell.

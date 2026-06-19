@@ -185,6 +185,9 @@ Current mission implementation facts:
   maps the annotation to a coverage target privately, and UI hydrates active and
   terminal summaries from `snapshot.activeMission` and
   `snapshot.missions.recent`.
+- MCP does not currently expose `vacuum_start_room_cleaning` or
+  `vacuum_start_zone_cleaning`; those product starts remain deferred in the MCP
+  surface.
 - Room/zone recovery controls are runtime/action gated through
   `activeMission.availableActions` and adapter capabilities.
 - Coverage-style terminal results may carry details for cleaned area, remaining
@@ -604,8 +607,9 @@ Current behavior:
   cleanability preview.
 - The side panel reports whether the selected target is cleanable, partially
   cleanable, or invalid.
-- Selecting a saved room/zone can start `start_room_cleaning` or
-  `start_zone_cleaning`.
+- The product runtime path can start `start_room_cleaning` or
+  `start_zone_cleaning` from a saved room/zone selection, but MCP room/zone
+  start tools are not exposed yet.
 - The TurtleBot4/Nav2 adapter translates that intent into a runtime-owned
   coverage mission request while preserving room/zone label and mission intent
   in request payload and optimistic mission snapshot.

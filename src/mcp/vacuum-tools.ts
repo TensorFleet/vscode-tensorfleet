@@ -357,7 +357,7 @@ export function createVacuumTools(): Map<string, VacuumToolDefinition> {
 
   tools.set("vacuum_get_supported_actions", {
     name: "vacuum_get_supported_actions",
-    description: "Summarize selected-backend vacuum actions, including read tools, active mission actions, and deferred movement starts.",
+    description: "Summarize selected-backend vacuum actions, including read tools, active mission actions, callable movement writes, and explicitly deferred actions.",
     inputSchema: emptyInputSchema(),
     execute: async () =>
       withRuntime(async (context) => {
@@ -2023,9 +2023,9 @@ function normalizedBlockingReasons(
       }
     }
   }
-  if (!evidence.connected) blockers.add("runtime_unavailable");
+  if (!evidence.connected) blockers.add("runtime_offline");
   if (!evidence.reachable) blockers.add("source_unreachable");
-  if (evidence.stale) blockers.add("source_stale");
+  if (evidence.stale) blockers.add("stale_source");
   if (!evidence.mapAvailable) blockers.add("map_unavailable");
   if (!evidence.poseAvailable) blockers.add("pose_unavailable");
   if (evidence.movementCapabilities.available !== true) {

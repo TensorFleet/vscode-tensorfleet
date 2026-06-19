@@ -13,8 +13,7 @@ import {
   createVacuumTools,
 } from "../src/mcp/vacuum-tools";
 import { resolveMcpRuntimeConfig } from "../src/mcp/config";
-import { createVacuumRuntimeContext } from "../src/mcp/vacuum-runtime";
-import { fetchVacuumSnapshot } from "../src/mcp/vacuum-runtime";
+import { createVacuumRuntimeContext, fetchVacuumSnapshot, normalizeVacuumBackend } from "../src/mcp/vacuum-runtime";
 
 const expectedTools = [
   "vacuum_get_health",
@@ -59,6 +58,12 @@ for (const forbiddenTool of [
 ]) {
   assert.equal(VACUUM_MCP_TOOL_NAMES.includes(forbiddenTool as never), false);
 }
+
+assert.equal(normalizeVacuumBackend("valetudo"), "valetudo");
+assert.equal(normalizeVacuumBackend("turtlebot4_nav2"), "turtlebot4_nav2");
+assert.equal(normalizeVacuumBackend("simulation"), "turtlebot4_nav2");
+assert.equal(normalizeVacuumBackend("turtlebot4-nav2"), "turtlebot4_nav2");
+assert.equal(normalizeVacuumBackend("unsupported_backend"), null);
 
 const missingAuthConfig = await resolveMcpRuntimeConfig(
   { TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test" },
@@ -1113,6 +1118,7 @@ await withMockVacuumServer(
       assert.deepEqual(result.data.callableMovementWriteTools, ["vacuum_start_navigation", "vacuum_start_clean_area"]);
       assert.equal(result.data.deferredActions.includes("vacuum_start_navigation"), false);
       assert.equal(result.data.deferredActions.includes("vacuum_start_clean_area"), false);
+      assert.equal(result.data.deferredActions.includes("vacuum_go_to_location"), true);
       assert.ok(result.data.futureMovementActions.navigationStart.supported);
       assert.ok(result.data.futureMovementActions.cleanArea.supported);
       assert.ok(result.data.futureMovementActions.goToLocation.supported);

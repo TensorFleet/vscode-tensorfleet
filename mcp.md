@@ -153,7 +153,9 @@ Current behavior facts:
 - Placeholder drone, ROS2, Gazebo, AI inference, QGC mission, install, and
   telemetry tools are no longer advertised as production MCP capabilities.
 - Runtime reads route through the selected vacuum backend from MCP config or
-  the VS Code bridge. Known backends are `valetudo` and `turtlebot4_nav2`.
+  the VS Code bridge. Supported backend identifiers are `valetudo`,
+  `turtlebot4_nav2`, and `simulation`; `simulation` normalizes to
+  `turtlebot4_nav2`.
 - Valetudo reads and commands use typed VM Manager client helpers for the
   `/vms/self/tensorfleet/api/v1/valetudo/*` proxy paths.
 - TurtleBot4/Nav2 simulation reads use product-level
@@ -169,9 +171,9 @@ Current behavior facts:
   `activeMission.availableActions`. They do not start navigation, go-to,
   coverage, room, or zone missions.
 - Simulation movement preflight tools are read-only. They inspect the current
-  normalized snapshot and capabilities to report whether a future movement
-  command could be attempted, but they do not dispatch navigation, go-to, Clean
-  Area, room cleaning, or zone cleaning.
+  normalized snapshot and capabilities to report readiness for the currently
+  available movement-start tools, but they do not dispatch navigation, go-to,
+  Clean Area, room cleaning, or zone cleaning.
 - Valetudo-only settings such as fan speed and water usage return
   `unsupported` when `turtlebot4_nav2` is selected.
 

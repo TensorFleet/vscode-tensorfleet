@@ -8,7 +8,7 @@ The server is built to:
 - return structured TensorFleet MCP result envelopes
 - dispatch only normalized, currently supported vacuum commands
 - avoid raw robot, Valetudo, MQTT, ROS, shell, VM private IP, or generic proxy tools
-- route vacuum tools by the selected backend (`turtlebot4_nav2` or `valetudo`)
+- route vacuum tools by the selected backend (`turtlebot4_nav2`, `simulation`, or `valetudo`; `simulation` normalizes to `turtlebot4_nav2`)
 
 ## Build
 
