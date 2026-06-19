@@ -448,12 +448,16 @@ Implementation facts:
 - Adapter snapshot exposes availability, identity, pose, map, navigation,
   mapping, mission, battery, readiness, fault, and capabilities.
 - `Vacuum Control` consumes the adapter instead of raw Nav2 runtime.
-- `start_navigation` and `cancel_mission` dispatch through
+- `start_navigation`, `start_coverage`, and `cancel_mission` dispatch through
   `adapter.sendCommand`; `cancel_navigation` remains as a compatibility
   fallback.
 - MCP exposes `vacuum_start_navigation` as the first simulation-only
   movement-start write tool; it requires a target, runs readiness gates, and
   dispatches only through the product-level vacuum command route.
+- MCP exposes `vacuum_start_clean_area` as the second simulation-only
+  movement-start write tool; it accepts only simple rectangles, runs Clean Area
+  readiness gates, and dispatches only the normalized `start_coverage` command
+  through the product-level vacuum command route.
 - TurtleBot4/Nav2 navigation missions hydrate through
   `/vacuum_mission/status` and `/vacuum_mission/get_snapshot`.
 - Command dispatch is extracted into a pure helper for regression tests.

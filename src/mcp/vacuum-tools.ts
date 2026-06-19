@@ -157,6 +157,7 @@ export const VACUUM_MCP_TOOL_NAMES = [
   "vacuum_check_clean_area_readiness",
   "vacuum_get_supported_actions",
   "vacuum_start_navigation",
+  "vacuum_start_clean_area",
   ...Object.keys(COMMAND_TOOL_TO_RUNTIME_COMMAND),
 ] as const;
 
@@ -167,6 +168,15 @@ type NavigationStartTarget = {
   x: number;
   y: number;
   theta: number;
+  frameId: string;
+  label?: string;
+};
+type CleanAreaStartArea = {
+  type: "rectangle";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   frameId: string;
   label?: string;
 };
@@ -386,6 +396,33 @@ export function createVacuumTools(): Map<string, VacuumToolDefinition> {
     execute: async (args) => executeStartNavigationTool(args),
   });
 
+  tools.set("vacuum_start_clean_area", {
+    name: "vacuum_start_clean_area",
+    description: "Start a simulation backend rectangular Clean Area mission after product-level readiness gates pass.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        area: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ["rectangle"] },
+            x: { type: "number" },
+            y: { type: "number" },
+            width: { type: "number" },
+            height: { type: "number" },
+            frameId: { type: "string", default: "map" },
+            label: { type: "string" },
+          },
+          required: ["type", "x", "y", "width", "height"],
+          additionalProperties: false,
+        },
+      },
+      required: ["area"],
+      additionalProperties: false,
+    },
+    execute: async (args) => executeStartCleanAreaTool(args),
+  });
+
   for (const [toolName, command] of Object.entries(COMMAND_TOOL_TO_RUNTIME_COMMAND) as Array<[CommandToolName, RuntimeCommandName]>) {
     tools.set(toolName, {
       name: toolName,
@@ -569,6 +606,80 @@ async function executeStartNavigationTool(args: JsonRecord): Promise<TensorFleet
   });
 }
 
+async function executeStartCleanAreaTool(args: JsonRecord): Promise<TensorFleetMcpResult> {
+  return withRuntime(async (context) => {
+    const requestedArea = summarizeRequestedCleanArea(args.area);
+
+    if (context.backend !== "turtlebot4_nav2") {
+      return mcpFailure("unsupported", "unsupported_backend", "Vacuum start Clean Area is only supported by the simulation backend.", {
+        backend: context.backend,
+        action: "start_clean_area",
+        requestedArea,
+        blockingGate: "backend",
+        blockingReasons: ["simulation_backend_required"],
+        requiredInputs: [],
+        capabilityEvidence: {},
+        snapshotEvidence: {},
+        activeMission: null,
+      });
+    }
+
+    const areaValidation = validateCleanAreaStartArea(args.area);
+    if (!areaValidation.ok || !areaValidation.data) {
+      return areaValidation;
+    }
+    const area = areaValidation.data as CleanAreaStartArea;
+
+    const snapshotResult = await fetchSelectedVacuumSnapshot(context);
+    if (!snapshotResult.ok || !snapshotResult.data) {
+      return withStartCleanAreaRefusalDetails(snapshotResult, context.backend, area, "snapshot");
+    }
+
+    const snapshot = snapshotResult.data as RuntimeSnapshot;
+    const gate = buildStartCleanAreaGateResult(context.backend, snapshot, area);
+    if (gate.ready !== true) {
+      const reason = selectStartCleanAreaBlockingReason(gate);
+      return mcpFailure(
+        startCleanAreaFailureStatus(reason, gate.capabilities as JsonRecord | undefined),
+        reason,
+        "Vacuum start Clean Area was refused because readiness gates did not pass.",
+        {
+          ...gate,
+          blockingGate: blockingGateForCleanAreaReason(reason),
+        },
+      );
+    }
+
+    const previousActiveMission = normalizeActiveMission(asRecord(snapshot.activeMission ?? snapshot.missions?.active));
+    const commandResult = await dispatchVacuumCommand(context, {
+      command: "start_coverage",
+      area: cleanAreaToCoverageArea(area),
+    });
+    if (!commandResult.ok) {
+      return withStartCleanAreaRefusalDetails(commandResult, context.backend, area, "dispatch", previousActiveMission, gate);
+    }
+
+    const refreshedSnapshotResult = await fetchSelectedVacuumSnapshot(context);
+    const refreshedActiveMission = refreshedSnapshotResult.ok && refreshedSnapshotResult.data
+      ? normalizeActiveMission(asRecord((refreshedSnapshotResult.data as RuntimeSnapshot).activeMission ?? (refreshedSnapshotResult.data as RuntimeSnapshot).missions?.active))
+      : null;
+
+    return mcpSuccess("Vacuum start Clean Area dispatched.", {
+      backend: context.backend,
+      action: "start_clean_area",
+      dispatchedCommand: "start_coverage",
+      requestedArea: cleanAreaSummary(area),
+      previousActiveMission,
+      commandResult: summarizeCommandDispatchResult(commandResult.data),
+      refreshedActiveMission,
+      refresh: refreshedSnapshotResult.ok
+        ? { ok: true }
+        : { ok: false, status: refreshedSnapshotResult.status, reason: refreshedSnapshotResult.reason, message: refreshedSnapshotResult.message },
+      warnings: Array.isArray(gate.warnings) ? gate.warnings : [],
+    });
+  });
+}
+
 async function executeSimulationMissionActionTool(
   context: Extract<ReturnType<typeof createVacuumRuntimeContext>, { ok: true }>,
   action: SimulationMissionActionCommand,
@@ -733,6 +844,37 @@ function withStartNavigationRefusalDetails(
   };
 }
 
+function withStartCleanAreaRefusalDetails(
+  result: TensorFleetMcpResult,
+  backend: VacuumBackendId,
+  area: CleanAreaStartArea,
+  blockingGate: string,
+  activeMission: JsonRecord | null = null,
+  gate: JsonRecord | null = null,
+): TensorFleetMcpResult {
+  if (result.ok) return result;
+  const resultData = result.data && typeof result.data === "object" ? result.data as JsonRecord : {};
+  const gateReasons = Array.isArray(gate?.blockingReasons)
+    ? gate.blockingReasons.filter((reason): reason is string => typeof reason === "string")
+    : [];
+  return {
+    ...result,
+    data: {
+      ...resultData,
+      backend,
+      action: "start_clean_area",
+      requestedArea: cleanAreaSummary(area),
+      blockingGate,
+      blockingReasons: gateReasons.length > 0 ? gateReasons : [result.reason ?? result.status],
+      requiredInputs: Array.isArray(gate?.requiredInputs) ? gate.requiredInputs : [],
+      capabilityEvidence: gate?.capabilityEvidence ?? gate?.capabilities ?? {},
+      snapshotEvidence: gate?.snapshotEvidence ?? {},
+      activeMission,
+      commandResult: result.ok ? undefined : summarizeCommandDispatchResult(result.data),
+    },
+  };
+}
+
 function startNavigationFailureStatus(
   reason: string,
   capability: JsonRecord | undefined,
@@ -777,6 +919,53 @@ function blockingGateForNavigationReason(reason: string): string {
   if (reason.includes("mission")) return "active_mission";
   if (reason.includes("capability") || reason === "availability_not_reported" || reason.endsWith("_not_ready")) return "capability";
   if (reason.includes("frame") || reason.includes("target")) return "target";
+  return "readiness";
+}
+
+function startCleanAreaFailureStatus(
+  reason: string,
+  capability: JsonRecord | undefined,
+): "unsupported" | "unavailable" | "invalid_request" | "invalid_state" | "runtime_offline" | "source_unreachable" | "stale_source" {
+  if (reason === "capability_unsupported" || capability?.supported === false) return "unsupported";
+  if (reason === "area_frame_mismatch") return "invalid_request";
+  if (reason === "active_mission_incompatible") return "invalid_state";
+  if (reason === "runtime_offline") return "runtime_offline";
+  if (reason === "source_unreachable") return "source_unreachable";
+  if (reason === "stale_source") return "stale_source";
+  return "unavailable";
+}
+
+function selectStartCleanAreaBlockingReason(gate: JsonRecord): string {
+  const reasons = Array.isArray(gate.blockingReasons)
+    ? gate.blockingReasons.filter((reason): reason is string => typeof reason === "string")
+    : [];
+  const priority = [
+    "runtime_offline",
+    "source_unreachable",
+    "stale_source",
+    "map_unavailable",
+    "map_not_usable_for_coverage",
+    "pose_unavailable",
+    "area_frame_mismatch",
+    "active_mission_incompatible",
+    "capability_unsupported",
+    "capability_unavailable",
+  ];
+  return priority.find((reason) => reasons.includes(reason))
+    ?? reasons.find((reason) => reason.includes("capability"))
+    ?? reasons.find((reason) => reason !== "availability_not_reported")
+    ?? reasons[0]
+    ?? "clean_area_not_ready";
+}
+
+function blockingGateForCleanAreaReason(reason: string): string {
+  if (reason.includes("runtime")) return "runtime_availability";
+  if (reason.includes("source")) return "source_availability";
+  if (reason.includes("map")) return "map";
+  if (reason.includes("pose") || reason.includes("localization")) return "pose";
+  if (reason.includes("mission")) return "active_mission";
+  if (reason.includes("capability") || reason === "availability_not_reported" || reason.endsWith("_not_ready")) return "capability";
+  if (reason.includes("frame") || reason.includes("area")) return "area";
   return "readiness";
 }
 
@@ -1062,6 +1251,52 @@ function buildStartNavigationGateResult(
   };
 }
 
+function buildStartCleanAreaGateResult(
+  backend: VacuumBackendId,
+  snapshot: RuntimeSnapshot,
+  area: CleanAreaStartArea,
+): JsonRecord {
+  const readiness = buildReadinessResult(backend, snapshot, "clean_area", area);
+  const capabilities = normalizeCapabilities(snapshot, backend);
+  const features = capabilities.features && typeof capabilities.features === "object" ? capabilities.features as JsonRecord : {};
+  const startCoverageCapability = capabilityAvailability(features, ["start_coverage"]);
+  const blockingReasons = new Set(
+    Array.isArray(readiness.blockingReasons)
+      ? readiness.blockingReasons.filter((reason): reason is string => typeof reason === "string")
+      : [],
+  );
+  const map = normalizeMap(snapshot);
+  const mapFrame = stringValue((map.dimensions as JsonRecord | null | undefined)?.frameId);
+
+  if (mapFrame && area.frameId !== mapFrame) {
+    blockingReasons.add("area_frame_mismatch");
+  }
+  if (startCoverageCapability.supported !== true) {
+    blockingReasons.add("capability_unsupported");
+  } else if (startCoverageCapability.available !== true) {
+    blockingReasons.add(stringValue(startCoverageCapability.reason) ?? "capability_unavailable");
+  }
+
+  const reasons = [...blockingReasons];
+  return {
+    ...readiness,
+    action: "start_clean_area",
+    ready: reasons.length === 0,
+    status: reasons.length === 0 ? "ready" : "blocked",
+    blockingReasons: reasons,
+    requiredInputs: [],
+    requestedArea: cleanAreaSummary(area),
+    capabilities: startCoverageCapability,
+    capabilityEvidence: {
+      startCoverage: startCoverageCapability,
+    },
+    activeMission: (readiness.snapshotEvidence as JsonRecord | undefined)?.mission
+      && typeof (readiness.snapshotEvidence as JsonRecord).mission === "object"
+      ? ((readiness.snapshotEvidence as JsonRecord).mission as JsonRecord).activeMission
+      : null,
+  };
+}
+
 function validateNavigationTarget(value: unknown): TensorFleetMcpResult<JsonRecord | null> {
   if (value == null) return mcpSuccess("Navigation target omitted.", null);
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -1134,6 +1369,57 @@ function validateNavigationStartTarget(value: unknown): TensorFleetMcpResult<Nav
   });
 }
 
+function validateCleanAreaStartArea(value: unknown): TensorFleetMcpResult<CleanAreaStartArea | JsonRecord | null> {
+  if (value == null) {
+    return mcpFailure("invalid_request", "missing_area", "Vacuum start Clean Area requires an area.", {
+      backend: "turtlebot4_nav2",
+      action: "start_clean_area",
+      requestedArea: null,
+      ready: false,
+      status: "needs_input",
+      blockingGate: "area",
+      blockingReasons: ["missing_area"],
+      requiredInputs: ["area"],
+      capabilityEvidence: {},
+      snapshotEvidence: {},
+      activeMission: null,
+    });
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return invalidCleanAreaStartArea("invalid_area", "Clean Area payload must be an object.", value);
+  }
+  const area = value as JsonRecord;
+  if (area.type !== "rectangle") {
+    return invalidCleanAreaStartArea("unsupported_area_type", "Clean Area currently accepts only rectangle areas.", value);
+  }
+  const x = numberValue(area.x);
+  const y = numberValue(area.y);
+  const width = numberValue(area.width);
+  const height = numberValue(area.height);
+  if (x == null || y == null || width == null || height == null) {
+    return invalidCleanAreaStartArea("invalid_area", "Clean Area requires numeric x, y, width, and height.", value);
+  }
+  if (width <= 0 || height <= 0) {
+    return invalidCleanAreaStartArea("invalid_area_dimensions", "Clean Area width and height must be positive.", value);
+  }
+  const frameId = stringValue(area.frameId) ?? "map";
+  if (frameId !== "map") {
+    return invalidCleanAreaStartArea("unsupported_frame", "Clean Area frameId must be 'map'.", value);
+  }
+  if ("label" in area && area.label != null && !stringValue(area.label)) {
+    return invalidCleanAreaStartArea("invalid_area", "Clean Area label must be a non-empty string when provided.", value);
+  }
+  return mcpSuccess("Clean Area start area is valid.", {
+    type: "rectangle",
+    x,
+    y,
+    width,
+    height,
+    frameId,
+    label: stringValue(area.label),
+  });
+}
+
 function invalidNavigationStartTarget(reason: string, message: string, value: unknown): TensorFleetMcpResult<NavigationStartTarget | JsonRecord | null> {
   return mcpFailure("invalid_request", reason, message, {
     backend: "turtlebot4_nav2",
@@ -1144,6 +1430,22 @@ function invalidNavigationStartTarget(reason: string, message: string, value: un
     blockingGate: "target",
     blockingReasons: [reason],
     requiredInputs: reason === "missing_theta" ? ["target.theta"] : [],
+    capabilityEvidence: {},
+    snapshotEvidence: {},
+    activeMission: null,
+  });
+}
+
+function invalidCleanAreaStartArea(reason: string, message: string, value: unknown): TensorFleetMcpResult<CleanAreaStartArea | JsonRecord | null> {
+  return mcpFailure("invalid_request", reason, message, {
+    backend: "turtlebot4_nav2",
+    action: "start_clean_area",
+    requestedArea: summarizeRequestedCleanArea(value),
+    ready: false,
+    status: "invalid_request",
+    blockingGate: "area",
+    blockingReasons: [reason],
+    requiredInputs: [],
     capabilityEvidence: {},
     snapshotEvidence: {},
     activeMission: null,
@@ -1219,8 +1521,12 @@ function supportedActionsSummary(backend: VacuumBackendId, snapshot: RuntimeSnap
   const activeMission = mission.active && typeof mission.active === "object" ? mission.active as JsonRecord : null;
   const activeMissionActions = Array.isArray(activeMission?.availableActions) ? activeMission.availableActions : [];
   const startNavigation = capabilityAvailability(features, ["start_navigation"]);
-  const callableMovementWriteTools = backend === "turtlebot4_nav2" && startNavigation.supported === true
-    ? ["vacuum_start_navigation"]
+  const startCoverage = capabilityAvailability(features, ["start_coverage"]);
+  const callableMovementWriteTools = backend === "turtlebot4_nav2"
+    ? [
+        ...(startNavigation.supported === true ? ["vacuum_start_navigation"] : []),
+        ...(startCoverage.supported === true ? ["vacuum_start_clean_area"] : []),
+      ]
     : [];
   return {
     backend,
@@ -1241,10 +1547,10 @@ function supportedActionsSummary(backend: VacuumBackendId, snapshot: RuntimeSnap
     callableMovementWriteTools,
     futureMovementActions: backend === "turtlebot4_nav2"
       ? {
-          note: "Navigation start is the first callable movement write tool when the simulation start_navigation capability is supported; other movement starts remain deferred.",
+          note: "Navigation start and rectangular Clean Area start are callable movement write tools when their simulation capabilities are supported; other movement starts remain deferred.",
           navigationStart: startNavigation,
           goToLocation: capabilityAvailability(features, ["go_to_location"]),
-          cleanArea: capabilityAvailability(features, ["start_coverage"]),
+          cleanArea: startCoverage,
         }
       : {
           note: "Simulation movement preflight does not reinterpret Valetudo map targets.",
@@ -1253,7 +1559,6 @@ function supportedActionsSummary(backend: VacuumBackendId, snapshot: RuntimeSnap
         },
     deferredActions: [
       "vacuum_go_to_location",
-      "vacuum_start_clean_area",
       "vacuum_start_room_cleaning",
       "vacuum_start_zone_cleaning",
       "arbitrary_waypoint_tools",
@@ -1943,6 +2248,49 @@ function navigationTargetSummary(target: NavigationStartTarget): JsonRecord {
     theta: target.theta,
     frameId: target.frameId,
     label: target.label,
+  };
+}
+
+function summarizeRequestedCleanArea(area: unknown): JsonRecord | null {
+  if (!area || typeof area !== "object" || Array.isArray(area)) return null;
+  const record = area as JsonRecord;
+  const summary: JsonRecord = {};
+  const type = stringValue(record.type);
+  const x = numberValue(record.x);
+  const y = numberValue(record.y);
+  const width = numberValue(record.width);
+  const height = numberValue(record.height);
+  const frameId = stringValue(record.frameId);
+  const label = stringValue(record.label);
+  if (type) summary.type = type;
+  if (x != null) summary.x = x;
+  if (y != null) summary.y = y;
+  if (width != null) summary.width = width;
+  if (height != null) summary.height = height;
+  if (frameId) summary.frameId = frameId;
+  if (label) summary.label = label;
+  return Object.keys(summary).length > 0 ? summary : null;
+}
+
+function cleanAreaSummary(area: CleanAreaStartArea): JsonRecord {
+  return {
+    type: area.type,
+    x: area.x,
+    y: area.y,
+    width: area.width,
+    height: area.height,
+    frameId: area.frameId,
+    label: area.label,
+  };
+}
+
+function cleanAreaToCoverageArea(area: CleanAreaStartArea): JsonRecord {
+  return {
+    shape: "rectangle",
+    minX: area.x,
+    minY: area.y,
+    maxX: area.x + area.width,
+    maxY: area.y + area.height,
   };
 }
 

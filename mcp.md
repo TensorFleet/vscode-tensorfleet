@@ -134,6 +134,7 @@ The production MCP surface currently advertises vacuum product tools:
 - `vacuum_check_clean_area_readiness`
 - `vacuum_get_supported_actions`
 - `vacuum_start_navigation`
+- `vacuum_start_clean_area`
 - `vacuum_start_cleaning`
 - `vacuum_pause`
 - `vacuum_resume`
@@ -489,6 +490,7 @@ hosts:
 - `vacuum_check_clean_area_readiness`
 - `vacuum_get_supported_actions`
 - `vacuum_start_navigation`
+- `vacuum_start_clean_area`
 - `vacuum_start_cleaning`
 - `vacuum_pause`
 - `vacuum_resume`
@@ -979,11 +981,12 @@ availability, runtime/source availability, map availability, pose/localization
 evidence, incompatible active mission state, and normalized movement/coverage
 capability support/current availability.
 
-### Simulation Movement-Start Write Tool
+### Simulation Movement-Start Write Tools
 
-Tool:
+Tools:
 
 - `vacuum_start_navigation`
+- `vacuum_start_clean_area`
 
 Purpose:
 
@@ -1005,15 +1008,52 @@ Purpose:
 }
 ```
 
+`vacuum_start_clean_area` starts one runtime-owned simulation coverage mission
+after product-level gates pass. It currently accepts only a simple rectangular
+area payload:
+
+```json
+{
+  "area": {
+    "type": "rectangle",
+    "x": 0,
+    "y": 0,
+    "width": 1,
+    "height": 1,
+    "frameId": "map",
+    "label": "Kitchen clean area"
+  }
+}
+```
+
+The tool requires numeric `x`, `y`, `width`, and `height`; `width` and `height`
+must be positive. Optional `frameId` defaults to the product map frame (`map`).
+Optional `label` is returned only as request context and does not affect safety
+or dispatch. MCP translates the rectangle into the normalized adapter command:
+
+```json
+{
+  "command": "start_coverage",
+  "area": {
+    "shape": "rectangle",
+    "minX": 0,
+    "minY": 0,
+    "maxX": 1,
+    "maxY": 1
+  }
+}
+```
+
 Before dispatch, the tool resolves the selected backend, requires
 `turtlebot4_nav2`, fetches the normalized simulation snapshot, checks
 runtime/source availability, map usability, pose/localization evidence,
-incompatible active mission state, `start_navigation` support/current
-availability, and target frame validity. Dispatch uses only
+incompatible active mission state, the matching `start_navigation` or
+`start_coverage` support/current availability, and target/area frame validity.
+Dispatch uses only
 `POST /vms/self/tensorfleet/api/v1/vacuum/command`.
 
-Valetudo returns structured `unsupported`. Missing or malformed targets return
-structured `invalid_request`. Missing simulation command route returns
+Valetudo returns structured `unsupported`. Missing or malformed targets/areas
+return structured `invalid_request`. Missing simulation command route returns
 structured `unavailable` with `simulation_command_route_unavailable`; MCP does
 not fake success or call raw ROS/Nav2/Foxglove/private endpoints.
 

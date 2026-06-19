@@ -51,6 +51,7 @@ If no vacuum backend is known, tools return a structured `invalid_state` result 
 - `vacuum_check_clean_area_readiness`
 - `vacuum_get_supported_actions`
 - `vacuum_start_navigation`
+- `vacuum_start_clean_area`
 - `vacuum_start_cleaning`
 - `vacuum_pause`
 - `vacuum_resume`
@@ -75,15 +76,17 @@ Simulation read results are compact and product-level:
 
 `vacuum_check_navigation_readiness` and `vacuum_check_clean_area_readiness` are read-only simulation preflight tools. They inspect the selected simulation snapshot, runtime/source availability, map and pose evidence, active mission state, and normalized capability availability. They return `ready`, `status`, `blockingReasons`, `warnings`, `requiredInputs`, `capabilities`, and `snapshotEvidence` inside the shared MCP envelope. They do not dispatch navigation, go-to, Clean Area, room cleaning, or zone cleaning.
 
-`vacuum_get_supported_actions` summarizes the selected backend's read tools, currently available active mission actions, callable simulation movement writes, and deferred actions. It advertises `vacuum_start_navigation` as callable only when the selected backend is simulation and normalized `start_navigation` is supported; other deferred movement-start tools are not advertised as callable.
+`vacuum_get_supported_actions` summarizes the selected backend's read tools, currently available active mission actions, callable simulation movement writes, and deferred actions. It advertises `vacuum_start_navigation` and `vacuum_start_clean_area` as callable only when the selected backend is simulation and the matching normalized capability (`start_navigation` or `start_coverage`) is supported; other deferred movement-start tools are not advertised as callable.
 
-`vacuum_start_navigation` is the first simulation movement-start write tool. It is simulation-backend-only, requires a `target` with numeric `x`, `y`, and `theta`, validates the target frame as `map`, runs the same runtime/source, map, pose/localization, active mission, and `start_navigation` capability gates used by preflight, and then dispatches only through `POST /vms/self/tensorfleet/api/v1/vacuum/command` with the normalized product command `start_navigation`. If the command route is absent, MCP returns structured `unavailable` with `simulation_command_route_unavailable`.
+`vacuum_start_navigation` is simulation-backend-only, requires a `target` with numeric `x`, `y`, and `theta`, validates the target frame as `map`, runs the same runtime/source, map, pose/localization, active mission, and `start_navigation` capability gates used by preflight, and then dispatches only through `POST /vms/self/tensorfleet/api/v1/vacuum/command` with the normalized product command `start_navigation`. If the command route is absent, MCP returns structured `unavailable` with `simulation_command_route_unavailable`.
+
+`vacuum_start_clean_area` is simulation-backend-only, accepts only a simple rectangular `area` with `type: "rectangle"` plus numeric `x`, `y`, positive `width`, positive `height`, optional `frameId: "map"`, and optional `label`, runs the same readiness gates with `start_coverage` capability checks, and dispatches only the normalized product command `start_coverage`. Labels are returned as request context only and do not affect safety or dispatch.
 
 `vacuum_pause_mission`, `vacuum_resume_mission`, `vacuum_cancel_mission`, `vacuum_retry_mission_step`, and `vacuum_skip_mission_step` are simulation mission controls only. They operate on an existing runtime-owned active mission and require the requested action to be present in normalized `activeMission.availableActions`. They do not start navigation, go-to, Clean Area, room cleaning, or zone cleaning missions.
 
 `vacuum_set_fan_speed` and `vacuum_set_water_usage` are currently Valetudo-limited and return `unsupported` for the TurtleBot4/Nav2 simulation backend. Basic command tools remain gated by the selected backend's normalized capabilities and current availability.
 
-Deferred vacuum features such as go-to, Clean Area/coverage start, room cleaning start, zone cleaning start, segment cleaning, map editing, arbitrary waypoints, raw Nav2 tools, live map streaming, consumable resets, dock actions, and hardware validation are not exposed as MCP commands.
+Deferred vacuum features such as go-to, room cleaning start, zone cleaning start, segment cleaning, map editing, arbitrary waypoints, raw Nav2 tools, live map streaming, consumable resets, dock actions, and hardware validation are not exposed as MCP commands.
 
 ## Cursor Config
 

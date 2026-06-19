@@ -29,6 +29,7 @@ const expectedTools = [
   "vacuum_check_clean_area_readiness",
   "vacuum_get_supported_actions",
   "vacuum_start_navigation",
+  "vacuum_start_clean_area",
   "vacuum_start_cleaning",
   "vacuum_pause",
   "vacuum_resume",
@@ -53,7 +54,6 @@ for (const forbiddenTool of [
   "drone_takeoff",
   "gazebo_spawn",
   "vacuum_go_to_location",
-  "vacuum_start_clean_area",
   "vacuum_start_room_cleaning",
   "vacuum_start_zone_cleaning",
 ]) {
@@ -529,6 +529,7 @@ for (const toolName of [
   "vacuum_check_clean_area_readiness",
   "vacuum_get_supported_actions",
   "vacuum_start_navigation",
+  "vacuum_start_clean_area",
   "vacuum_pause_mission",
   "vacuum_resume_mission",
   "vacuum_cancel_mission",
@@ -562,6 +563,22 @@ await withToolEnv(
   },
   async () => {
     const result = toolResult(await tools.get("vacuum_check_navigation_readiness")!.execute({}));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "invalid_state");
+    assert.equal(result.reason, "missing_vacuum_backend");
+  },
+);
+
+await withToolEnv(
+  {
+    TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
+    TENSORFLEET_JWT: "token",
+    TENSORFLEET_VACUUM_BACKEND: undefined,
+  },
+  async () => {
+    const result = toolResult(await tools.get("vacuum_start_clean_area")!.execute({
+      area: { type: "rectangle", x: 0, y: 0, width: 1, height: 1, frameId: "map" },
+    }));
     assert.equal(result.ok, false);
     assert.equal(result.status, "invalid_state");
     assert.equal(result.reason, "missing_vacuum_backend");
@@ -610,6 +627,14 @@ await withToolEnv(
     assert.equal(startNavigation.status, "unsupported");
     assert.equal(startNavigation.reason, "unsupported_backend");
     assert.equal(startNavigation.data.backend, "valetudo");
+
+    const startCleanArea = toolResult(await tools.get("vacuum_start_clean_area")!.execute({
+      area: { type: "rectangle", x: 0, y: 0, width: 1, height: 1, frameId: "map" },
+    }));
+    assert.equal(startCleanArea.ok, false);
+    assert.equal(startCleanArea.status, "unsupported");
+    assert.equal(startCleanArea.reason, "unsupported_backend");
+    assert.equal(startCleanArea.data.backend, "valetudo");
   },
 );
 
@@ -679,6 +704,19 @@ for (const [toolName, snapshot, expectedReason] of [
     "map_unavailable",
   ],
   [
+    "vacuum_start_clean_area",
+    {
+      ...readyCleanAreaSnapshot,
+      map: {
+        ...(readyCleanAreaSnapshot.map as Record<string, unknown>),
+        readiness: "unavailable",
+        metadata: { hasMap: false },
+        detail: "Map is not available.",
+      },
+    },
+    "map_unavailable",
+  ],
+  [
     "vacuum_check_navigation_readiness",
     {
       ...readyNavigationSnapshot,
@@ -698,6 +736,14 @@ for (const [toolName, snapshot, expectedReason] of [
     "vacuum_start_navigation",
     {
       ...readyNavigationSnapshot,
+      pose: { readiness: "waiting", available: false, coordinates: null, detail: "Waiting for pose." },
+    },
+    "pose_unavailable",
+  ],
+  [
+    "vacuum_start_clean_area",
+    {
+      ...readyCleanAreaSnapshot,
       pose: { readiness: "waiting", available: false, coordinates: null, detail: "Waiting for pose." },
     },
     "pose_unavailable",
@@ -722,7 +768,7 @@ for (const [toolName, snapshot, expectedReason] of [
           ? { target: { x: 0, y: 0, theta: 0, frameId: "map" } }
           : { area: { type: "rectangle", x: 0, y: 0, width: 1, height: 1, frameId: "map" } };
         const result = toolResult(await tools.get(toolName)!.execute(args));
-        assert.equal(result.ok, toolName !== "vacuum_start_navigation");
+        assert.equal(result.ok, toolName !== "vacuum_start_navigation" && toolName !== "vacuum_start_clean_area");
         assert.equal(result.data.ready, false);
         assert.equal(result.data.status, "blocked");
         assert.ok(result.data.blockingReasons.includes(expectedReason), `${toolName} should include ${expectedReason}`);
@@ -761,6 +807,14 @@ await withMockVacuumServer(
       assert.equal(startResult.status, "invalid_state");
       assert.equal(startResult.data.blockingGate, "active_mission");
       assert.ok(startResult.data.blockingReasons.includes("active_mission_incompatible"));
+
+      const startCleanArea = toolResult(await tools.get("vacuum_start_clean_area")!.execute({
+        area: { type: "rectangle", x: 0, y: 0, width: 1, height: 1, frameId: "map" },
+      }));
+      assert.equal(startCleanArea.ok, false);
+      assert.equal(startCleanArea.status, "invalid_state");
+      assert.equal(startCleanArea.data.blockingGate, "active_mission");
+      assert.ok(startCleanArea.data.blockingReasons.includes("active_mission_incompatible"));
     },
   ),
 );
@@ -868,6 +922,61 @@ for (const [snapshot, expectedStatus, expectedReason] of [
   );
 }
 
+for (const [snapshot, expectedStatus, expectedReason] of [
+  [
+    {
+      ...readyCleanAreaSnapshot,
+      capabilities: {
+        ...(readyCleanAreaSnapshot.capabilities as Record<string, unknown>),
+        start_coverage: { supported: false, available: false, status: "unsupported" },
+      },
+    },
+    "unsupported",
+    "capability_unsupported",
+  ],
+  [
+    {
+      ...readyCleanAreaSnapshot,
+      capabilities: {
+        ...(readyCleanAreaSnapshot.capabilities as Record<string, unknown>),
+        start_coverage: { supported: true, available: false, availabilityReason: "coverage_not_ready", status: "unavailable" },
+      },
+    },
+    "unavailable",
+    "coverage_not_ready",
+  ],
+] as const) {
+  await withMockVacuumServer(
+    (request, response) => {
+      if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+        jsonResponse(response, 200, snapshot);
+        return;
+      }
+      if (request.method === "POST" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/command") {
+        jsonResponse(response, 500, { error: "capability blocker should prevent dispatch" });
+        return;
+      }
+      jsonResponse(response, 404, { error: "not found" });
+    },
+    async (baseUrl) => withToolEnv(
+      {
+        TENSORFLEET_VM_MANAGER_URL: baseUrl,
+        TENSORFLEET_JWT: "token",
+        TENSORFLEET_VACUUM_BACKEND: "simulation",
+      },
+      async () => {
+        const result = toolResult(await tools.get("vacuum_start_clean_area")!.execute({
+          area: { type: "rectangle", x: 0, y: 0, width: 1, height: 1, frameId: "map" },
+        }));
+        assert.equal(result.ok, false);
+        assert.equal(result.status, expectedStatus);
+        assert.ok(result.data.blockingReasons.includes(expectedReason));
+        assert.equal(result.data.blockingGate, "capability");
+      },
+    ),
+  );
+}
+
 await withToolEnv(
   {
     TENSORFLEET_VM_MANAGER_URL: "http://vm-manager.example.test",
@@ -907,6 +1016,40 @@ await withToolEnv(
     assert.equal(invalidStartFrame.ok, false);
     assert.equal(invalidStartFrame.status, "invalid_request");
     assert.equal(invalidStartFrame.reason, "unsupported_frame");
+
+    const missingStartArea = toolResult(await tools.get("vacuum_start_clean_area")!.execute({}));
+    assert.equal(missingStartArea.ok, false);
+    assert.equal(missingStartArea.status, "invalid_request");
+    assert.equal(missingStartArea.reason, "missing_area");
+    assert.deepEqual(missingStartArea.data.requiredInputs, ["area"]);
+
+    const invalidStartArea = toolResult(await tools.get("vacuum_start_clean_area")!.execute({
+      area: { type: "rectangle", x: "bad", y: 0, width: 1, height: 1 },
+    }));
+    assert.equal(invalidStartArea.ok, false);
+    assert.equal(invalidStartArea.status, "invalid_request");
+    assert.equal(invalidStartArea.reason, "invalid_area");
+
+    const unsupportedStartAreaType = toolResult(await tools.get("vacuum_start_clean_area")!.execute({
+      area: { type: "polygon", x: 0, y: 0, width: 1, height: 1 },
+    }));
+    assert.equal(unsupportedStartAreaType.ok, false);
+    assert.equal(unsupportedStartAreaType.status, "invalid_request");
+    assert.equal(unsupportedStartAreaType.reason, "unsupported_area_type");
+
+    const invalidStartAreaDimensions = toolResult(await tools.get("vacuum_start_clean_area")!.execute({
+      area: { type: "rectangle", x: 0, y: 0, width: 0, height: 1 },
+    }));
+    assert.equal(invalidStartAreaDimensions.ok, false);
+    assert.equal(invalidStartAreaDimensions.status, "invalid_request");
+    assert.equal(invalidStartAreaDimensions.reason, "invalid_area_dimensions");
+
+    const invalidStartAreaFrame = toolResult(await tools.get("vacuum_start_clean_area")!.execute({
+      area: { type: "rectangle", x: 0, y: 0, width: 1, height: 1, frameId: "odom" },
+    }));
+    assert.equal(invalidStartAreaFrame.ok, false);
+    assert.equal(invalidStartAreaFrame.status, "invalid_request");
+    assert.equal(invalidStartAreaFrame.reason, "unsupported_frame");
   },
 );
 
@@ -967,13 +1110,14 @@ await withMockVacuumServer(
     async () => {
       const result = toolResult(await tools.get("vacuum_get_supported_actions")!.execute({}));
       assert.equal(result.ok, true);
-      assert.deepEqual(result.data.callableMovementWriteTools, ["vacuum_start_navigation"]);
+      assert.deepEqual(result.data.callableMovementWriteTools, ["vacuum_start_navigation", "vacuum_start_clean_area"]);
       assert.equal(result.data.deferredActions.includes("vacuum_start_navigation"), false);
+      assert.equal(result.data.deferredActions.includes("vacuum_start_clean_area"), false);
       assert.ok(result.data.futureMovementActions.navigationStart.supported);
+      assert.ok(result.data.futureMovementActions.cleanArea.supported);
       assert.ok(result.data.futureMovementActions.goToLocation.supported);
       for (const deferredTool of [
         "vacuum_go_to_location",
-        "vacuum_start_clean_area",
         "vacuum_start_room_cleaning",
         "vacuum_start_zone_cleaning",
       ]) {
@@ -1012,6 +1156,38 @@ await withMockVacuumServer(
       assert.equal(result.reason, "simulation_command_route_unavailable");
       assert.equal(result.data.blockingGate, "dispatch");
       assert.equal(result.data.requestedTarget.label, "Kitchen waypoint");
+      assert.doesNotMatch(JSON.stringify(result), /\/map|\/pose|NavigateToPose|geometry_msgs|nav_msgs|Foxglove|topic|service|http:\/\/|10\.\d+\.\d+\.\d+/i);
+    },
+  ),
+);
+
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      jsonResponse(response, 200, readyCleanAreaSnapshot);
+      return;
+    }
+    if (request.method === "POST" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/command") {
+      jsonResponse(response, 404, { error: "not found" });
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_start_clean_area")!.execute({
+        area: { type: "rectangle", x: 0.5, y: 1.25, width: 2, height: 3, frameId: "map", label: "Kitchen clean area" },
+      }));
+      assert.equal(result.ok, false);
+      assert.equal(result.status, "unavailable");
+      assert.equal(result.reason, "simulation_command_route_unavailable");
+      assert.equal(result.data.blockingGate, "dispatch");
+      assert.equal(result.data.requestedArea.label, "Kitchen clean area");
       assert.doesNotMatch(JSON.stringify(result), /\/map|\/pose|NavigateToPose|geometry_msgs|nav_msgs|Foxglove|topic|service|http:\/\/|10\.\d+\.\d+\.\d+/i);
     },
   ),
@@ -1076,6 +1252,72 @@ await withMockVacuumServer(
       assert.deepEqual(startNavigationDispatchedCommand, {
         command: "start_navigation",
         target: { x: 0.5, y: 1.25, yaw: 90 },
+      });
+      assert.doesNotMatch(JSON.stringify(result), /\/map|\/pose|NavigateToPose|geometry_msgs|nav_msgs|Foxglove|topic|service|http:\/\/|10\.\d+\.\d+\.\d+/i);
+    },
+  ),
+);
+
+let startCleanAreaDispatchCount = 0;
+let startCleanAreaDispatchedCommand: unknown;
+await withMockVacuumServer(
+  (request, response) => {
+    if (request.method === "GET" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/snapshot") {
+      const snapshot = startCleanAreaDispatchCount === 0
+        ? readyCleanAreaSnapshot
+        : {
+            ...readyCleanAreaSnapshot,
+            navigation: { state: "active", active: true, detail: "Coverage running." },
+            mission: { state: "coverage", detail: "Robot is cleaning an area." },
+            activeMission: {
+              id: "coverage-started",
+              type: "coverage",
+              status: "running",
+              phase: "covering",
+              progress: { percent: 0, currentStep: 1, totalSteps: 1, distanceRemaining: null, areaCoveredSqM: 0, areaRemainingSqM: 6 },
+              availableActions: ["pause_mission", "cancel_mission"],
+              result: null,
+              error: null,
+              target: { type: "coverage_area" },
+              startedAt: 1800000000002,
+              updatedAt: 1800000000003,
+            },
+          };
+      jsonResponse(response, 200, snapshot);
+      return;
+    }
+    if (request.method === "POST" && request.url === "/vms/self/tensorfleet/api/v1/vacuum/command") {
+      startCleanAreaDispatchCount += 1;
+      void readJsonBody(request).then((body) => {
+        startCleanAreaDispatchedCommand = body;
+        jsonResponse(response, 200, { ok: true, status: "success", command: "start_coverage", message: "Coverage started." });
+      });
+      return;
+    }
+    jsonResponse(response, 404, { error: "not found" });
+  },
+  async (baseUrl) => withToolEnv(
+    {
+      TENSORFLEET_VM_MANAGER_URL: baseUrl,
+      TENSORFLEET_JWT: "token",
+      TENSORFLEET_VACUUM_BACKEND: "simulation",
+    },
+    async () => {
+      const result = toolResult(await tools.get("vacuum_start_clean_area")!.execute({
+        area: { type: "rectangle", x: 0.5, y: 1.25, width: 2, height: 3, frameId: "map", label: "Kitchen clean area" },
+      }));
+      assert.equal(result.ok, true);
+      assert.equal(result.data.backend, "turtlebot4_nav2");
+      assert.equal(result.data.action, "start_clean_area");
+      assert.equal(result.data.dispatchedCommand, "start_coverage");
+      assert.equal(result.data.requestedArea.label, "Kitchen clean area");
+      assert.equal(result.data.previousActiveMission, null);
+      assert.equal(result.data.refreshedActiveMission.id, "coverage-started");
+      assert.equal(result.data.commandResult.command, "start_coverage");
+      assert.equal(startCleanAreaDispatchCount, 1);
+      assert.deepEqual(startCleanAreaDispatchedCommand, {
+        command: "start_coverage",
+        area: { shape: "rectangle", minX: 0.5, minY: 1.25, maxX: 2.5, maxY: 4.25 },
       });
       assert.doesNotMatch(JSON.stringify(result), /\/map|\/pose|NavigateToPose|geometry_msgs|nav_msgs|Foxglove|topic|service|http:\/\/|10\.\d+\.\d+\.\d+/i);
     },
