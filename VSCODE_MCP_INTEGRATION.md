@@ -64,7 +64,7 @@ Add MCP server config to Cursor or Claude:
   "mcpServers": {
     "tensorfleet-drone": {
       "command": "node",
-      "args": ["/path/to/vscode-tensorfleet/out/mcp-server.js"]
+      "args": ["/path/to/vscode-tensorfleet/dist/mcp-server.js"]
     }
   }
 }
@@ -179,7 +179,7 @@ Edit `~/.cursor/mcp.json`:
     "tensorfleet-drone": {
       "command": "node",
       "args": [
-        "/Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js"
+        "/Users/hyper/projects/drone/vscode-tensorfleet/dist/mcp-server.js"
       ]
     }
   }
@@ -226,7 +226,7 @@ rm -f /tmp/tensorfleet-mcp-bridge.sock
 **Solution:**
 
 1. Run `bun run compile`
-2. Verify `out/mcp-server.js` exists
+2. Verify `dist/mcp-server.js` exists
 3. Update path in Cursor config to absolute path
 
 ### Panels Don't Open But Everything Else Works

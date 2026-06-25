@@ -66,7 +66,7 @@ Open Cursor Settings (JSON) and add the MCP server configuration:
     "tensorfleet-drone": {
       "command": "node",
       "args": [
-        "/Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js"
+        "/Users/hyper/projects/drone/vscode-tensorfleet/dist/mcp-server.js"
       ],
       "env": {}
     }
@@ -114,7 +114,7 @@ Edit the Claude Desktop configuration file:
     "tensorfleet-drone": {
       "command": "node",
       "args": [
-        "/Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js"
+        "/Users/hyper/projects/drone/vscode-tensorfleet/dist/mcp-server.js"
       ]
     }
   }
@@ -144,7 +144,7 @@ Claude will use the MCP server to access your TensorFleet tools.
 For tools that support MCP over stdio, you can run the server directly:
 
 ```bash
-node /Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js
+node /Users/hyper/projects/drone/vscode-tensorfleet/dist/mcp-server.js
 ```
 
 The server communicates via stdin/stdout using the MCP protocol.
@@ -160,7 +160,7 @@ You can test the server manually:
 ```bash
 cd /Users/hyper/projects/drone/vscode-tensorfleet
 bun run compile
-node out/mcp-server.js
+node dist/mcp-server.js
 ```
 
 The server will start and listen on stdio. You should see:
@@ -174,7 +174,7 @@ TensorFleet MCP Server running on stdio
 Use the official MCP inspector tool:
 
 ```bash
-npx @modelcontextprotocol/inspector node out/mcp-server.js
+npx @modelcontextprotocol/inspector node dist/mcp-server.js
 ```
 
 This opens a web UI where you can:
@@ -231,7 +231,7 @@ bun run compile
 ### MCP Server Not Appearing
 
 - Ensure the path in config is absolute and correct
-- Check that `out/mcp-server.js` exists (run `bun run compile`)
+- Check that `dist/mcp-server.js` exists (run `bun run compile`)
 - Verify Node.js is in your PATH
 - Check Cursor/Claude logs for errors
 
@@ -246,7 +246,7 @@ bun run compile
 Make sure the compiled JavaScript is executable:
 
 ```bash
-chmod +x /Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js
+chmod +x /Users/hyper/projects/drone/vscode-tensorfleet/dist/mcp-server.js
 ```
 
 ---

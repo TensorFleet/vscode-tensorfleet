@@ -1,11 +1,13 @@
 {
   "mcpServers": {
-    "tensorfleet-drone": {
+    "tensorfleet": {
       "command": "node",
       "args": [
-        "/Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js"
+        "/home/shane/vscode-tensorfleet/dist/mcp-server.js"
       ],
-      "env": {}
+      "env": {
+        "TENSORFLEET_VACUUM_BACKEND": "simulation"
+      }
     }
   }
 }
