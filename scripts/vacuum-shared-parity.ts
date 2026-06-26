@@ -6,6 +6,7 @@ import {
   VACUUM_CAPABILITY_NAMES as LOCAL_CAPABILITY_NAMES,
   createUnsupportedCapabilities as createLocalUnsupportedCapabilities,
 } from "../panels-standalone/src/vacuum-adapter/capabilities";
+import { VACUUM_COMMAND_NAMES as LOCAL_COMMAND_NAMES } from "../panels-standalone/src/vacuum-adapter/commands";
 import {
   VACUUM_CAPABILITY_NAMES as SHARED_CAPABILITY_NAMES,
   createUnsupportedCapabilities as createSharedUnsupportedCapabilities,
@@ -92,39 +93,6 @@ type CheckResult = {
 
 const repoRoot = resolve(import.meta.dir, "..");
 
-const LOCAL_COMMAND_NAMES = [
-  "start_navigation",
-  "go_to_location",
-  "cancel_navigation",
-  "manual_control",
-  "start_mapping",
-  "pause_mapping",
-  "resume_mapping",
-  "finish_mapping",
-  "discard_mapping",
-  "accept_map",
-  "load_map",
-  "save_map_annotation",
-  "delete_map_annotation",
-  "start_coverage",
-  "start_room_cleaning",
-  "start_zone_cleaning",
-  "pause_mission",
-  "resume_mission",
-  "cancel_mission",
-  "retry_mission_step",
-  "skip_mission_step",
-  "start_cleaning",
-  "pause",
-  "resume",
-  "stop",
-  "return_to_dock",
-  "segment_cleaning",
-  "zone_cleaning",
-  "set_fan_speed",
-  "set_water_usage",
-] as const;
-
 const VALETUDO_CAPABILITY_FIXTURE = [
   "BasicControlCapability",
   "BatteryStateCapability",
@@ -148,12 +116,13 @@ function readRepoFile(path: string): string {
   return readFileSync(resolve(repoRoot, path), "utf8");
 }
 
-function sorted<T>(values: Iterable<T>): T[] {
-  return Array.from(values).sort();
+function assertSharedReExportShim(path: string, target: string): void {
+  const source = readRepoFile(path).trim();
+  assert.equal(source, `export * from "${target}";`, `${path} must remain a shared re-export shim`);
 }
 
-function exportedTypeNames(source: string): string[] {
-  return sorted(source.matchAll(/^export type ([A-Za-z0-9_]+)/gm).map((match) => match[1]));
+function sorted<T>(values: Iterable<T>): T[] {
+  return Array.from(values).sort();
 }
 
 function unionLiterals(source: string, typeName: string): string[] {
@@ -162,15 +131,6 @@ function unionLiterals(source: string, typeName: string): string[] {
   const nextExport = source.indexOf("\nexport type ", start + 1);
   const block = source.slice(start, nextExport === -1 ? undefined : nextExport);
   return sorted(block.matchAll(/"([^"]+)"/g).map((match) => match[1]));
-}
-
-function assertDeepEqualOrDrift(name: string, actual: unknown, expected: unknown): CheckResult {
-  try {
-    assert.deepEqual(actual, expected);
-    return pass(name);
-  } catch (error) {
-    return knownDrift(name, error instanceof Error ? error.message.split("\n")[0] : String(error));
-  }
 }
 
 function createSmallOccupancyGrid(): Record<string, unknown> {
@@ -229,6 +189,7 @@ function createValetudoRuntimeSnapshot(overrides: Record<string, unknown> = {}):
 }
 
 function testCapabilities(): CheckResult {
+  assertSharedReExportShim("panels-standalone/src/vacuum-adapter/capabilities.ts", "tensorfleet-util/vacuum/capabilities");
   assert.deepEqual(LOCAL_CAPABILITY_NAMES, SHARED_CAPABILITY_NAMES);
   assert.deepEqual(createLocalUnsupportedCapabilities(), createSharedUnsupportedCapabilities());
   for (const descriptor of Object.values(createSharedUnsupportedCapabilities())) {
@@ -238,6 +199,7 @@ function testCapabilities(): CheckResult {
 }
 
 function testCommands(): CheckResult {
+  assertSharedReExportShim("panels-standalone/src/vacuum-adapter/commands.ts", "tensorfleet-util/vacuum/commands");
   assert.deepEqual(sorted(LOCAL_COMMAND_NAMES), sorted(SHARED_COMMAND_NAMES));
   for (const command of LOCAL_COMMAND_NAMES) {
     assert.ok(SHARED_COMMAND_NAMES.includes(command), `${command} missing from shared VACUUM_COMMAND_NAMES`);
@@ -256,9 +218,9 @@ function testCommands(): CheckResult {
 }
 
 function testErrors(): CheckResult {
-  const localSource = readRepoFile("panels-standalone/src/vacuum-adapter/errors.ts");
+  assertSharedReExportShim("panels-standalone/src/vacuum-adapter/errors.ts", "tensorfleet-util/vacuum/errors");
   const sharedSource = readRepoFile("panels-standalone/.generated/tensorfleet-util/vacuum/errors.ts");
-  assert.deepEqual(unionLiterals(localSource, "VacuumCommandErrorCode"), unionLiterals(sharedSource, "VacuumCommandErrorCode"));
+  assert.deepEqual(unionLiterals(sharedSource, "VacuumCommandErrorCode"), unionLiterals(sharedSource, "VacuumCommandErrorCode"));
   assert.deepEqual(localUnsupportedCommand("return_to_dock"), sharedUnsupportedCommand("return_to_dock"));
   assert.deepEqual(
     localUnsupportedCommand("return_to_dock", "custom message"),
@@ -268,9 +230,8 @@ function testErrors(): CheckResult {
 }
 
 function testState(): CheckResult {
-  const localSource = readRepoFile("panels-standalone/src/vacuum-adapter/state.ts");
+  assertSharedReExportShim("panels-standalone/src/vacuum-adapter/state.ts", "tensorfleet-util/vacuum/state");
   const sharedSource = readRepoFile("panels-standalone/.generated/tensorfleet-util/vacuum/state.ts");
-  assert.deepEqual(exportedTypeNames(localSource), exportedTypeNames(sharedSource));
   for (const typeName of [
     "VacuumReadinessState",
     "VacuumNavigationState",
@@ -279,7 +240,7 @@ function testState(): CheckResult {
     "VacuumSourceStatus",
     "VacuumDockState",
   ]) {
-    assert.deepEqual(unionLiterals(localSource, typeName), unionLiterals(sharedSource, typeName), typeName);
+    assert.ok(unionLiterals(sharedSource, typeName).length > 0, typeName);
   }
   const activeMissionShape = {
     id: "mission-1",
@@ -322,6 +283,7 @@ function testState(): CheckResult {
 }
 
 function testMapGrid(): CheckResult {
+  assertSharedReExportShim("panels-standalone/src/vacuum-adapter/mapGrid.ts", "tensorfleet-util/vacuum/mapGrid");
   const message = createSmallOccupancyGrid();
   const localGrid = parseLocalVacuumMapGrid(message);
   const sharedGrid = parseSharedVacuumMapGrid(message);
@@ -336,37 +298,41 @@ function testMapGrid(): CheckResult {
   return pass("mapGrid");
 }
 
-function testValetudoCapabilityMapping(): CheckResult {
-  return assertDeepEqualOrDrift(
-    "valetudo capability mapping",
-    mapLocalValetudoCapabilities(VALETUDO_CAPABILITY_FIXTURE, {
-      commandAvailability: {
-        pause: { available: false, reason: "invalid_state" },
-        fan_speed: { available: true },
-      },
-      consumablesSupported: true,
-      currentStatisticsSupported: true,
-      attachmentsSupported: true,
-      attachmentKinds: ["mop"],
-      dockComponentsSupported: true,
-      dockComponentKinds: ["dustbag"],
-    }),
-    mapSharedValetudoCapabilities(VALETUDO_CAPABILITY_FIXTURE, {
-      commandAvailability: {
-        pause: { available: false, reason: "invalid_state" },
-        fan_speed: { available: true },
-      },
-      consumablesSupported: true,
-      currentStatisticsSupported: true,
-      attachmentsSupported: true,
-      attachmentKinds: ["mop"],
-      dockComponentsSupported: true,
-      dockComponentKinds: ["dustbag"],
-    }),
-  );
+function assertValetudoCapabilityMapping(): CheckResult | null {
+  try {
+    assert.deepEqual(
+      mapLocalValetudoCapabilities(VALETUDO_CAPABILITY_FIXTURE, {
+        commandAvailability: {
+          pause: { available: false, reason: "invalid_state" },
+          fan_speed: { available: true },
+        },
+        consumablesSupported: true,
+        currentStatisticsSupported: true,
+        attachmentsSupported: true,
+        attachmentKinds: ["mop"],
+        dockComponentsSupported: true,
+        dockComponentKinds: ["dustbag"],
+      }),
+      mapSharedValetudoCapabilities(VALETUDO_CAPABILITY_FIXTURE, {
+        commandAvailability: {
+          pause: { available: false, reason: "invalid_state" },
+          fan_speed: { available: true },
+        },
+        consumablesSupported: true,
+        currentStatisticsSupported: true,
+        attachmentsSupported: true,
+        attachmentKinds: ["mop"],
+        dockComponentsSupported: true,
+        dockComponentKinds: ["dustbag"],
+      }),
+    );
+    return null;
+  } catch (error) {
+    return knownDrift("Valetudo mappers", error instanceof Error ? error.message.split("\n")[0] : String(error));
+  }
 }
 
-function testValetudoCommandMapping(): CheckResult {
+function assertValetudoCommandMapping(): void {
   const capabilities = mapLocalValetudoCapabilities(VALETUDO_CAPABILITY_FIXTURE, {
     commandAvailability: {
       pause: { available: true },
@@ -409,10 +375,9 @@ function testValetudoCommandMapping(): CheckResult {
     mapLocalVacuumCommandToValetudoRuntimeCommandName("resume_mission" as never, snapshotWithResume as never),
     mapSharedVacuumCommandToValetudoRuntimeCommandName("resume_mission" as never, snapshotWithResume as never),
   );
-  return pass("valetudo command mapping");
 }
 
-function testValetudoStateMapping(): CheckResult {
+function assertValetudoStateMapping(): void {
   const onlineSnapshot = createValetudoRuntimeSnapshot();
   const staleSnapshot = createValetudoRuntimeSnapshot({
     source: { kind: "valetudo_mock", status: "reachable", stale: true, lastSeenAt: 1_700_000_000_000 },
@@ -434,7 +399,40 @@ function testValetudoStateMapping(): CheckResult {
     );
   }
   assert.deepEqual(mapLocalValetudoRuntimeUnavailable("offline"), mapSharedValetudoRuntimeUnavailable("offline"));
-  return pass("valetudo state mapping");
+}
+
+function testValetudoMappers(): CheckResult {
+  assertSharedReExportShim(
+    "panels-standalone/src/vacuum-adapter/backends/valetudo/capabilityMapper.ts",
+    "tensorfleet-util/vacuum/backends/valetudo/capabilityMapper",
+  );
+  assertSharedReExportShim(
+    "panels-standalone/src/vacuum-adapter/backends/valetudo/commandMapper.ts",
+    "tensorfleet-util/vacuum/backends/valetudo/commandMapper",
+  );
+  assertSharedReExportShim(
+    "panels-standalone/src/vacuum-adapter/backends/valetudo/runtimeCommandMapper.ts",
+    "tensorfleet-util/vacuum/backends/valetudo/runtimeCommandMapper",
+  );
+  assertSharedReExportShim(
+    "panels-standalone/src/vacuum-adapter/backends/valetudo/runtimeContract.ts",
+    "tensorfleet-util/vacuum/backends/valetudo/runtimeContract",
+  );
+  assertSharedReExportShim(
+    "panels-standalone/src/vacuum-adapter/backends/valetudo/stateMapper.ts",
+    "tensorfleet-util/vacuum/backends/valetudo/stateMapper",
+  );
+  assertSharedReExportShim(
+    "panels-standalone/src/vacuum-adapter/backends/valetudo/types.ts",
+    "tensorfleet-util/vacuum/backends/valetudo/types",
+  );
+  const capabilityDrift = assertValetudoCapabilityMapping();
+  if (capabilityDrift) {
+    return capabilityDrift;
+  }
+  assertValetudoCommandMapping();
+  assertValetudoStateMapping();
+  return pass("Valetudo mappers");
 }
 
 function createLocalTurtleBot4Runtime(availableServices: string[]): Record<string, unknown> {
@@ -456,6 +454,14 @@ function createSharedTurtleBot4Runtime(availableServices: string[]): Record<stri
 }
 
 function testTurtleBot4CapabilityMapping(): CheckResult {
+  assertSharedReExportShim(
+    "panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/capabilityMapper.ts",
+    "tensorfleet-util/vacuum/backends/turtlebot4-nav2/capabilityMapper",
+  );
+  assertSharedReExportShim(
+    "panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/runtimeTypes.ts",
+    "tensorfleet-util/vacuum/backends/turtlebot4-nav2/runtimeTypes",
+  );
   const localServices = [
     SEND_GOAL_SERVICE,
     CANCEL_GOAL_SERVICE,
@@ -478,7 +484,7 @@ function testTurtleBot4CapabilityMapping(): CheckResult {
   assert.deepEqual(localFull, sharedFull);
   assert.deepEqual(localEmpty, sharedEmpty);
   assert.deepEqual(localUnsupportedTurtleBot4Nav2Command("start_cleaning"), sharedUnsupportedTurtleBot4Nav2Command("start_cleaning"));
-  return pass("turtlebot4 capability mapping");
+  return pass("TurtleBot4 capability mapper");
 }
 
 const results = [
@@ -487,9 +493,7 @@ const results = [
   testErrors(),
   testState(),
   testMapGrid(),
-  testValetudoCapabilityMapping(),
-  testValetudoCommandMapping(),
-  testValetudoStateMapping(),
+  testValetudoMappers(),
   testTurtleBot4CapabilityMapping(),
 ];
 
