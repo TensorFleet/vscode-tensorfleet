@@ -1,35 +1,37 @@
-# Progress Report - Vacuum room zone target shared parity
+# Progress Report - Vacuum shared-core extension closeout
 Current report date: 2026-06-26.
 
 ## 1. What changed
 
-- Mirrored the shared `tensorfleet-util/vacuum` target contract into the extension vendored util copy: normalized target metadata, readiness statuses, geometry validation, runtime target mapping, and annotation-to-target mapping.
-- Added the pure extension shim `panels-standalone/src/vacuum-adapter/targets.ts` and exported it from the local adapter barrel.
-- Extended `scripts/vacuum-shared-parity.ts` to compare shared/local target mapping and readiness behavior.
-- Extended `scripts/vacuum-shared-boundary.test.ts` so the target shim remains a pure shared re-export.
+- Closed the VS Code side of the vacuum shared-core refactor: pure vacuum adapter modules are compatibility shims to `tensorfleet-util/vacuum`.
+- Kept extension-owned behavior local: React hooks, browser runtime clients, auth injection, polling, local annotation/UI state, rendering, and VS Code lifecycle.
+- Confirmed OpenClaw/tools do not depend on VS Code extension code for product-level vacuum control.
+- Preserved shared room/zone target parity in the vendored util copy used by the extension.
 
 ## 2. Product behavior
 
-- Extension UI lifecycle, rendering, hooks, local annotation editing, localStorage, runtime clients, auth injection, and polling stayed local.
-- Browser panel and extension host source still do not import `tensorfleet-util/vacuum/node-runtime`.
-- Target inventory/readiness semantics now come from the same shared pure module used by OpenClaw/tools.
-- No new UI controls, room/zone cleaning starts, or map editing behavior were added in the extension.
+- Extension UI behavior is unchanged by this closeout pass.
+- OpenClaw/agents can list normalized map/room/zone targets, preflight room/zone cleaning, and start room/zone cleaning for simulation only through `tensorfleet-tools` plus `tensorfleet-util/vacuum`.
+- Simulation room/zone starts use shared target readiness and normalized commands.
+- No live robot support, real-vacuum room/zone writes, or map editing behavior is claimed from the extension refactor.
 
 ## 3. Still deferred
 
-- Extension UI changes for room/zone target inventory beyond shared pure-module parity.
-- `start-room-cleaning` and `start-zone-cleaning`.
-- OpenClaw map annotation mutation/editing.
-- Real-vacuum room/zone write/control behavior.
-- MCP vacuum tools as a primary integration path.
-- Live robot validation was not performed or claimed.
+- Real-vacuum room/zone writes.
+- Map annotation mutation/editing.
+- Live robot validation.
+- Arbitrary waypoint/raw backend tools.
+- MCP as the primary vacuum control path.
+- New extension UI controls/workflows for room/zone starts.
 
 ## 4. Validation
 
 - `bun run --cwd /home/shane/vscode-tensorfleet/panels-standalone prepare:tensorfleet-util` - passed.
-- `bun run --cwd /home/shane/vscode-tensorfleet test:vacuum-shared-parity` - passed with target parity and no known drift.
+- `bun run --cwd /home/shane/vscode-tensorfleet test:vacuum-shared-parity` - passed.
 - `bun run --cwd /home/shane/vscode-tensorfleet test:vacuum-shared-boundary` - passed.
-- `bun run --cwd /home/shane/vscode-tensorfleet/panels-standalone build` - passed; Vite still emitted existing browser-externalization, eval, and chunk-size warnings.
-- `bun run --cwd /home/shane/vscode-tensorfleet compile` - passed; Vite still emitted existing panel warnings and the existing CJS Node API deprecation warning during extension build.
-- `bun run --cwd /home/shane/vscode-tensorfleet build:extension` - passed; Vite still emitted the existing CJS Node API deprecation warning.
+- `bun run --cwd /home/shane/vscode-tensorfleet/panels-standalone build` - passed; non-blocking warnings: existing Vite browser-externalization, protobufjs `eval`, and chunk-size warnings.
+- `bun run --cwd /home/shane/vscode-tensorfleet compile` - passed; non-blocking warnings: same panel build warnings plus existing Vite CJS Node API deprecation warning.
+- `bun run --cwd /home/shane/vscode-tensorfleet build:extension` - passed; non-blocking warning: existing Vite CJS Node API deprecation warning.
 - `git -C /home/shane/vscode-tensorfleet diff --check` - passed.
+
+The vacuum shared-core refactor is complete. Future work should be treated as product/tool feature work, with product-level semantics starting in tensorfleet-util/vacuum, OpenClaw policy in tensorfleet-tools, and UI lifecycle in vscode-tensorfleet.
