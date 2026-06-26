@@ -1,41 +1,42 @@
-# Progress Report - Step 6C vacuum shared imports
+# Progress Report - Vacuum shared-core boundary closeout
 Current report date: 2026-06-26.
 
 ## 1. What changed
 
-- Replaced these extension-local pure vacuum modules with compatibility re-export shims to `tensorfleet-util/vacuum`: `capabilities.ts`, `commands.ts`, `errors.ts`, `state.ts`, `mapGrid.ts`, Valetudo `capabilityMapper.ts`, `commandMapper.ts`, `runtimeCommandMapper.ts`, `runtimeContract.ts`, `stateMapper.ts`, `types.ts`, and TurtleBot4/Nav2 `capabilityMapper.ts`.
-- Added `panels-standalone/src/vacuum-adapter/backends/turtlebot4-nav2/runtimeTypes.ts` as a local compatibility shim to shared TurtleBot4/Nav2 runtime types.
-- Updated `scripts/vacuum-shared-parity.ts` so it verifies extension-facing local entrypoints are shared re-export shims and still exercises generated shared util parity for pure contracts/mappers.
-- Fixed `packages/tensorfleet-openclaw-plugin/scripts/discovery-smoke.test.mjs` in the OpenClaw repo to normalize string, direct object, and OpenClaw text-content wrapper results before asserting the structured vacuum result.
-- The smoke test now validates backend selection, normalized adapter, gated read/write actions, `canMoveVacuumNow`, missing-runtime/auth status, invalid navigation input, and absence of secret config values.
+- Finalized the architecture boundary in docs: `tensorfleet-util/vacuum` is the shared vacuum control foundation for tools, agents, and UI clients; `vscode-tensorfleet` is one UI client; `tensorfleet-vacuum` is the OpenClaw plugin tool facade over `tensorfleet-tools` and `tensorfleet-util`.
+- Added `scripts/vacuum-shared-boundary.test.ts` and `test:vacuum-shared-boundary` to guard that extension source does not import `tensorfleet-util/vacuum/node-runtime` or OpenClaw/tool packages, that pure shim files stay shared re-exports, and that extension-local hooks/runtime clients remain local.
+- Updated shared vacuum architecture references under `/home/shane/docs/vacuum` to describe the final shared-core boundary.
+- Verified Step 6C remains complete: extension pure modules are shared re-export shims to `tensorfleet-util/vacuum`.
 
 ## 2. Product behavior
 
-- Product behavior is unchanged; this pass only changed pure module import ownership and a stale test expectation.
-- Vacuum UI/hooks and runtime clients continue to consume local adapter entrypoints.
-- These extension-specific files remain local: `useVacuumAdapter.ts`, TurtleBot4/Nav2 `useTurtleBot4Nav2Adapter.ts`, `localAnnotationMigration.ts`, `stateMapper.ts`, `commandDispatcher.ts`, Valetudo `useValetudoAdapter.ts`, and Valetudo `runtimeClient.ts`.
-- `node-runtime` remains excluded from panel and extension source imports; `rg` found no `tensorfleet-util/vacuum/node-runtime` or `/vacuum/node-runtime` imports under `/home/shane/vscode-tensorfleet/panels-standalone/src` or `/home/shane/vscode-tensorfleet/src`.
+- Product behavior is unchanged; this pass added boundary guardrails and documentation only.
+- The extension adapter was not removed. It is thinner through shared shims, while `useVacuumAdapter.ts`, TurtleBot4/Nav2 hooks, Valetudo hooks/runtime client, local annotation migration, TurtleBot4 state mapper, and TurtleBot4 command dispatcher remain extension-local.
+- Extension panel and extension host source do not import `tensorfleet-util/vacuum/node-runtime`.
+- OpenClaw and other agents can use `tensorfleet-util/vacuum` through `tensorfleet-tools` without relying on `vscode-tensorfleet`.
 
 ## 3. Still deferred
 
-- No React hooks, browser runtime clients, local storage behavior, VS Code SecretStorage/auth behavior, Valetudo runtime client behavior, or TurtleBot4 runtime subscriptions/polling were refactored.
-- No local adapter files were deleted aggressively; local entrypoints remain as shims.
-- No OpenClaw vacuum actions, room/zone tools, MCP changes, or OpenClaw config changes were added.
-- Parity coverage remains fixture-based for pure shared-core contracts/mappers; it is not live robot/runtime integration coverage.
-- No known pure shared-core drift remains after the shim replacement.
+- No new vacuum actions, room/zone tools, real-vacuum writes, MCP changes, or OpenClaw config changes were added.
+- No React hooks, browser runtime clients, polling, localStorage behavior, VS Code SecretStorage/auth behavior, or rendering/presentation code was moved.
+- No local adapter entrypoints were deleted.
+- No live robot/runtime validation was performed or claimed.
+- Future product-level vacuum behavior should start in `tensorfleet-util/vacuum`; OpenClaw-specific response shape or tool policy belongs in `tensorfleet-tools`; UI lifecycle/presentation stays in `vscode-tensorfleet`.
 
 ## 4. Validation
 
 - `bun run --cwd /home/shane/vscode-tensorfleet/panels-standalone prepare:tensorfleet-util` - passed.
-- `bun run --cwd /home/shane/vscode-tensorfleet test:vacuum-shared-parity` - passed with the requested PASS lines through shared re-export shims and `DONE shared parity with no known drift.`
-- `bun run --cwd /home/shane/vscode-tensorfleet/panels-standalone build` - passed; Vite still emitted existing browser-externalization/eval/chunk-size warnings.
-- `bun run --cwd /home/shane/vscode-tensorfleet compile` - passed; this repo script runs panel and extension builds.
+- `bun run --cwd /home/shane/vscode-tensorfleet test:vacuum-shared-parity` - passed with all shared parity checks and no known drift.
+- `bun run --cwd /home/shane/vscode-tensorfleet test:vacuum-shared-boundary` - passed.
+- `bun run --cwd /home/shane/vscode-tensorfleet/panels-standalone build` - passed; Vite still emitted existing browser-externalization, eval, and chunk-size warnings.
+- `bun run --cwd /home/shane/vscode-tensorfleet compile` - passed; Vite still emitted the same panel warnings and the existing CJS Node API deprecation warning during extension build.
 - `bun run --cwd /home/shane/vscode-tensorfleet build:extension` - passed; Vite still emitted the existing CJS Node API deprecation warning.
 - `git -C /home/shane/vscode-tensorfleet diff --check` - passed.
 - `bun run --filter tensorfleet-tools test:vacuum-discovery` - passed.
 - `bun run --filter tensorfleet-tools test:vacuum-read-preflight` - passed.
 - `bun run --filter tensorfleet-tools test:vacuum-write-actions` - passed.
+- `bun run --filter tensorfleet-tools test:vacuum-boundary` - passed.
 - `bun run --filter tensorfleet-openclaw-plugin test:discovery-smoke` - passed.
-- `bun run --filter tensorfleet-openclaw-plugin build` - passed with existing direct-`eval` bundler warnings from `tensorfleet-tools/dist/index.mjs`.
+- `bun run --filter tensorfleet-openclaw-plugin build` - passed; tsup still emitted existing direct-`eval` bundler warnings from `tensorfleet-tools/dist/index.mjs`.
 - `bunx tsc -p packages/tensorfleet-openclaw-plugin/tsconfig.json --noEmit` - passed.
 - `git -C /home/shane/tensorfleet-claw-interface diff --check` - passed.
