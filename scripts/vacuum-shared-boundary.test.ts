@@ -16,6 +16,7 @@ const sharedShims = new Map([
   ["panels-standalone/src/vacuum-adapter/commands.ts", "tensorfleet-util/vacuum/commands"],
   ["panels-standalone/src/vacuum-adapter/errors.ts", "tensorfleet-util/vacuum/errors"],
   ["panels-standalone/src/vacuum-adapter/state.ts", "tensorfleet-util/vacuum/state"],
+  ["panels-standalone/src/vacuum-adapter/targets.ts", "tensorfleet-util/vacuum/targets"],
   ["panels-standalone/src/vacuum-adapter/mapGrid.ts", "tensorfleet-util/vacuum/mapGrid"],
   [
     "panels-standalone/src/vacuum-adapter/backends/valetudo/capabilityMapper.ts",

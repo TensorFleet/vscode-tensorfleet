@@ -23,6 +23,14 @@ import {
   parseVacuumMapGrid as parseSharedVacuumMapGrid,
 } from "../panels-standalone/.generated/tensorfleet-util/vacuum/mapGrid";
 import {
+  checkVacuumTargetReadiness as checkLocalVacuumTargetReadiness,
+  normalizeVacuumMapTargetsFromAnnotations as normalizeLocalVacuumMapTargetsFromAnnotations,
+} from "../panels-standalone/src/vacuum-adapter/targets";
+import {
+  checkVacuumTargetReadiness as checkSharedVacuumTargetReadiness,
+  normalizeVacuumMapTargetsFromAnnotations as normalizeSharedVacuumMapTargetsFromAnnotations,
+} from "../panels-standalone/.generated/tensorfleet-util/vacuum/targets";
+import {
   mapValetudoCapabilities as mapLocalValetudoCapabilities,
 } from "../panels-standalone/src/vacuum-adapter/backends/valetudo/capabilityMapper";
 import {
@@ -298,6 +306,42 @@ function testMapGrid(): CheckResult {
   return pass("mapGrid");
 }
 
+function testTargets(): CheckResult {
+  assertSharedReExportShim("panels-standalone/src/vacuum-adapter/targets.ts", "tensorfleet-util/vacuum/targets");
+  const annotations = [
+    {
+      id: "room-kitchen",
+      kind: "room",
+      name: "Kitchen",
+      area: { shape: "rectangle", minX: 0, minY: 0, maxX: 2, maxY: 1.5 },
+      mapId: "map-1",
+      createdAt: 1,
+      updatedAt: 2,
+    },
+    {
+      id: "zone-entry",
+      kind: "zone",
+      name: "Entry",
+      area: { shape: "polygon", points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }] },
+      mapId: "map-1",
+      createdAt: 3,
+      updatedAt: 4,
+    },
+  ];
+  const localTargets = normalizeLocalVacuumMapTargetsFromAnnotations(annotations as never);
+  const sharedTargets = normalizeSharedVacuumMapTargetsFromAnnotations(annotations as never);
+  assert.deepEqual(localTargets, sharedTargets);
+  assert.deepEqual(
+    checkLocalVacuumTargetReadiness(localTargets, "room", { name: "Kitchen" }, { supported: true }),
+    checkSharedVacuumTargetReadiness(sharedTargets, "room", { name: "Kitchen" }, { supported: true }),
+  );
+  assert.deepEqual(
+    checkLocalVacuumTargetReadiness(localTargets, "zone", undefined, { supported: true }),
+    checkSharedVacuumTargetReadiness(sharedTargets, "zone", undefined, { supported: true }),
+  );
+  return pass("targets");
+}
+
 function assertValetudoCapabilityMapping(): CheckResult | null {
   try {
     assert.deepEqual(
@@ -493,6 +537,7 @@ const results = [
   testErrors(),
   testState(),
   testMapGrid(),
+  testTargets(),
   testValetudoMappers(),
   testTurtleBot4CapabilityMapping(),
 ];

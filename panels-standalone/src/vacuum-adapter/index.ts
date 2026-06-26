@@ -6,4 +6,5 @@ export * from "./mapGrid";
 export * from "./messageUtils";
 export * from "./primaryState";
 export * from "./state";
+export * from "./targets";
 export * from "./useVacuumAdapter";
