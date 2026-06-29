@@ -59,7 +59,7 @@ Create or edit `~/.cursor/mcp.json`:
     "tensorfleet-drone": {
       "command": "node",
       "args": [
-        "/Users/hyper/projects/drone/vscode-tensorfleet/out/mcp-server.js"
+        "/Users/hyper/projects/drone/vscode-tensorfleet/dist/mcp-server.js"
       ]
     }
   }
@@ -159,7 +159,7 @@ node test-bridge.js
 bun run compile
 
 # Verify it exists
-ls -la out/mcp-server.js
+ls -la dist/mcp-server.js
 ```
 
 ### "Bridge not available"
